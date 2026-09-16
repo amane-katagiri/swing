@@ -1,6 +1,6 @@
 services:
   ipfs:
-    image: ipfs/kubo:latest
+    image: ipfs/kubo:v0.43.1
     command: ["daemon", "--migrate=true", "--agent-version-suffix=docker", "--enable-gc"]
     restart: unless-stopped
     environment:

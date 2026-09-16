@@ -422,7 +422,7 @@ agent 側の適用（事前判定の後、取得の前）:
 
 | サービス | 内容 |
 |---|---|
-| `ipfs` | `ipfs/kubo:latest`。`command` はイメージ既定（`daemon --migrate=true --agent-version-suffix=docker`）に `--enable-gc` を足したもの。環境変数 `SWING_KUBO_STORAGE_MAX`（compose の変数展開で `SWING_KUBO_STORAGE_MAX`、無ければ `SWING_MAX_TOTAL_STORAGE`、無ければ `100GB`）と `SWING_KUBO_PROVIDE_STRATEGY`（無ければ `pinned+mfs`）。volume `ipfs-data:/data/ipfs` と `./docker/kubo-init.d:/container-init.d:ro`。公開ポートは `4001/tcp` と `4001/udp` のみ（RPC 5001 と Gateway 8080 は非公開）。healthcheck は `ipfs id` |
+| `ipfs` | `ipfs/kubo:v0.43.1`（固定。「Kubo のバージョン」を参照）。`command` はイメージ既定（`daemon --migrate=true --agent-version-suffix=docker`）に `--enable-gc` を足したもの。環境変数 `SWING_KUBO_STORAGE_MAX`（compose の変数展開で `SWING_KUBO_STORAGE_MAX`、無ければ `SWING_MAX_TOTAL_STORAGE`、無ければ `100GB`）と `SWING_KUBO_PROVIDE_STRATEGY`（無ければ `pinned+mfs`）。volume `ipfs-data:/data/ipfs` と `./docker/kubo-init.d:/container-init.d:ro`。公開ポートは `4001/tcp` と `4001/udp` のみ（RPC 5001 と Gateway 8080 は非公開）。healthcheck は `ipfs id` |
 | `mirror` | `build: .`。`env_file: .env`。`SWING_IPFS_API=http://ipfs:5001`、`SWING_STATE_DIR=/data`、`RUST_LOG=info`。volume `swing-data:/data`。`depends_on: ipfs` を `condition: service_healthy` で待つ |
 
 Kubo イメージの起動スクリプト（`start_ipfs`）は、repo の初期化の有無にかかわらず毎回の起動時に `/container-init.d/*.sh` を実行してから daemon を起動する。`docker/kubo-init.d/001-swing-config.sh` はそこで `ipfs config Datastore.StorageMax "$SWING_KUBO_STORAGE_MAX"` と `ipfs config Provide.Strategy "$SWING_KUBO_PROVIDE_STRATEGY"` を実行する。変数が空ならスクリプトが失敗し、コンテナは起動しない。
@@ -432,6 +432,18 @@ Kubo イメージの起動スクリプト（`start_ipfs`）は、repo の初期�
 両サービスとも `restart: unless-stopped`。名前付き volume は `ipfs-data` と `swing-data`。`swing-data` は初回マウント時にイメージ側の `/data` の所有者（`swing`）を引き継ぐ。
 
 `.env.example` は `SWING_NOSTR_SECRET_KEY`、`SWING_NOSTR_RELAYS`、`SWING_MIRROR_SET`、`SWING_MAX_TOTAL_STORAGE` の 4 つと、コメントアウトした `SWING_KUBO_STORAGE_MAX`、`SWING_KUBO_PROVIDE_STRATEGY`。`.env` は mirror の `env_file` であると同時に、compose の変数展開（ipfs の環境変数）にも使われる。
+
+### Kubo のバージョン
+
+compose の Kubo は、検証済みのバージョンにタグで固定する（現在は `v0.43.1`）。SWING は Kubo RPC の次の挙動に依存しており、Kubo のバージョンが上がると壊れうる。
+
+- `files/ls`・`files/stat` のエラー文面 `file does not exist` での判定。文面が変わると「無い」がエラーとして扱われ、`reconcile` は MFS から消えた版を取り直さなくなる（警告を出し続けるだけになる）
+- `files/rm` が失敗時も 200 を返すこと
+- 各 RPC の JSON のフィールド名と形（`TotalSize`、`Hash`、`Entries[].Type` など）
+- `add` の multipart で共通の接頭辞からルートディレクトリを推定すること、`to-files` などのパラメータ
+- MFS の保護・GC・`offline=true` の挙動（「MFS の使い方」「Kubo RPC」を参照）
+
+Kubo を上げるときは、新しいバージョンのイメージで統合テスト（「テスト」を参照。`kubo_integration` と `agent_stores_and_removes_through_real_kubo`）を通してから、`compose.yaml` のタグと統合テストの手順のタグを同時に上げる。既存の `ipfs-data` は `--migrate=true` で新しい repo 形式に移行され、古いバージョンには戻せないことがある。
 
 ## docs/examples/publish.sh
 
@@ -449,7 +461,7 @@ Kubo イメージの起動スクリプト（`start_ipfs`）は、repo の初期�
 
 ```bash
 # test プロファイルは bootstrap とローカル探索を無効にし、公開ネットワークに接続しない
-docker run -d --rm -e IPFS_PROFILE=test -p 127.0.0.1:15001:5001 ipfs/kubo:latest
+docker run -d --rm -e IPFS_PROFILE=test -p 127.0.0.1:15001:5001 ipfs/kubo:v0.43.1
 # SWING_TEST_IPFS_API（既定 http://127.0.0.1:15001）、任意で SWING_TEST_EXPECTED_CID
 cargo test --test kubo_integration -- --ignored --test-threads=1
 # agent の保存・sweep・突き合わせ・unfollow を実物の Kubo で通す
