@@ -40,11 +40,64 @@ async fn add_pin_stat_unpin_round_trip() {
     assert!(!pins_after_rm.contains(&cid));
 
     client
-        .pin_add(&cid, Duration::from_secs(30))
+        .pin_add_local(&cid, Duration::from_secs(30))
         .await
-        .expect("pin_add");
+        .expect("pin_add_local");
     let pins_after_add = client.pin_ls().await.expect("pin_ls after add");
     assert!(pins_after_add.contains(&cid));
+}
+
+fn limits(max_bytes: u64) -> ipfs::FetchLimits {
+    ipfs::FetchLimits {
+        max_bytes,
+        total: Duration::from_secs(30),
+        idle: Duration::from_secs(2),
+    }
+}
+
+#[tokio::test]
+#[ignore]
+async fn fetch_dag_counts_bytes_and_stops_at_limit() {
+    let client = ipfs::IpfsClient::new(kubo_api());
+
+    let dir = tempfile::tempdir().unwrap();
+    let body: Vec<u8> = (0..300_000u32).map(|i| (i * 7 % 251) as u8).collect();
+    std::fs::write(dir.path().join("blob.bin"), &body).unwrap();
+    let cid = client.add_dir(dir.path()).await.expect("add_dir");
+
+    let size = client.dag_size_local(&cid).await.expect("dag_size_local");
+    assert!(size >= 300_000, "unexpected dag size {size}");
+
+    assert_eq!(
+        client.fetch_dag(&cid, limits(10_000_000)).await.unwrap(),
+        ipfs::Fetched::Complete
+    );
+    assert_eq!(
+        client.fetch_dag(&cid, limits(1_000)).await.unwrap(),
+        ipfs::Fetched::TooLarge
+    );
+}
+
+// With the recommended `IPFS_PROFILE=test` container the daemon has no peers,
+// so a missing CID never arrives and only the idle timeout ends the fetch.
+#[tokio::test]
+#[ignore]
+async fn missing_cid_fails_fast_and_is_never_pinned_from_network() {
+    let client = ipfs::IpfsClient::new(kubo_api());
+    let missing = "bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi";
+
+    let started = std::time::Instant::now();
+    assert!(client.fetch_dag(missing, limits(1_000_000)).await.is_err());
+    assert!(started.elapsed() < Duration::from_secs(10));
+
+    let started = std::time::Instant::now();
+    assert!(
+        client
+            .pin_add_local(missing, Duration::from_secs(30))
+            .await
+            .is_err()
+    );
+    assert!(started.elapsed() < Duration::from_secs(5));
 }
 
 #[tokio::test]

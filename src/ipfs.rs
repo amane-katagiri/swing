@@ -4,13 +4,36 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
+use futures_util::StreamExt;
 use reqwest::multipart::{Form, Part};
 use serde::Deserialize;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FetchLimits {
+    pub max_bytes: u64,
+    pub total: Duration,
+    pub idle: Duration,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Fetched {
+    Complete,
+    TooLarge,
+}
+
 pub trait KuboPins {
-    fn pin_add(&self, cid: &str, timeout: Duration) -> impl Future<Output = Result<()>> + Send;
+    fn fetch_dag(
+        &self,
+        cid: &str,
+        limits: FetchLimits,
+    ) -> impl Future<Output = Result<Fetched>> + Send;
+    fn pin_add_local(
+        &self,
+        cid: &str,
+        timeout: Duration,
+    ) -> impl Future<Output = Result<()>> + Send;
+    fn dag_size_local(&self, cid: &str) -> impl Future<Output = Result<u64>> + Send;
     fn pin_rm(&self, cid: &str) -> impl Future<Output = Result<()>> + Send;
-    fn files_stat(&self, cid: &str) -> impl Future<Output = Result<u64>> + Send;
 }
 
 pub struct IpfsClient {
@@ -19,16 +42,20 @@ pub struct IpfsClient {
 }
 
 impl KuboPins for IpfsClient {
-    async fn pin_add(&self, cid: &str, timeout: Duration) -> Result<()> {
-        IpfsClient::pin_add(self, cid, timeout).await
+    async fn fetch_dag(&self, cid: &str, limits: FetchLimits) -> Result<Fetched> {
+        IpfsClient::fetch_dag(self, cid, limits).await
+    }
+
+    async fn pin_add_local(&self, cid: &str, timeout: Duration) -> Result<()> {
+        IpfsClient::pin_add_local(self, cid, timeout).await
+    }
+
+    async fn dag_size_local(&self, cid: &str) -> Result<u64> {
+        IpfsClient::dag_size_local(self, cid).await
     }
 
     async fn pin_rm(&self, cid: &str) -> Result<()> {
         IpfsClient::pin_rm(self, cid).await
-    }
-
-    async fn files_stat(&self, cid: &str) -> Result<u64> {
-        IpfsClient::files_stat(self, cid).await
     }
 }
 
@@ -118,6 +145,12 @@ struct AddResponseLine {
 struct FilesStatResponse {
     #[serde(rename = "CumulativeSize")]
     cumulative_size: u64,
+}
+
+#[derive(Debug, Deserialize)]
+struct DagStatResponse {
+    #[serde(rename = "TotalSize")]
+    total_size: u64,
 }
 
 #[derive(Debug, Deserialize)]
@@ -223,9 +256,66 @@ impl IpfsClient {
         Ok(parsed.cumulative_size)
     }
 
-    pub async fn pin_add(&self, cid: &str, timeout: Duration) -> Result<()> {
+    pub async fn fetch_dag(&self, cid: &str, limits: FetchLimits) -> Result<Fetched> {
         let url = self.url(&format!(
-            "/api/v0/pin/add?arg={}&recursive=true",
+            "/api/v0/dag/export?arg={}&progress=false",
+            urlencoding_cid(cid)
+        ));
+        let fetch = async {
+            let resp = tokio::time::timeout(limits.idle, self.http.post(&url).send())
+                .await
+                .context("dag/export stalled before the first block")?
+                .context("POST /api/v0/dag/export")?;
+            let status = resp.status();
+            if !status.is_success() {
+                let text = resp.text().await.unwrap_or_default();
+                bail!("dag/export failed: {status}: {text}");
+            }
+            let mut stream = resp.bytes_stream();
+            let mut received: u64 = 0;
+            while let Some(chunk) = tokio::time::timeout(limits.idle, stream.next())
+                .await
+                .context("dag/export stalled")?
+            {
+                received += chunk.context("reading dag/export body")?.len() as u64;
+                if received > limits.max_bytes {
+                    return Ok(Fetched::TooLarge);
+                }
+            }
+            Ok(Fetched::Complete)
+        };
+        tokio::time::timeout(limits.total, fetch)
+            .await
+            .context("dag/export timed out")?
+    }
+
+    pub async fn dag_size_local(&self, cid: &str) -> Result<u64> {
+        let url = self.url(&format!(
+            "/api/v0/dag/stat?arg={}&progress=false&offline=true",
+            urlencoding_cid(cid)
+        ));
+        let resp = self
+            .http
+            .post(&url)
+            .timeout(Duration::from_secs(300))
+            .send()
+            .await
+            .context("POST /api/v0/dag/stat")?;
+        let status = resp.status();
+        let text = resp.text().await.context("reading dag/stat response")?;
+        if !status.is_success() {
+            bail!("dag/stat failed: {status}: {text}");
+        }
+        let parsed: DagStatResponse =
+            serde_json::from_str(&text).context("parsing dag/stat response")?;
+        Ok(parsed.total_size)
+    }
+
+    pub async fn pin_add_local(&self, cid: &str, timeout: Duration) -> Result<()> {
+        // offline=true keeps Kubo from fetching blocks that fetch_dag did not
+        // count, so the size cap cannot be bypassed by a truncated export.
+        let url = self.url(&format!(
+            "/api/v0/pin/add?arg={}&recursive=true&offline=true",
             urlencoding_cid(cid)
         ));
         let resp = self

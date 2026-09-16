@@ -14,6 +14,12 @@ pub struct CandidateEvent {
     pub created_at: u64,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct Usage {
+    pub other_sites: u64,
+    pub other_sites_of_account: u64,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Decision {
     pub pin: Option<String>,
@@ -46,9 +52,15 @@ fn evict_oldest_until(
     removed
 }
 
+pub fn fetch_limit(cfg: &PolicyConfig) -> u64 {
+    cfg.max_update_size
+        .min(cfg.max_per_site)
+        .min(cfg.max_per_account)
+}
+
 pub fn decide(
     existing_versions: &[VersionInfo],
-    other_sites_total_bytes: u64,
+    usage: Usage,
     candidate: &CandidateEvent,
     cfg: &PolicyConfig,
     now: u64,
@@ -115,8 +127,11 @@ pub fn decide(
 
     // All evictions (max_per_site, keep_versions, keep_days) are applied above so
     // this check reflects the footprint the site would actually have afterwards.
-    let total_after = other_sites_total_bytes + total_size(&versions_after);
-    if total_after > cfg.max_total_storage {
+    let site_after = total_size(&versions_after);
+    if usage.other_sites_of_account + site_after > cfg.max_per_account {
+        return Decision::skip("max_per_account");
+    }
+    if usage.other_sites + site_after > cfg.max_total_storage {
         return Decision::skip("max_total_storage");
     }
 
@@ -135,12 +150,21 @@ mod tests {
         PolicyConfig {
             max_total_storage: 1_000_000,
             max_per_site: 300,
+            max_per_account: 1_000_000,
             max_update_size: 250,
             keep_versions: 5,
             keep_days: 365,
             min_update_interval: 600,
             unpin_on_unfollow: true,
             nip05: crate::config::Nip05Mode::Off,
+            nip05_cache_ttl: 0,
+        }
+    }
+
+    fn total_usage(other_sites: u64) -> Usage {
+        Usage {
+            other_sites,
+            other_sites_of_account: 0,
         }
     }
 
@@ -164,7 +188,7 @@ mod tests {
     fn duplicate_cid_is_skipped() {
         let existing = vec![v("bafy1", 100, 1000)];
         let cand = c("bafy1", Some(100), 2000);
-        let d = decide(&existing, 0, &cand, &cfg(), 3000);
+        let d = decide(&existing, Usage::default(), &cand, &cfg(), 3000);
         assert_eq!(d.pin, None);
         assert_eq!(d.reason, "duplicate_cid");
         assert!(d.unpin.is_empty());
@@ -174,7 +198,7 @@ mod tests {
     fn min_update_interval_skips_too_soon_update() {
         let existing = vec![v("bafy1", 100, 1000)];
         let cand = c("bafy2", Some(100), 1000 + 599);
-        let d = decide(&existing, 0, &cand, &cfg(), 2000);
+        let d = decide(&existing, Usage::default(), &cand, &cfg(), 2000);
         assert_eq!(d.pin, None);
         assert_eq!(d.reason, "min_update_interval");
     }
@@ -183,7 +207,7 @@ mod tests {
     fn min_update_interval_allows_update_at_exact_boundary() {
         let existing = vec![v("bafy1", 100, 1000)];
         let cand = c("bafy2", Some(100), 1000 + 600);
-        let d = decide(&existing, 0, &cand, &cfg(), 2000);
+        let d = decide(&existing, Usage::default(), &cand, &cfg(), 2000);
         assert_eq!(d.pin, Some("bafy2".to_string()));
     }
 
@@ -191,7 +215,7 @@ mod tests {
     fn max_update_size_skips_oversized_event() {
         let existing: Vec<VersionInfo> = vec![];
         let cand = c("bafy1", Some(251), 1000);
-        let d = decide(&existing, 0, &cand, &cfg(), 2000);
+        let d = decide(&existing, Usage::default(), &cand, &cfg(), 2000);
         assert_eq!(d.pin, None);
         assert_eq!(d.reason, "max_update_size");
     }
@@ -200,7 +224,7 @@ mod tests {
     fn max_update_size_none_size_is_not_checked_here() {
         let existing: Vec<VersionInfo> = vec![];
         let cand = c("bafy1", None, 1000);
-        let d = decide(&existing, 0, &cand, &cfg(), 2000);
+        let d = decide(&existing, Usage::default(), &cand, &cfg(), 2000);
         assert_eq!(d.pin, Some("bafy1".to_string()));
     }
 
@@ -210,7 +234,7 @@ mod tests {
         c1.max_update_size = 10_000;
         let existing = vec![v("old1", 150, 1000), v("old2", 100, 1700)];
         let cand = c("new1", Some(100), 3000);
-        let d = decide(&existing, 0, &cand, &c1, 4000);
+        let d = decide(&existing, Usage::default(), &cand, &c1, 4000);
         assert_eq!(d.pin, Some("new1".to_string()));
         assert_eq!(d.unpin, vec!["old1".to_string()]);
     }
@@ -221,7 +245,7 @@ mod tests {
         c1.max_update_size = 10_000;
         let existing: Vec<VersionInfo> = vec![];
         let cand = c("new1", Some(301), 1000);
-        let d = decide(&existing, 0, &cand, &c1, 2000);
+        let d = decide(&existing, Usage::default(), &cand, &c1, 2000);
         assert_eq!(d.pin, None);
         assert_eq!(d.reason, "max_per_site_exceeded_alone");
         assert!(d.unpin.is_empty());
@@ -233,7 +257,7 @@ mod tests {
         let mut c1 = cfg();
         c1.max_total_storage = 500;
         let cand = c("new1", Some(200), 1000);
-        let d = decide(&existing, 400, &cand, &c1, 2000);
+        let d = decide(&existing, total_usage(400), &cand, &c1, 2000);
         assert_eq!(d.pin, None);
         assert_eq!(d.reason, "max_total_storage");
         assert!(d.unpin.is_empty());
@@ -246,7 +270,7 @@ mod tests {
         c1.max_per_site = 10_000;
         let existing = vec![v("v1", 10, 1000), v("v2", 10, 1700)];
         let cand = c("v3", Some(10), 2400);
-        let d = decide(&existing, 0, &cand, &c1, 3000);
+        let d = decide(&existing, Usage::default(), &cand, &c1, 3000);
         assert_eq!(d.pin, Some("v3".to_string()));
         assert_eq!(d.unpin, vec!["v1".to_string()]);
     }
@@ -258,7 +282,7 @@ mod tests {
         c1.max_per_site = 10_000;
         let existing = vec![v("v1", 10, 1000)];
         let cand = c("v2", Some(10), 1700);
-        let d = decide(&existing, 0, &cand, &c1, 3000);
+        let d = decide(&existing, Usage::default(), &cand, &c1, 3000);
         assert_eq!(d.pin, Some("v2".to_string()));
         assert_eq!(d.unpin, vec!["v1".to_string()]);
     }
@@ -273,7 +297,7 @@ mod tests {
         let now = 100 * day;
         let existing = vec![v("ancient", 10, day), v("recent_old", 10, now - 20 * day)];
         let cand = c("new", Some(10), now - 1);
-        let d = decide(&existing, 0, &cand, &c1, now);
+        let d = decide(&existing, Usage::default(), &cand, &c1, now);
         assert_eq!(d.pin, Some("new".to_string()));
         assert!(d.unpin.contains(&"ancient".to_string()));
         assert!(d.unpin.contains(&"recent_old".to_string()));
@@ -289,7 +313,7 @@ mod tests {
         let now = 100 * day;
         let existing: Vec<VersionInfo> = vec![];
         let cand = c("new_but_old_timestamp", Some(10), day);
-        let d = decide(&existing, 0, &cand, &c1, now);
+        let d = decide(&existing, Usage::default(), &cand, &c1, now);
         assert_eq!(d.pin, Some("new_but_old_timestamp".to_string()));
         assert!(d.unpin.is_empty());
     }
@@ -298,7 +322,7 @@ mod tests {
     fn first_ever_version_is_accepted() {
         let existing: Vec<VersionInfo> = vec![];
         let cand = c("bafy1", Some(50), 1000);
-        let d = decide(&existing, 0, &cand, &cfg(), 1000);
+        let d = decide(&existing, Usage::default(), &cand, &cfg(), 1000);
         assert_eq!(d.pin, Some("bafy1".to_string()));
         assert!(d.unpin.is_empty());
         assert_eq!(d.reason, "accepted");
@@ -310,12 +334,12 @@ mod tests {
         c1.min_update_interval = 0;
         let existing = vec![v("bafy1", 100, 2000)];
         let same_ts = c("bafy2", Some(100), 2000);
-        let d = decide(&existing, 0, &same_ts, &c1, 3000);
+        let d = decide(&existing, Usage::default(), &same_ts, &c1, 3000);
         assert_eq!(d.pin, None);
         assert_eq!(d.reason, "stale");
 
         let older_ts = c("bafy3", Some(100), 1000);
-        let d = decide(&existing, 0, &older_ts, &c1, 3000);
+        let d = decide(&existing, Usage::default(), &older_ts, &c1, 3000);
         assert_eq!(d.pin, None);
         assert_eq!(d.reason, "stale");
     }
@@ -330,8 +354,56 @@ mod tests {
         c1.min_update_interval = 0;
         let existing = vec![v("v1", 100, 1000), v("v2", 100, 1100), v("v3", 100, 1200)];
         let cand = c("v4", Some(100), 1300);
-        let d = decide(&existing, 0, &cand, &c1, 2000);
+        let d = decide(&existing, Usage::default(), &cand, &c1, 2000);
         assert_eq!(d.pin, Some("v4".to_string()));
         assert_eq!(d.unpin, vec!["v1".to_string()]);
+    }
+
+    #[test]
+    fn max_per_account_counts_other_sites_of_the_same_account() {
+        let mut c1 = cfg();
+        c1.max_per_account = 500;
+        let cand = c("v1", Some(200), 1000);
+        let usage = Usage {
+            other_sites: 400,
+            other_sites_of_account: 400,
+        };
+        let d = decide(&[], usage, &cand, &c1, 2000);
+        assert_eq!(d.pin, None);
+        assert_eq!(d.reason, "max_per_account");
+
+        let usage = Usage {
+            other_sites: 400,
+            other_sites_of_account: 300,
+        };
+        let d = decide(&[], usage, &cand, &c1, 2000);
+        assert_eq!(d.pin, Some("v1".to_string()));
+    }
+
+    #[test]
+    fn max_per_account_uses_post_eviction_site_size() {
+        let mut c1 = cfg();
+        c1.max_per_account = 450;
+        c1.keep_versions = 1;
+        c1.min_update_interval = 0;
+        let existing = vec![v("v1", 200, 1000)];
+        let cand = c("v2", Some(200), 1100);
+        let usage = Usage {
+            other_sites: 250,
+            other_sites_of_account: 250,
+        };
+        let d = decide(&existing, usage, &cand, &c1, 2000);
+        assert_eq!(d.pin, Some("v2".to_string()));
+        assert_eq!(d.unpin, vec!["v1".to_string()]);
+    }
+
+    #[test]
+    fn fetch_limit_is_the_smallest_per_candidate_cap() {
+        let mut c1 = cfg();
+        assert_eq!(fetch_limit(&c1), 250);
+        c1.max_per_account = 100;
+        assert_eq!(fetch_limit(&c1), 100);
+        c1.max_per_site = 50;
+        assert_eq!(fetch_limit(&c1), 50);
     }
 }

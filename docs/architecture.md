@@ -28,7 +28,7 @@ swing/
     main.rs          CLI エントリ (clap)
     config.rs        設定読み込み（TOML + 環境変数上書き）、サイズ・時間パーサ
     nostr.rs         relay 接続 / follow set 取得 / site event 購読・発行・パース
-    ipfs.rs          Kubo RPC クライアント (add / pin add / pin rm / files stat / pin ls)
+    ipfs.rs          Kubo RPC クライアント (add / dag export / dag stat / pin add / pin rm / files stat / pin ls)
     key.rs           swing key generate 用の鍵ペア生成（純粋関数）
     policy.rs        保存ポリシー判定（純粋関数）
     state.rs         state.json の永続化
@@ -154,16 +154,19 @@ api = "http://127.0.0.1:5001"       # SWING_IPFS_API
 [policy]
 max_total_storage = "100GB"         # SWING_MAX_TOTAL_STORAGE
 max_per_site = "10GB"               # SWING_MAX_PER_SITE
+max_per_account = "20GB"            # SWING_MAX_PER_ACCOUNT
 max_update_size = "2GB"             # SWING_MAX_UPDATE_SIZE
 keep_versions = 5                   # SWING_KEEP_VERSIONS
 keep_days = 365                     # SWING_KEEP_DAYS
 min_update_interval = "10m"         # SWING_MIN_UPDATE_INTERVAL
 unpin_on_unfollow = true            # SWING_UNPIN_ON_UNFOLLOW
 nip05 = "warn"                      # SWING_NIP05（off / warn / require）
+nip05_cache_ttl = "1d"              # SWING_NIP05_CACHE_TTL
 
 [agent]
 state_dir = "./data"                # SWING_STATE_DIR
 poll_interval = "5m"                # SWING_POLL_INTERVAL
+concurrency = 4                     # SWING_CONCURRENCY
 
 [publish]
 nip05 = "warn"                      # SWING_PUBLISH_NIP05（off / warn / require、--nip05 が優先）
@@ -174,9 +177,10 @@ TOML キーの無い環境変数:
 | 環境変数 | 意味 | 既定 |
 |---|---|---|
 | `SWING_CONFIG` | 設定ファイルのパス | `./swing.toml` |
-| `SWING_PIN_TIMEOUT` | `pin/add` のタイムアウト | `1h` |
+| `SWING_PIN_TIMEOUT` | 1 サイト分のコンテンツ取得（`dag/export`）全体と `pin/add` のタイムアウト | `15m` |
+| `SWING_FETCH_IDLE_TIMEOUT` | `dag/export` で次のデータが届かないまま待つ上限。最初のブロックが届くまでも含む | `2m` |
 
-`poll_interval` と `SWING_PIN_TIMEOUT` は 0 だと設定エラーになる。
+`poll_interval`、`concurrency`、`SWING_PIN_TIMEOUT`、`SWING_FETCH_IDLE_TIMEOUT` は 0 だと設定エラーになる。
 
 ### 値の形式
 
@@ -202,22 +206,38 @@ kind・`d` タグの既定値は「設定と環境変数」を参照（サイト
 2. 自分の Follow Set を取得する。無ければ警告を出し、`poll_interval` ごとに再試行する。
 3. 対象 pubkey 群のサイトイベントを過去分も含めて取得し（`kinds=[site_event_kind], authors=targets`）、以後は購読で新着を受ける。同じ `pubkey + d` は `created_at` 最大のものを最新とみなす。
 4. 受理ゲート: 送信元 pubkey が現在の Follow Set に含まれないイベントは warn を出して無視する。購読 ID と kind が一致しない通知は debug ログで捨てる。
-5. NIP-05 検証（`[policy].nip05` が `off` 以外のとき）。詳細は後述。
-6. `policy::decide` で pin / skip / unpin を決め、Kubo に反映し、`state.json` を保存する。
-7. `poll_interval` ごとに Follow Set を再取得する。同時に対象全員のサイトイベントを取り直し、サイトごとの最新版を再適用する。これにより一時的な pin 失敗や `files/stat` 失敗は次の tick で再試行される。
-8. Follow Set から外れた相手は、`unpin_on_unfollow = true` のときのみ全バージョンを unpin し、`state.sites` と `state.verifications` から削除する。`false` のときは何もしない。
+5. サイトイベントはサイト単位のタスクに渡して並行に処理する（後述「並行処理」）。各タスクは次の「pin と unpin の順序」に従って処理し、`state.json` を保存する。
+6. `poll_interval` ごとに Follow Set を再取得する。同時に対象全員のサイトイベントを取り直し、サイトごとの最新版を再投入する。これにより一時的な取得失敗や pin 失敗は次の tick で再試行される。
+7. Follow Set から外れた相手は、`unpin_on_unfollow = true` のときのみ全バージョンを unpin し、その pubkey の `state.sites` と `state.verifications` のエントリを削除する。`false` のときは何もしない。Follow Set の更新はこの削除より先に反映する。
+8. 起動時に `state.json` を読み、Kubo の `pin/ls?type=recursive` と突き合わせて食い違いをログに出す。自動修復はしない。
 9. 起動時に `state.json` を読み、Kubo の `pin/ls?type=recursive` と突き合わせて食い違いをログに出す。自動修復はしない。
 
-relay の切断や Kubo のエラー、不正なイベントはログに出して処理を続ける。relay への再接続と再購読は nostr-sdk が自動で行う（再試行間隔 10 秒から最大 60 秒）。通知チャネル（容量 2048）が溢れた分は nostr-sdk が黙って捨てるが、7 の定期取り直しで回収される。通知ストリーム自体が終わった場合（relay プールの shutdown）はエラーで終了する。
+relay の切断や Kubo のエラー、不正なイベントはログに出して処理を続ける。relay への再接続と再購読は nostr-sdk が自動で行う（再試行間隔 10 秒から最大 60 秒）。通知チャネル（容量 2048）が溢れた分は nostr-sdk が黙って捨てるが、6 の定期取り直しで回収される。通知ストリーム自体が終わった場合（relay プールの shutdown）はエラーで終了する。
 
 ### pin と unpin の順序
 
-- `size` タグあり: `policy::decide` → 新版を `pin/add` → 成功したら evict 対象を `pin/rm` → state 保存。pin に失敗した場合は evict も state 変更もしない。
-- `size` タグなし: 新版を `pin/add` → `files/stat` で実サイズ取得（失敗したら unpin して記録せず戻る）→ 実サイズで `policy::decide` → reject なら unpin して記録しない → accept なら evict 対象を `pin/rm` し、実サイズで記録する。
+1. 事前判定: `size` タグの値（無ければ不明）で `policy::decide` する。skip ならここで終わり、NIP-05 検証も取得もしない。
+2. NIP-05 検証（`[policy].nip05` が `off` 以外のとき）。`require` で `Verified` でなければ終わり。
+3. 取得: `dag/export` で CAR を流し読みし、受信バイト数を数える。`policy::fetch_limit`（`max_update_size`・`max_per_site`・`max_per_account` の最小値）を超えた時点で打ち切る。`SWING_FETCH_IDLE_TIMEOUT` の間データが来ない、または `SWING_PIN_TIMEOUT` を超えたら失敗。いずれも state と pin は変えない。`size` タグは使わないので、小さく偽った `size` でも上限を超えて取得されない。
+4. ここから先は state のロックを持ったまま行う。作者が Follow Set から外れていれば終わる。
+5. `pin/add` を `offline=true` で行う。3 で取得しきれなかったブロックがあれば失敗し、ネットワークから追加取得しない。
+6. `dag/stat`（`offline=true`）の `TotalSize` を実サイズとする。失敗したら新版を解放して終わる。`size` タグより大きければ warn を出す。
+7. 実サイズで `policy::decide` する。skip なら新版を解放して終わる。accept なら新版を記録し、evict 対象を state から消してから解放し、state を保存する。
+
+「解放」は、その CID が state 上のどのサイトからも参照されていなければ `pin/rm` することを指す。別のサイトが同じ CID を持っている場合は pin を残す。`pin/rm` に失敗しても state からは消したままにし、起動時の突き合わせで報告される。
+
+打ち切った取得や解放したコンテンツのブロックは Kubo の blockstore に残り、GC で消える。compose の Kubo は `--enable-gc` で起動する（GC は repo が `Datastore.StorageMax` × `StorageGCWatermark` を超えたときに `Datastore.GCPeriod` ごとに走る）。
+
+### 並行処理
+
+- タスクは同時に最大 `concurrency` 個が 3〜7 を実行する（セマフォ）。
+- 同じサイト（`pubkey:d`）のタスクは同時に 1 つだけ。実行中に同じサイトのイベントが来たら、実行中のものと待機中のものより `created_at` が新しいときだけ待機に置き（待機は 1 件で、新しいもので上書き）、実行が終わったら同じタスクで続けて処理する。
+- ポリシー判定・pin・unpin・state の更新（4〜7）は state のロックの中で直列に行うので、並行に取得しても容量の判定は既に確定した pin を必ず見る。取得中の一時的なディスク使用量は最大で `concurrency` × `fetch_limit` になる。
+- Ctrl-C で終了するとき、実行中のタスクは中断される。state は一時ファイル経由で保存するので壊れない。
 
 ### ポリシー判定（policy.rs）
 
-入力: 現在の state、候補イベント（pubkey, d, cid, size, created_at）、ポリシー設定、現在時刻。出力: `Decision { pin: Option<String>, unpin: Vec<String>, reason: String }`。純粋関数。
+入力: 同サイトの既存版、使用量（他サイトの合計と、同じ pubkey の他サイトの合計）、候補イベント（cid, size, created_at）、ポリシー設定、現在時刻。出力: `Decision { pin: Option<String>, unpin: Vec<String>, reason: String }`。純粋関数。
 
 判定順:
 
@@ -228,7 +248,10 @@ relay の切断や Kubo のエラー、不正なイベントはログに出し�
 5. 同サイト合計が `max_per_site` を超えるなら古い版から evict する。新版単体で超えるなら skip。
 6. `keep_versions` 超過分の古い版を evict する。`keep_versions` は最低 1 に丸められる。
 7. `keep_days` より古い版を evict する。最新版は残す。
-8. 5〜7 の evict 後の全サイト合計が `max_total_storage` を超えるなら skip。他サイトは削らない。
+8. 5〜7 の evict 後、同じ pubkey の全サイト合計が `max_per_account` を超えるなら skip（`max_per_account`）。同じアカウントの他サイトは削らない。
+9. 5〜7 の evict 後の全サイト合計が `max_total_storage` を超えるなら skip。他サイトは削らない。
+
+`size` が不明な事前判定では 4 を飛ばし、新版のサイズを 0 として 5〜9 を評価する。
 
 ### NIP-05 検証（nip05.rs）
 
@@ -251,13 +274,15 @@ agent 用の `public_only()` は、他人のイベントの `d` を宛先にす�
 
 publish 用の `new()` は自分の `d` を検証するだけなので、アドレスの制限もプロキシの無視もしない。
 
-agent 側の適用（Follow Set ゲートの後、`policy::decide` の前）:
+agent 側の適用（事前判定の後、取得の前）:
 
 | モード | 動作 |
 |---|---|
 | `off` | 検証しない。記録しない |
-| `warn` | 検証して結果を記録し、`Verified` 以外は warn ログ。pin 判定には進む |
-| `require` | 検証して結果を記録し、`Verified` のときだけ pin 判定に進む |
+| `warn` | 検証して結果を記録し、`Verified` 以外は warn ログ。取得に進む |
+| `require` | 検証して結果を記録し、`Verified` のときだけ取得に進む |
+
+結果は `state.verifications` をキャッシュとして使う。`checked_at` から `nip05_cache_ttl`（既定 1 日、`error` は 15 分とのうち短い方）が経つまでは再検証せず、記録済みの `status` が `verified` かどうかで判断する。`nip05_cache_ttl = 0` なら毎回検証する。
 
 `Nip05Verify` トレイトとして定義され、テストではインメモリの fake を使う。
 
@@ -280,19 +305,22 @@ agent 側の適用（Follow Set ゲートの後、`policy::decide` の前）:
 
 - `status` は `verified` / `mismatch` / `not_applicable` / `error`。
 - `verifications` は `#[serde(default)]` で、無い state.json も読める。
-- サイズは keep_versions × フォロー中サイト数に比例し、evict や unfollow でエントリは消える。
+- `sites` の `size` は `dag/stat` の `TotalSize`（`size` タグの値ではない）。
+- サイズは keep_versions × フォロー中サイト数に比例し、evict や unfollow でエントリは消える。`verifications` は pin されなかったサイトの分も残り、unfollow で消える。
 
 ## Kubo RPC
 
 | 操作 | リクエスト | タイムアウト |
 |---|---|---|
-| pin | `POST /api/v0/pin/add?arg={cid}&recursive=true` | `SWING_PIN_TIMEOUT`（既定 1h） |
+| 取得 | `POST /api/v0/dag/export?arg={cid}&progress=false`（CAR をストリームで読み捨て、バイト数を数える） | 全体 `SWING_PIN_TIMEOUT`（既定 15 分）、無通信 `SWING_FETCH_IDLE_TIMEOUT`（既定 2 分） |
+| pin | `POST /api/v0/pin/add?arg={cid}&recursive=true&offline=true` | `SWING_PIN_TIMEOUT` |
+| 実サイズ | `POST /api/v0/dag/stat?arg={cid}&progress=false&offline=true` → `TotalSize` | 300 秒 |
 | unpin | `POST /api/v0/pin/rm?arg={cid}&recursive=true` | 60 秒 |
-| サイズ | `POST /api/v0/files/stat?arg=/ipfs/{cid}` → `CumulativeSize` | 30 秒 |
+| サイズ（publish のみ） | `POST /api/v0/files/stat?arg=/ipfs/{cid}` → `CumulativeSize` | 30 秒 |
 | 一覧 | `POST /api/v0/pin/ls?type=recursive` | 60 秒 |
 | add | `POST /api/v0/add?recursive=true&cid-version=1&pin=true&quieter=true&wrap-with-directory=false` | 300 秒 |
 
-CID はクエリに入れる前にパーセントエンコードする。非 2xx はボディ付きのエラーになる。
+CID はクエリに入れる前にパーセントエンコードする。非 2xx はボディ付きのエラーになる。`dag/export` は最初のブロックが取れるまでレスポンスヘッダーも返さないので、無通信タイムアウトは送信からヘッダー受信までにも適用する。`offline=true` は Kubo の RPC 全体に共通のオプションで、ローカルに無いブロックをネットワークから探さずに即エラーにする。
 
 `add` の multipart:
 
@@ -315,7 +343,7 @@ CID はクエリに入れる前にパーセントエンコードする。非 2xx
 
 | サービス | 内容 |
 |---|---|
-| `ipfs` | `ipfs/kubo:latest`。volume `ipfs-data:/data/ipfs`。公開ポートは `4001/tcp` と `4001/udp` のみ（RPC 5001 と Gateway 8080 は非公開）。healthcheck は `ipfs id` |
+| `ipfs` | `ipfs/kubo:latest`。`command` はイメージ既定（`daemon --migrate=true --agent-version-suffix=docker`）に `--enable-gc` を足したもの。volume `ipfs-data:/data/ipfs`。公開ポートは `4001/tcp` と `4001/udp` のみ（RPC 5001 と Gateway 8080 は非公開）。healthcheck は `ipfs id` |
 | `mirror` | `build: .`。`env_file: .env`。`SWING_IPFS_API=http://ipfs:5001`、`SWING_STATE_DIR=/data`、`RUST_LOG=info`。volume `swing-data:/data`。`depends_on: ipfs` を `condition: service_healthy` で待つ |
 
 両サービスとも `restart: unless-stopped`。名前付き volume は `ipfs-data` と `swing-data`。`swing-data` は初回マウント時にイメージ側の `/data` の所有者（`swing`）を引き継ぐ。
@@ -333,11 +361,12 @@ CID はクエリに入れる前にパーセントエンコードする。非 2xx
 
 ## テスト
 
-- ユニットテスト: `cargo test`。`policy.rs`、`config.rs` のパーサ、`nostr.rs` のイベントパース、`agent.rs` の pin/unpin 順序（`FakeKubo`、`FakeNip05`）、`mirror.rs` のタグ再構築、`nip05.rs` のホスト名判定と JSON 比較、`publish.rs` の NIP-05 判定など。
+- ユニットテスト: `cargo test`。`policy.rs`、`config.rs` のパーサ、`nostr.rs` のイベントパース、`agent.rs` の pin/unpin 順序・並行処理の合流・NIP-05 キャッシュ（`FakeKubo`、`FakeNip05`）、`mirror.rs` のタグ再構築、`nip05.rs` のホスト名判定と JSON 比較、`publish.rs` の NIP-05 判定など。
 - 統合テスト（`#[ignore]`、ローカルの Kubo / relay が必要）:
 
 ```bash
-docker run -d --rm -p 127.0.0.1:15001:5001 ipfs/kubo:latest
+# test プロファイルは bootstrap とローカル探索を無効にし、公開ネットワークに接続しない
+docker run -d --rm -e IPFS_PROFILE=test -p 127.0.0.1:15001:5001 ipfs/kubo:latest
 # SWING_TEST_IPFS_API（既定 http://127.0.0.1:15001）、任意で SWING_TEST_EXPECTED_CID
 cargo test --test kubo_integration -- --ignored
 

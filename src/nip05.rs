@@ -9,6 +9,8 @@ use serde_json::Value;
 
 pub const FETCH_TIMEOUT: Duration = Duration::from_secs(10);
 pub const MAX_BODY_BYTES: usize = 64 * 1024;
+pub const STATE_VERIFIED: &str = "verified";
+pub const STATE_ERROR: &str = "error";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum VerificationResult {
@@ -21,10 +23,10 @@ pub enum VerificationResult {
 impl VerificationResult {
     pub fn as_state_str(&self) -> &'static str {
         match self {
-            VerificationResult::Verified => "verified",
+            VerificationResult::Verified => STATE_VERIFIED,
             VerificationResult::Mismatch => "mismatch",
             VerificationResult::NotApplicable => "not_applicable",
-            VerificationResult::Error(_) => "error",
+            VerificationResult::Error(_) => STATE_ERROR,
         }
     }
 

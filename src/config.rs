@@ -33,12 +33,14 @@ pub struct IpfsFile {
 pub struct PolicyFile {
     pub max_total_storage: Option<String>,
     pub max_per_site: Option<String>,
+    pub max_per_account: Option<String>,
     pub max_update_size: Option<String>,
     pub keep_versions: Option<usize>,
     pub keep_days: Option<u64>,
     pub min_update_interval: Option<String>,
     pub unpin_on_unfollow: Option<bool>,
     pub nip05: Option<String>,
+    pub nip05_cache_ttl: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -62,6 +64,7 @@ pub fn parse_nip05_mode(input: &str) -> Result<Nip05Mode> {
 pub struct AgentFile {
     pub state_dir: Option<String>,
     pub poll_interval: Option<String>,
+    pub concurrency: Option<usize>,
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -126,12 +129,14 @@ pub struct IpfsConfig {
 pub struct PolicyConfig {
     pub max_total_storage: u64,
     pub max_per_site: u64,
+    pub max_per_account: u64,
     pub max_update_size: u64,
     pub keep_versions: usize,
     pub keep_days: u64,
     pub min_update_interval: u64,
     pub unpin_on_unfollow: bool,
     pub nip05: Nip05Mode,
+    pub nip05_cache_ttl: u64,
 }
 
 #[derive(Debug, Clone)]
@@ -139,6 +144,8 @@ pub struct AgentConfig {
     pub state_dir: PathBuf,
     pub poll_interval: Duration,
     pub pin_timeout: Duration,
+    pub fetch_idle_timeout: Duration,
+    pub concurrency: usize,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -313,6 +320,14 @@ fn build_config(file: ConfigFile, get_env: impl Fn(&str) -> Option<String>) -> R
         },
     };
 
+    let max_per_account = match get_env("SWING_MAX_PER_ACCOUNT") {
+        Some(v) => parse_size(&v).context("invalid SWING_MAX_PER_ACCOUNT")?,
+        None => match file.policy.max_per_account {
+            Some(v) => parse_size(&v).context("invalid [policy].max_per_account")?,
+            None => 20 * (1u64 << 30),
+        },
+    };
+
     let max_update_size = match get_env("SWING_MAX_UPDATE_SIZE") {
         Some(v) => parse_size(&v).context("invalid SWING_MAX_UPDATE_SIZE")?,
         None => match file.policy.max_update_size {
@@ -356,6 +371,14 @@ fn build_config(file: ConfigFile, get_env: impl Fn(&str) -> Option<String>) -> R
         },
     };
 
+    let nip05_cache_ttl = match get_env("SWING_NIP05_CACHE_TTL") {
+        Some(v) => parse_duration_secs(&v).context("invalid SWING_NIP05_CACHE_TTL")?,
+        None => match file.policy.nip05_cache_ttl {
+            Some(v) => parse_duration_secs(&v).context("invalid [policy].nip05_cache_ttl")?,
+            None => 86_400,
+        },
+    };
+
     let state_dir = get_env("SWING_STATE_DIR")
         .or(file.agent.state_dir)
         .unwrap_or_else(|| "./data".to_string());
@@ -373,10 +396,28 @@ fn build_config(file: ConfigFile, get_env: impl Fn(&str) -> Option<String>) -> R
 
     let pin_timeout = match get_env("SWING_PIN_TIMEOUT") {
         Some(v) => parse_duration_secs(&v).context("invalid SWING_PIN_TIMEOUT")?,
-        None => 3600,
+        None => 900,
     };
     if pin_timeout == 0 {
         bail!("SWING_PIN_TIMEOUT must be greater than 0");
+    }
+
+    let fetch_idle_timeout = match get_env("SWING_FETCH_IDLE_TIMEOUT") {
+        Some(v) => parse_duration_secs(&v).context("invalid SWING_FETCH_IDLE_TIMEOUT")?,
+        None => 120,
+    };
+    if fetch_idle_timeout == 0 {
+        bail!("SWING_FETCH_IDLE_TIMEOUT must be greater than 0");
+    }
+
+    let concurrency = match get_env("SWING_CONCURRENCY") {
+        Some(v) => v
+            .parse()
+            .context("invalid SWING_CONCURRENCY: expected integer")?,
+        None => file.agent.concurrency.unwrap_or(4),
+    };
+    if concurrency == 0 {
+        bail!("concurrency must be greater than 0");
     }
 
     let publish_nip05 = match get_env("SWING_PUBLISH_NIP05") {
@@ -398,17 +439,21 @@ fn build_config(file: ConfigFile, get_env: impl Fn(&str) -> Option<String>) -> R
         policy: PolicyConfig {
             max_total_storage,
             max_per_site,
+            max_per_account,
             max_update_size,
             keep_versions,
             keep_days,
             min_update_interval,
             unpin_on_unfollow,
             nip05,
+            nip05_cache_ttl,
         },
         agent: AgentConfig {
             state_dir: PathBuf::from(state_dir),
             poll_interval: Duration::from_secs(poll_interval),
             pin_timeout: Duration::from_secs(pin_timeout),
+            fetch_idle_timeout: Duration::from_secs(fetch_idle_timeout),
+            concurrency,
         },
         publish: PublishConfig {
             nip05: publish_nip05,
@@ -496,6 +541,22 @@ mod tests {
     }
 
     #[test]
+    fn zero_concurrency_and_idle_timeout_are_rejected() {
+        let err = build_config(minimal_file(), |k| match k {
+            "SWING_CONCURRENCY" => Some("0".into()),
+            _ => None,
+        })
+        .unwrap_err();
+        assert!(err.to_string().contains("concurrency"));
+        let err = build_config(minimal_file(), |k| match k {
+            "SWING_FETCH_IDLE_TIMEOUT" => Some("0".into()),
+            _ => None,
+        })
+        .unwrap_err();
+        assert!(err.to_string().contains("SWING_FETCH_IDLE_TIMEOUT"));
+    }
+
+    #[test]
     fn zero_pin_timeout_is_rejected() {
         let err = build_config(minimal_file(), |k| match k {
             "SWING_PIN_TIMEOUT" => Some("0".into()),
@@ -558,14 +619,18 @@ mod tests {
         assert_eq!(cfg.ipfs.api, "http://127.0.0.1:5001");
         assert_eq!(cfg.policy.max_total_storage, 100 * (1u64 << 30));
         assert_eq!(cfg.policy.max_per_site, 10 * (1u64 << 30));
+        assert_eq!(cfg.policy.max_per_account, 20 * (1u64 << 30));
         assert_eq!(cfg.policy.max_update_size, 2 * (1u64 << 30));
         assert_eq!(cfg.policy.keep_versions, 5);
         assert_eq!(cfg.policy.keep_days, 365);
         assert_eq!(cfg.policy.min_update_interval, 600);
         assert!(cfg.policy.unpin_on_unfollow);
         assert_eq!(cfg.policy.nip05, Nip05Mode::Warn);
+        assert_eq!(cfg.policy.nip05_cache_ttl, 86_400);
         assert_eq!(cfg.agent.poll_interval, Duration::from_secs(300));
-        assert_eq!(cfg.agent.pin_timeout, Duration::from_secs(3600));
+        assert_eq!(cfg.agent.pin_timeout, Duration::from_secs(900));
+        assert_eq!(cfg.agent.fetch_idle_timeout, Duration::from_secs(120));
+        assert_eq!(cfg.agent.concurrency, 4);
     }
 
     #[test]

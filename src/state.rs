@@ -93,6 +93,20 @@ impl State {
             .unwrap_or(0)
     }
 
+    pub fn account_bytes(&self, pubkey_hex: &str) -> u64 {
+        let prefix = format!("{pubkey_hex}:");
+        self.sites
+            .range(prefix.clone()..)
+            .take_while(|(k, _)| k.starts_with(&prefix))
+            .flat_map(|(_, versions)| versions.iter())
+            .map(|v| v.size)
+            .sum()
+    }
+
+    pub fn references_cid(&self, cid: &str) -> bool {
+        self.all_pinned_cids().any(|c| c == cid)
+    }
+
     pub fn all_pinned_cids(&self) -> impl Iterator<Item = &str> {
         self.sites
             .values()
@@ -162,6 +176,26 @@ mod tests {
         std::fs::write(&path, r#"{"sites":{}}"#).unwrap();
         let state = State::load(&path).await.unwrap();
         assert!(state.verifications.is_empty());
+    }
+
+    #[test]
+    fn account_bytes_sums_only_that_accounts_sites() {
+        let mut state = State::default();
+        let record = |cid: &str, size| VersionRecord {
+            cid: cid.into(),
+            size,
+            created_at: 1,
+            pinned_at: 1,
+        };
+        state.apply_pin(&site_key("aa", "one.example"), record("c1", 10));
+        state.apply_pin(&site_key("aa", "two.example"), record("c2", 20));
+        state.apply_pin(&site_key("aab", "x.example"), record("c3", 40));
+        state.apply_pin(&site_key("ab", "x.example"), record("c4", 80));
+        assert_eq!(state.account_bytes("aa"), 30);
+        assert_eq!(state.account_bytes("ab"), 80);
+        assert_eq!(state.account_bytes("zz"), 0);
+        assert!(state.references_cid("c3"));
+        assert!(!state.references_cid("c5"));
     }
 
     #[test]

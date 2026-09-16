@@ -158,12 +158,23 @@ NIP-05 は、`d` タグがドメイン名の形をしている場合に、その
 | --- | --- | --- |
 | `max_total_storage` | `100GB` | 保存する全サイト合計の容量上限 |
 | `max_per_site` | `10GB` | 1 サイトあたりの容量上限。超えた分は古い版から削除される |
+| `max_per_account` | `20GB` | 1 アカウント（pubkey）が持つ全サイトの合計容量上限。超える更新は保存されない |
 | `max_update_size` | `2GB` | 1 回の更新（1 バージョン）あたりのサイズ上限。超えると保存されない |
 | `keep_versions` | `5` | サイトごとに保持する旧バージョンの数。超えた分は古い順に削除される |
 | `keep_days` | `365` | バージョンを保持する日数。最新版を除き、これより古い版は削除される |
 | `min_update_interval` | `10m` | 同じサイトの更新を受け付ける最短間隔。これより短い間隔で来た更新は保存されない |
 | `unpin_on_unfollow` | `true` | 相手をミラー対象から外したときに、自動でそのサイトの保存をやめるかどうか |
 | `nip05` | `warn` | 保存前に行う NIP-05 検証のモード（`off` / `warn` / `require`） |
+| `nip05_cache_ttl` | `1d` | NIP-05 の検証結果を再利用する期間 |
+
+サイズはイベントの `size` タグではなく、実際に取得したデータ量で判定します。取得中に上限（`max_update_size`・`max_per_site`・`max_per_account` の最小値）を超えた時点で取得を打ち切ります。
+
+打ち切った取得や削除した版のデータは、Kubo の GC が走るまでディスクに残ります。Docker Compose の構成では Kubo を `--enable-gc` で起動していますが、GC が走るのは Kubo の repo が `Datastore.StorageMax`（Kubo の既定は `10GB`）の 90% を超えたときだけです。`max_total_storage` に少し余裕を足した値にしておくことをおすすめします。
+
+```bash
+docker compose exec ipfs ipfs config Datastore.StorageMax 110GB
+docker compose restart ipfs
+```
 
 判定の詳しい順序は [`docs/architecture.md`](docs/architecture.md) を参照してください。
 
@@ -181,15 +192,19 @@ TOML の設定ファイル（`swing.toml`）を使う場合と、環境変数だ
 | `SWING_IPFS_API` | `ipfs.api` | Kubo RPC のエンドポイント |
 | `SWING_MAX_TOTAL_STORAGE` | `policy.max_total_storage` | 全体容量上限 |
 | `SWING_MAX_PER_SITE` | `policy.max_per_site` | サイト単位の容量上限 |
+| `SWING_MAX_PER_ACCOUNT` | `policy.max_per_account` | アカウント単位の容量上限 |
 | `SWING_MAX_UPDATE_SIZE` | `policy.max_update_size` | 1 更新あたりのサイズ上限 |
 | `SWING_KEEP_VERSIONS` | `policy.keep_versions` | 保持する旧バージョン数 |
 | `SWING_KEEP_DAYS` | `policy.keep_days` | バージョン保持日数 |
 | `SWING_MIN_UPDATE_INTERVAL` | `policy.min_update_interval` | 更新受理の最短間隔 |
 | `SWING_UNPIN_ON_UNFOLLOW` | `policy.unpin_on_unfollow` | unfollow 時に自動 unpin するか |
 | `SWING_NIP05` | `policy.nip05` | mirror-agent の NIP-05 検証モード（既定 `warn`） |
+| `SWING_NIP05_CACHE_TTL` | `policy.nip05_cache_ttl` | NIP-05 検証結果のキャッシュ期間（既定 `1d`。`0` で無効） |
 | `SWING_STATE_DIR` | `agent.state_dir` | 状態ファイルを置くディレクトリ |
 | `SWING_POLL_INTERVAL` | `agent.poll_interval` | Follow Set の再取得間隔 |
-| `SWING_PIN_TIMEOUT` | (Kubo RPC の pin タイムアウト) | `pin/add` のタイムアウト（既定 1 時間） |
+| `SWING_CONCURRENCY` | `agent.concurrency` | 同時に取得・保存するサイト数（既定 `4`） |
+| `SWING_PIN_TIMEOUT` | (なし) | 1 サイト分の取得と pin のタイムアウト（既定 15 分） |
+| `SWING_FETCH_IDLE_TIMEOUT` | (なし) | 取得中にデータが届かないまま待つ上限（既定 2 分） |
 | `SWING_PUBLISH_NIP05` | `publish.nip05` | `swing publish` の NIP-05 検証モード（既定 `warn`。CLI の `--nip05` が優先） |
 
 ## プライバシーと注意点
