@@ -96,7 +96,7 @@
 - NIP-05 の実 HTTP 経路は fake と純ロジックのテストのみ。実 TLS エンドポイント相手の統合テストは未実施
 - `docs/examples/publish.sh` は構文チェックと `nak` / `ipfs` のフラグ確認のみで、実行していない
 - Follow Set の暗号化 private 部分は読まない
-- git は `git init` のみでコミットしていない。GitHub リポジトリも未作成
+- GitHub の private リポジトリ `vividoyomogimochi/swing` に初回コミットを push 済み
 
 ## ドキュメント整備（同日追記）
 
