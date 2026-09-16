@@ -1,0 +1,26 @@
+[nostr]
+secret_key = "nsec1..."             # SWING_NOSTR_SECRET_KEY（nsec または hex）
+relays = ["wss://relay.damus.io", "wss://nos.lol", "wss://relay.primal.net", "wss://yabu.me", "wss://relay-jp.nostr.wirednet.jp"]
+                                    # SWING_NOSTR_RELAYS（カンマ区切り）
+mirror_set = "swing"                # SWING_MIRROR_SET（kind 30000 の d タグ）
+site_event_kind = 35980             # SWING_SITE_EVENT_KIND
+
+[ipfs]
+api = "http://127.0.0.1:5001"       # SWING_IPFS_API
+
+[policy]
+max_total_storage = "100GB"         # SWING_MAX_TOTAL_STORAGE
+max_per_site = "10GB"               # SWING_MAX_PER_SITE
+max_update_size = "2GB"             # SWING_MAX_UPDATE_SIZE
+keep_versions = 5                   # SWING_KEEP_VERSIONS
+keep_days = 365                     # SWING_KEEP_DAYS
+min_update_interval = "10m"         # SWING_MIN_UPDATE_INTERVAL
+unpin_on_unfollow = true            # SWING_UNPIN_ON_UNFOLLOW
+nip05 = "warn"                      # SWING_NIP05（off / warn / require）
+
+[agent]
+state_dir = "./data"                # SWING_STATE_DIR
+poll_interval = "5m"                # SWING_POLL_INTERVAL（follow set 再取得間隔）
+
+[publish]
+nip05 = "warn"                      # SWING_PUBLISH_NIP05（off / warn / require、--nip05 が優先）

@@ -1,0 +1,33 @@
+services:
+  ipfs:
+    image: ipfs/kubo:latest
+    restart: unless-stopped
+    volumes:
+      - ipfs-data:/data/ipfs
+    ports:
+      - "4001:4001/tcp"
+      - "4001:4001/udp"
+    healthcheck:
+      test: ["CMD", "ipfs", "id"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 20s
+
+  mirror:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      SWING_IPFS_API: http://ipfs:5001
+      SWING_STATE_DIR: /data
+      RUST_LOG: info
+    volumes:
+      - swing-data:/data
+    depends_on:
+      ipfs:
+        condition: service_healthy
+
+volumes:
+  ipfs-data:
+  swing-data:
