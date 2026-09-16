@@ -26,3 +26,4 @@ SWING（Nostr + IPFS 個人サイト相互ミラー）のリポジトリで作�
 - `cargo fmt` / `cargo clippy --all-targets -- -D warnings` / `cargo test` を通す。
 - テストで公開 relay や公開 IPFS に接続しない。統合テストはローカルの Kubo / relay に限定し `#[ignore]` にする。
 - 環境変数は `SWING_` 接頭辞で統一する。
+- 後方互換性のための処置（古い形式の state.json や設定を読むための `#[serde(default)]`・フォールバック・移行コードなど）は、入れる前に要否を確認する。確認せずに入れた場合は、何のための処置かを結果報告ではっきり伝える。
