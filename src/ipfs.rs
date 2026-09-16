@@ -216,7 +216,7 @@ impl IpfsClient {
             .await
             .with_context(|| format!("reading {endpoint} response"))?;
         if !status.is_success() {
-            bail!("{endpoint} failed: {status}: {text}");
+            bail!("{endpoint} failed: {status}: {}", text.trim());
         }
         Ok(text)
     }
@@ -275,7 +275,7 @@ impl IpfsClient {
         let status = resp.status();
         let text = resp.text().await.context("reading add response body")?;
         if !status.is_success() {
-            bail!("ipfs add failed: {status}: {text}");
+            bail!("ipfs add failed: {status}: {}", text.trim());
         }
 
         let last_line = text
@@ -300,7 +300,7 @@ impl IpfsClient {
             let status = resp.status();
             if !status.is_success() {
                 let text = resp.text().await.unwrap_or_default();
-                bail!("dag/export failed: {status}: {text}");
+                bail!("dag/export failed: {status}: {}", text.trim());
             }
             let mut stream = resp.bytes_stream();
             let mut received: u64 = 0;
@@ -335,7 +335,7 @@ impl IpfsClient {
         let status = resp.status();
         let text = resp.text().await.context("reading dag/stat response")?;
         if !status.is_success() {
-            bail!("dag/stat failed: {status}: {text}");
+            bail!("dag/stat failed: {status}: {}", text.trim());
         }
         let parsed: DagStatResponse =
             serde_json::from_str(&text).context("parsing dag/stat response")?;

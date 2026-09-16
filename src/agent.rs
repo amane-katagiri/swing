@@ -10,6 +10,7 @@ use tokio::task::JoinSet;
 use tracing::{debug, error, info, warn};
 
 use crate::config::{Config, Nip05Mode};
+use crate::health;
 use crate::ipfs::{FetchLimits, Fetched, IpfsClient, KuboStore};
 use crate::mfs::MfsLayout;
 use crate::nip05::{self, HttpNip05Verifier, Nip05Verify};
@@ -375,8 +376,7 @@ impl<C: KuboStore, N: Nip05Verify> Agent<C, N> {
     }
 
     fn version_path(&self, key: &str, created_at: u64) -> Option<String> {
-        let (pubkey_hex, d) = state::split_site_key(key)?;
-        Some(self.layout.agent_version(pubkey_hex, d, created_at))
+        health::version_path(&self.layout, key, created_at)
     }
 
     async fn remove_path(&self, path: &str) {
@@ -418,70 +418,13 @@ impl<C: KuboStore, N: Nip05Verify> Agent<C, N> {
         self.collect_garbage(&state).await;
     }
 
-    // Everything under the agent root belongs to SWING, so any entry the
-    // state does not reference is a leftover of a failed or interrupted step.
     async fn collect_garbage(&self, state: &State) {
-        let expected: HashSet<String> = state
-            .sites
-            .iter()
-            .flat_map(|(key, versions)| {
-                versions
-                    .iter()
-                    .filter_map(|v| self.version_path(key, v.created_at))
-            })
-            .collect();
-        let root = self.layout.agent_root();
-        let Some(accounts) = self.list_dir(&root).await else {
-            return;
-        };
-        for account in accounts {
-            let account_path = format!("{root}/{}", account.name);
-            if !account.is_dir {
-                self.remove_path(&account_path).await;
-                continue;
-            }
-            let Some(sites) = self.list_dir(&account_path).await else {
-                continue;
-            };
-            let mut account_kept = false;
-            for site in sites {
-                let site_path = format!("{account_path}/{}", site.name);
-                if !site.is_dir {
-                    self.remove_path(&site_path).await;
-                    continue;
-                }
-                let Some(versions) = self.list_dir(&site_path).await else {
-                    account_kept = true;
-                    continue;
-                };
-                let mut site_kept = false;
-                for version in versions {
-                    let path = format!("{site_path}/{}", version.name);
-                    if expected.contains(&path) {
-                        site_kept = true;
-                    } else {
-                        self.remove_path(&path).await;
-                    }
-                }
-                if site_kept {
-                    account_kept = true;
-                } else {
-                    self.remove_path(&site_path).await;
-                }
-            }
-            if !account_kept {
-                self.remove_path(&account_path).await;
-            }
+        let garbage = health::find_garbage(&self.ipfs, &self.layout, state).await;
+        for (path, error) in &garbage.unlisted {
+            warn!(path = %path, error = %error, "listing MFS failed");
         }
-    }
-
-    async fn list_dir(&self, path: &str) -> Option<Vec<crate::ipfs::MfsEntry>> {
-        match self.ipfs.mfs_list(path).await {
-            Ok(entries) => Some(entries),
-            Err(e) => {
-                warn!(path = %path, error = %e, "listing MFS failed");
-                None
-            }
+        for path in &garbage.paths {
+            self.remove_path(path).await;
         }
     }
 
@@ -493,21 +436,12 @@ impl<C: KuboStore, N: Nip05Verify> Agent<C, N> {
                 let Some(path) = self.version_path(key, v.created_at) else {
                     continue;
                 };
-                let problem = match self.ipfs.mfs_stat_cid(&path).await {
-                    Ok(Some(cid)) if cid == v.cid => match self.ipfs.dag_size_local(&v.cid).await {
-                        Ok(_) => None,
-                        Err(e) => Some(format!("content is incomplete: {e}")),
-                    },
-                    Ok(Some(cid)) => Some(format!("MFS entry points to {cid}")),
-                    Ok(None) => Some("MFS entry is missing".to_string()),
-                    Err(e) => {
-                        warn!(path = %path, error = %e, "checking MFS failed; keeping the version");
-                        None
-                    }
-                };
-                if let Some(problem) = problem {
+                let problem = health::check_version(&self.ipfs, &path, &v.cid).await;
+                if problem.is_broken() {
                     warn!(site_key = %key, cid = %v.cid, problem = %problem, "forgetting the version so it is fetched again");
                     missing.push((key.clone(), v.cid.clone()));
+                } else if let health::VersionHealth::CheckFailed(e) = &problem {
+                    warn!(path = %path, error = %e, "checking MFS failed; keeping the version");
                 }
             }
         }

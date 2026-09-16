@@ -1,4 +1,4 @@
-# mirror-agent（agent.rs, policy.rs, state.rs）
+# mirror-agent（agent.rs, health.rs, policy.rs, state.rs）
 
 [`architecture.md`](../architecture.md) の一部。MFS のパスと Kubo RPC は [`kubo.md`](kubo.md)、NIP-05 は [`nip05.md`](nip05.md)。
 
@@ -59,11 +59,11 @@ Follow Set が決まった tick で行う（決まらない tick では何もし
 state のロックの中で行う。
 
 1. すべてのサイトに `policy::retention_evictions`（`max_per_site`・`keep_versions`・`keep_days`。最新版は残す）を適用する。evict があれば `sites` から消して state を保存し、パスを消す。evict が無ければ state は保存しない。
-2. `<mfs_root>/agent` を `<pubkey hex>/<site>/<created_at>` の 3 階層たどり、state の版に対応しない項目を消す。版が 1 つも残らない `<site>`・`<pubkey hex>` のディレクトリや、想定外の階層のファイルも消す。一覧に失敗したディレクトリの下は消さない。
+2. `health::find_garbage` で `<mfs_root>/agent` を `<pubkey hex>/<site>/<created_at>` の 3 階層たどり、state の版に対応しない項目を消す。版が 1 つも残らない `<site>`・`<pubkey hex>` のディレクトリや、想定外の階層のファイルも消す。一覧に失敗したディレクトリの下は消さない。
 
 ## 起動時の突き合わせ
 
-state の各版について、版のパスの CID（`files/stat`）が記録と一致し、`dag/stat`（`offline=true`）が成功するかを確かめる。パスが無い、CID が違う、ブロックが欠けている版は warn を出して `sites` から消す（次の poll で取り直され、パスは sweep で消える）。`files/stat` 自体が失敗した版は残す。消した版があれば state を保存する。全版の DAG をたどるので、保存量に比例して時間がかかる。
+state の各版について、`health::check_version` で版のパスの CID（`files/stat`）が記録と一致し、`dag/stat`（`offline=true`）が成功するかを確かめる。パスが無い、CID が違う、ブロックが欠けている版は warn を出して `sites` から消す（次の poll で取り直され、パスは sweep で消える）。`files/stat` 自体が失敗した版は残す。消した版があれば state を保存する。全版の DAG をたどるので、保存量に比例して時間がかかる。
 
 ## 並行処理
 

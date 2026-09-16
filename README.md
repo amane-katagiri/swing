@@ -99,6 +99,14 @@ docker compose exec mirror swing sites
 
 ミラー対象から外したのにまだ保存しているサイトは、最後に `[unfollowed]` として表示されます。これを消すには `remove_on_unfollow` を `true` にして mirror-agent を再起動してください。次の Follow Set の確認で消えます。
 
+保存したサイトが Kubo 上で壊れていないかは `swing status` で確認できます。
+
+```bash
+docker compose exec mirror swing status
+```
+
+状態ファイルに記録した版が Kubo の MFS に揃っているかと、状態ファイルに無い余分なパスを表示します。問題があれば 0 以外で終了するので、cron などからの監視にも使えます。詳しくは [`docs/architecture.md`](docs/architecture.md#status) を参照してください。
+
 コンテナのログで動作状況を確認することもできます。
 
 ```bash

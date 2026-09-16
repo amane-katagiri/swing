@@ -39,6 +39,7 @@ swing/
     policy.rs        保存ポリシー判定（純粋関数）
     state.rs         state.json の永続化
     agent.rs         mirror-agent ループ
+    health.rs        版と MFS の突き合わせ（agent と status で共通）、status サブコマンド
     publish.rs       publish サブコマンド
     mirror.rs        mirror list/add/remove, sites サブコマンド
     nip05.rs         NIP-05 検証
@@ -59,6 +60,7 @@ swing mirror list                      [--config <path>]
 swing mirror add <key>...              [--config <path>]
 swing mirror remove <key>...           [--config <path>]
 swing sites                            [--config <path>]
+swing status                           [--config <path>]
 swing key generate
 ```
 
@@ -108,6 +110,16 @@ Follow Set の対象者のサイトを MFS に保存・削除し続ける常駐�
 
 - Follow Set の対象者ごとに、サイトごとの最新のサイトイベントを 1 行（`d`、`cid`、`url`、`size`、`created_at`、NIP-05 検証結果、`[stored]` / `[not stored]`）表示する。検証結果と保存状況は `state.json` から読む。
 - 続けて、state に版があるのに Follow Set にいない pubkey を `Unfollowed but still stored` 見出しの下に `[unfollowed]` 付きで、サイトごとに state の最新版を 1 行（`url` は `-`）表示する。見出しには `remove_on_unfollow` に応じて、次の poll で消えるか残しているかを添える。Follow Set が見つからなくても表示する。
+
+### status
+
+読み取り専用。relay には接続せず、`state.json` と Kubo だけを見る。state も MFS も変えない。
+
+- `state.json` の版ごとに、版のパス・`cid`・`size` と判定を 1 行表示する。判定は [起動時の突き合わせ](architecture/agent.md#起動時の突き合わせ) と同じ検査で、`[ok]` / `[missing]`（パスが無い）/ `[cid mismatch]` / `[incomplete]`（ブロックが欠けている）/ `[check failed]`（`files/stat` 自体が失敗）のいずれか。`ok` 以外は理由を添える。
+- 続けて `Not in state` 見出しの下に、[sweep](architecture/agent.md#sweep) が消す MFS のパスを表示する。ディレクトリごと消えるものはそのディレクトリだけを出す。一覧に失敗したディレクトリは `[list failed]` 付きで出す。
+- `ok` 以外の版と `Not in state` の項目が 1 つでもあれば、件数を表示して 0 以外で終了する。
+- agent の実行中は、保存途中の版（MFS に置いた後、state を保存する前）が `Not in state` に出ることがある。
+- 全版の DAG をたどるので、保存量に比例して時間がかかる。
 
 ### key generate
 
@@ -191,7 +203,7 @@ TOML キーの無い環境変数:
 docker run -d --rm -e IPFS_PROFILE=test -p 127.0.0.1:15001:5001 ipfs/kubo:v0.43.1
 # SWING_TEST_IPFS_API（既定 http://127.0.0.1:15001）、任意で SWING_TEST_EXPECTED_CID
 cargo test --test kubo_integration -- --ignored --test-threads=1
-# agent の保存・sweep・突き合わせ・unfollow を実物の Kubo で通す
+# agent の保存・sweep・突き合わせ・unfollow を実物の Kubo で通す（health.rs の検査を含む）
 cargo test --lib agent_stores_and_removes_through_real_kubo -- --ignored
 
 docker run -d --rm -p 127.0.0.1:18080:8080 scsibug/nostr-rs-relay

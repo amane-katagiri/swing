@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
-use swing::{agent, config, key, mirror, publish};
+use swing::{agent, config, health, key, mirror, publish};
 use tracing_subscriber::EnvFilter;
 
 #[derive(Parser)]
@@ -47,6 +47,13 @@ enum Command {
     },
     #[command(about = "Show followed sites, their latest CIDs and storage status")]
     Sites {
+        #[arg(long, help = "Config file (default: $SWING_CONFIG or ./swing.toml)")]
+        config: Option<PathBuf>,
+    },
+    #[command(
+        about = "Check stored versions against Kubo MFS and list leftover paths (exits non-zero on problems)"
+    )]
+    Status {
         #[arg(long, help = "Config file (default: $SWING_CONFIG or ./swing.toml)")]
         config: Option<PathBuf>,
     },
@@ -127,6 +134,10 @@ async fn main() -> Result<()> {
         Command::Sites { config } => {
             let cfg = config::Config::load(config.as_deref())?;
             mirror::sites(&cfg).await
+        }
+        Command::Status { config } => {
+            let cfg = config::Config::load(config.as_deref())?;
+            health::status(&cfg).await
         }
         Command::Key { action } => match action {
             KeyCommand::Generate => key::generate(),
