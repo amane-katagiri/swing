@@ -181,7 +181,7 @@ SWING は Kubo の pin を使わず、MFS の `/swing`（`SWING_MFS_ROOT` で変
 
 MFS に置いたサイトを他のノードから見つけてもらうには、Kubo の `Provide.Strategy` に `mfs` か `all` が含まれている必要があります。Docker Compose の構成では起動のたびに `SWING_KUBO_PROVIDE_STRATEGY`（既定 `pinned+mfs`）を設定します。
 
-判定の詳しい順序は [`docs/architecture.md`](docs/architecture.md) を参照してください。
+判定の詳しい順序は [`docs/architecture/agent.md`](docs/architecture/agent.md) を参照してください。
 
 ## 設定一覧
 
@@ -244,7 +244,7 @@ Nostr の秘密鍵は `.env` に平文で保存されます。サイト公開・
 
 - [`docs/plan.md`](docs/plan.md): 初期実装計画。設計の背景や原則を説明しています
 - [`docs/protocol.md`](docs/protocol.md): 実装非依存のプロトコル定義。他のクライアントやエージェントを実装する方向けです
-- [`docs/architecture.md`](docs/architecture.md): 現在の実装の詳細なリファレンス
+- [`docs/architecture.md`](docs/architecture.md): 現在の実装の詳細なリファレンス（詳細は [`docs/architecture/`](docs/architecture/) に分割）
 - [`docs/extensions.md`](docs/extensions.md): 新しい kind や `d` タグを追加する際の命名規約と予約表
 - [`docs/todo.md`](docs/todo.md): 残タスクの一覧
 - [`docs/log/`](docs/log/): 実装ログ（何を決め、何を作り、何を検証したかの記録）
