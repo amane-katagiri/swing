@@ -14,6 +14,5 @@
 | 低 | relay から取得するサイトイベントの件数上限。`fetch_events` は件数無制限で、30 秒のタイムアウトだけで抑えている | レビュー（DoS） |
 | 低 | NIP-05 のアドレスフィルタで NAT64（`64:ff9b::/96`）や 6to4（`2002::/16`）に埋め込まれた IPv4 を判定する | レビュー |
 | 低 | 「全履歴保持」オプション（`keep_versions` / `keep_days` を無制限にする明示的な設定） | plan §4 |
-| 低 | Gateway（任意）: Caddy + Kubo Gateway を追加する compose の別プロファイル | plan §17 |
 | 低 | private mode: WireGuard / Tailscale / private IPFS network を使う別モード | plan §17 |
 | 低 | サブパス公開サイト向けに NIP-05 の代替検証（例: `<url>/.well-known/swing.json`）を検討 | レビュー |

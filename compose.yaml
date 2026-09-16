@@ -6,12 +6,14 @@ services:
     environment:
       SWING_KUBO_STORAGE_MAX: ${SWING_KUBO_STORAGE_MAX:-${SWING_MAX_TOTAL_STORAGE:-100GB}}
       SWING_KUBO_PROVIDE_STRATEGY: ${SWING_KUBO_PROVIDE_STRATEGY:-pinned+mfs}
+      SWING_GATEWAY_HOSTS: ${SWING_GATEWAY_HOSTS:-}
     volumes:
       - ipfs-data:/data/ipfs
       - ./docker/kubo-init.d:/container-init.d:ro
     ports:
       - "4001:4001/tcp"
       - "4001:4001/udp"
+      - "${SWING_KUBO_GATEWAY_BIND:-127.0.0.1:8080}:8080"
     healthcheck:
       test: ["CMD", "ipfs", "id"]
       interval: 30s
@@ -29,6 +31,21 @@ services:
       RUST_LOG: info
     volumes:
       - swing-data:/data
+    depends_on:
+      ipfs:
+        condition: service_healthy
+
+  gateway:
+    image: caddy:2.11.4-alpine
+    profiles: [gateway]
+    restart: unless-stopped
+    entrypoint: ["/etc/caddy/entrypoint.sh"]
+    environment:
+      SWING_GATEWAY_HOSTS: ${SWING_GATEWAY_HOSTS:-}
+    volumes:
+      - ./docker/caddy:/etc/caddy:ro
+    ports:
+      - "${SWING_GATEWAY_BIND:-127.0.0.1:8081}:80"
     depends_on:
       ipfs:
         condition: service_healthy

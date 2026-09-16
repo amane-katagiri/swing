@@ -75,7 +75,7 @@ docker compose run --rm mirror key generate
 docker compose up -d
 ```
 
-`ipfs`（Kubo）と `mirror`（このツール本体、既定で `swing agent` を実行）の 2 つのコンテナが立ち上がります。Kubo の RPC（5001）やゲートウェイ（8080）はホストに公開されず、公開されるのは IPFS の swarm 用ポート（`4001/tcp`・`4001/udp`）だけです。
+`ipfs`（Kubo）と `mirror`（このツール本体、既定で `swing agent` を実行）の 2 つのコンテナが立ち上がります。外部に公開されるのは IPFS の swarm 用ポート（`4001/tcp`・`4001/udp`）だけです。Kubo の RPC（5001）はホストにも公開されず、ゲートウェイ（8080）はホストの `127.0.0.1:8080` だけに公開されます。
 
 保存したい相手を追加するには、`mirror` コンテナの中で `swing mirror add` を実行します。相手の npub（または hex、nprofile）を指定してください。
 
@@ -106,6 +106,8 @@ docker compose exec mirror swing status
 ```
 
 状態ファイルに記録した版が Kubo の MFS に揃っているかと、状態ファイルに無い余分なパスを表示します。問題があれば 0 以外で終了するので、cron などからの監視にも使えます。詳しくは [`docs/architecture.md`](docs/architecture.md#status) を参照してください。
+
+保存したサイトはローカルのゲートウェイで閲覧できます。`http://localhost:8080/ipfs/<cid>/` を開くと `http://<cid>.ipfs.localhost:8080/` に移り、サイトごとに別のオリジンで表示されます。ゲートウェイはローカルにあるデータだけを返し、ネットワークから取りに行きません。
 
 コンテナのログで動作状況を確認することもできます。
 
@@ -162,6 +164,23 @@ Published.
 処理内容は、ディレクトリを Kubo に追加して MFS の `/swing/publish/` の下に置き、その root CID を含むサイトイベント（`kind 35980`）に自分の鍵で署名し、設定した全 relay に publish する、というものです。どれかの relay に受理されたら、同じサイトの古い版を新しい順に `keep_versions`（既定 5）個だけ残して MFS から消します。
 
 NIP-05 は、`d` タグがドメイン名の形をしている場合に、そのドメインの所有者が自分の pubkey を掲載しているかどうかを確認する任意の検証です。確認するには、公開するドメインの `https://{ドメイン}/.well-known/nostr.json` に `{"names": {"_": "<自分の pubkey の hex>"}}` を置きます。検証モードは `--nip05 off|warn|require`（省略時は `.env` の `SWING_PUBLISH_NIP05`、既定 `warn`）で切り替えられ、`warn` は結果を表示するだけで publish を続行し、`require` は検証に成功しない限り publish を中止します。
+
+## 自分のサイトをゲートウェイで配信する
+
+`gateway` プロファイルを使うと、決めたホスト名だけを DNSLink で配信する HTTP サーバー（Caddy）が `127.0.0.1:8081` で立ち上がります。TLS は扱わないので、Cloudflare Tunnel などを前段に置いて、そこから `http://127.0.0.1:8081` に転送してください。
+
+```bash
+# .env
+SWING_GATEWAY_HOSTS=example.com,blog.example.net
+```
+
+```bash
+docker compose --profile gateway up -d
+```
+
+各ホストの DNS に `_dnslink.<ホスト名>` の TXT レコード（`dnslink=/ipfs/<cid>`）を置きます。ゲートウェイはローカルにあるデータしか返さないので、CID は `swing publish` でこのノードに置いたものにしてください。publish のたびに TXT レコードも更新します。
+
+`SWING_GATEWAY_HOSTS` 以外のホスト名、および `/ipfs/<cid>` のようなパスでのアクセスには 404 を返します。Kubo の 8080 は Host ヘッダーを信用するため、Caddy を通さずに外部へ公開しないでください。詳しくは [`docs/architecture/docker.md`](docs/architecture/docker.md#gateway) を参照してください。
 
 ## どれくらい保存されるか
 
@@ -222,6 +241,9 @@ TOML の設定ファイル（`swing.toml`）を使う場合と、環境変数だ
 | `SWING_FETCH_IDLE_TIMEOUT` | (なし) | 取得中にデータが届かないまま待つ上限（既定 2 分） |
 | `SWING_KUBO_STORAGE_MAX` | (なし、compose の Kubo 用) | Kubo の `Datastore.StorageMax`（既定は `SWING_MAX_TOTAL_STORAGE` と同じ） |
 | `SWING_KUBO_PROVIDE_STRATEGY` | (なし、compose の Kubo 用) | Kubo の `Provide.Strategy`（既定 `pinned+mfs`） |
+| `SWING_KUBO_GATEWAY_BIND` | (なし、compose の Kubo 用) | Kubo のゲートウェイを公開するアドレス（既定 `127.0.0.1:8080`） |
+| `SWING_GATEWAY_HOSTS` | (なし、compose の gateway 用) | DNSLink で配信するホスト名（カンマ区切り） |
+| `SWING_GATEWAY_BIND` | (なし、compose の gateway 用) | gateway の Caddy を公開するアドレス（既定 `127.0.0.1:8081`） |
 | `SWING_PUBLISH_KEEP_VERSIONS` | `publish.keep_versions` | `swing publish` が自分のノードに残す版の数（既定 `5`） |
 | `SWING_PUBLISH_NIP05` | `publish.nip05` | `swing publish` の NIP-05 検証モード（既定 `warn`。CLI の `--nip05` が優先） |
 
@@ -229,7 +251,7 @@ TOML の設定ファイル（`swing.toml`）を使う場合と、環境変数だ
 
 SWING は公開の IPFS Mainnet をそのまま使うため、匿名性は提供しません。他の IPFS peer から、あなたの Peer ID・IP アドレス・提供している CID などの関連を観測される可能性があります。もともと公開 Web サイトを保存することが前提のツールなので、この点は許容した上でご利用ください。
 
-一方で、Kubo の RPC やローカルのゲートウェイ、管理 UI は外部に公開しません。Docker Compose の構成では、公開されるのは IPFS swarm 用のポート（`4001`）だけです。
+一方で、Kubo の RPC やローカルのゲートウェイ、管理 UI は外部に公開しません。Docker Compose の構成では、外部に公開されるのは IPFS swarm 用のポート（`4001`）だけで、ゲートウェイは `127.0.0.1` だけで待ち受けます。`gateway` プロファイルで外部に配信するのは `SWING_GATEWAY_HOSTS` のホストの DNSLink だけです。
 
 Nostr の秘密鍵は `.env` に平文で保存されます。サイト公開・ミラー参加専用の鍵を新しく作り、他の用途の鍵とは分けて扱うことをおすすめします。`.env` を Git にコミットしないよう注意してください。
 
@@ -240,13 +262,13 @@ Nostr の秘密鍵は `.env` に平文で保存されます。サイト公開・
 - 中央管理サーバー / ユーザー登録
 - 専用の Web UI
 - IPFS Cluster / private swarm / 独自 DHT
-- 公開 Gateway
+- 任意の CID を配信する公開 Gateway（`gateway` プロファイルは決めたホストの DNSLink だけを配信します）
 - レプリカの自動割当
 - 高度なアクセス制御
 - 決済
 - 独自の Nostr Relay
 
-今後の拡張として、レプリカ数の可視化、Follow Set を集計した Webring 表示、任意の Gateway、private mode（IP アドレスを隠したい参加者向けの別モード）などを検討しています。NIP-46 remote signer への対応も予定にあります。残タスクの一覧は [`docs/todo.md`](docs/todo.md)、新しい kind や `d` タグの命名規約は [`docs/extensions.md`](docs/extensions.md) を参照してください。
+今後の拡張として、レプリカ数の可視化、Follow Set を集計した Webring 表示、private mode（IP アドレスを隠したい参加者向けの別モード）などを検討しています。NIP-46 remote signer への対応も予定にあります。残タスクの一覧は [`docs/todo.md`](docs/todo.md)、新しい kind や `d` タグの命名規約は [`docs/extensions.md`](docs/extensions.md) を参照してください。
 
 ## ドキュメント
 

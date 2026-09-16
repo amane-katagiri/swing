@@ -8,7 +8,7 @@
 | [`architecture/agent.md`](architecture/agent.md) | mirror-agent の動作、ポリシー判定、`state.json` |
 | [`architecture/nip05.md`](architecture/nip05.md) | NIP-05 検証（agent と publish で共通） |
 | [`architecture/kubo.md`](architecture/kubo.md) | MFS の使い方、Kubo RPC、Kubo のバージョン |
-| [`architecture/docker.md`](architecture/docker.md) | Dockerfile、compose |
+| [`architecture/docker.md`](architecture/docker.md) | Dockerfile、compose、Gateway |
 
 ## 構成要素
 
@@ -47,6 +47,7 @@ swing/
     kubo_integration.rs          Kubo 連携の統合テスト（#[ignore]）
     nostr_relay_integration.rs   relay 連携の統合テスト（#[ignore]）
   docker/kubo-init.d/  Kubo コンテナの起動スクリプト
+  docker/caddy/        gateway プロファイルの Caddy 設定
   Dockerfile, compose.yaml, .env.example, swing.example.toml
   docs/                役割は AGENTS.md を参照
 ```

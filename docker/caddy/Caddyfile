@@ -1,0 +1,14 @@
+{
+	admin off
+	auto_https off
+}
+
+:80 {
+	@allowed host {$SWING_GATEWAY_HOST_LIST}
+	handle @allowed {
+		reverse_proxy ipfs:8080
+	}
+	handle {
+		respond 404
+	}
+}
