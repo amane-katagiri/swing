@@ -3,8 +3,11 @@ services:
     image: ipfs/kubo:latest
     command: ["daemon", "--migrate=true", "--agent-version-suffix=docker", "--enable-gc"]
     restart: unless-stopped
+    environment:
+      SWING_KUBO_STORAGE_MAX: ${SWING_KUBO_STORAGE_MAX:-${SWING_MAX_TOTAL_STORAGE:-100GB}}
     volumes:
       - ipfs-data:/data/ipfs
+      - ./docker/kubo-init.d:/container-init.d:ro
     ports:
       - "4001:4001/tcp"
       - "4001:4001/udp"

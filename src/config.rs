@@ -34,6 +34,7 @@ pub struct PolicyFile {
     pub max_total_storage: Option<String>,
     pub max_per_site: Option<String>,
     pub max_per_account: Option<String>,
+    pub max_sites_per_account: Option<usize>,
     pub max_update_size: Option<String>,
     pub keep_versions: Option<usize>,
     pub keep_days: Option<u64>,
@@ -130,6 +131,7 @@ pub struct PolicyConfig {
     pub max_total_storage: u64,
     pub max_per_site: u64,
     pub max_per_account: u64,
+    pub max_sites_per_account: usize,
     pub max_update_size: u64,
     pub keep_versions: usize,
     pub keep_days: u64,
@@ -328,6 +330,16 @@ fn build_config(file: ConfigFile, get_env: impl Fn(&str) -> Option<String>) -> R
         },
     };
 
+    let max_sites_per_account = match get_env("SWING_MAX_SITES_PER_ACCOUNT") {
+        Some(v) => v
+            .parse()
+            .context("invalid SWING_MAX_SITES_PER_ACCOUNT: expected integer")?,
+        None => file.policy.max_sites_per_account.unwrap_or(10),
+    };
+    if max_sites_per_account == 0 {
+        bail!("max_sites_per_account must be greater than 0");
+    }
+
     let max_update_size = match get_env("SWING_MAX_UPDATE_SIZE") {
         Some(v) => parse_size(&v).context("invalid SWING_MAX_UPDATE_SIZE")?,
         None => match file.policy.max_update_size {
@@ -440,6 +452,7 @@ fn build_config(file: ConfigFile, get_env: impl Fn(&str) -> Option<String>) -> R
             max_total_storage,
             max_per_site,
             max_per_account,
+            max_sites_per_account,
             max_update_size,
             keep_versions,
             keep_days,
@@ -557,6 +570,16 @@ mod tests {
     }
 
     #[test]
+    fn zero_max_sites_per_account_is_rejected() {
+        let err = build_config(minimal_file(), |k| match k {
+            "SWING_MAX_SITES_PER_ACCOUNT" => Some("0".into()),
+            _ => None,
+        })
+        .unwrap_err();
+        assert!(err.to_string().contains("max_sites_per_account"));
+    }
+
+    #[test]
     fn zero_pin_timeout_is_rejected() {
         let err = build_config(minimal_file(), |k| match k {
             "SWING_PIN_TIMEOUT" => Some("0".into()),
@@ -620,6 +643,7 @@ mod tests {
         assert_eq!(cfg.policy.max_total_storage, 100 * (1u64 << 30));
         assert_eq!(cfg.policy.max_per_site, 10 * (1u64 << 30));
         assert_eq!(cfg.policy.max_per_account, 20 * (1u64 << 30));
+        assert_eq!(cfg.policy.max_sites_per_account, 10);
         assert_eq!(cfg.policy.max_update_size, 2 * (1u64 << 30));
         assert_eq!(cfg.policy.keep_versions, 5);
         assert_eq!(cfg.policy.keep_days, 365);

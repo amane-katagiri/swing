@@ -33,6 +33,7 @@ pub trait KuboPins {
         timeout: Duration,
     ) -> impl Future<Output = Result<()>> + Send;
     fn dag_size_local(&self, cid: &str) -> impl Future<Output = Result<u64>> + Send;
+    fn is_pinned(&self, cid: &str) -> impl Future<Output = Result<bool>> + Send;
     fn pin_rm(&self, cid: &str) -> impl Future<Output = Result<()>> + Send;
 }
 
@@ -52,6 +53,10 @@ impl KuboPins for IpfsClient {
 
     async fn dag_size_local(&self, cid: &str) -> Result<u64> {
         IpfsClient::dag_size_local(self, cid).await
+    }
+
+    async fn is_pinned(&self, cid: &str) -> Result<bool> {
+        IpfsClient::is_pinned(self, cid).await
     }
 
     async fn pin_rm(&self, cid: &str) -> Result<()> {
@@ -351,6 +356,33 @@ impl IpfsClient {
             bail!("pin/rm failed: {status}: {text}");
         }
         Ok(())
+    }
+
+    // Recursive and direct are checked separately because type=all also
+    // searches indirect pins, which walks every pinned DAG for unpinned CIDs.
+    pub async fn is_pinned(&self, cid: &str) -> Result<bool> {
+        for pin_type in ["recursive", "direct"] {
+            let url = self.url(&format!(
+                "/api/v0/pin/ls?arg={}&type={pin_type}",
+                urlencoding_cid(cid)
+            ));
+            let resp = self
+                .http
+                .post(&url)
+                .timeout(Duration::from_secs(30))
+                .send()
+                .await
+                .context("POST /api/v0/pin/ls")?;
+            let status = resp.status();
+            let text = resp.text().await.context("reading pin/ls response")?;
+            if status.is_success() {
+                return Ok(true);
+            }
+            if !text.contains("is not pinned") {
+                bail!("pin/ls failed: {status}: {text}");
+            }
+        }
+        Ok(false)
     }
 
     pub async fn pin_ls(&self) -> Result<HashSet<String>> {

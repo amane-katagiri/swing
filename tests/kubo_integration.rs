@@ -102,6 +102,34 @@ async fn missing_cid_fails_fast_and_is_never_pinned_from_network() {
 
 #[tokio::test]
 #[ignore]
+async fn is_pinned_detects_recursive_and_direct_pins() {
+    let client = ipfs::IpfsClient::new(kubo_api());
+
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("a.txt"), b"is_pinned fixture\n").unwrap();
+    let cid = client.add_dir(dir.path()).await.expect("add_dir");
+    assert!(client.is_pinned(&cid).await.unwrap());
+
+    client.pin_rm(&cid).await.expect("pin_rm");
+    assert!(!client.is_pinned(&cid).await.unwrap());
+
+    let direct = reqwest::Client::new()
+        .post(format!(
+            "{}/api/v0/pin/add?arg={cid}&recursive=false",
+            kubo_api()
+        ))
+        .send()
+        .await
+        .unwrap();
+    assert!(direct.status().is_success());
+    assert!(client.is_pinned(&cid).await.unwrap());
+    client.pin_rm(&cid).await.ok();
+
+    assert!(client.is_pinned("not-a-cid").await.is_err());
+}
+
+#[tokio::test]
+#[ignore]
 async fn add_dir_matches_ipfs_cli_cid_for_known_fixture() {
     let client = ipfs::IpfsClient::new(kubo_api());
 

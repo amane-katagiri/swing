@@ -159,6 +159,7 @@ NIP-05 は、`d` タグがドメイン名の形をしている場合に、その
 | `max_total_storage` | `100GB` | 保存する全サイト合計の容量上限 |
 | `max_per_site` | `10GB` | 1 サイトあたりの容量上限。超えた分は古い版から削除される |
 | `max_per_account` | `20GB` | 1 アカウント（pubkey）が持つ全サイトの合計容量上限。超える更新は保存されない |
+| `max_sites_per_account` | `10` | 1 アカウントあたりに保存するサイト数の上限。既に保存しているサイトの更新は続く |
 | `max_update_size` | `2GB` | 1 回の更新（1 バージョン）あたりのサイズ上限。超えると保存されない |
 | `keep_versions` | `5` | サイトごとに保持する旧バージョンの数。超えた分は古い順に削除される |
 | `keep_days` | `365` | バージョンを保持する日数。最新版を除き、これより古い版は削除される |
@@ -169,12 +170,9 @@ NIP-05 は、`d` タグがドメイン名の形をしている場合に、その
 
 サイズはイベントの `size` タグではなく、実際に取得したデータ量で判定します。取得中に上限（`max_update_size`・`max_per_site`・`max_per_account` の最小値）を超えた時点で取得を打ち切ります。
 
-打ち切った取得や削除した版のデータは、Kubo の GC が走るまでディスクに残ります。Docker Compose の構成では Kubo を `--enable-gc` で起動していますが、GC が走るのは Kubo の repo が `Datastore.StorageMax`（Kubo の既定は `10GB`）の 90% を超えたときだけです。`max_total_storage` に少し余裕を足した値にしておくことをおすすめします。
+打ち切った取得や削除した版のデータは、Kubo の GC が走るまでディスクに残ります。Docker Compose の構成では Kubo を `--enable-gc` で起動し、GC の基準になる Kubo の `Datastore.StorageMax` を起動のたびに `SWING_KUBO_STORAGE_MAX`（未設定なら `SWING_MAX_TOTAL_STORAGE`）に設定します。GC はこの値の 90% を超えたときに走るので、`SWING_MAX_TOTAL_STORAGE` に少し余裕を足した値を `.env` に書いておくことをおすすめします。
 
-```bash
-docker compose exec ipfs ipfs config Datastore.StorageMax 110GB
-docker compose restart ipfs
-```
+SWING の外で（手動で）pin していた CID は、SWING が保存をやめたときも unpin されません。
 
 判定の詳しい順序は [`docs/architecture.md`](docs/architecture.md) を参照してください。
 
@@ -193,6 +191,7 @@ TOML の設定ファイル（`swing.toml`）を使う場合と、環境変数だ
 | `SWING_MAX_TOTAL_STORAGE` | `policy.max_total_storage` | 全体容量上限 |
 | `SWING_MAX_PER_SITE` | `policy.max_per_site` | サイト単位の容量上限 |
 | `SWING_MAX_PER_ACCOUNT` | `policy.max_per_account` | アカウント単位の容量上限 |
+| `SWING_MAX_SITES_PER_ACCOUNT` | `policy.max_sites_per_account` | アカウント単位のサイト数上限（既定 `10`） |
 | `SWING_MAX_UPDATE_SIZE` | `policy.max_update_size` | 1 更新あたりのサイズ上限 |
 | `SWING_KEEP_VERSIONS` | `policy.keep_versions` | 保持する旧バージョン数 |
 | `SWING_KEEP_DAYS` | `policy.keep_days` | バージョン保持日数 |
@@ -205,6 +204,7 @@ TOML の設定ファイル（`swing.toml`）を使う場合と、環境変数だ
 | `SWING_CONCURRENCY` | `agent.concurrency` | 同時に取得・保存するサイト数（既定 `4`） |
 | `SWING_PIN_TIMEOUT` | (なし) | 1 サイト分の取得と pin のタイムアウト（既定 15 分） |
 | `SWING_FETCH_IDLE_TIMEOUT` | (なし) | 取得中にデータが届かないまま待つ上限（既定 2 分） |
+| `SWING_KUBO_STORAGE_MAX` | (なし、compose の Kubo 用) | Kubo の `Datastore.StorageMax`（既定は `SWING_MAX_TOTAL_STORAGE` と同じ） |
 | `SWING_PUBLISH_NIP05` | `publish.nip05` | `swing publish` の NIP-05 検証モード（既定 `warn`。CLI の `--nip05` が優先） |
 
 ## プライバシーと注意点

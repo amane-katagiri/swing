@@ -18,6 +18,7 @@ pub struct CandidateEvent {
 pub struct Usage {
     pub other_sites: u64,
     pub other_sites_of_account: u64,
+    pub other_site_count_of_account: usize,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -67,6 +68,12 @@ pub fn decide(
 ) -> Decision {
     if existing_versions.iter().any(|v| v.cid == candidate.cid) {
         return Decision::skip("duplicate_cid");
+    }
+
+    if existing_versions.is_empty()
+        && usage.other_site_count_of_account >= cfg.max_sites_per_account
+    {
+        return Decision::skip("max_sites_per_account");
     }
 
     let last_created_at = existing_versions.iter().map(|v| v.created_at).max();
@@ -151,6 +158,7 @@ mod tests {
             max_total_storage: 1_000_000,
             max_per_site: 300,
             max_per_account: 1_000_000,
+            max_sites_per_account: 10,
             max_update_size: 250,
             keep_versions: 5,
             keep_days: 365,
@@ -164,7 +172,7 @@ mod tests {
     fn total_usage(other_sites: u64) -> Usage {
         Usage {
             other_sites,
-            other_sites_of_account: 0,
+            ..Usage::default()
         }
     }
 
@@ -367,6 +375,7 @@ mod tests {
         let usage = Usage {
             other_sites: 400,
             other_sites_of_account: 400,
+            ..Usage::default()
         };
         let d = decide(&[], usage, &cand, &c1, 2000);
         assert_eq!(d.pin, None);
@@ -375,6 +384,7 @@ mod tests {
         let usage = Usage {
             other_sites: 400,
             other_sites_of_account: 300,
+            ..Usage::default()
         };
         let d = decide(&[], usage, &cand, &c1, 2000);
         assert_eq!(d.pin, Some("v1".to_string()));
@@ -391,10 +401,35 @@ mod tests {
         let usage = Usage {
             other_sites: 250,
             other_sites_of_account: 250,
+            ..Usage::default()
         };
         let d = decide(&existing, usage, &cand, &c1, 2000);
         assert_eq!(d.pin, Some("v2".to_string()));
         assert_eq!(d.unpin, vec!["v1".to_string()]);
+    }
+
+    #[test]
+    fn max_sites_per_account_blocks_only_new_sites() {
+        let mut c1 = cfg();
+        c1.max_sites_per_account = 2;
+        c1.min_update_interval = 0;
+        let usage = Usage {
+            other_site_count_of_account: 2,
+            ..Usage::default()
+        };
+        let d = decide(&[], usage, &c("new", Some(10), 1000), &c1, 2000);
+        assert_eq!(d.reason, "max_sites_per_account");
+
+        let existing = vec![v("v1", 10, 1000)];
+        let d = decide(&existing, usage, &c("v2", Some(10), 1100), &c1, 2000);
+        assert_eq!(d.pin, Some("v2".to_string()));
+
+        let usage = Usage {
+            other_site_count_of_account: 1,
+            ..Usage::default()
+        };
+        let d = decide(&[], usage, &c("new", Some(10), 1000), &c1, 2000);
+        assert_eq!(d.pin, Some("new".to_string()));
     }
 
     #[test]

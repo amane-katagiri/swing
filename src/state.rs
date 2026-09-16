@@ -10,6 +10,7 @@ pub struct VersionRecord {
     pub size: u64,
     pub created_at: u64,
     pub pinned_at: u64,
+    pub preexisting_pin: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -27,9 +28,7 @@ pub fn site_key(pubkey_hex: &str, d: &str) -> SiteKey {
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct State {
-    #[serde(default)]
     pub sites: BTreeMap<SiteKey, Vec<VersionRecord>>,
-    #[serde(default)]
     pub verifications: BTreeMap<SiteKey, Verification>,
 }
 
@@ -103,8 +102,45 @@ impl State {
             .sum()
     }
 
+    pub fn account_site_count(&self, pubkey_hex: &str) -> usize {
+        let prefix = format!("{pubkey_hex}:");
+        self.sites
+            .range(prefix.clone()..)
+            .take_while(|(k, _)| k.starts_with(&prefix))
+            .count()
+    }
+
     pub fn references_cid(&self, cid: &str) -> bool {
         self.all_pinned_cids().any(|c| c == cid)
+    }
+
+    pub fn preexisting_pin(&self, cid: &str) -> Option<bool> {
+        let mut records = self
+            .sites
+            .values()
+            .flat_map(|versions| versions.iter())
+            .filter(|v| v.cid == cid)
+            .peekable();
+        records.peek()?;
+        Some(records.any(|v| v.preexisting_pin))
+    }
+
+    pub fn prune_unpinned_verifications(&mut self, pubkey_hex: &str, keep: usize) {
+        let prefix = format!("{pubkey_hex}:");
+        let mut unpinned: Vec<(u64, SiteKey)> = self
+            .verifications
+            .range(prefix.clone()..)
+            .take_while(|(k, _)| k.starts_with(&prefix))
+            .filter(|(k, _)| !self.sites.contains_key(*k))
+            .map(|(k, v)| (v.checked_at, k.clone()))
+            .collect();
+        if unpinned.len() <= keep {
+            return;
+        }
+        unpinned.sort_by(|a, b| b.cmp(a));
+        for (_, key) in unpinned.into_iter().skip(keep) {
+            self.verifications.remove(&key);
+        }
     }
 
     pub fn all_pinned_cids(&self) -> impl Iterator<Item = &str> {
@@ -118,13 +154,18 @@ impl State {
         self.sites.entry(key.clone()).or_default().push(record);
     }
 
-    pub fn apply_unpins(&mut self, key: &SiteKey, cids: &[String]) {
-        if let Some(versions) = self.sites.get_mut(key) {
-            versions.retain(|v| !cids.contains(&v.cid));
-            if versions.is_empty() {
-                self.sites.remove(key);
-            }
+    pub fn apply_unpins(&mut self, key: &SiteKey, cids: &[String]) -> Vec<VersionRecord> {
+        let Some(versions) = self.sites.get_mut(key) else {
+            return Vec::new();
+        };
+        let (removed, kept) = std::mem::take(versions)
+            .into_iter()
+            .partition(|v| cids.contains(&v.cid));
+        *versions = kept;
+        if versions.is_empty() {
+            self.sites.remove(key);
         }
+        removed
     }
 
     pub fn remove_site(&mut self, key: &SiteKey) -> Vec<VersionRecord> {
@@ -153,6 +194,7 @@ mod tests {
                 size: 100,
                 created_at: 1,
                 pinned_at: 2,
+                preexisting_pin: false,
             },
         );
         state.save(&path).await.unwrap();
@@ -170,12 +212,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn loading_state_without_verifications_key_still_works() {
+    async fn loading_state_without_verifications_key_fails() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("state.json");
         std::fs::write(&path, r#"{"sites":{}}"#).unwrap();
-        let state = State::load(&path).await.unwrap();
-        assert!(state.verifications.is_empty());
+        assert!(State::load(&path).await.is_err());
     }
 
     #[test]
@@ -186,6 +227,7 @@ mod tests {
             size,
             created_at: 1,
             pinned_at: 1,
+            preexisting_pin: false,
         };
         state.apply_pin(&site_key("aa", "one.example"), record("c1", 10));
         state.apply_pin(&site_key("aa", "two.example"), record("c2", 20));
@@ -196,6 +238,64 @@ mod tests {
         assert_eq!(state.account_bytes("zz"), 0);
         assert!(state.references_cid("c3"));
         assert!(!state.references_cid("c5"));
+    }
+
+    #[test]
+    fn preexisting_pin_is_known_only_for_referenced_cids() {
+        let mut state = State::default();
+        let record = |cid: &str, preexisting_pin| VersionRecord {
+            cid: cid.into(),
+            size: 1,
+            created_at: 1,
+            pinned_at: 1,
+            preexisting_pin,
+        };
+        state.apply_pin(&site_key("aa", "one.example"), record("c1", false));
+        state.apply_pin(&site_key("bb", "two.example"), record("c1", true));
+        state.apply_pin(&site_key("bb", "two.example"), record("c2", false));
+        assert_eq!(state.preexisting_pin("c1"), Some(true));
+        assert_eq!(state.preexisting_pin("c2"), Some(false));
+        assert_eq!(state.preexisting_pin("c3"), None);
+        assert_eq!(state.account_site_count("bb"), 1);
+        assert_eq!(state.account_site_count("b"), 0);
+    }
+
+    #[test]
+    fn prune_unpinned_verifications_keeps_pinned_and_newest() {
+        let mut state = State::default();
+        let verification = |checked_at| Verification {
+            status: "mismatch".into(),
+            detail: None,
+            checked_at,
+        };
+        state.apply_pin(
+            &site_key("aa", "pinned.example"),
+            VersionRecord {
+                cid: "c".into(),
+                size: 1,
+                created_at: 1,
+                pinned_at: 1,
+                preexisting_pin: false,
+            },
+        );
+        state.set_verification(&site_key("aa", "pinned.example"), verification(1));
+        for (d, t) in [("old.example", 2), ("mid.example", 3), ("new.example", 4)] {
+            state.set_verification(&site_key("aa", d), verification(t));
+        }
+        state.set_verification(&site_key("ab", "other.example"), verification(1));
+
+        state.prune_unpinned_verifications("aa", 2);
+
+        let keys: Vec<&str> = state.verifications.keys().map(|k| k.as_str()).collect();
+        assert_eq!(
+            keys,
+            vec![
+                "aa:mid.example",
+                "aa:new.example",
+                "aa:pinned.example",
+                "ab:other.example"
+            ]
+        );
     }
 
     #[test]
@@ -233,6 +333,7 @@ mod tests {
                 size: 10,
                 created_at: 1,
                 pinned_at: 1,
+                preexisting_pin: false,
             },
         );
         state.set_verification(
@@ -258,6 +359,7 @@ mod tests {
                 size: 10,
                 created_at: 1,
                 pinned_at: 1,
+                preexisting_pin: false,
             },
         );
         state.apply_pin(
@@ -267,6 +369,7 @@ mod tests {
                 size: 20,
                 created_at: 2,
                 pinned_at: 2,
+                preexisting_pin: false,
             },
         );
         state.apply_unpins(&key, &["cid1".to_string()]);

@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, RwLock};
 
@@ -162,12 +162,43 @@ async fn refresh_follow_set<C, N>(
                     },
                 )
                 .collect();
-            for ev in nostr::select_latest(&parsed).into_values() {
+            let latest = nostr::select_latest(&parsed).into_values().collect();
+            let selected = {
+                let state = agent.state.lock().await;
+                limit_sites_per_account(latest, &state, config.policy.max_sites_per_account)
+            };
+            for ev in selected {
                 agent.submit(ev, tasks);
             }
         }
         Err(e) => warn!(error = %e, "fetching historical site events failed"),
     }
+}
+
+fn limit_sites_per_account(
+    events: Vec<SiteEvent>,
+    state: &State,
+    max_sites: usize,
+) -> Vec<SiteEvent> {
+    let mut by_account: HashMap<PublicKey, Vec<(bool, SiteEvent)>> = HashMap::new();
+    for ev in events {
+        let pinned = state
+            .sites
+            .contains_key(&state::site_key(&ev.pubkey.to_hex(), &ev.d));
+        by_account.entry(ev.pubkey).or_default().push((pinned, ev));
+    }
+    let mut selected = Vec::new();
+    for mut events in by_account.into_values() {
+        events.sort_by(|a, b| b.0.cmp(&a.0).then(b.1.created_at.cmp(&a.1.created_at)));
+        let pinned = events.iter().filter(|(p, _)| *p).count();
+        selected.extend(
+            events
+                .into_iter()
+                .take(pinned.max(max_sites))
+                .map(|(_, ev)| ev),
+        );
+    }
+    selected
 }
 
 fn decide(
@@ -195,6 +226,8 @@ fn decide(
     let usage = Usage {
         other_sites: state.total_bytes() - site,
         other_sites_of_account: state.account_bytes(pubkey_hex) - site,
+        other_site_count_of_account: state.account_site_count(pubkey_hex)
+            - usize::from(state.sites.contains_key(key)),
     };
     let candidate = CandidateEvent {
         cid: ev.cid.clone(),
@@ -216,7 +249,7 @@ struct Agent<C, N> {
     state: tokio::sync::Mutex<State>,
     state_path: PathBuf,
     targets: RwLock<HashSet<PublicKey>>,
-    queue: Mutex<HashMap<SiteKey, Queued>>,
+    queue: Mutex<BTreeMap<SiteKey, Queued>>,
     permits: Semaphore,
 }
 
@@ -226,7 +259,8 @@ where
     N: Nip05Verify + Send + Sync + 'static,
 {
     fn submit(self: &Arc<Self>, ev: SiteEvent, tasks: &mut JoinSet<()>) {
-        let key = state::site_key(&ev.pubkey.to_hex(), &ev.d);
+        let pubkey_hex = ev.pubkey.to_hex();
+        let key = state::site_key(&pubkey_hex, &ev.d);
         {
             let mut queue = self.queue.lock().unwrap();
             if let Some(queued) = queue.get_mut(&key) {
@@ -237,6 +271,15 @@ where
                 if ev.created_at > newest {
                     queued.next = Some(ev);
                 }
+                return;
+            }
+            let prefix = format!("{pubkey_hex}:");
+            let active = queue
+                .range(prefix.clone()..)
+                .take_while(|(k, _)| k.starts_with(&prefix))
+                .count();
+            if active >= self.config.policy.max_sites_per_account {
+                debug!(site_key = %key, "too many sites of this account in progress; dropping until next poll");
                 return;
             }
             queue.insert(
@@ -295,7 +338,7 @@ impl<C: KuboPins, N: Nip05Verify> Agent<C, N> {
             state: tokio::sync::Mutex::new(state),
             state_path,
             targets: RwLock::new(HashSet::new()),
-            queue: Mutex::new(HashMap::new()),
+            queue: Mutex::new(BTreeMap::new()),
             permits,
         }
     }
@@ -317,9 +360,13 @@ impl<C: KuboPins, N: Nip05Verify> Agent<C, N> {
         }
     }
 
-    async fn release_cid(&self, state: &State, cid: &str) {
+    async fn release_cid(&self, state: &State, cid: &str, preexisting_pin: bool) {
         if state.references_cid(cid) {
             debug!(cid = %cid, "still referenced by another site; keeping the pin");
+            return;
+        }
+        if preexisting_pin {
+            info!(cid = %cid, "pinned outside SWING before; keeping the pin");
             return;
         }
         match self.ipfs.pin_rm(cid).await {
@@ -340,7 +387,7 @@ impl<C: KuboPins, N: Nip05Verify> Agent<C, N> {
             .collect();
         for key in keys {
             for v in state.remove_site(&key) {
-                self.release_cid(&state, &v.cid).await;
+                self.release_cid(&state, &v.cid, v.preexisting_pin).await;
             }
             self.save(&state, "unfollow").await;
             info!(site_key = %key, "unfollowed and unpinned");
@@ -383,6 +430,7 @@ impl<C: KuboPins, N: Nip05Verify> Agent<C, N> {
                 checked_at: now_secs(),
             },
         );
+        state.prune_unpinned_verifications(pubkey_hex, self.config.policy.max_sites_per_account);
         self.save(&state, "nip05 verification").await;
         result.is_verified()
     }
@@ -438,6 +486,16 @@ impl<C: KuboPins, N: Nip05Verify> Agent<C, N> {
             info!(site = %ev.d, pubkey = %pubkey_hex, "author left the follow set during fetch; not pinning");
             return;
         }
+        let preexisting_pin = match state.preexisting_pin(&ev.cid) {
+            Some(preexisting_pin) => preexisting_pin,
+            None => match self.ipfs.is_pinned(&ev.cid).await {
+                Ok(pinned) => pinned,
+                Err(e) => {
+                    warn!(cid = %ev.cid, error = %e, "checking existing pins failed; will retry on next poll");
+                    return;
+                }
+            },
+        };
         if let Err(e) = self
             .ipfs
             .pin_add_local(&ev.cid, self.config.agent.pin_timeout)
@@ -450,7 +508,7 @@ impl<C: KuboPins, N: Nip05Verify> Agent<C, N> {
             Ok(size) => size,
             Err(e) => {
                 warn!(cid = %ev.cid, error = %e, "dag/stat failed after pin; unpinning and retrying later");
-                self.release_cid(&state, &ev.cid).await;
+                self.release_cid(&state, &ev.cid, preexisting_pin).await;
                 return;
             }
         };
@@ -463,7 +521,7 @@ impl<C: KuboPins, N: Nip05Verify> Agent<C, N> {
         let decision = decide(&state, &key, &pubkey_hex, ev, Some(size), &self.config);
         let Some(cid) = decision.pin else {
             warn!(cid = %ev.cid, site = %ev.d, size, reason = %decision.reason, "rejected after fetch; unpinning");
-            self.release_cid(&state, &ev.cid).await;
+            self.release_cid(&state, &ev.cid, preexisting_pin).await;
             return;
         };
         state.apply_pin(
@@ -473,11 +531,12 @@ impl<C: KuboPins, N: Nip05Verify> Agent<C, N> {
                 size,
                 created_at: ev.created_at,
                 pinned_at: now_secs(),
+                preexisting_pin,
             },
         );
-        state.apply_unpins(&key, &decision.unpin);
-        for old in &decision.unpin {
-            self.release_cid(&state, old).await;
+        for old in state.apply_unpins(&key, &decision.unpin) {
+            self.release_cid(&state, &old.cid, old.preexisting_pin)
+                .await;
         }
         self.save(&state, "pin").await;
         info!(cid = %cid, site = %ev.d, pubkey = %pubkey_hex, size, "pinned");
@@ -498,6 +557,7 @@ mod tests {
         fetched: Vec<String>,
         fail_fetch: HashSet<String>,
         fail_stat: HashSet<String>,
+        fail_is_pinned: HashSet<String>,
         sizes: HashMap<String, u64>,
     }
 
@@ -542,6 +602,14 @@ mod tests {
                 anyhow::bail!("simulated dag/stat failure");
             }
             Ok(s.sizes.get(cid).copied().unwrap_or(0))
+        }
+
+        async fn is_pinned(&self, cid: &str) -> Result<bool> {
+            let s = self.s.lock().unwrap();
+            if s.fail_is_pinned.contains(cid) {
+                anyhow::bail!("simulated pin/ls failure");
+            }
+            Ok(s.pinned.contains(cid))
         }
 
         async fn pin_rm(&self, cid: &str) -> Result<()> {
@@ -612,6 +680,7 @@ mod tests {
             max_total_storage: 1_000_000,
             max_per_site: 100_000,
             max_per_account: 1_000_000,
+            max_sites_per_account: 10,
             max_update_size: 100_000,
             keep_versions: 5,
             keep_days: 365,
@@ -684,6 +753,7 @@ mod tests {
                     size,
                     created_at: 100,
                     pinned_at: 100,
+                    preexisting_pin: false,
                 },
             );
             self.kubo().pinned.insert(cid.to_string());
@@ -695,6 +765,18 @@ mod tests {
 
         fn kubo(&self) -> std::sync::MutexGuard<'_, FakeKuboState> {
             self.agent.ipfs.s.lock().unwrap()
+        }
+
+        async fn record(&self, d: &str, cid: &str) -> Option<VersionRecord> {
+            self.agent
+                .state
+                .lock()
+                .await
+                .sites
+                .get(&self.key(d))?
+                .iter()
+                .find(|v| v.cid == cid)
+                .cloned()
         }
 
         async fn site_bytes(&self, d: &str) -> u64 {
@@ -1056,5 +1138,190 @@ mod tests {
         fx.apply(fx.event(D, "bafy-1", None, 100)).await;
 
         assert_eq!(fx.agent.nip05.calls(), 0);
+    }
+
+    fn manual_pin(cid: &str, size: u64) -> FakeKubo {
+        FakeKubo::with(|s| {
+            s.pinned.insert(cid.into());
+            s.sizes.insert(cid.into(), size);
+        })
+    }
+
+    #[tokio::test]
+    async fn manual_pin_survives_rejection_after_fetch() {
+        let mut policy = default_policy();
+        policy.max_total_storage = 50;
+        let fx = Fixture::new(policy, manual_pin("bafy-manual", 80));
+
+        fx.apply(fx.event(D, "bafy-manual", None, 200)).await;
+
+        assert!(fx.kubo().pinned.contains("bafy-manual"));
+        assert_eq!(fx.site_bytes(D).await, 0);
+    }
+
+    #[tokio::test]
+    async fn manual_pin_survives_eviction_and_unfollow() {
+        let mut policy = default_policy();
+        policy.keep_versions = 1;
+        let kubo = manual_pin("bafy-manual", 10);
+        kubo.s.lock().unwrap().sizes.insert("bafy-next".into(), 10);
+        let fx = Fixture::new(policy, kubo);
+
+        fx.apply(fx.event(D, "bafy-manual", None, 200)).await;
+        assert!(fx.record(D, "bafy-manual").await.unwrap().preexisting_pin);
+        fx.apply(fx.event(D, "bafy-next", None, 300)).await;
+        assert!(fx.record(D, "bafy-manual").await.is_none());
+        assert!(fx.kubo().pinned.contains("bafy-manual"));
+
+        fx.apply(fx.event("b.example", "bafy-manual", None, 200))
+            .await;
+        fx.agent.unfollow(fx.pubkey).await;
+        assert!(fx.kubo().pinned.contains("bafy-manual"));
+        assert!(!fx.kubo().pinned.contains("bafy-next"));
+    }
+
+    #[tokio::test]
+    async fn preexisting_flag_is_inherited_from_existing_records() {
+        let fx = Fixture::new(default_policy(), manual_pin("bafy-manual", 10));
+        fx.apply(fx.event("a.example", "bafy-manual", None, 200))
+            .await;
+        fx.apply(fx.event("b.example", "bafy-manual", None, 200))
+            .await;
+
+        let b = fx.record("b.example", "bafy-manual").await.unwrap();
+        assert!(b.preexisting_pin);
+        fx.agent.unfollow(fx.pubkey).await;
+        assert!(fx.kubo().pinned.contains("bafy-manual"));
+    }
+
+    #[tokio::test]
+    async fn pin_check_failure_aborts_without_pinning() {
+        let kubo = FakeKubo::with(|s| {
+            s.fail_is_pinned.insert("bafy-new".into());
+        });
+        let fx = Fixture::new(default_policy(), kubo);
+
+        fx.apply(fx.event(D, "bafy-new", None, 200)).await;
+
+        assert!(!fx.kubo().pinned.contains("bafy-new"));
+        assert_eq!(fx.record(D, "bafy-new").await, None);
+    }
+
+    #[tokio::test]
+    async fn max_sites_per_account_skips_new_sites_before_fetching() {
+        let mut policy = default_policy();
+        policy.max_sites_per_account = 2;
+        let fx = Fixture::new(policy, FakeKubo::default());
+        fx.seed("a.example", "bafy-a", 1).await;
+        fx.seed("b.example", "bafy-b", 1).await;
+
+        fx.apply(fx.event("c.example", "bafy-c", None, 200)).await;
+        assert!(fx.kubo().fetched.is_empty());
+
+        fx.apply(fx.event("a.example", "bafy-a2", None, 200)).await;
+        assert_eq!(fx.kubo().fetched, vec!["bafy-a2"]);
+    }
+
+    #[test]
+    fn limit_sites_per_account_prefers_pinned_then_newest() {
+        let fx = Fixture::new(default_policy(), FakeKubo::default());
+        let other = Keys::generate().public_key();
+        let mut state = State::default();
+        state.apply_pin(
+            &fx.key("pinned.example"),
+            VersionRecord {
+                cid: "c".into(),
+                size: 1,
+                created_at: 1,
+                pinned_at: 1,
+                preexisting_pin: false,
+            },
+        );
+        let mut other_event = fx.event("x.example", "c", None, 1);
+        other_event.pubkey = other;
+        let events = vec![
+            fx.event("old.example", "c", None, 10),
+            fx.event("pinned.example", "c", None, 5),
+            fx.event("new.example", "c", None, 30),
+            fx.event("mid.example", "c", None, 20),
+            other_event,
+        ];
+
+        let mut selected: Vec<String> = limit_sites_per_account(events, &state, 3)
+            .into_iter()
+            .map(|e| e.d)
+            .collect();
+        selected.sort();
+        assert_eq!(
+            selected,
+            vec!["mid.example", "new.example", "pinned.example", "x.example"]
+        );
+    }
+
+    #[test]
+    fn limit_sites_per_account_keeps_all_pinned_sites_over_the_limit() {
+        let fx = Fixture::new(default_policy(), FakeKubo::default());
+        let mut state = State::default();
+        for d in ["a.example", "b.example"] {
+            state.apply_pin(
+                &fx.key(d),
+                VersionRecord {
+                    cid: "c".into(),
+                    size: 1,
+                    created_at: 1,
+                    pinned_at: 1,
+                    preexisting_pin: false,
+                },
+            );
+        }
+        let events = vec![
+            fx.event("a.example", "c", None, 1),
+            fx.event("b.example", "c", None, 1),
+            fx.event("new.example", "c", None, 99),
+        ];
+
+        let mut selected: Vec<String> = limit_sites_per_account(events, &state, 1)
+            .into_iter()
+            .map(|e| e.d)
+            .collect();
+        selected.sort();
+        assert_eq!(selected, vec!["a.example", "b.example"]);
+    }
+
+    #[tokio::test]
+    async fn submit_caps_in_progress_sites_per_account() {
+        let mut policy = default_policy();
+        policy.max_sites_per_account = 2;
+        let fx = Fixture::new(policy, FakeKubo::default());
+        let gate = fx.agent.ipfs.gate.write().await;
+
+        let mut tasks = JoinSet::new();
+        for d in ["a.example", "b.example", "c.example"] {
+            fx.agent.submit(fx.event(d, "bafy", None, 100), &mut tasks);
+        }
+        fx.agent
+            .submit(fx.event("a.example", "bafy-a2", None, 200), &mut tasks);
+        assert_eq!(tasks.len(), 2);
+        drop(gate);
+        while let Some(joined) = tasks.join_next().await {
+            joined.unwrap();
+        }
+        let mut fetched = fx.kubo().fetched.clone();
+        fetched.sort();
+        assert_eq!(fetched, vec!["bafy", "bafy", "bafy-a2"]);
+    }
+
+    #[tokio::test]
+    async fn verifications_of_unpinned_sites_are_pruned_per_account() {
+        let mut policy = nip05_policy(Nip05Mode::Require);
+        policy.max_sites_per_account = 2;
+        let fx = Fixture::new(policy, FakeKubo::default());
+        for d in ["a.example", "b.example", "c.example"] {
+            fx.agent
+                .nip05
+                .set(d, &fx.pubkey.to_hex(), VerificationResult::Mismatch);
+            fx.apply(fx.event(d, "bafy", None, 200)).await;
+        }
+        assert_eq!(fx.agent.state.lock().await.verifications.len(), 2);
     }
 }

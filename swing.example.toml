@@ -12,6 +12,7 @@ api = "http://127.0.0.1:5001"       # SWING_IPFS_API
 max_total_storage = "100GB"         # SWING_MAX_TOTAL_STORAGE
 max_per_site = "10GB"               # SWING_MAX_PER_SITE
 max_per_account = "20GB"            # SWING_MAX_PER_ACCOUNT
+max_sites_per_account = 10          # SWING_MAX_SITES_PER_ACCOUNT
 max_update_size = "2GB"             # SWING_MAX_UPDATE_SIZE
 keep_versions = 5                   # SWING_KEEP_VERSIONS
 keep_days = 365                     # SWING_KEEP_DAYS

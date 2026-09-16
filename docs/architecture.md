@@ -39,6 +39,8 @@ swing/
   tests/
     kubo_integration.rs          Kubo 連携の統合テスト（#[ignore]）
     nostr_relay_integration.rs   relay 連携の統合テスト（#[ignore]）
+  docker/
+    kubo-init.d/     Kubo コンテナの /container-init.d にマウントする起動スクリプト
   Dockerfile         multi-stage（rust:1.97-slim-trixie → debian:trixie-slim）
   .dockerignore
   compose.yaml
@@ -155,6 +157,7 @@ api = "http://127.0.0.1:5001"       # SWING_IPFS_API
 max_total_storage = "100GB"         # SWING_MAX_TOTAL_STORAGE
 max_per_site = "10GB"               # SWING_MAX_PER_SITE
 max_per_account = "20GB"            # SWING_MAX_PER_ACCOUNT
+max_sites_per_account = 10          # SWING_MAX_SITES_PER_ACCOUNT
 max_update_size = "2GB"             # SWING_MAX_UPDATE_SIZE
 keep_versions = 5                   # SWING_KEEP_VERSIONS
 keep_days = 365                     # SWING_KEEP_DAYS
@@ -180,7 +183,7 @@ TOML キーの無い環境変数:
 | `SWING_PIN_TIMEOUT` | 1 サイト分のコンテンツ取得（`dag/export`）全体と `pin/add` のタイムアウト | `15m` |
 | `SWING_FETCH_IDLE_TIMEOUT` | `dag/export` で次のデータが届かないまま待つ上限。最初のブロックが届くまでも含む | `2m` |
 
-`poll_interval`、`concurrency`、`SWING_PIN_TIMEOUT`、`SWING_FETCH_IDLE_TIMEOUT` は 0 だと設定エラーになる。
+`poll_interval`、`concurrency`、`max_sites_per_account`、`SWING_PIN_TIMEOUT`、`SWING_FETCH_IDLE_TIMEOUT` は 0 だと設定エラーになる。
 
 ### 値の形式
 
@@ -207,7 +210,7 @@ kind・`d` タグの既定値は「設定と環境変数」を参照（サイト
 3. 対象 pubkey 群のサイトイベントを過去分も含めて取得し（`kinds=[site_event_kind], authors=targets`）、以後は購読で新着を受ける。同じ `pubkey + d` は `created_at` 最大のものを最新とみなす。
 4. 受理ゲート: 送信元 pubkey が現在の Follow Set に含まれないイベントは warn を出して無視する。購読 ID と kind が一致しない通知は debug ログで捨てる。
 5. サイトイベントはサイト単位のタスクに渡して並行に処理する（後述「並行処理」）。各タスクは次の「pin と unpin の順序」に従って処理し、`state.json` を保存する。
-6. `poll_interval` ごとに Follow Set を再取得する。同時に対象全員のサイトイベントを取り直し、サイトごとの最新版を再投入する。これにより一時的な取得失敗や pin 失敗は次の tick で再試行される。
+6. `poll_interval` ごとに Follow Set を再取得する。同時に対象全員のサイトイベントを取り直し、サイトごとの最新版を再投入する。投入するのは pubkey ごとに、pin 済みのサイトすべてと、それ以外のサイトを `created_at` の新しい順に合計 `max_sites_per_account` 件まで（pin 済みだけで上限を超えていれば pin 済みのみ）。これにより一時的な取得失敗や pin 失敗は次の tick で再試行される。
 7. Follow Set から外れた相手は、`unpin_on_unfollow = true` のときのみ全バージョンを unpin し、その pubkey の `state.sites` と `state.verifications` のエントリを削除する。`false` のときは何もしない。Follow Set の更新はこの削除より先に反映する。
 8. 起動時に `state.json` を読み、Kubo の `pin/ls?type=recursive` と突き合わせて食い違いをログに出す。自動修復はしない。
 9. 起動時に `state.json` を読み、Kubo の `pin/ls?type=recursive` と突き合わせて食い違いをログに出す。自動修復はしない。
@@ -220,38 +223,40 @@ relay の切断や Kubo のエラー、不正なイベントはログに出し�
 2. NIP-05 検証（`[policy].nip05` が `off` 以外のとき）。`require` で `Verified` でなければ終わり。
 3. 取得: `dag/export` で CAR を流し読みし、受信バイト数を数える。`policy::fetch_limit`（`max_update_size`・`max_per_site`・`max_per_account` の最小値）を超えた時点で打ち切る。`SWING_FETCH_IDLE_TIMEOUT` の間データが来ない、または `SWING_PIN_TIMEOUT` を超えたら失敗。いずれも state と pin は変えない。`size` タグは使わないので、小さく偽った `size` でも上限を超えて取得されない。
 4. ここから先は state のロックを持ったまま行う。作者が Follow Set から外れていれば終わる。
-5. `pin/add` を `offline=true` で行う。3 で取得しきれなかったブロックがあれば失敗し、ネットワークから追加取得しない。
+5. 新版の CID が SWING の外で pin されていたかを決める。state のどこかにその CID があれば、その記録の `preexisting_pin` のどれかが真かどうかを引き継ぐ。無ければ `pin/ls` で recursive と direct の pin を確認する（確認に失敗したら終わる）。そのうえで `pin/add` を `offline=true` で行う。3 で取得しきれなかったブロックがあれば失敗し、ネットワークから追加取得しない。
 6. `dag/stat`（`offline=true`）の `TotalSize` を実サイズとする。失敗したら新版を解放して終わる。`size` タグより大きければ warn を出す。
-7. 実サイズで `policy::decide` する。skip なら新版を解放して終わる。accept なら新版を記録し、evict 対象を state から消してから解放し、state を保存する。
+7. 実サイズで `policy::decide` する。skip なら新版を解放して終わる。accept なら新版を 5 の結果とともに記録し、evict 対象を state から消してから解放し、state を保存する。
 
-「解放」は、その CID が state 上のどのサイトからも参照されていなければ `pin/rm` することを指す。別のサイトが同じ CID を持っている場合は pin を残す。`pin/rm` に失敗しても state からは消したままにし、起動時の突き合わせで報告される。
+「解放」は、その CID が state 上のどのサイトからも参照されておらず、かつ SWING の外で pin されていなかった（`preexisting_pin` が偽）ときだけ `pin/rm` することを指す。別のサイトが同じ CID を持っている場合や、運用者が手動で pin していた場合は pin を残す。Kubo は direct pin のある CID を recursive で pin すると direct pin を recursive に置き換えるので、手動の direct pin は残す際に recursive pin になる。`pin/rm` に失敗しても state からは消したままにし、起動時の突き合わせで報告される。
 
 打ち切った取得や解放したコンテンツのブロックは Kubo の blockstore に残り、GC で消える。compose の Kubo は `--enable-gc` で起動する（GC は repo が `Datastore.StorageMax` × `StorageGCWatermark` を超えたときに `Datastore.GCPeriod` ごとに走る）。
 
 ### 並行処理
 
 - タスクは同時に最大 `concurrency` 個が 3〜7 を実行する（セマフォ）。
+- 同じ pubkey のサイトのタスクは同時に `max_sites_per_account` 個まで。超えた分のイベントは捨て、次の poll で拾い直す。
 - 同じサイト（`pubkey:d`）のタスクは同時に 1 つだけ。実行中に同じサイトのイベントが来たら、実行中のものと待機中のものより `created_at` が新しいときだけ待機に置き（待機は 1 件で、新しいもので上書き）、実行が終わったら同じタスクで続けて処理する。
 - ポリシー判定・pin・unpin・state の更新（4〜7）は state のロックの中で直列に行うので、並行に取得しても容量の判定は既に確定した pin を必ず見る。取得中の一時的なディスク使用量は最大で `concurrency` × `fetch_limit` になる。
 - Ctrl-C で終了するとき、実行中のタスクは中断される。state は一時ファイル経由で保存するので壊れない。
 
 ### ポリシー判定（policy.rs）
 
-入力: 同サイトの既存版、使用量（他サイトの合計と、同じ pubkey の他サイトの合計）、候補イベント（cid, size, created_at）、ポリシー設定、現在時刻。出力: `Decision { pin: Option<String>, unpin: Vec<String>, reason: String }`。純粋関数。
+入力: 同サイトの既存版、使用量（他サイトの合計容量、同じ pubkey の他サイトの合計容量とサイト数）、候補イベント（cid, size, created_at）、ポリシー設定、現在時刻。出力: `Decision { pin: Option<String>, unpin: Vec<String>, reason: String }`。純粋関数。
 
 判定順:
 
 1. 同じ CID が既に pin 済みなら skip（`duplicate_cid`）。
-2. `created_at` が同サイトの最新受理版以下なら skip（`stale`）。`min_update_interval` の値によらず適用される。
-3. `created_at` が最新受理版から `min_update_interval` 未満なら skip。
-4. `size` が `max_update_size` を超えるなら skip。
-5. 同サイト合計が `max_per_site` を超えるなら古い版から evict する。新版単体で超えるなら skip。
-6. `keep_versions` 超過分の古い版を evict する。`keep_versions` は最低 1 に丸められる。
-7. `keep_days` より古い版を evict する。最新版は残す。
-8. 5〜7 の evict 後、同じ pubkey の全サイト合計が `max_per_account` を超えるなら skip（`max_per_account`）。同じアカウントの他サイトは削らない。
-9. 5〜7 の evict 後の全サイト合計が `max_total_storage` を超えるなら skip。他サイトは削らない。
+2. 同サイトに記録済みの版が無く、同じ pubkey の他のサイト（記録済みの版があるもの）が `max_sites_per_account` 個以上あれば skip（`max_sites_per_account`）。既存サイトの更新には適用しない。
+3. `created_at` が同サイトの最新受理版以下なら skip（`stale`）。`min_update_interval` の値によらず適用される。
+4. `created_at` が最新受理版から `min_update_interval` 未満なら skip。
+5. `size` が `max_update_size` を超えるなら skip。
+6. 同サイト合計が `max_per_site` を超えるなら古い版から evict する。新版単体で超えるなら skip。
+7. `keep_versions` 超過分の古い版を evict する。`keep_versions` は最低 1 に丸められる。
+8. `keep_days` より古い版を evict する。最新版は残す。
+9. 6〜8 の evict 後、同じ pubkey の全サイト合計が `max_per_account` を超えるなら skip（`max_per_account`）。同じアカウントの他サイトは削らない。
+10. 6〜8 の evict 後の全サイト合計が `max_total_storage` を超えるなら skip。他サイトは削らない。
 
-`size` が不明な事前判定では 4 を飛ばし、新版のサイズを 0 として 5〜9 を評価する。
+`size` が不明な事前判定では 5 を飛ばし、新版のサイズを 0 として 6〜10 を評価する。
 
 ### NIP-05 検証（nip05.rs）
 
@@ -282,7 +287,7 @@ agent 側の適用（事前判定の後、取得の前）:
 | `warn` | 検証して結果を記録し、`Verified` 以外は warn ログ。取得に進む |
 | `require` | 検証して結果を記録し、`Verified` のときだけ取得に進む |
 
-結果は `state.verifications` をキャッシュとして使う。`checked_at` から `nip05_cache_ttl`（既定 1 日、`error` は 15 分とのうち短い方）が経つまでは再検証せず、記録済みの `status` が `verified` かどうかで判断する。`nip05_cache_ttl = 0` なら毎回検証する。
+結果は `state.verifications` をキャッシュとして使う。`checked_at` から `nip05_cache_ttl`（既定 1 日、`error` は 15 分とのうち短い方）が経つまでは再検証せず、記録済みの `status` が `verified` かどうかで判断する。`nip05_cache_ttl = 0` なら毎回検証する。検証結果を記録するたびに、その pubkey の pin されていないサイトの記録を `checked_at` の新しい順に `max_sites_per_account` 件だけ残して消す。
 
 `Nip05Verify` トレイトとして定義され、テストではインメモリの fake を使う。
 
@@ -294,7 +299,7 @@ agent 側の適用（事前判定の後、取得の前）:
 {
   "sites": {
     "<pubkey hex>:<d>": [
-      { "cid": "bafy...", "size": 12345, "created_at": 1700000000, "pinned_at": 1700000100 }
+      { "cid": "bafy...", "size": 12345, "created_at": 1700000000, "pinned_at": 1700000100, "preexisting_pin": true }
     ]
   },
   "verifications": {
@@ -304,9 +309,10 @@ agent 側の適用（事前判定の後、取得の前）:
 ```
 
 - `status` は `verified` / `mismatch` / `not_applicable` / `error`。
-- `verifications` は `#[serde(default)]` で、無い state.json も読める。
+- `sites` と `verifications` は必須キー（空なら `{}`）。state.json が存在しない、または空白だけのときは空の state として扱う。
 - `sites` の `size` は `dag/stat` の `TotalSize`（`size` タグの値ではない）。
-- サイズは keep_versions × フォロー中サイト数に比例し、evict や unfollow でエントリは消える。`verifications` は pin されなかったサイトの分も残り、unfollow で消える。
+- `preexisting_pin` は、SWING が pin する前からその CID が Kubo で pin されていたかどうか。必須キーで、このフィールドが無い頃の state.json は読めない。
+- サイズは keep_versions × フォロー中サイト数に比例し、evict や unfollow でエントリは消える。`verifications` は pin されなかったサイトの分も pubkey ごとに `max_sites_per_account` 件まで残り、unfollow で消える。
 
 ## Kubo RPC
 
@@ -315,6 +321,7 @@ agent 側の適用（事前判定の後、取得の前）:
 | 取得 | `POST /api/v0/dag/export?arg={cid}&progress=false`（CAR をストリームで読み捨て、バイト数を数える） | 全体 `SWING_PIN_TIMEOUT`（既定 15 分）、無通信 `SWING_FETCH_IDLE_TIMEOUT`（既定 2 分） |
 | pin | `POST /api/v0/pin/add?arg={cid}&recursive=true&offline=true` | `SWING_PIN_TIMEOUT` |
 | 実サイズ | `POST /api/v0/dag/stat?arg={cid}&progress=false&offline=true` → `TotalSize` | 300 秒 |
+| 既存 pin の確認 | `POST /api/v0/pin/ls?arg={cid}&type=recursive`、無ければ `type=direct`。エラーメッセージに `is not pinned` を含む非 2xx は「pin されていない」 | 各 30 秒 |
 | unpin | `POST /api/v0/pin/rm?arg={cid}&recursive=true` | 60 秒 |
 | サイズ（publish のみ） | `POST /api/v0/files/stat?arg=/ipfs/{cid}` → `CumulativeSize` | 30 秒 |
 | 一覧 | `POST /api/v0/pin/ls?type=recursive` | 60 秒 |
@@ -343,12 +350,14 @@ CID はクエリに入れる前にパーセントエンコードする。非 2xx
 
 | サービス | 内容 |
 |---|---|
-| `ipfs` | `ipfs/kubo:latest`。`command` はイメージ既定（`daemon --migrate=true --agent-version-suffix=docker`）に `--enable-gc` を足したもの。volume `ipfs-data:/data/ipfs`。公開ポートは `4001/tcp` と `4001/udp` のみ（RPC 5001 と Gateway 8080 は非公開）。healthcheck は `ipfs id` |
+| `ipfs` | `ipfs/kubo:latest`。`command` はイメージ既定（`daemon --migrate=true --agent-version-suffix=docker`）に `--enable-gc` を足したもの。環境変数 `SWING_KUBO_STORAGE_MAX`（compose の変数展開で `SWING_KUBO_STORAGE_MAX`、無ければ `SWING_MAX_TOTAL_STORAGE`、無ければ `100GB`）。volume `ipfs-data:/data/ipfs` と `./docker/kubo-init.d:/container-init.d:ro`。公開ポートは `4001/tcp` と `4001/udp` のみ（RPC 5001 と Gateway 8080 は非公開）。healthcheck は `ipfs id` |
 | `mirror` | `build: .`。`env_file: .env`。`SWING_IPFS_API=http://ipfs:5001`、`SWING_STATE_DIR=/data`、`RUST_LOG=info`。volume `swing-data:/data`。`depends_on: ipfs` を `condition: service_healthy` で待つ |
+
+Kubo イメージの起動スクリプト（`start_ipfs`）は、repo の初期化の有無にかかわらず毎回の起動時に `/container-init.d/*.sh` を実行してから daemon を起動する。`docker/kubo-init.d/001-storage-max.sh` はそこで `ipfs config Datastore.StorageMax "$SWING_KUBO_STORAGE_MAX"` を実行する。変数が空ならスクリプトが失敗し、コンテナは起動しない。
 
 両サービスとも `restart: unless-stopped`。名前付き volume は `ipfs-data` と `swing-data`。`swing-data` は初回マウント時にイメージ側の `/data` の所有者（`swing`）を引き継ぐ。
 
-`.env.example` は `SWING_NOSTR_SECRET_KEY`、`SWING_NOSTR_RELAYS`、`SWING_MIRROR_SET`、`SWING_MAX_TOTAL_STORAGE` の 4 つ。
+`.env.example` は `SWING_NOSTR_SECRET_KEY`、`SWING_NOSTR_RELAYS`、`SWING_MIRROR_SET`、`SWING_MAX_TOTAL_STORAGE` の 4 つと、コメントアウトした `SWING_KUBO_STORAGE_MAX`。`.env` は mirror の `env_file` であると同時に、compose の変数展開（`SWING_KUBO_STORAGE_MAX` の既定値）にも使われる。
 
 ## docs/examples/publish.sh
 

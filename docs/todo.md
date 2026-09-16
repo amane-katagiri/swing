@@ -11,9 +11,7 @@
 | 中 | NIP-05 の実 HTTP 経路の統合テスト（ローカル TLS エンドポイント相手、`#[ignore]`） | レビュー |
 | 中 | `publish` の `--url` を省略可、`--site` を必須にして IPFS のみのサイトを publish できるようにする | レビュー |
 | 中 | 取得に失敗した CID を覚えて指数バックオフで再試行する。今は poll ごとに同じ CID の取得を試み、そのたびに最大 `SWING_FETCH_IDLE_TIMEOUT` の間、並行枠を 1 つ使う | レビュー（DoS） |
-| 中 | 1 pubkey あたりのサイト数（`d` の種類）の上限。容量は `max_per_account` で抑えたが、中身の無い `d` を大量に出されると NIP-05 検証の回数と `state.verifications` の件数が増える | レビュー（DoS） |
 | 低 | relay から取得するサイトイベントの件数上限。`fetch_events` は件数無制限で、30 秒のタイムアウトだけで抑えている | レビュー（DoS） |
-| 低 | 取得後に reject した CID を、運用者が SWING の外で手動 pin していた場合も unpin してしまう。取得前に `pin/ls?arg=` で既存 pin を確認する | レビュー |
 | 低 | NIP-05 のアドレスフィルタで NAT64（`64:ff9b::/96`）や 6to4（`2002::/16`）に埋め込まれた IPv4 を判定する | レビュー |
 | 低 | `swing status`: ローカルの state.json と Kubo の pin 一覧の突き合わせ結果を表示する | レビュー |
 | 低 | 「全履歴保持」オプション（`keep_versions` / `keep_days` を無制限にする明示的な設定） | plan §4 |
