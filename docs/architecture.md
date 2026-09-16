@@ -135,6 +135,7 @@ Published.
 - 既存の Follow Set が無い状態で `add` すると、`["title", "SWING mirror list"]` タグ付きで新規作成する。
 - 追加済みの鍵の `add`、未登録の鍵の `remove` は no-op として報告し、変更が無ければ publish しない。
 - `list` は読み取り専用で、npub と hex を併記する。
+- `list` / `add` / `remove` と `sites` は、relay から取得した Follow Set と `state.json` の `follow_set`（agent が保存したもの。検証条件は「Follow Set の選び方」と同じ）を比べ、新しい方を使う。保存済みの方を使ったときは、`(relays returned an older follow set; ...)` か `(follow set not found on relays; ...)` を表示する。relay から古い版しか取れないときに、それを元に編集して新しい版を上書きしないため。state.json は読むだけで書かない。
 
 ### sites
 
@@ -218,15 +219,35 @@ kind・`d` タグの既定値は「設定と環境変数」を参照（サイト
 ## mirror-agent の動作
 
 1. relay 群に接続する。
-2. 自分の Follow Set を取得する。無ければ警告を出し、`poll_interval` ごとに再試行する。
+2. 自分の Follow Set を決める（後述「Follow Set の選び方」）。決まらなければ警告を出し、`poll_interval` ごとに再試行する。
 3. 対象 pubkey 群のサイトイベントを過去分も含めて取得し（`kinds=[site_event_kind], authors=targets`）、以後は購読で新着を受ける。同じ `pubkey + d` は `created_at` 最大のものを最新とみなす。
 4. 受理ゲート: 送信元 pubkey が現在の Follow Set に含まれないイベントは warn を出して無視する。購読 ID と kind が一致しない通知は debug ログで捨てる。
 5. サイトイベントはサイト単位のタスクに渡して並行に処理する（後述「並行処理」）。各タスクは次の「保存の順序」に従って処理し、`state.json` を保存する。
 6. `poll_interval` ごとに、まず sweep（後述）を行い、続いて Follow Set を再取得する。同時に対象全員のサイトイベントを取り直し、サイトごとの最新版を再投入する。投入するのは pubkey ごとに、保存済みのサイトすべてと、それ以外のサイトを `created_at` の新しい順に合計 `max_sites_per_account` 件まで（保存済みだけで上限を超えていれば保存済みのみ）。これにより一時的な取得失敗や保存失敗は次の tick で再試行される。
-7. `remove_on_unfollow = true` のとき、Follow Set を取得できるたびに、`state.sites` か `state.verifications` にエントリがある pubkey のうち今の Follow Set にいないものを削除して state を保存し、`<mfs_root>/agent/<pubkey hex>` を MFS から消す。前回の Follow Set との差分ではなく state と比べるので、agent の停止中に外した相手や、`false` から `true` に変えた時点で残っていた相手も消える。Follow Set が見つからない、または取得に失敗した tick では何もしない。`false` のときは、外れた相手の保存済みの版を残す（新しい版は取らない。保持期間の適用は続くので、最新版は残り続ける。容量の集計にも入り続ける。起動時の突き合わせで壊れていた版は取り直さずに消える）。Follow Set の更新はこの削除より先に反映する。
+7. `remove_on_unfollow = true` のとき、Follow Set が決まるたびに、`state.sites` か `state.verifications` にエントリがある pubkey のうち今の Follow Set にいないものを削除して state を保存し、`<mfs_root>/agent/<pubkey hex>` を MFS から消す。前回の Follow Set との差分ではなく state と比べるので、agent の停止中に外した相手や、`false` から `true` に変えた時点で残っていた相手も消える。Follow Set が決まらない tick では何もしない。`false` のときは、外れた相手の保存済みの版を残す（新しい版は取らない。保持期間の適用は続くので、最新版は残り続ける。容量の集計にも入り続ける。起動時の突き合わせで壊れていた版は取り直さずに消える）。Follow Set の更新はこの削除より先に反映する。
 8. 起動時に突き合わせ（後述）を行う。
 
 relay の切断や Kubo のエラー、不正なイベントはログに出して処理を続ける。relay への再接続と再購読は nostr-sdk が自動で行う（再試行間隔 10 秒から最大 60 秒）。通知チャネル（容量 2048）が溢れた分は nostr-sdk が黙って捨てるが、6 の定期取り直しで回収される。通知ストリーム自体が終わった場合（relay プールの shutdown）はエラーで終了する。
+
+### Follow Set の選び方
+
+relay から取得した Follow Set と、`state.follow_set` に保存した Follow Set を比べて使う方を決める。relay が古い版を返したり、Follow Set を失ったりしても、外していない相手のサイトを消さないため。
+
+- 取得では、kind 30000、作者が自分、`d` が `mirror_set`、署名が正しいものだけを候補にし、その中で最も新しいものを選ぶ。
+- 新しさは NIP-01 の置き換え可能イベントの規則で比べる（`created_at` が大きい方、同じなら `id` が小さい方）。
+- 保存済みの版も同じ条件（kind・作者・`d`・署名）を満たすときだけ使う。`mirror_set` を変えた場合、古い `d` の保存済みの版は使わない。
+
+| relay から | 保存済み | 使う版 | state に保存 | relay に再送 |
+|---|---|---|---|---|
+| 取れた | 無い | 取れた版 | する | しない |
+| 取れた（保存済みと同じ `id`） | ある | 保存済み | しない | しない |
+| 取れた（保存済みより新しい） | ある | 取れた版 | する | しない |
+| 取れた（保存済みより古い） | ある | 保存済み | しない | する |
+| 見つからない | ある | 保存済み | しない | する |
+| 取得に失敗 | ある | 保存済み | しない | しない |
+| 見つからない、または失敗 | 無い | 決まらない | — | — |
+
+再送は署名済みのイベントをそのまま全 relay に送る。どの relay にも受理されなければ warn を出す。自分で Follow Set を NIP-09 で削除しても、agent は保存済みの版を再送し続ける。ミラーをやめるときは `swing mirror remove` で対象を外す。
 
 ### MFS の使い方
 
@@ -345,12 +366,14 @@ agent 側の適用（事前判定の後、取得の前）:
   },
   "verifications": {
     "<pubkey hex>:<d>": { "status": "verified", "detail": null, "checked_at": 1700000100 }
-  }
+  },
+  "follow_set": { "id": "...", "pubkey": "...", "created_at": 1700000000, "kind": 30000, "tags": [["d", "swing"], ["p", "..."]], "content": "", "sig": "..." }
 }
 ```
 
 - `status` は `verified` / `mismatch` / `not_applicable` / `error`。
-- すべてのキーが必須（`sites` と `verifications` は空なら `{}`）。state.json が存在しない、または空白だけのときは空の state として扱う。
+- `follow_set` は「Follow Set の選び方」で最後に保存した署名済みイベント（NIP-01 の JSON）。まだ無ければ `null`。
+- `sites` と `verifications` は必須キー（空なら `{}`）。`follow_set` は serde の `Option` なので、キーが無くても `null` として読む。state.json が存在しない、または空白だけのときは空の state として扱う。
 - キーの `<pubkey hex>` と `<d>` は最初の `:` で分ける（`d` に `:` が含まれてもよい）。
 - `sites` の `size` は `dag/stat` の `TotalSize`（`size` タグの値ではない）。
 - サイズは keep_versions × フォロー中サイト数に比例し、evict や unfollow でエントリは消える。`verifications` は保存されなかったサイトの分も pubkey ごとに `max_sites_per_account` 件まで残り、unfollow で消える。

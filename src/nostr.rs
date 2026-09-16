@@ -45,11 +45,11 @@ impl RelayClient {
             .timeout(Duration::from_secs(30))
             .await
             .context("fetching follow set")?;
-        // Defense in depth against a relay that ignores the author filter.
+        // Defense in depth against a relay that ignores the filter.
         Ok(events
             .into_iter()
-            .filter(|e| e.pubkey == self.keys.public_key())
-            .max_by_key(|e| e.created_at))
+            .filter(|e| is_follow_set_of(e, &self.keys.public_key(), mirror_set))
+            .reduce(|a, b| if is_newer_replaceable(&b, &a) { b } else { a }))
     }
 
     pub async fn fetch_site_events(
@@ -126,6 +126,63 @@ pub fn print_relay_send_results(
         } else {
             println!("  \u{2717} {relay_url}");
         }
+    }
+}
+
+// NIP-01: for replaceable events the later created_at wins, and on a tie
+// the lowest id is kept.
+pub fn is_newer_replaceable(a: &Event, b: &Event) -> bool {
+    (a.created_at, std::cmp::Reverse(a.id)) > (b.created_at, std::cmp::Reverse(b.id))
+}
+
+pub fn is_follow_set_of(event: &Event, author: &PublicKey, mirror_set: &str) -> bool {
+    event.kind == Kind::Custom(30000)
+        && event.pubkey == *author
+        && event.tags.identifier().as_deref() == Some(mirror_set)
+        && event.verify().is_ok()
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FollowSetChoice {
+    pub event: Event,
+    pub save: bool,
+    pub republish: bool,
+}
+
+pub fn choose_follow_set(
+    fetched: Option<Event>,
+    fetch_succeeded: bool,
+    stored: Option<Event>,
+) -> Option<FollowSetChoice> {
+    match (fetched, stored) {
+        (None, None) => None,
+        (Some(event), None) => Some(FollowSetChoice {
+            event,
+            save: true,
+            republish: false,
+        }),
+        (None, Some(event)) => Some(FollowSetChoice {
+            event,
+            save: false,
+            republish: fetch_succeeded,
+        }),
+        (Some(fetched), Some(stored)) if fetched.id == stored.id => Some(FollowSetChoice {
+            event: stored,
+            save: false,
+            republish: false,
+        }),
+        (Some(fetched), Some(stored)) if is_newer_replaceable(&fetched, &stored) => {
+            Some(FollowSetChoice {
+                event: fetched,
+                save: true,
+                republish: false,
+            })
+        }
+        (Some(_), Some(stored)) => Some(FollowSetChoice {
+            event: stored,
+            save: false,
+            republish: true,
+        }),
     }
 }
 
@@ -509,5 +566,75 @@ mod tests {
             latest[&(k2.public_key().to_hex(), "site-a".to_string())].cid,
             "bafy-k2"
         );
+    }
+
+    fn follow_set(keys: &Keys, d: &str, created_at: u64, marker: &str) -> Event {
+        EventBuilder::new(Kind::Custom(30000), marker)
+            .tag(Tag::identifier(d))
+            .custom_created_at(Timestamp::from_secs(created_at))
+            .finalize(keys)
+            .unwrap()
+    }
+
+    #[test]
+    fn newer_replaceable_uses_created_at_then_lowest_id() {
+        let k = keys();
+        let old = follow_set(&k, "swing", 100, "a");
+        let new = follow_set(&k, "swing", 200, "b");
+        assert!(is_newer_replaceable(&new, &old));
+        assert!(!is_newer_replaceable(&old, &new));
+        assert!(!is_newer_replaceable(&old, &old));
+
+        let x = follow_set(&k, "swing", 100, "x");
+        let y = follow_set(&k, "swing", 100, "y");
+        let (low, high) = if x.id < y.id { (x, y) } else { (y, x) };
+        assert!(is_newer_replaceable(&low, &high));
+        assert!(!is_newer_replaceable(&high, &low));
+    }
+
+    #[test]
+    fn follow_set_identity_checks_kind_author_d_and_signature() {
+        let k = keys();
+        let ev = follow_set(&k, "swing", 100, "");
+        assert!(is_follow_set_of(&ev, &k.public_key(), "swing"));
+        assert!(!is_follow_set_of(&ev, &k.public_key(), "other"));
+        assert!(!is_follow_set_of(&ev, &keys().public_key(), "swing"));
+
+        let mut tampered = ev.clone();
+        tampered.content = "changed".to_string();
+        assert!(!is_follow_set_of(&tampered, &k.public_key(), "swing"));
+
+        let site = EventBuilder::new(Kind::Custom(35980), "")
+            .tag(Tag::identifier("swing"))
+            .finalize(&k)
+            .unwrap();
+        assert!(!is_follow_set_of(&site, &k.public_key(), "swing"));
+    }
+
+    #[test]
+    fn choose_follow_set_prefers_the_newest_and_repairs_relays() {
+        let k = keys();
+        let old = follow_set(&k, "swing", 100, "old");
+        let new = follow_set(&k, "swing", 200, "new");
+
+        assert_eq!(choose_follow_set(None, true, None), None);
+
+        let c = choose_follow_set(Some(new.clone()), true, None).unwrap();
+        assert_eq!((c.event.id, c.save, c.republish), (new.id, true, false));
+
+        let c = choose_follow_set(Some(new.clone()), true, Some(old.clone())).unwrap();
+        assert_eq!((c.event.id, c.save, c.republish), (new.id, true, false));
+
+        let c = choose_follow_set(Some(old.clone()), true, Some(new.clone())).unwrap();
+        assert_eq!((c.event.id, c.save, c.republish), (new.id, false, true));
+
+        let c = choose_follow_set(Some(new.clone()), true, Some(new.clone())).unwrap();
+        assert_eq!((c.event.id, c.save, c.republish), (new.id, false, false));
+
+        let c = choose_follow_set(None, true, Some(new.clone())).unwrap();
+        assert_eq!((c.event.id, c.save, c.republish), (new.id, false, true));
+
+        let c = choose_follow_set(None, false, Some(new.clone())).unwrap();
+        assert_eq!((c.event.id, c.save, c.republish), (new.id, false, false));
     }
 }

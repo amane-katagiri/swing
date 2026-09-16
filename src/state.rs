@@ -2,6 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
+use nostr_sdk::prelude::Event;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -33,6 +34,7 @@ pub fn split_site_key(key: &str) -> Option<(&str, &str)> {
 pub struct State {
     pub sites: BTreeMap<SiteKey, Vec<VersionRecord>>,
     pub verifications: BTreeMap<SiteKey, Verification>,
+    pub follow_set: Option<Event>,
 }
 
 impl State {

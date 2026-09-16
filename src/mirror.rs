@@ -123,9 +123,47 @@ fn print_mirror_set(mirror_set_name: &str, set: &MirrorSet) {
     }
 }
 
+async fn load_state(config: &Config) -> Result<State> {
+    let state_path = config.agent.state_dir.join("state.json");
+    if state_path.exists() {
+        State::load(&state_path).await
+    } else {
+        Ok(State::default())
+    }
+}
+
+fn newest_follow_set(
+    fetched: Option<Event>,
+    saved: Option<Event>,
+) -> (Option<Event>, Option<&'static str>) {
+    match (fetched, saved) {
+        (Some(fetched), Some(saved)) if nostr::is_newer_replaceable(&saved, &fetched) => (
+            Some(saved),
+            Some("(relays returned an older follow set; using the newer one saved by the agent)"),
+        ),
+        (None, Some(saved)) => (
+            Some(saved),
+            Some("(follow set not found on relays; using the one saved by the agent)"),
+        ),
+        (fetched, _) => (fetched, None),
+    }
+}
+
+async fn current_follow_set(relay: &RelayClient, config: &Config) -> Result<Option<Event>> {
+    let fetched = relay.fetch_follow_set(&config.nostr.mirror_set).await?;
+    let saved = load_state(config).await?.follow_set.filter(|ev| {
+        nostr::is_follow_set_of(ev, &relay.keys.public_key(), &config.nostr.mirror_set)
+    });
+    let (event, note) = newest_follow_set(fetched, saved);
+    if let Some(note) = note {
+        println!("{note}");
+    }
+    Ok(event)
+}
+
 pub async fn list(config: &Config) -> Result<()> {
     let relay = RelayClient::connect(&config.nostr.secret_key, &config.nostr.relays).await?;
-    let event = relay.fetch_follow_set(&config.nostr.mirror_set).await?;
+    let event = current_follow_set(&relay, config).await?;
     match event {
         Some(ev) => print_mirror_set(&config.nostr.mirror_set, &MirrorSet::from_event(&ev)),
         None => println!("(no follow set found)"),
@@ -151,7 +189,7 @@ async fn publish_mirror_set(relay: &RelayClient, config: &Config, set: &MirrorSe
 pub async fn add(config: &Config, inputs: &[String]) -> Result<()> {
     let keys = parse_pubkey_inputs(inputs)?;
     let relay = RelayClient::connect(&config.nostr.secret_key, &config.nostr.relays).await?;
-    let existing = relay.fetch_follow_set(&config.nostr.mirror_set).await?;
+    let existing = current_follow_set(&relay, config).await?;
     let mut set = existing
         .as_ref()
         .map(MirrorSet::from_event)
@@ -186,7 +224,7 @@ pub async fn add(config: &Config, inputs: &[String]) -> Result<()> {
 pub async fn remove(config: &Config, inputs: &[String]) -> Result<()> {
     let keys = parse_pubkey_inputs(inputs)?;
     let relay = RelayClient::connect(&config.nostr.secret_key, &config.nostr.relays).await?;
-    let existing = relay.fetch_follow_set(&config.nostr.mirror_set).await?;
+    let existing = current_follow_set(&relay, config).await?;
     let mut set = match existing {
         Some(ev) => MirrorSet::from_event(&ev),
         None => {
@@ -288,7 +326,7 @@ fn print_account_header(pubkey_hex: &str, suffix: &str) -> Result<PublicKey> {
 
 pub async fn sites(config: &Config) -> Result<()> {
     let relay = RelayClient::connect(&config.nostr.secret_key, &config.nostr.relays).await?;
-    let follow_event = relay.fetch_follow_set(&config.nostr.mirror_set).await?;
+    let follow_event = current_follow_set(&relay, config).await?;
     let targets = match &follow_event {
         Some(event) => nostr::extract_follow_set_pubkeys(event),
         None => {
@@ -314,12 +352,7 @@ pub async fn sites(config: &Config) -> Result<()> {
     };
     relay.client.shutdown().await;
 
-    let state_path = config.agent.state_dir.join("state.json");
-    let state = if state_path.exists() {
-        State::load(&state_path).await?
-    } else {
-        State::default()
-    };
+    let state = load_state(config).await?;
 
     let mut by_pubkey: BTreeMap<String, Vec<&nostr::SiteEvent>> = BTreeMap::new();
     for pk in &targets {
@@ -564,5 +597,38 @@ mod tests {
             .map(|(d, v)| (d.as_str(), v.cid.as_str()))
             .collect();
         assert_eq!(sites, vec![("x.example", "new"), ("y:z", "yz")]);
+    }
+
+    fn signed_follow_set(keys: &Keys, created_at: u64) -> Event {
+        MirrorSet::empty()
+            .build_event_builder("swing")
+            .custom_created_at(Timestamp::from_secs(created_at))
+            .finalize(keys)
+            .unwrap()
+    }
+
+    #[test]
+    fn newest_follow_set_prefers_a_newer_saved_copy() {
+        let k = keys();
+        let old = signed_follow_set(&k, 100);
+        let new = signed_follow_set(&k, 200);
+
+        let (ev, note) = newest_follow_set(Some(old.clone()), Some(new.clone()));
+        assert_eq!(ev.unwrap().id, new.id);
+        assert!(note.is_some());
+
+        let (ev, note) = newest_follow_set(Some(new.clone()), Some(old.clone()));
+        assert_eq!(ev.unwrap().id, new.id);
+        assert!(note.is_none());
+
+        let (ev, note) = newest_follow_set(None, Some(old.clone()));
+        assert_eq!(ev.unwrap().id, old.id);
+        assert!(note.is_some());
+
+        let (ev, note) = newest_follow_set(Some(old.clone()), None);
+        assert_eq!(ev.unwrap().id, old.id);
+        assert!(note.is_none());
+
+        assert_eq!(newest_follow_set(None, None), (None, None));
     }
 }

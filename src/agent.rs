@@ -100,17 +100,44 @@ async fn refresh_follow_set<C, N>(
     N: Nip05Verify + Send + Sync + 'static,
 {
     let config = &agent.config;
-    let follow_event = match relay.fetch_follow_set(&config.nostr.mirror_set).await {
-        Ok(Some(ev)) => ev,
-        Ok(None) => {
-            warn!(mirror_set = %config.nostr.mirror_set, "no follow set found yet; will retry");
-            return;
-        }
+    let (fetched, fetch_succeeded) = match relay.fetch_follow_set(&config.nostr.mirror_set).await {
+        Ok(event) => (event, true),
         Err(e) => {
-            warn!(error = %e, "fetching follow set failed; will retry");
-            return;
+            warn!(error = %e, "fetching follow set failed");
+            (None, false)
         }
     };
+    let own = relay.keys.public_key();
+    let choice = {
+        let mut state = agent.state.lock().await;
+        let stored = state
+            .follow_set
+            .clone()
+            .filter(|ev| nostr::is_follow_set_of(ev, &own, &config.nostr.mirror_set));
+        let choice = nostr::choose_follow_set(fetched, fetch_succeeded, stored);
+        if let Some(choice) = &choice
+            && choice.save
+        {
+            state.follow_set = Some(choice.event.clone());
+            agent.save(&state, "follow set update").await;
+        }
+        choice
+    };
+    let Some(choice) = choice else {
+        warn!(mirror_set = %config.nostr.mirror_set, "no follow set found yet; will retry");
+        return;
+    };
+    if choice.republish {
+        warn!(event_id = %choice.event.id, "relays returned an older follow set or none; republishing the saved one");
+        match relay.publish_to_relays(&choice.event).await {
+            Ok(output) if output.success.is_empty() => {
+                warn!("no relay accepted the republished follow set")
+            }
+            Ok(_) => {}
+            Err(e) => warn!(error = %e, "republishing the follow set failed"),
+        }
+    }
+    let follow_event = choice.event;
 
     let new_targets: HashSet<PublicKey> = nostr::extract_follow_set_pubkeys(&follow_event)
         .into_iter()
