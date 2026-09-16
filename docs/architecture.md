@@ -140,6 +140,8 @@ Published.
 
 Follow Set の対象者ごとに、サイト単位で最新のサイトイベント 1 行（`d`、`cid`、`url`、`size`、`created_at`、NIP-05 検証結果、`[stored]` / `[not stored]`）を表示する。バージョンごとの一覧ではない。`state.json`（`[agent].state_dir`）があれば読んで、その CID を agent が保存しているかと検証結果に使う。読み取り専用で、state は作らない。
 
+続けて、state に保存済みの版があるのに Follow Set にいない pubkey を `Unfollowed but still stored` の見出しの下に `[unfollowed]` 付きで表示する。サイトごとに state の最新の版を 1 行（`url` は `-`）出す。見出しには `remove_on_unfollow` に応じて、次の poll で消えるか、残している理由を添える。Follow Set が見つからない場合もこの部分は表示する。
+
 ### key generate
 
 `nostr_sdk::Keys::generate()` で新しい鍵ペアを作り、nsec / npub / hex（秘密鍵・公開鍵）を表示する。設定ファイルも `SWING_NOSTR_SECRET_KEY` も不要で、`Config::load` を呼ばない。ロジックは `src/key.rs` の純粋関数（`Keys` を受け取り 4 つの文字列を返す）に切り出してあり、CLI 側はそれを表示するだけ。
@@ -221,7 +223,7 @@ kind・`d` タグの既定値は「設定と環境変数」を参照（サイト
 4. 受理ゲート: 送信元 pubkey が現在の Follow Set に含まれないイベントは warn を出して無視する。購読 ID と kind が一致しない通知は debug ログで捨てる。
 5. サイトイベントはサイト単位のタスクに渡して並行に処理する（後述「並行処理」）。各タスクは次の「保存の順序」に従って処理し、`state.json` を保存する。
 6. `poll_interval` ごとに、まず sweep（後述）を行い、続いて Follow Set を再取得する。同時に対象全員のサイトイベントを取り直し、サイトごとの最新版を再投入する。投入するのは pubkey ごとに、保存済みのサイトすべてと、それ以外のサイトを `created_at` の新しい順に合計 `max_sites_per_account` 件まで（保存済みだけで上限を超えていれば保存済みのみ）。これにより一時的な取得失敗や保存失敗は次の tick で再試行される。
-7. Follow Set から外れた相手は、`remove_on_unfollow = true` のときのみ、その pubkey の `state.sites` と `state.verifications` のエントリを削除して state を保存し、`<mfs_root>/agent/<pubkey hex>` を MFS から消す。`false` のときは何もしない。Follow Set の更新はこの削除より先に反映する。
+7. `remove_on_unfollow = true` のとき、Follow Set を取得できるたびに、`state.sites` か `state.verifications` にエントリがある pubkey のうち今の Follow Set にいないものを削除して state を保存し、`<mfs_root>/agent/<pubkey hex>` を MFS から消す。前回の Follow Set との差分ではなく state と比べるので、agent の停止中に外した相手や、`false` から `true` に変えた時点で残っていた相手も消える。Follow Set が見つからない、または取得に失敗した tick では何もしない。`false` のときは、外れた相手の保存済みの版を残す（新しい版は取らない。保持期間の適用は続くので、最新版は残り続ける。容量の集計にも入り続ける。起動時の突き合わせで壊れていた版は取り直さずに消える）。Follow Set の更新はこの削除より先に反映する。
 8. 起動時に突き合わせ（後述）を行う。
 
 relay の切断や Kubo のエラー、不正なイベントはログに出して処理を続ける。relay への再接続と再購読は nostr-sdk が自動で行う（再試行間隔 10 秒から最大 60 秒）。通知チャネル（容量 2048）が溢れた分は nostr-sdk が黙って捨てるが、6 の定期取り直しで回収される。通知ストリーム自体が終わった場合（relay プールの shutdown）はエラーで終了する。

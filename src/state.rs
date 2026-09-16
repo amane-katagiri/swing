@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
@@ -105,6 +105,29 @@ impl State {
             .sum()
     }
 
+    pub fn accounts(&self) -> BTreeSet<String> {
+        self.sites
+            .keys()
+            .chain(self.verifications.keys())
+            .filter_map(|key| split_site_key(key).map(|(pubkey_hex, _)| pubkey_hex.to_string()))
+            .collect()
+    }
+
+    pub fn remove_account(&mut self, pubkey_hex: &str) -> Vec<SiteKey> {
+        let prefix = format!("{pubkey_hex}:");
+        let keys: BTreeSet<SiteKey> = self
+            .sites
+            .keys()
+            .chain(self.verifications.keys())
+            .filter(|k| k.starts_with(&prefix))
+            .cloned()
+            .collect();
+        for key in &keys {
+            self.remove_site(key);
+        }
+        keys.into_iter().collect()
+    }
+
     pub fn account_site_count(&self, pubkey_hex: &str) -> usize {
         let prefix = format!("{pubkey_hex}:");
         self.sites
@@ -203,6 +226,36 @@ mod tests {
     fn site_key_round_trips_even_when_d_contains_colons() {
         let key = site_key("ab", "a:b");
         assert_eq!(split_site_key(&key), Some(("ab", "a:b")));
+    }
+
+    #[test]
+    fn accounts_and_remove_account_cover_sites_and_verifications() {
+        let mut state = State::default();
+        state.apply_store(
+            &site_key("aa", "one.example"),
+            VersionRecord {
+                cid: "c".into(),
+                size: 1,
+                created_at: 1,
+                stored_at: 1,
+            },
+        );
+        let verification = Verification {
+            status: "mismatch".into(),
+            detail: None,
+            checked_at: 1,
+        };
+        state.set_verification(&site_key("aa", "two.example"), verification.clone());
+        state.set_verification(&site_key("bb", "x.example"), verification);
+        assert_eq!(
+            state.accounts().into_iter().collect::<Vec<_>>(),
+            vec!["aa", "bb"]
+        );
+
+        let removed = state.remove_account("aa");
+        assert_eq!(removed, vec!["aa:one.example", "aa:two.example"]);
+        assert_eq!(state.accounts().into_iter().collect::<Vec<_>>(), vec!["bb"]);
+        assert!(state.sites.is_empty());
     }
 
     #[test]

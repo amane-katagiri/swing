@@ -95,7 +95,7 @@ docker compose exec mirror swing mirror list
 docker compose exec mirror swing sites
 ```
 
-各サイトについて `d`（サイト識別子）、`cid`、`url`、`size`、`created_at`、NIP-05 の検証結果、保存状況（`stored` / `not stored`）が 1 行ずつ表示されます。
+各サイトについて `d`（サイト識別子）、`cid`、`url`、`size`、`created_at`、NIP-05 の検証結果、保存状況（`stored` / `not stored`）が 1 行ずつ表示されます。ミラー対象から外したのにまだ保存しているサイトは、最後に `[unfollowed]` として表示されます。これを消すには `remove_on_unfollow` を `true` にして mirror-agent を再起動してください。次の Follow Set の確認で消えます。
 
 コンテナのログで動作状況を確認することもできます。
 
@@ -167,7 +167,7 @@ NIP-05 は、`d` タグがドメイン名の形をしている場合に、その
 | `keep_versions` | `5` | サイトごとに保持する旧バージョンの数。超えた分は古い順に削除される |
 | `keep_days` | `365` | バージョンを保持する日数。最新版を除き、これより古い版は削除される |
 | `min_update_interval` | `10m` | 同じサイトの更新を受け付ける最短間隔。これより短い間隔で来た更新は保存されない |
-| `remove_on_unfollow` | `true` | 相手をミラー対象から外したときに、自動でそのサイトの保存をやめるかどうか |
+| `remove_on_unfollow` | `true` | 相手をミラー対象から外したときに、自動でそのサイトの保存をやめるかどうか。`false` なら最後に保存した版を残し続ける |
 | `nip05` | `warn` | 保存前に行う NIP-05 検証のモード（`off` / `warn` / `require`） |
 | `nip05_cache_ttl` | `1d` | NIP-05 の検証結果を再利用する期間 |
 

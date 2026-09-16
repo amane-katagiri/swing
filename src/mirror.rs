@@ -1,11 +1,11 @@
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 
 use anyhow::{Context, Result};
 use nostr_sdk::prelude::*;
 
 use crate::config::Config;
 use crate::nostr::{self, RelayClient};
-use crate::state::{self, State};
+use crate::state::{self, State, VersionRecord};
 
 const FOLLOW_SET_KIND: u16 = 30000;
 const DEFAULT_TITLE: &str = "SWING mirror list";
@@ -244,7 +244,7 @@ fn format_unix_timestamp(secs: u64) -> String {
     format!("{y:04}-{m:02}-{d:02} {hh:02}:{mm:02}:{ss:02} UTC")
 }
 
-fn format_site_line(ev: &nostr::SiteEvent, stored: bool, verification: Option<&str>) -> String {
+fn format_site_line(ev: &nostr::SiteEvent, status: &str, verification: Option<&str>) -> String {
     format!(
         "  d={:<24} cid={:<62} url={:<32} size={:<12} created_at={:<25} nip05={:<14} [{}]",
         ev.d,
@@ -255,34 +255,64 @@ fn format_site_line(ev: &nostr::SiteEvent, stored: bool, verification: Option<&s
             .unwrap_or_else(|| "-".to_string()),
         format_unix_timestamp(ev.created_at),
         verification.unwrap_or("-"),
-        if stored { "stored" } else { "not stored" }
+        status
     )
+}
+
+fn unfollowed_sites(
+    state: &State,
+    targets: &BTreeSet<String>,
+) -> BTreeMap<String, Vec<(String, VersionRecord)>> {
+    let mut out: BTreeMap<String, Vec<(String, VersionRecord)>> = BTreeMap::new();
+    for (key, versions) in &state.sites {
+        let Some((pubkey_hex, d)) = state::split_site_key(key) else {
+            continue;
+        };
+        if targets.contains(pubkey_hex) {
+            continue;
+        }
+        if let Some(latest) = versions.iter().max_by_key(|v| v.created_at) {
+            out.entry(pubkey_hex.to_string())
+                .or_default()
+                .push((d.to_string(), latest.clone()));
+        }
+    }
+    out
+}
+
+fn print_account_header(pubkey_hex: &str, suffix: &str) -> Result<PublicKey> {
+    let pk = PublicKey::from_hex(pubkey_hex).context("parsing pubkey")?;
+    println!("{} ({}){suffix}", npub(&pk), pubkey_hex);
+    Ok(pk)
 }
 
 pub async fn sites(config: &Config) -> Result<()> {
     let relay = RelayClient::connect(&config.nostr.secret_key, &config.nostr.relays).await?;
     let follow_event = relay.fetch_follow_set(&config.nostr.mirror_set).await?;
-    let Some(follow_event) = follow_event else {
-        println!("(no follow set found)");
-        relay.client.shutdown().await;
-        return Ok(());
+    let targets = match &follow_event {
+        Some(event) => nostr::extract_follow_set_pubkeys(event),
+        None => {
+            println!("(no follow set found)");
+            Vec::new()
+        }
     };
-
-    let targets = nostr::extract_follow_set_pubkeys(&follow_event);
-    if targets.is_empty() {
+    if follow_event.is_some() && targets.is_empty() {
         println!("(follow set is empty)");
-        relay.client.shutdown().await;
-        return Ok(());
     }
 
-    let raw_events = relay
-        .fetch_site_events(config.nostr.site_event_kind, &targets)
-        .await?;
-    let parsed: Vec<nostr::SiteEvent> = raw_events
-        .iter()
-        .filter_map(|e| nostr::parse_site_event(e, config.nostr.site_event_kind).ok())
-        .collect();
-    let latest = nostr::select_latest(&parsed);
+    let latest = if targets.is_empty() {
+        Default::default()
+    } else {
+        let raw_events = relay
+            .fetch_site_events(config.nostr.site_event_kind, &targets)
+            .await?;
+        let parsed: Vec<nostr::SiteEvent> = raw_events
+            .iter()
+            .filter_map(|e| nostr::parse_site_event(e, config.nostr.site_event_kind).ok())
+            .collect();
+        nostr::select_latest(&parsed)
+    };
+    relay.client.shutdown().await;
 
     let state_path = config.agent.state_dir.join("state.json");
     let state = if state_path.exists() {
@@ -301,8 +331,7 @@ pub async fn sites(config: &Config) -> Result<()> {
 
     for (pubkey_hex, mut evs) in by_pubkey {
         evs.sort_by(|a, b| a.d.cmp(&b.d));
-        let pk = PublicKey::from_hex(&pubkey_hex).context("parsing follow set pubkey")?;
-        println!("{} ({})", npub(&pk), pubkey_hex);
+        print_account_header(&pubkey_hex, "")?;
         if evs.is_empty() {
             println!("  (no site events)");
             continue;
@@ -315,11 +344,40 @@ pub async fn sites(config: &Config) -> Result<()> {
                 .map(|versions| versions.iter().any(|v| v.cid == ev.cid))
                 .unwrap_or(false);
             let verification = state.verifications.get(&key).map(|v| v.status.as_str());
-            println!("{}", format_site_line(ev, stored, verification));
+            let status = if stored { "stored" } else { "not stored" };
+            println!("{}", format_site_line(ev, status, verification));
         }
     }
 
-    relay.client.shutdown().await;
+    let target_hex: BTreeSet<String> = targets.iter().map(|pk| pk.to_hex()).collect();
+    let unfollowed = unfollowed_sites(&state, &target_hex);
+    if unfollowed.is_empty() {
+        return Ok(());
+    }
+    println!();
+    if config.policy.remove_on_unfollow {
+        println!("Unfollowed but still stored (the agent removes them on its next poll):");
+    } else {
+        println!(
+            "Unfollowed but still stored (kept because remove_on_unfollow is false; set it to true to remove them):"
+        );
+    }
+    for (pubkey_hex, sites) in unfollowed {
+        let pk = print_account_header(&pubkey_hex, " [unfollowed]")?;
+        for (d, version) in sites {
+            let ev = nostr::SiteEvent {
+                pubkey: pk,
+                d: d.clone(),
+                cid: version.cid,
+                url: None,
+                size: Some(version.size),
+                created_at: version.created_at,
+            };
+            let key = state::site_key(&pubkey_hex, &d);
+            let verification = state.verifications.get(&key).map(|v| v.status.as_str());
+            println!("{}", format_site_line(&ev, "unfollowed", verification));
+        }
+    }
     Ok(())
 }
 
@@ -481,5 +539,30 @@ mod tests {
         let set = MirrorSet::empty();
         assert_eq!(set.title(), Some(DEFAULT_TITLE));
         assert!(set.pubkeys().is_empty());
+    }
+
+    #[test]
+    fn unfollowed_sites_lists_the_latest_version_of_accounts_outside_the_follow_set() {
+        let mut state = State::default();
+        let record = |cid: &str, created_at| VersionRecord {
+            cid: cid.into(),
+            size: 1,
+            created_at,
+            stored_at: created_at,
+        };
+        state.apply_store(&state::site_key("aa", "x.example"), record("old", 1));
+        state.apply_store(&state::site_key("aa", "x.example"), record("new", 2));
+        state.apply_store(&state::site_key("aa", "y:z"), record("yz", 1));
+        state.apply_store(&state::site_key("bb", "x.example"), record("kept", 1));
+        let targets = BTreeSet::from(["bb".to_string()]);
+
+        let unfollowed = unfollowed_sites(&state, &targets);
+
+        assert_eq!(unfollowed.keys().collect::<Vec<_>>(), vec!["aa"]);
+        let sites: Vec<(&str, &str)> = unfollowed["aa"]
+            .iter()
+            .map(|(d, v)| (d.as_str(), v.cid.as_str()))
+            .collect();
+        assert_eq!(sites, vec![("x.example", "new"), ("y:z", "yz")]);
     }
 }

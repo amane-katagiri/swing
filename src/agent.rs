@@ -115,11 +115,9 @@ async fn refresh_follow_set<C, N>(
     let new_targets: HashSet<PublicKey> = nostr::extract_follow_set_pubkeys(&follow_event)
         .into_iter()
         .collect();
-    let removed = agent.replace_targets(new_targets.clone());
+    agent.replace_targets(new_targets.clone());
     if config.policy.remove_on_unfollow {
-        for pk in removed {
-            agent.unfollow(pk).await;
-        }
+        agent.remove_unfollowed().await;
     }
 
     let target_list: Vec<PublicKey> = new_targets.into_iter().collect();
@@ -339,11 +337,8 @@ impl<C: KuboStore, N: Nip05Verify> Agent<C, N> {
         self.targets.read().unwrap().contains(pubkey)
     }
 
-    fn replace_targets(&self, new_targets: HashSet<PublicKey>) -> Vec<PublicKey> {
-        let mut targets = self.targets.write().unwrap();
-        let removed = targets.difference(&new_targets).copied().collect();
-        *targets = new_targets;
-        removed
+    fn replace_targets(&self, new_targets: HashSet<PublicKey>) {
+        *self.targets.write().unwrap() = new_targets;
     }
 
     async fn save(&self, state: &State, after: &str) {
@@ -498,24 +493,35 @@ impl<C: KuboStore, N: Nip05Verify> Agent<C, N> {
         self.save(&state, "reconciliation").await;
     }
 
-    async fn unfollow(&self, pubkey: PublicKey) {
-        let pubkey_hex = pubkey.to_hex();
-        let prefix = format!("{pubkey_hex}:");
-        let mut state = self.state.lock().await;
-        let keys: HashSet<SiteKey> = state
-            .sites
-            .keys()
-            .chain(state.verifications.keys())
-            .filter(|k| k.starts_with(&prefix))
-            .cloned()
+    // Compared against the state rather than the previous follow set, so
+    // accounts dropped while the agent was stopped are removed too.
+    async fn remove_unfollowed(&self) {
+        let targets: HashSet<String> = self
+            .targets
+            .read()
+            .unwrap()
+            .iter()
+            .map(|pk| pk.to_hex())
             .collect();
-        for key in keys {
-            state.remove_site(&key);
-            info!(site_key = %key, "unfollowed");
+        let mut state = self.state.lock().await;
+        let unfollowed: Vec<String> = state
+            .accounts()
+            .into_iter()
+            .filter(|pubkey_hex| !targets.contains(pubkey_hex))
+            .collect();
+        if unfollowed.is_empty() {
+            return;
+        }
+        for pubkey_hex in &unfollowed {
+            for key in state.remove_account(pubkey_hex) {
+                info!(site_key = %key, "unfollowed");
+            }
         }
         self.save(&state, "unfollow").await;
-        self.remove_path(&self.layout.agent_account(&pubkey_hex))
-            .await;
+        for pubkey_hex in &unfollowed {
+            self.remove_path(&self.layout.agent_account(pubkey_hex))
+                .await;
+        }
     }
 
     async fn nip05_verified(&self, key: &SiteKey, ev: &SiteEvent, pubkey_hex: &str) -> bool {
@@ -1122,7 +1128,7 @@ mod tests {
         let task = tokio::spawn(async move { agent.apply_site_event(&ev).await });
         fx.agent.ipfs.entered_fetch.notified().await;
         fx.agent.replace_targets(HashSet::new());
-        fx.agent.unfollow(fx.pubkey).await;
+        fx.agent.remove_unfollowed().await;
         drop(gate);
         task.await.unwrap();
 
@@ -1146,12 +1152,53 @@ mod tests {
             .mfs
             .insert(format!("{other}/x/1"), "bafy-x".into());
 
-        fx.agent.unfollow(fx.pubkey).await;
+        fx.agent.replace_targets(HashSet::new());
+        fx.agent.remove_unfollowed().await;
 
         assert_eq!(fx.kubo().paths(), vec![format!("{other}/x/1")]);
         let state = fx.agent.state.lock().await;
         assert!(state.sites.is_empty());
         assert!(state.verifications.is_empty());
+    }
+
+    #[tokio::test]
+    async fn accounts_dropped_while_stopped_are_removed_on_the_first_refresh() {
+        let fx = Fixture::new(default_policy(), FakeKubo::default());
+        let kept = Keys::generate().public_key();
+        fx.seed(D, "bafy-gone", 1, 100).await;
+        let kept_key = state::site_key(&kept.to_hex(), D);
+        let kept_path = fx.agent.layout.agent_version(&kept.to_hex(), D, 100);
+        fx.agent.state.lock().await.apply_store(
+            &kept_key,
+            VersionRecord {
+                cid: "bafy-kept".into(),
+                size: 1,
+                created_at: 100,
+                stored_at: 100,
+            },
+        );
+        fx.kubo().mfs.insert(kept_path.clone(), "bafy-kept".into());
+
+        fx.agent.replace_targets(HashSet::from([kept]));
+        fx.agent.remove_unfollowed().await;
+
+        let state = fx.agent.state.lock().await;
+        assert_eq!(
+            state.sites.keys().cloned().collect::<Vec<_>>(),
+            vec![kept_key]
+        );
+        drop(state);
+        assert_eq!(fx.kubo().paths(), vec![kept_path]);
+        assert!(fx.state_path.exists());
+    }
+
+    #[tokio::test]
+    async fn remove_unfollowed_without_changes_does_not_write_state() {
+        let fx = Fixture::new(default_policy(), FakeKubo::default());
+        fx.seed(D, "bafy-a", 1, 100).await;
+        fx.agent.remove_unfollowed().await;
+        assert!(!fx.state_path.exists());
+        assert_eq!(fx.cids(D).await, vec!["bafy-a"]);
     }
 
     #[tokio::test]
@@ -1614,7 +1661,8 @@ mod tests {
             .unwrap();
         assert_eq!(sites.len(), 1);
 
-        agent.unfollow(pubkey).await;
+        agent.replace_targets(HashSet::new());
+        agent.remove_unfollowed().await;
         assert!(
             agent
                 .ipfs
