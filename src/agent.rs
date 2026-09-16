@@ -557,6 +557,26 @@ impl<C: KuboPins, N: Nip05Verify> Agent<C, N> {
             info!(site = %ev.d, pubkey = %pubkey_hex, "author left the follow set during fetch; not pinning");
             return;
         }
+        // Kubo's offline pin/add hangs instead of failing when a child block is
+        // missing, so completeness is checked with dag/stat before pinning.
+        let size = match self.ipfs.dag_size_local(&ev.cid).await {
+            Ok(size) => size,
+            Err(e) => {
+                warn!(cid = %ev.cid, error = %e, "content is incomplete after fetch; will retry on next poll");
+                return;
+            }
+        };
+        if let Some(declared) = ev.size
+            && declared < size
+        {
+            warn!(cid = %ev.cid, site = %ev.d, declared, actual = size, "size tag understates the content");
+        }
+
+        let decision = decide(&state, &key, &pubkey_hex, ev, Some(size), &self.config);
+        let Some(cid) = decision.pin else {
+            warn!(cid = %ev.cid, site = %ev.d, size, reason = %decision.reason, "rejected after fetch");
+            return;
+        };
         let preexisting_pin = match state.preexisting_pin(&ev.cid) {
             Some(preexisting_pin) => preexisting_pin,
             None => match self.ipfs.is_pinned(&ev.cid).await {
@@ -575,28 +595,6 @@ impl<C: KuboPins, N: Nip05Verify> Agent<C, N> {
             error!(cid = %ev.cid, error = %e, "pin_add failed");
             return;
         }
-        let size = match self.ipfs.dag_size_local(&ev.cid).await {
-            Ok(size) => size,
-            Err(e) => {
-                warn!(cid = %ev.cid, error = %e, "dag/stat failed after pin; unpinning and retrying later");
-                let released = vec![candidate_record(ev, 0, preexisting_pin)];
-                self.release(&mut state, released).await;
-                return;
-            }
-        };
-        if let Some(declared) = ev.size
-            && declared < size
-        {
-            warn!(cid = %ev.cid, site = %ev.d, declared, actual = size, "size tag understates the content");
-        }
-
-        let decision = decide(&state, &key, &pubkey_hex, ev, Some(size), &self.config);
-        let Some(cid) = decision.pin else {
-            warn!(cid = %ev.cid, site = %ev.d, size, reason = %decision.reason, "rejected after fetch; unpinning");
-            let released = vec![candidate_record(ev, size, preexisting_pin)];
-            self.release(&mut state, released).await;
-            return;
-        };
         state.apply_pin(&key, candidate_record(ev, size, preexisting_pin));
         let released = state.apply_unpins(&key, &decision.unpin);
         self.save(&state, "pin").await;
@@ -616,6 +614,7 @@ mod tests {
     #[derive(Default)]
     struct FakeKuboState {
         pinned: HashSet<String>,
+        pin_calls: Vec<String>,
         fetched: Vec<String>,
         fail_fetch: HashSet<String>,
         fail_stat: HashSet<String>,
@@ -655,7 +654,9 @@ mod tests {
         }
 
         async fn pin_add_local(&self, cid: &str, _timeout: Duration) -> Result<()> {
-            self.s.lock().unwrap().pinned.insert(cid.to_string());
+            let mut s = self.s.lock().unwrap();
+            s.pin_calls.push(cid.to_string());
+            s.pinned.insert(cid.to_string());
             Ok(())
         }
 
@@ -895,7 +896,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn stat_failure_after_pin_unpins_and_records_nothing() {
+    async fn incomplete_content_is_never_pinned() {
         let kubo = FakeKubo::with(|s| {
             s.fail_stat.insert("bafy-new".into());
         });
@@ -904,7 +905,23 @@ mod tests {
         fx.apply(fx.event(D, "bafy-new", None, 200)).await;
 
         assert!(fx.agent.state.lock().await.sites.is_empty());
-        assert!(!fx.kubo().pinned.contains("bafy-new"));
+        assert!(fx.kubo().pin_calls.is_empty());
+        assert!(fx.agent.state.lock().await.releasing.is_empty());
+    }
+
+    #[tokio::test]
+    async fn content_rejected_by_actual_size_is_never_pinned() {
+        let mut policy = default_policy();
+        policy.max_total_storage = 50;
+        let kubo = FakeKubo::with(|s| {
+            s.sizes.insert("bafy-new".into(), 80);
+        });
+        let fx = Fixture::new(policy, kubo);
+
+        fx.apply(fx.event(D, "bafy-new", None, 200)).await;
+
+        assert!(fx.kubo().pin_calls.is_empty());
+        assert!(fx.agent.state.lock().await.releasing.is_empty());
     }
 
     #[tokio::test]

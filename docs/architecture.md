@@ -222,9 +222,13 @@ relay の切断や Kubo のエラー、不正なイベントはログに出し�
 2. NIP-05 検証（`[policy].nip05` が `off` 以外のとき）。`require` で `Verified` でなければ終わり。
 3. 取得: `dag/export` で CAR を流し読みし、受信バイト数を数える。`policy::fetch_limit`（`max_update_size`・`max_per_site`・`max_per_account` の最小値）を超えた時点で打ち切る。`SWING_FETCH_IDLE_TIMEOUT` の間データが来ない、または `SWING_PIN_TIMEOUT` を超えたら失敗。いずれも state と pin は変えない。`size` タグは使わないので、小さく偽った `size` でも上限を超えて取得されない。
 4. ここから先は state のロックを持ったまま行う。作者が Follow Set から外れていれば終わる。
-5. 新版の CID が SWING の外で pin されていたかを決める。state のどこかにその CID があれば、その記録の `preexisting_pin` のどれかが真かどうかを引き継ぐ。無ければ `pin/ls` で recursive と direct の pin を確認する（確認に失敗したら終わる）。そのうえで `pin/add` を `offline=true` で行う。3 で取得しきれなかったブロックがあれば失敗し、ネットワークから追加取得しない。
-6. `dag/stat`（`offline=true`）の `TotalSize` を実サイズとする。失敗したら新版を解放して終わる。`size` タグより大きければ warn を出す。
-7. 実サイズで `policy::decide` する。skip なら新版を解放して終わる。accept なら新版を 5 の結果とともに記録し、evict 対象を `sites` から消して state を保存してから解放する。
+5. `dag/stat`（`offline=true`）の `TotalSize` を実サイズとする。DAG のブロックが 1 つでも欠けていれば即エラーになるので、そのまま終わる（pin も解放もしない）。`size` タグより大きければ warn を出す。
+6. 実サイズで `policy::decide` する。skip ならそのまま終わる（pin していないので解放も要らない）。
+7. 新版の CID が SWING の外で pin されていたかを決める。state のどこかにその CID があれば、その記録の `preexisting_pin` のどれかが真かどうかを引き継ぐ。無ければ `pin/ls` で recursive と direct の pin を確認する（確認に失敗したら終わる）。
+8. `pin/add` を `offline=true` で行う。
+9. 新版を 7 の結果とともに記録し、evict 対象を `sites` から消して state を保存してから解放する。
+
+5 を `pin/add` より先に行うのは、Kubo の `offline=true` の `pin/add` が、ルートのブロックが無いときは即エラーになるのに、子ブロックが欠けているときはエラーにならず止まり続けるため（Kubo 0.43.1 で確認）。
 
 ### 解放と sweep
 

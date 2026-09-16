@@ -134,6 +134,43 @@ async fn is_pinned_detects_recursive_and_direct_pins() {
 
 #[tokio::test]
 #[ignore]
+async fn dag_size_local_fails_fast_on_an_incomplete_dag() {
+    let client = ipfs::IpfsClient::new(kubo_api());
+
+    let dir = tempfile::tempdir().unwrap();
+    let body: Vec<u8> = (0..300_000u32).map(|i| (i * 13 % 251) as u8).collect();
+    std::fs::write(dir.path().join("blob.bin"), &body).unwrap();
+    let cid = client.add_dir(dir.path()).await.expect("add_dir");
+    client.pin_rm(&cid).await.expect("pin_rm");
+
+    let http = reqwest::Client::new();
+    let refs = http
+        .post(format!(
+            "{}/api/v0/refs?arg={cid}&recursive=true&unique=true",
+            kubo_api()
+        ))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    let leaf: serde_json::Value = serde_json::from_str(refs.lines().last().unwrap()).unwrap();
+    let leaf = leaf["Ref"].as_str().unwrap();
+    let removed = http
+        .post(format!("{}/api/v0/block/rm?arg={leaf}", kubo_api()))
+        .send()
+        .await
+        .unwrap();
+    assert!(removed.status().is_success());
+
+    let started = std::time::Instant::now();
+    assert!(client.dag_size_local(&cid).await.is_err());
+    assert!(started.elapsed() < Duration::from_secs(5));
+}
+
+#[tokio::test]
+#[ignore]
 async fn add_dir_matches_ipfs_cli_cid_for_known_fixture() {
     let client = ipfs::IpfsClient::new(kubo_api());
 
