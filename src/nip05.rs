@@ -1,7 +1,10 @@
 use std::future::Future;
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
+use std::sync::Arc;
 use std::time::Duration;
 
 use futures_util::StreamExt;
+use reqwest::dns::{Addrs, Name, Resolve, Resolving};
 use serde_json::Value;
 
 pub const FETCH_TIMEOUT: Duration = Duration::from_secs(10);
@@ -41,7 +44,7 @@ pub trait Nip05Verify {
     fn verify(&self, d: &str, pubkey_hex: &str) -> impl Future<Output = VerificationResult> + Send;
 }
 
-pub fn normalize_hostname(input: &str) -> Option<String> {
+fn normalize_hostname(input: &str) -> Option<String> {
     let lower = input.to_ascii_lowercase();
     if lower.is_empty() || lower.len() > 253 {
         return None;
@@ -53,12 +56,76 @@ pub fn normalize_hostname(input: &str) -> Option<String> {
     if labels.len() < 2 {
         return None;
     }
-    let valid_label =
-        |l: &str| !l.is_empty() && l.chars().all(|c| c.is_ascii_alphanumeric() || c == '-');
+    let valid_label = |l: &str| {
+        !l.is_empty()
+            && l.len() <= 63
+            && !l.starts_with('-')
+            && !l.ends_with('-')
+            && l.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
+    };
     if !labels.iter().all(|l| valid_label(l)) {
         return None;
     }
+    // The WHATWG host parser reads forms like "0x7f.1" as IPv4, so defer to it.
+    let url = reqwest::Url::parse(&format!("https://{lower}/")).ok()?;
+    if url.domain() != Some(lower.as_str()) {
+        return None;
+    }
     Some(lower)
+}
+
+fn is_public_v4(ip: Ipv4Addr) -> bool {
+    let [a, b, c, _] = ip.octets();
+    !(ip.is_unspecified()
+        || ip.is_loopback()
+        || ip.is_private()
+        || ip.is_link_local()
+        || ip.is_broadcast()
+        || ip.is_documentation()
+        || ip.is_multicast()
+        || a == 0
+        || a >= 240
+        || (a == 100 && (64..128).contains(&b))
+        || (a == 198 && (b == 18 || b == 19))
+        || (a == 192 && b == 0 && c == 0))
+}
+
+fn is_public_v6(ip: Ipv6Addr) -> bool {
+    if let Some(v4) = ip.to_ipv4_mapped() {
+        return is_public_v4(v4);
+    }
+    let [s0, s1, ..] = ip.segments();
+    !(ip.is_unspecified()
+        || ip.is_loopback()
+        || ip.is_multicast()
+        || ip.is_unique_local()
+        || ip.is_unicast_link_local()
+        || (s0 == 0x2001 && s1 == 0x0db8))
+}
+
+fn is_public_ip(ip: IpAddr) -> bool {
+    match ip {
+        IpAddr::V4(v4) => is_public_v4(v4),
+        IpAddr::V6(v6) => is_public_v6(v6),
+    }
+}
+
+struct PublicOnlyResolver;
+
+impl Resolve for PublicOnlyResolver {
+    fn resolve(&self, name: Name) -> Resolving {
+        let host = name.as_str().to_string();
+        Box::pin(async move {
+            let public: Vec<SocketAddr> = tokio::net::lookup_host((host.as_str(), 0))
+                .await?
+                .filter(|addr| is_public_ip(addr.ip()))
+                .collect();
+            if public.is_empty() {
+                return Err(format!("{host} has no public address").into());
+            }
+            Ok(Box::new(public.into_iter()) as Addrs)
+        })
+    }
 }
 
 fn evaluate_body(body: &str, pubkey_hex: &str) -> VerificationResult {
@@ -82,8 +149,21 @@ pub struct HttpNip05Verifier {
 
 impl HttpNip05Verifier {
     pub fn new() -> Self {
+        Self::build(reqwest::Client::builder())
+    }
+
+    pub fn public_only() -> Self {
+        // A proxy would resolve the name itself and bypass the address filter.
+        Self::build(
+            reqwest::Client::builder()
+                .no_proxy()
+                .dns_resolver(Arc::new(PublicOnlyResolver)),
+        )
+    }
+
+    fn build(builder: reqwest::ClientBuilder) -> Self {
         Self {
-            http: reqwest::Client::builder()
+            http: builder
                 .redirect(reqwest::redirect::Policy::none())
                 .build()
                 .expect("reqwest client uses only built-in TLS/redirect options"),
@@ -169,6 +249,68 @@ mod tests {
         assert_eq!(normalize_hostname("exa mple.com"), None);
         assert_eq!(normalize_hostname("exa_mple.com"), None);
         assert_eq!(normalize_hostname("example..com"), None);
+    }
+
+    #[test]
+    fn normalize_hostname_rejects_ip_addresses() {
+        assert_eq!(normalize_hostname("127.0.0.1"), None);
+        assert_eq!(normalize_hostname("10.0.0.5"), None);
+        assert_eq!(normalize_hostname("169.254.169.254"), None);
+        assert_eq!(normalize_hostname("0x7f.1"), None);
+        assert_eq!(normalize_hostname("0177.0.0.1"), None);
+        assert_eq!(normalize_hostname("example.123"), None);
+    }
+
+    #[test]
+    fn normalize_hostname_rejects_bad_labels() {
+        assert_eq!(normalize_hostname("-example.com"), None);
+        assert_eq!(normalize_hostname("example-.com"), None);
+        let label = "a".repeat(64);
+        assert_eq!(normalize_hostname(&format!("{label}.com")), None);
+        let label = "a".repeat(63);
+        assert!(normalize_hostname(&format!("{label}.com")).is_some());
+        assert!(normalize_hostname("xn--eckwd4c7c.xn--zckzah").is_some());
+    }
+
+    #[test]
+    fn public_ip_filter() {
+        for ip in [
+            "127.0.0.1",
+            "10.1.2.3",
+            "172.16.0.1",
+            "192.168.1.1",
+            "169.254.169.254",
+            "100.64.0.1",
+            "0.0.0.0",
+            "255.255.255.255",
+            "198.18.0.1",
+            "192.0.0.8",
+            "224.0.0.1",
+            "::1",
+            "::",
+            "fc00::1",
+            "fd12::1",
+            "fe80::1",
+            "2001:db8::1",
+            "::ffff:127.0.0.1",
+            "::ffff:10.0.0.1",
+        ] {
+            assert!(!is_public_ip(ip.parse().unwrap()), "{ip} should be blocked");
+        }
+        for ip in [
+            "1.1.1.1",
+            "93.184.216.34",
+            "2606:4700::1111",
+            "::ffff:8.8.8.8",
+        ] {
+            assert!(is_public_ip(ip.parse().unwrap()), "{ip} should be allowed");
+        }
+    }
+
+    #[tokio::test]
+    async fn public_only_resolver_refuses_loopback_names() {
+        let name: Name = "localhost".parse().unwrap();
+        assert!(PublicOnlyResolver.resolve(name).await.is_err());
     }
 
     #[test]

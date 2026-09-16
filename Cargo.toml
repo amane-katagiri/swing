@@ -7,7 +7,7 @@ license = "MIT"
 [dependencies]
 nostr-sdk = { version = "0.45", default-features = false, features = ["rustls-tls-webpki-roots"] }
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "multipart", "json", "stream"] }
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal", "time", "fs", "io-util"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal", "time", "fs", "io-util", "net"] }
 clap = { version = "4", features = ["derive"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

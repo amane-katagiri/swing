@@ -216,13 +216,17 @@ pub fn parse_size(input: &str) -> Result<u64> {
         (upper.as_str(), 1)
     };
     let num_part = num_part.trim();
+    if !num_part.chars().all(|c| c.is_ascii_digit() || c == '.') {
+        bail!("invalid size value: {input}");
+    }
     let value: f64 = num_part
         .parse()
         .with_context(|| format!("invalid size value: {input}"))?;
-    if value < 0.0 {
-        bail!("size value must not be negative: {input}");
+    let bytes = value * mult as f64;
+    if bytes >= u64::MAX as f64 {
+        bail!("size value too large: {input}");
     }
-    Ok((value * mult as f64) as u64)
+    Ok(bytes as u64)
 }
 
 pub fn parse_duration_secs(input: &str) -> Result<u64> {
@@ -246,7 +250,9 @@ pub fn parse_duration_secs(input: &str) -> Result<u64> {
         .trim()
         .parse()
         .with_context(|| format!("invalid duration value: {input}"))?;
-    Ok(value * mult)
+    value
+        .checked_mul(mult)
+        .with_context(|| format!("duration value too large: {input}"))
 }
 
 fn parse_bool(input: &str) -> Result<bool> {
@@ -361,11 +367,17 @@ fn build_config(file: ConfigFile, get_env: impl Fn(&str) -> Option<String>) -> R
             None => 300,
         },
     };
+    if poll_interval == 0 {
+        bail!("poll_interval must be greater than 0");
+    }
 
     let pin_timeout = match get_env("SWING_PIN_TIMEOUT") {
         Some(v) => parse_duration_secs(&v).context("invalid SWING_PIN_TIMEOUT")?,
         None => 3600,
     };
+    if pin_timeout == 0 {
+        bail!("SWING_PIN_TIMEOUT must be greater than 0");
+    }
 
     let publish_nip05 = match get_env("SWING_PUBLISH_NIP05") {
         Some(v) => parse_nip05_mode(&v).context("invalid SWING_PUBLISH_NIP05")?,
@@ -432,6 +444,16 @@ mod tests {
         assert!(parse_size("").is_err());
         assert!(parse_size("GB").is_err());
         assert!(parse_size("-5GB").is_err());
+        assert!(parse_size("inf").is_err());
+        assert!(parse_size("NaN").is_err());
+        assert!(parse_size("1e3").is_err());
+        assert!(parse_size("+5GB").is_err());
+        assert!(parse_size("99999999999TB").is_err());
+    }
+
+    #[test]
+    fn parse_size_accepts_fraction() {
+        assert_eq!(parse_size("1.5KB").unwrap(), 1536);
     }
 
     #[test]
@@ -449,6 +471,38 @@ mod tests {
         assert!(parse_duration_secs("").is_err());
         assert!(parse_duration_secs("m").is_err());
         assert!(parse_duration_secs("-5m").is_err());
+        assert!(parse_duration_secs("99999999999999999d").is_err());
+    }
+
+    fn minimal_file() -> ConfigFile {
+        ConfigFile {
+            nostr: NostrFile {
+                secret_key: Some("k".into()),
+                relays: Some(vec!["wss://r".into()]),
+                ..Default::default()
+            },
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn zero_poll_interval_is_rejected() {
+        let err = build_config(minimal_file(), |k| match k {
+            "SWING_POLL_INTERVAL" => Some("0s".into()),
+            _ => None,
+        })
+        .unwrap_err();
+        assert!(err.to_string().contains("poll_interval"));
+    }
+
+    #[test]
+    fn zero_pin_timeout_is_rejected() {
+        let err = build_config(minimal_file(), |k| match k {
+            "SWING_PIN_TIMEOUT" => Some("0".into()),
+            _ => None,
+        })
+        .unwrap_err();
+        assert!(err.to_string().contains("SWING_PIN_TIMEOUT"));
     }
 
     #[test]

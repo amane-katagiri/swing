@@ -1,6 +1,5 @@
 use std::collections::HashSet;
 use std::path::Path;
-use std::time::Duration;
 
 use anyhow::Result;
 use futures_util::StreamExt;
@@ -23,7 +22,7 @@ pub async fn run(config: Config) -> Result<()> {
     info!(relays = ?relay.relays(), "connected to relays");
 
     let ipfs = IpfsClient::new(config.ipfs.api.clone());
-    let nip05 = HttpNip05Verifier::new();
+    let nip05 = HttpNip05Verifier::public_only();
     let state_path = config.agent.state_dir.join("state.json");
     let mut state = State::load(&state_path).await?;
     info!(path = %state_path.display(), sites = state.sites.len(), "loaded state");
@@ -63,14 +62,10 @@ pub async fn run(config: Config) -> Result<()> {
                             );
                         }
                     }
-                    Some(ClientNotification::Shutdown) => {
-                        warn!("relay pool shut down");
+                    Some(ClientNotification::Shutdown) | None => {
+                        anyhow::bail!("relay notification stream ended");
                     }
                     Some(_) => {}
-                    None => {
-                        warn!("notification stream ended; retrying shortly");
-                        tokio::time::sleep(Duration::from_secs(5)).await;
-                    }
                 }
             }
             _ = poll_timer.tick() => {
@@ -397,6 +392,7 @@ mod tests {
     use super::*;
     use std::collections::HashMap;
     use std::sync::Mutex;
+    use std::time::Duration;
 
     use crate::config::{AgentConfig, IpfsConfig, Nip05Mode, NostrConfig, PolicyConfig};
     use crate::nip05::VerificationResult;
