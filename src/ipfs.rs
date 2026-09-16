@@ -8,6 +8,8 @@ use futures_util::StreamExt;
 use reqwest::multipart::{Form, Part};
 use serde::Deserialize;
 
+use crate::mfs;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FetchLimits {
     pub max_bytes: u64,
@@ -21,21 +23,24 @@ pub enum Fetched {
     TooLarge,
 }
 
-pub trait KuboPins {
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MfsEntry {
+    pub name: String,
+    pub is_dir: bool,
+    pub cid: String,
+}
+
+pub trait KuboStore {
     fn fetch_dag(
         &self,
         cid: &str,
         limits: FetchLimits,
     ) -> impl Future<Output = Result<Fetched>> + Send;
-    fn pin_add_local(
-        &self,
-        cid: &str,
-        timeout: Duration,
-    ) -> impl Future<Output = Result<()>> + Send;
     fn dag_size_local(&self, cid: &str) -> impl Future<Output = Result<u64>> + Send;
-    fn is_pinned(&self, cid: &str) -> impl Future<Output = Result<bool>> + Send;
-    fn recursive_pins(&self) -> impl Future<Output = Result<HashSet<String>>> + Send;
-    fn pin_rm(&self, cid: &str) -> impl Future<Output = Result<()>> + Send;
+    fn mfs_put(&self, cid: &str, path: &str) -> impl Future<Output = Result<()>> + Send;
+    fn mfs_remove(&self, path: &str) -> impl Future<Output = Result<()>> + Send;
+    fn mfs_list(&self, path: &str) -> impl Future<Output = Result<Vec<MfsEntry>>> + Send;
+    fn mfs_stat_cid(&self, path: &str) -> impl Future<Output = Result<Option<String>>> + Send;
 }
 
 pub struct IpfsClient {
@@ -43,33 +48,33 @@ pub struct IpfsClient {
     api: String,
 }
 
-impl KuboPins for IpfsClient {
+impl KuboStore for IpfsClient {
     async fn fetch_dag(&self, cid: &str, limits: FetchLimits) -> Result<Fetched> {
         IpfsClient::fetch_dag(self, cid, limits).await
-    }
-
-    async fn pin_add_local(&self, cid: &str, timeout: Duration) -> Result<()> {
-        IpfsClient::pin_add_local(self, cid, timeout).await
     }
 
     async fn dag_size_local(&self, cid: &str) -> Result<u64> {
         IpfsClient::dag_size_local(self, cid).await
     }
 
-    async fn is_pinned(&self, cid: &str) -> Result<bool> {
-        IpfsClient::is_pinned(self, cid).await
+    async fn mfs_put(&self, cid: &str, path: &str) -> Result<()> {
+        IpfsClient::mfs_put(self, cid, path).await
     }
 
-    async fn recursive_pins(&self) -> Result<HashSet<String>> {
-        IpfsClient::pin_ls(self).await
+    async fn mfs_remove(&self, path: &str) -> Result<()> {
+        IpfsClient::mfs_remove(self, path).await
     }
 
-    async fn pin_rm(&self, cid: &str) -> Result<()> {
-        IpfsClient::pin_rm(self, cid).await
+    async fn mfs_list(&self, path: &str) -> Result<Vec<MfsEntry>> {
+        IpfsClient::mfs_list(self, path).await
+    }
+
+    async fn mfs_stat_cid(&self, path: &str) -> Result<Option<String>> {
+        IpfsClient::mfs_stat_cid(self, path).await
     }
 }
 
-fn percent_encode_segment(segment: &str) -> String {
+pub(crate) fn percent_encode_segment(segment: &str) -> String {
     let mut out = String::with_capacity(segment.len());
     for byte in segment.bytes() {
         match byte {
@@ -152,21 +157,37 @@ struct AddResponseLine {
 }
 
 #[derive(Debug, Deserialize)]
-struct FilesStatResponse {
-    #[serde(rename = "CumulativeSize")]
-    cumulative_size: u64,
-}
-
-#[derive(Debug, Deserialize)]
 struct DagStatResponse {
     #[serde(rename = "TotalSize")]
     total_size: u64,
 }
 
 #[derive(Debug, Deserialize)]
-struct PinLsResponse {
-    #[serde(rename = "Keys")]
-    keys: std::collections::HashMap<String, serde_json::Value>,
+struct FilesStatResponse {
+    #[serde(rename = "Hash")]
+    hash: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct FilesLsResponse {
+    #[serde(rename = "Entries")]
+    entries: Option<Vec<FilesLsEntry>>,
+}
+
+#[derive(Debug, Deserialize)]
+struct FilesLsEntry {
+    #[serde(rename = "Name")]
+    name: String,
+    #[serde(rename = "Type")]
+    kind: u8,
+    #[serde(rename = "Hash")]
+    hash: String,
+}
+
+const MFS_MISSING: &str = "file does not exist";
+
+fn query_path(path: &str) -> String {
+    percent_encode_relative_path(path)
 }
 
 impl IpfsClient {
@@ -181,7 +202,26 @@ impl IpfsClient {
         format!("{}{}", self.api, path)
     }
 
-    pub async fn add_dir(&self, dir: &Path) -> Result<String> {
+    async fn call(&self, endpoint: &str, query: &str, timeout: Duration) -> Result<String> {
+        let resp = self
+            .http
+            .post(self.url(&format!("/api/v0/{endpoint}?{query}")))
+            .timeout(timeout)
+            .send()
+            .await
+            .with_context(|| format!("POST /api/v0/{endpoint}"))?;
+        let status = resp.status();
+        let text = resp
+            .text()
+            .await
+            .with_context(|| format!("reading {endpoint} response"))?;
+        if !status.is_success() {
+            bail!("{endpoint} failed: {status}: {text}");
+        }
+        Ok(text)
+    }
+
+    pub async fn add_dir(&self, dir: &Path, mfs_path: &str) -> Result<String> {
         if !dir.is_dir() {
             bail!("not a directory: {}", dir.display());
         }
@@ -218,9 +258,12 @@ impl IpfsClient {
             form = form.part("file", part);
         }
 
-        let url = self.url(
-            "/api/v0/add?recursive=true&cid-version=1&pin=true&quieter=true&wrap-with-directory=false",
-        );
+        self.mfs_mkdir(mfs::parent(mfs_path)).await?;
+        self.mfs_remove(mfs_path).await?;
+        let url = self.url(&format!(
+            "/api/v0/add?recursive=true&cid-version=1&pin=false&quieter=true&wrap-with-directory=false&to-files={}",
+            query_path(mfs_path)
+        ));
         let resp = self
             .http
             .post(&url)
@@ -242,28 +285,6 @@ impl IpfsClient {
         let parsed: AddResponseLine =
             serde_json::from_str(last_line).context("parsing ipfs add response")?;
         Ok(parsed.hash)
-    }
-
-    pub async fn files_stat(&self, cid: &str) -> Result<u64> {
-        let url = self.url(&format!(
-            "/api/v0/files/stat?arg=/ipfs/{}",
-            urlencoding_cid(cid)
-        ));
-        let resp = self
-            .http
-            .post(&url)
-            .timeout(Duration::from_secs(30))
-            .send()
-            .await
-            .context("POST /api/v0/files/stat")?;
-        let status = resp.status();
-        let text = resp.text().await.context("reading files/stat response")?;
-        if !status.is_success() {
-            bail!("files/stat failed: {status}: {text}");
-        }
-        let parsed: FilesStatResponse =
-            serde_json::from_str(&text).context("parsing files/stat response")?;
-        Ok(parsed.cumulative_size)
     }
 
     pub async fn fetch_dag(&self, cid: &str, limits: FetchLimits) -> Result<Fetched> {
@@ -321,95 +342,92 @@ impl IpfsClient {
         Ok(parsed.total_size)
     }
 
-    pub async fn pin_add_local(&self, cid: &str, timeout: Duration) -> Result<()> {
-        // offline=true keeps Kubo from fetching blocks that fetch_dag did not
-        // count, so the size cap cannot be bypassed by a truncated export.
-        let url = self.url(&format!(
-            "/api/v0/pin/add?arg={}&recursive=true&offline=true",
-            urlencoding_cid(cid)
-        ));
-        let resp = self
-            .http
-            .post(&url)
-            .timeout(timeout)
-            .send()
-            .await
-            .context("POST /api/v0/pin/add")?;
-        let status = resp.status();
-        if !status.is_success() {
-            let text = resp.text().await.unwrap_or_default();
-            bail!("pin/add failed: {status}: {text}");
+    pub async fn mfs_mkdir(&self, path: &str) -> Result<()> {
+        self.call(
+            "files/mkdir",
+            &format!("arg={}&parents=true", query_path(path)),
+            Duration::from_secs(60),
+        )
+        .await?;
+        Ok(())
+    }
+
+    pub async fn mfs_put(&self, cid: &str, path: &str) -> Result<()> {
+        self.mfs_mkdir(mfs::parent(path)).await?;
+        self.mfs_remove(path).await?;
+        // offline=true: only the root block is needed to link it, and callers
+        // have already checked the whole DAG is local.
+        self.call(
+            "files/cp",
+            &format!(
+                "arg=/ipfs/{}&arg={}&offline=true",
+                urlencoding_cid(cid),
+                query_path(path)
+            ),
+            Duration::from_secs(60),
+        )
+        .await?;
+        Ok(())
+    }
+
+    pub async fn mfs_remove(&self, path: &str) -> Result<()> {
+        // files/rm reports failures as a 200 response with a message body.
+        let text = self
+            .call(
+                "files/rm",
+                &format!("arg={}&recursive=true&force=true", query_path(path)),
+                Duration::from_secs(60),
+            )
+            .await?;
+        if !text.trim().is_empty() {
+            bail!("files/rm failed: {}", text.trim());
         }
         Ok(())
     }
 
-    pub async fn pin_rm(&self, cid: &str) -> Result<()> {
-        let url = self.url(&format!(
-            "/api/v0/pin/rm?arg={}&recursive=true",
-            urlencoding_cid(cid)
-        ));
-        let resp = self
-            .http
-            .post(&url)
-            .timeout(Duration::from_secs(60))
-            .send()
+    pub async fn mfs_list(&self, path: &str) -> Result<Vec<MfsEntry>> {
+        let text = match self
+            .call(
+                "files/ls",
+                &format!("arg={}&long=true", query_path(path)),
+                Duration::from_secs(60),
+            )
             .await
-            .context("POST /api/v0/pin/rm")?;
-        let status = resp.status();
-        if !status.is_success() {
-            let text = resp.text().await.unwrap_or_default();
-            if text.contains("not pinned or pinned indirectly") {
-                return Ok(());
-            }
-            bail!("pin/rm failed: {status}: {text}");
-        }
-        Ok(())
+        {
+            Ok(text) => text,
+            Err(e) if e.to_string().contains(MFS_MISSING) => return Ok(Vec::new()),
+            Err(e) => return Err(e),
+        };
+        let parsed: FilesLsResponse =
+            serde_json::from_str(&text).context("parsing files/ls response")?;
+        Ok(parsed
+            .entries
+            .unwrap_or_default()
+            .into_iter()
+            .map(|e| MfsEntry {
+                name: e.name,
+                is_dir: e.kind == 1,
+                cid: e.hash,
+            })
+            .collect())
     }
 
-    // Recursive and direct are checked separately because type=all also
-    // searches indirect pins, which walks every pinned DAG for unpinned CIDs.
-    pub async fn is_pinned(&self, cid: &str) -> Result<bool> {
-        for pin_type in ["recursive", "direct"] {
-            let url = self.url(&format!(
-                "/api/v0/pin/ls?arg={}&type={pin_type}",
-                urlencoding_cid(cid)
-            ));
-            let resp = self
-                .http
-                .post(&url)
-                .timeout(Duration::from_secs(30))
-                .send()
-                .await
-                .context("POST /api/v0/pin/ls")?;
-            let status = resp.status();
-            let text = resp.text().await.context("reading pin/ls response")?;
-            if status.is_success() {
-                return Ok(true);
-            }
-            if !text.contains("is not pinned") {
-                bail!("pin/ls failed: {status}: {text}");
-            }
-        }
-        Ok(false)
-    }
-
-    pub async fn pin_ls(&self) -> Result<HashSet<String>> {
-        let url = self.url("/api/v0/pin/ls?type=recursive");
-        let resp = self
-            .http
-            .post(&url)
-            .timeout(Duration::from_secs(60))
-            .send()
+    pub async fn mfs_stat_cid(&self, path: &str) -> Result<Option<String>> {
+        let text = match self
+            .call(
+                "files/stat",
+                &format!("arg={}&hash=true", query_path(path)),
+                Duration::from_secs(60),
+            )
             .await
-            .context("POST /api/v0/pin/ls")?;
-        let status = resp.status();
-        let text = resp.text().await.context("reading pin/ls response")?;
-        if !status.is_success() {
-            bail!("pin/ls failed: {status}: {text}");
-        }
-        let parsed: PinLsResponse =
-            serde_json::from_str(&text).context("parsing pin/ls response")?;
-        Ok(parsed.keys.into_keys().collect())
+        {
+            Ok(text) => text,
+            Err(e) if e.to_string().contains(MFS_MISSING) => return Ok(None),
+            Err(e) => return Err(e),
+        };
+        let parsed: FilesStatResponse =
+            serde_json::from_str(&text).context("parsing files/stat response")?;
+        Ok(Some(parsed.hash))
     }
 }
 

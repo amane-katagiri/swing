@@ -244,7 +244,7 @@ fn format_unix_timestamp(secs: u64) -> String {
     format!("{y:04}-{m:02}-{d:02} {hh:02}:{mm:02}:{ss:02} UTC")
 }
 
-fn format_site_line(ev: &nostr::SiteEvent, pinned: bool, verification: Option<&str>) -> String {
+fn format_site_line(ev: &nostr::SiteEvent, stored: bool, verification: Option<&str>) -> String {
     format!(
         "  d={:<24} cid={:<62} url={:<32} size={:<12} created_at={:<25} nip05={:<14} [{}]",
         ev.d,
@@ -255,7 +255,7 @@ fn format_site_line(ev: &nostr::SiteEvent, pinned: bool, verification: Option<&s
             .unwrap_or_else(|| "-".to_string()),
         format_unix_timestamp(ev.created_at),
         verification.unwrap_or("-"),
-        if pinned { "pinned" } else { "not pinned" }
+        if stored { "stored" } else { "not stored" }
     )
 }
 
@@ -309,13 +309,13 @@ pub async fn sites(config: &Config) -> Result<()> {
         }
         for ev in evs {
             let key = state::site_key(&pubkey_hex, &ev.d);
-            let pinned = state
+            let stored = state
                 .sites
                 .get(&key)
                 .map(|versions| versions.iter().any(|v| v.cid == ev.cid))
                 .unwrap_or(false);
             let verification = state.verifications.get(&key).map(|v| v.status.as_str());
-            println!("{}", format_site_line(ev, pinned, verification));
+            println!("{}", format_site_line(ev, stored, verification));
         }
     }
 

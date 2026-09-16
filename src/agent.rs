@@ -10,7 +10,8 @@ use tokio::task::JoinSet;
 use tracing::{debug, error, info, warn};
 
 use crate::config::{Config, Nip05Mode};
-use crate::ipfs::{FetchLimits, Fetched, IpfsClient, KuboPins};
+use crate::ipfs::{FetchLimits, Fetched, IpfsClient, KuboStore};
+use crate::mfs::MfsLayout;
 use crate::nip05::{self, HttpNip05Verifier, Nip05Verify};
 use crate::nostr::{self, RelayClient, SiteEvent};
 use crate::policy::{self, CandidateEvent, Decision, Usage, VersionInfo};
@@ -95,7 +96,7 @@ async fn refresh_follow_set<C, N>(
     agent: &Arc<Agent<C, N>>,
     tasks: &mut JoinSet<()>,
 ) where
-    C: KuboPins + Send + Sync + 'static,
+    C: KuboStore + Send + Sync + 'static,
     N: Nip05Verify + Send + Sync + 'static,
 {
     let config = &agent.config;
@@ -115,7 +116,7 @@ async fn refresh_follow_set<C, N>(
         .into_iter()
         .collect();
     let removed = agent.replace_targets(new_targets.clone());
-    if config.policy.unpin_on_unfollow {
+    if config.policy.remove_on_unfollow {
         for pk in removed {
             agent.unfollow(pk).await;
         }
@@ -166,19 +167,19 @@ fn limit_sites_per_account(
 ) -> Vec<SiteEvent> {
     let mut by_account: HashMap<PublicKey, Vec<(bool, SiteEvent)>> = HashMap::new();
     for ev in events {
-        let pinned = state
+        let stored = state
             .sites
             .contains_key(&state::site_key(&ev.pubkey.to_hex(), &ev.d));
-        by_account.entry(ev.pubkey).or_default().push((pinned, ev));
+        by_account.entry(ev.pubkey).or_default().push((stored, ev));
     }
     let mut selected = Vec::new();
     for mut events in by_account.into_values() {
         events.sort_by(|a, b| b.0.cmp(&a.0).then(b.1.created_at.cmp(&a.1.created_at)));
-        let pinned = events.iter().filter(|(p, _)| *p).count();
+        let stored = events.iter().filter(|(s, _)| *s).count();
         selected.extend(
             events
                 .into_iter()
-                .take(pinned.max(max_sites))
+                .take(stored.max(max_sites))
                 .map(|(_, ev)| ev),
         );
     }
@@ -225,16 +226,6 @@ fn decide(
     policy::decide(&existing, usage, &candidate, &config.policy, now_secs())
 }
 
-fn candidate_record(ev: &SiteEvent, size: u64, preexisting_pin: bool) -> VersionRecord {
-    VersionRecord {
-        cid: ev.cid.clone(),
-        size,
-        created_at: ev.created_at,
-        pinned_at: now_secs(),
-        preexisting_pin,
-    }
-}
-
 struct Queued {
     running_created_at: u64,
     next: Option<SiteEvent>,
@@ -244,6 +235,7 @@ struct Agent<C, N> {
     config: Config,
     ipfs: C,
     nip05: N,
+    layout: MfsLayout,
     state: tokio::sync::Mutex<State>,
     state_path: PathBuf,
     targets: RwLock<HashSet<PublicKey>>,
@@ -253,7 +245,7 @@ struct Agent<C, N> {
 
 impl<C, N> Agent<C, N>
 where
-    C: KuboPins + Send + Sync + 'static,
+    C: KuboStore + Send + Sync + 'static,
     N: Nip05Verify + Send + Sync + 'static,
 {
     fn submit(self: &Arc<Self>, ev: SiteEvent, tasks: &mut JoinSet<()>) {
@@ -326,10 +318,12 @@ where
     }
 }
 
-impl<C: KuboPins, N: Nip05Verify> Agent<C, N> {
+impl<C: KuboStore, N: Nip05Verify> Agent<C, N> {
     fn new(config: Config, ipfs: C, nip05: N, state: State, state_path: PathBuf) -> Self {
         let permits = Semaphore::new(config.agent.concurrency);
+        let layout = MfsLayout::new(config.ipfs.mfs_root.clone());
         Self {
+            layout,
             config,
             ipfs,
             nip05,
@@ -358,96 +352,155 @@ impl<C: KuboPins, N: Nip05Verify> Agent<C, N> {
         }
     }
 
-    async fn release(&self, state: &mut State, released: Vec<VersionRecord>) {
-        if released.is_empty() {
-            return;
-        }
-        let now = now_secs();
-        for v in &released {
-            state.mark_releasing(&v.cid, v.preexisting_pin, now);
-        }
-        self.save(state, "marking CIDs for release").await;
-        for v in &released {
-            self.try_release(state, &v.cid).await;
-        }
-        self.save(state, "releasing CIDs").await;
+    fn version_path(&self, key: &str, created_at: u64) -> Option<String> {
+        let (pubkey_hex, d) = state::split_site_key(key)?;
+        Some(self.layout.agent_version(pubkey_hex, d, created_at))
     }
 
-    async fn try_release(&self, state: &mut State, cid: &str) {
-        let Some(preexisting_pin) = state.releasing.get(cid).map(|r| r.preexisting_pin) else {
-            return;
-        };
-        if state.references_cid(cid) {
-            debug!(cid = %cid, "still referenced by another site; keeping the pin");
-        } else if preexisting_pin {
-            info!(cid = %cid, "pinned outside SWING before; keeping the pin");
-        } else {
-            match self.ipfs.pin_rm(cid).await {
-                Ok(()) => info!(cid = %cid, "unpinned"),
-                Err(e) => {
-                    warn!(cid = %cid, error = %e, "pin_rm failed; will retry on next sweep");
-                    return;
-                }
+    async fn remove_path(&self, path: &str) {
+        match self.ipfs.mfs_remove(path).await {
+            Ok(()) => info!(path = %path, "removed from MFS"),
+            Err(e) => {
+                warn!(path = %path, error = %e, "removing from MFS failed; the next sweep retries")
             }
         }
-        state.releasing.remove(cid);
+    }
+
+    async fn remove_versions(&self, key: &str, versions: &[VersionRecord]) {
+        for v in versions {
+            if let Some(path) = self.version_path(key, v.created_at) {
+                self.remove_path(&path).await;
+            }
+        }
     }
 
     async fn sweep(&self) {
         let mut state = self.state.lock().await;
         let now = now_secs();
-        let retry: Vec<String> = state.releasing.keys().cloned().collect();
         let keys: Vec<SiteKey> = state.sites.keys().cloned().collect();
-        let mut released = Vec::new();
+        let mut removed = Vec::new();
         for key in keys {
             let cids =
                 policy::retention_evictions(&version_infos(&state, &key), &self.config.policy, now);
             if !cids.is_empty() {
                 info!(site_key = %key, count = cids.len(), "evicting versions past retention");
-                released.extend(state.apply_unpins(&key, &cids));
+                removed.push((key.clone(), state.remove_versions(&key, &cids)));
             }
         }
-        self.release(&mut state, released).await;
-        if retry.is_empty() {
+        if !removed.is_empty() {
+            self.save(&state, "retention").await;
+            for (key, versions) in &removed {
+                self.remove_versions(key, versions).await;
+            }
+        }
+        self.collect_garbage(&state).await;
+    }
+
+    // Everything under the agent root belongs to SWING, so any entry the
+    // state does not reference is a leftover of a failed or interrupted step.
+    async fn collect_garbage(&self, state: &State) {
+        let expected: HashSet<String> = state
+            .sites
+            .iter()
+            .flat_map(|(key, versions)| {
+                versions
+                    .iter()
+                    .filter_map(|v| self.version_path(key, v.created_at))
+            })
+            .collect();
+        let root = self.layout.agent_root();
+        let Some(accounts) = self.list_dir(&root).await else {
             return;
+        };
+        for account in accounts {
+            let account_path = format!("{root}/{}", account.name);
+            if !account.is_dir {
+                self.remove_path(&account_path).await;
+                continue;
+            }
+            let Some(sites) = self.list_dir(&account_path).await else {
+                continue;
+            };
+            let mut account_kept = false;
+            for site in sites {
+                let site_path = format!("{account_path}/{}", site.name);
+                if !site.is_dir {
+                    self.remove_path(&site_path).await;
+                    continue;
+                }
+                let Some(versions) = self.list_dir(&site_path).await else {
+                    account_kept = true;
+                    continue;
+                };
+                let mut site_kept = false;
+                for version in versions {
+                    let path = format!("{site_path}/{}", version.name);
+                    if expected.contains(&path) {
+                        site_kept = true;
+                    } else {
+                        self.remove_path(&path).await;
+                    }
+                }
+                if site_kept {
+                    account_kept = true;
+                } else {
+                    self.remove_path(&site_path).await;
+                }
+            }
+            if !account_kept {
+                self.remove_path(&account_path).await;
+            }
         }
-        for cid in &retry {
-            self.try_release(&mut state, cid).await;
+    }
+
+    async fn list_dir(&self, path: &str) -> Option<Vec<crate::ipfs::MfsEntry>> {
+        match self.ipfs.mfs_list(path).await {
+            Ok(entries) => Some(entries),
+            Err(e) => {
+                warn!(path = %path, error = %e, "listing MFS failed");
+                None
+            }
         }
-        self.save(&state, "sweep").await;
     }
 
     async fn reconcile(&self) {
-        let pins = match self.ipfs.recursive_pins().await {
-            Ok(pins) => pins,
-            Err(e) => {
-                warn!(error = %e, "could not query Kubo pins for reconciliation");
-                return;
-            }
-        };
         let mut state = self.state.lock().await;
-        let mut changed = false;
-        for (key, versions) in state.sites.iter_mut() {
-            versions.retain(|v| {
-                let pinned = pins.contains(&v.cid);
-                if !pinned {
-                    warn!(site_key = %key, cid = %v.cid, "pin missing in Kubo; forgetting the version so it is fetched again");
-                    changed = true;
+        let mut missing = Vec::new();
+        for (key, versions) in &state.sites {
+            for v in versions {
+                let Some(path) = self.version_path(key, v.created_at) else {
+                    continue;
+                };
+                let problem = match self.ipfs.mfs_stat_cid(&path).await {
+                    Ok(Some(cid)) if cid == v.cid => match self.ipfs.dag_size_local(&v.cid).await {
+                        Ok(_) => None,
+                        Err(e) => Some(format!("content is incomplete: {e}")),
+                    },
+                    Ok(Some(cid)) => Some(format!("MFS entry points to {cid}")),
+                    Ok(None) => Some("MFS entry is missing".to_string()),
+                    Err(e) => {
+                        warn!(path = %path, error = %e, "checking MFS failed; keeping the version");
+                        None
+                    }
+                };
+                if let Some(problem) = problem {
+                    warn!(site_key = %key, cid = %v.cid, problem = %problem, "forgetting the version so it is fetched again");
+                    missing.push((key.clone(), v.cid.clone()));
                 }
-                pinned
-            });
+            }
         }
-        state.sites.retain(|_, versions| !versions.is_empty());
-        let before = state.releasing.len();
-        state.releasing.retain(|cid, _| pins.contains(cid));
-        changed |= state.releasing.len() != before;
-        if changed {
-            self.save(&state, "reconciliation").await;
+        if missing.is_empty() {
+            return;
         }
+        for (key, cid) in &missing {
+            state.remove_versions(key, std::slice::from_ref(cid));
+        }
+        self.save(&state, "reconciliation").await;
     }
 
     async fn unfollow(&self, pubkey: PublicKey) {
-        let prefix = format!("{}:", pubkey.to_hex());
+        let pubkey_hex = pubkey.to_hex();
+        let prefix = format!("{pubkey_hex}:");
         let mut state = self.state.lock().await;
         let keys: HashSet<SiteKey> = state
             .sites
@@ -456,13 +509,13 @@ impl<C: KuboPins, N: Nip05Verify> Agent<C, N> {
             .filter(|k| k.starts_with(&prefix))
             .cloned()
             .collect();
-        let mut released = Vec::new();
         for key in keys {
-            released.extend(state.remove_site(&key));
+            state.remove_site(&key);
             info!(site_key = %key, "unfollowed");
         }
-        self.release(&mut state, released).await;
         self.save(&state, "unfollow").await;
+        self.remove_path(&self.layout.agent_account(&pubkey_hex))
+            .await;
     }
 
     async fn nip05_verified(&self, key: &SiteKey, ev: &SiteEvent, pubkey_hex: &str) -> bool {
@@ -501,7 +554,7 @@ impl<C: KuboPins, N: Nip05Verify> Agent<C, N> {
                 checked_at: now_secs(),
             },
         );
-        state.prune_unpinned_verifications(pubkey_hex, self.config.policy.max_sites_per_account);
+        state.prune_unstored_verifications(pubkey_hex, self.config.policy.max_sites_per_account);
         self.save(&state, "nip05 verification").await;
         result.is_verified()
     }
@@ -522,7 +575,7 @@ impl<C: KuboPins, N: Nip05Verify> Agent<C, N> {
             let state = self.state.lock().await;
             decide(&state, &key, &pubkey_hex, ev, ev.size, &self.config)
         };
-        if precheck.pin.is_none() {
+        if precheck.store.is_none() {
             info!(site = %ev.d, pubkey = %pubkey_hex, reason = %precheck.reason, "skip");
             return;
         }
@@ -537,7 +590,7 @@ impl<C: KuboPins, N: Nip05Verify> Agent<C, N> {
 
         let limits = FetchLimits {
             max_bytes: policy::fetch_limit(&self.config.policy),
-            total: self.config.agent.pin_timeout,
+            total: self.config.agent.fetch_timeout,
             idle: self.config.agent.fetch_idle_timeout,
         };
         match self.ipfs.fetch_dag(&ev.cid, limits).await {
@@ -554,15 +607,19 @@ impl<C: KuboPins, N: Nip05Verify> Agent<C, N> {
 
         let mut state = self.state.lock().await;
         if !self.is_target(&ev.pubkey) {
-            info!(site = %ev.d, pubkey = %pubkey_hex, "author left the follow set during fetch; not pinning");
+            info!(site = %ev.d, pubkey = %pubkey_hex, "author left the follow set during fetch; not storing");
             return;
         }
-        // Kubo's offline pin/add hangs instead of failing when a child block is
-        // missing, so completeness is checked with dag/stat before pinning.
+        let path = self.layout.agent_version(&pubkey_hex, &ev.d, ev.created_at);
+        if let Err(e) = self.ipfs.mfs_put(&ev.cid, &path).await {
+            error!(cid = %ev.cid, path = %path, error = %e, "storing into MFS failed");
+            return;
+        }
         let size = match self.ipfs.dag_size_local(&ev.cid).await {
             Ok(size) => size,
             Err(e) => {
                 warn!(cid = %ev.cid, error = %e, "content is incomplete after fetch; will retry on next poll");
+                self.remove_path(&path).await;
                 return;
             }
         };
@@ -573,33 +630,24 @@ impl<C: KuboPins, N: Nip05Verify> Agent<C, N> {
         }
 
         let decision = decide(&state, &key, &pubkey_hex, ev, Some(size), &self.config);
-        let Some(cid) = decision.pin else {
+        let Some(cid) = decision.store else {
             warn!(cid = %ev.cid, site = %ev.d, size, reason = %decision.reason, "rejected after fetch");
+            self.remove_path(&path).await;
             return;
         };
-        let preexisting_pin = match state.preexisting_pin(&ev.cid) {
-            Some(preexisting_pin) => preexisting_pin,
-            None => match self.ipfs.is_pinned(&ev.cid).await {
-                Ok(pinned) => pinned,
-                Err(e) => {
-                    warn!(cid = %ev.cid, error = %e, "checking existing pins failed; will retry on next poll");
-                    return;
-                }
+        state.apply_store(
+            &key,
+            VersionRecord {
+                cid: cid.clone(),
+                size,
+                created_at: ev.created_at,
+                stored_at: now_secs(),
             },
-        };
-        if let Err(e) = self
-            .ipfs
-            .pin_add_local(&ev.cid, self.config.agent.pin_timeout)
-            .await
-        {
-            error!(cid = %ev.cid, error = %e, "pin_add failed");
-            return;
-        }
-        state.apply_pin(&key, candidate_record(ev, size, preexisting_pin));
-        let released = state.apply_unpins(&key, &decision.unpin);
-        self.save(&state, "pin").await;
-        self.release(&mut state, released).await;
-        info!(cid = %cid, site = %ev.d, pubkey = %pubkey_hex, size, "pinned");
+        );
+        let evicted = state.remove_versions(&key, &decision.evict);
+        self.save(&state, "store").await;
+        self.remove_versions(&key, &evicted).await;
+        info!(cid = %cid, site = %ev.d, pubkey = %pubkey_hex, size, "stored");
     }
 }
 
@@ -609,18 +657,29 @@ mod tests {
     use std::time::Duration;
 
     use crate::config::{AgentConfig, IpfsConfig, NostrConfig, PolicyConfig};
+    use crate::ipfs::MfsEntry;
     use crate::nip05::VerificationResult;
 
     #[derive(Default)]
     struct FakeKuboState {
-        pinned: HashSet<String>,
-        pin_calls: Vec<String>,
+        mfs: BTreeMap<String, String>,
+        put_calls: Vec<String>,
         fetched: Vec<String>,
         fail_fetch: HashSet<String>,
         fail_stat: HashSet<String>,
-        fail_is_pinned: HashSet<String>,
-        fail_rm: HashSet<String>,
+        fail_put: HashSet<String>,
+        fail_remove: HashSet<String>,
         sizes: HashMap<String, u64>,
+    }
+
+    impl FakeKuboState {
+        fn stores(&self, cid: &str) -> bool {
+            self.mfs.values().any(|c| c == cid)
+        }
+
+        fn paths(&self) -> Vec<String> {
+            self.mfs.keys().cloned().collect()
+        }
     }
 
     #[derive(Default)]
@@ -638,7 +697,7 @@ mod tests {
         }
     }
 
-    impl KuboPins for FakeKubo {
+    impl KuboStore for FakeKubo {
         async fn fetch_dag(&self, cid: &str, limits: FetchLimits) -> Result<Fetched> {
             self.entered_fetch.notify_one();
             let _open = self.gate.read().await;
@@ -653,13 +712,6 @@ mod tests {
             Ok(Fetched::Complete)
         }
 
-        async fn pin_add_local(&self, cid: &str, _timeout: Duration) -> Result<()> {
-            let mut s = self.s.lock().unwrap();
-            s.pin_calls.push(cid.to_string());
-            s.pinned.insert(cid.to_string());
-            Ok(())
-        }
-
         async fn dag_size_local(&self, cid: &str) -> Result<u64> {
             let s = self.s.lock().unwrap();
             if s.fail_stat.contains(cid) {
@@ -668,25 +720,52 @@ mod tests {
             Ok(s.sizes.get(cid).copied().unwrap_or(0))
         }
 
-        async fn is_pinned(&self, cid: &str) -> Result<bool> {
-            let s = self.s.lock().unwrap();
-            if s.fail_is_pinned.contains(cid) {
-                anyhow::bail!("simulated pin/ls failure");
-            }
-            Ok(s.pinned.contains(cid))
-        }
-
-        async fn recursive_pins(&self) -> Result<HashSet<String>> {
-            Ok(self.s.lock().unwrap().pinned.clone())
-        }
-
-        async fn pin_rm(&self, cid: &str) -> Result<()> {
+        async fn mfs_put(&self, cid: &str, path: &str) -> Result<()> {
             let mut s = self.s.lock().unwrap();
-            if s.fail_rm.contains(cid) {
-                anyhow::bail!("simulated pin_rm failure");
+            s.put_calls.push(cid.to_string());
+            if s.fail_put.contains(cid) {
+                anyhow::bail!("simulated files/cp failure");
             }
-            s.pinned.remove(cid);
+            s.mfs.insert(path.to_string(), cid.to_string());
             Ok(())
+        }
+
+        async fn mfs_remove(&self, path: &str) -> Result<()> {
+            let mut s = self.s.lock().unwrap();
+            if s.fail_remove.contains(path) {
+                anyhow::bail!("simulated files/rm failure");
+            }
+            let prefix = format!("{path}/");
+            s.mfs.retain(|p, _| p != path && !p.starts_with(&prefix));
+            Ok(())
+        }
+
+        async fn mfs_list(&self, path: &str) -> Result<Vec<MfsEntry>> {
+            let s = self.s.lock().unwrap();
+            let prefix = format!("{path}/");
+            let mut entries: BTreeMap<String, MfsEntry> = BTreeMap::new();
+            for (p, cid) in &s.mfs {
+                let Some(rest) = p.strip_prefix(&prefix) else {
+                    continue;
+                };
+                let (name, is_dir) = match rest.split_once('/') {
+                    Some((name, _)) => (name, true),
+                    None => (rest, false),
+                };
+                entries.insert(
+                    name.to_string(),
+                    MfsEntry {
+                        name: name.to_string(),
+                        is_dir,
+                        cid: if is_dir { String::new() } else { cid.clone() },
+                    },
+                );
+            }
+            Ok(entries.into_values().collect())
+        }
+
+        async fn mfs_stat_cid(&self, path: &str) -> Result<Option<String>> {
+            Ok(self.s.lock().unwrap().mfs.get(path).cloned())
         }
     }
 
@@ -732,17 +811,19 @@ mod tests {
             },
             ipfs: IpfsConfig {
                 api: "http://127.0.0.1:5001".to_string(),
+                mfs_root: "/swing".to_string(),
             },
             policy,
             agent: AgentConfig {
                 state_dir: std::path::PathBuf::from("./data"),
                 poll_interval: Duration::from_secs(300),
-                pin_timeout: Duration::from_secs(60),
+                fetch_timeout: Duration::from_secs(60),
                 fetch_idle_timeout: Duration::from_secs(10),
                 concurrency: 2,
             },
             publish: crate::config::PublishConfig {
                 nip05: Nip05Mode::Off,
+                keep_versions: 5,
             },
         }
     }
@@ -757,7 +838,7 @@ mod tests {
             keep_versions: 5,
             keep_days: 365,
             min_update_interval: 0,
-            unpin_on_unfollow: true,
+            remove_on_unfollow: true,
             nip05: Nip05Mode::Off,
             nip05_cache_ttl: 86_400,
         }
@@ -779,17 +860,13 @@ mod tests {
 
     impl Fixture {
         fn new(policy: PolicyConfig, kubo: FakeKubo) -> Self {
-            Self::with_nip05(policy, kubo, FakeNip05::default())
-        }
-
-        fn with_nip05(policy: PolicyConfig, kubo: FakeKubo, nip05: FakeNip05) -> Self {
             let dir = tempfile::tempdir().unwrap();
             let state_path = dir.path().join("state.json");
             let pubkey = Keys::generate().public_key();
             let agent = Agent::new(
                 test_config(policy),
                 kubo,
-                nip05,
+                FakeNip05::default(),
                 State::default(),
                 state_path.clone(),
             );
@@ -806,6 +883,12 @@ mod tests {
             state::site_key(&self.pubkey.to_hex(), d)
         }
 
+        fn path(&self, d: &str, created_at: u64) -> String {
+            self.agent
+                .layout
+                .agent_version(&self.pubkey.to_hex(), d, created_at)
+        }
+
         fn event(&self, d: &str, cid: &str, size: Option<u64>, created_at: u64) -> SiteEvent {
             SiteEvent {
                 pubkey: self.pubkey,
@@ -817,18 +900,20 @@ mod tests {
             }
         }
 
-        async fn seed(&self, d: &str, cid: &str, size: u64) {
-            self.agent.state.lock().await.apply_pin(
+        async fn seed(&self, d: &str, cid: &str, size: u64, created_at: u64) {
+            self.agent.state.lock().await.apply_store(
                 &self.key(d),
                 VersionRecord {
                     cid: cid.to_string(),
                     size,
-                    created_at: 100,
-                    pinned_at: 100,
-                    preexisting_pin: false,
+                    created_at,
+                    stored_at: created_at,
                 },
             );
-            self.kubo().pinned.insert(cid.to_string());
+            let path = self.path(d, created_at);
+            let mut kubo = self.kubo();
+            kubo.mfs.insert(path, cid.to_string());
+            kubo.sizes.insert(cid.to_string(), size);
         }
 
         async fn apply(&self, ev: SiteEvent) {
@@ -839,16 +924,15 @@ mod tests {
             self.agent.ipfs.s.lock().unwrap()
         }
 
-        async fn record(&self, d: &str, cid: &str) -> Option<VersionRecord> {
+        async fn cids(&self, d: &str) -> Vec<String> {
             self.agent
                 .state
                 .lock()
                 .await
                 .sites
-                .get(&self.key(d))?
-                .iter()
-                .find(|v| v.cid == cid)
-                .cloned()
+                .get(&self.key(d))
+                .map(|vs| vs.iter().map(|v| v.cid.clone()).collect())
+                .unwrap_or_default()
         }
 
         async fn site_bytes(&self, d: &str) -> u64 {
@@ -868,19 +952,38 @@ mod tests {
 
     const D: &str = "example.com";
 
+    fn sized(entries: &[(&str, u64)]) -> FakeKubo {
+        FakeKubo::with(|s| {
+            for (cid, size) in entries {
+                s.sizes.insert(cid.to_string(), *size);
+            }
+        })
+    }
+
     #[tokio::test]
-    async fn fetch_failure_leaves_state_and_old_pins_untouched() {
+    async fn stores_a_new_site_under_its_versioned_path() {
+        let fx = Fixture::new(default_policy(), sized(&[("bafy-new", 20)]));
+
+        fx.apply(fx.event(D, "bafy-new", Some(20), 200)).await;
+
+        assert_eq!(fx.kubo().paths(), vec![fx.path(D, 200)]);
+        assert_eq!(fx.cids(D).await, vec!["bafy-new"]);
+        assert_eq!(fx.site_bytes(D).await, 20);
+        assert!(fx.state_path.exists());
+    }
+
+    #[tokio::test]
+    async fn fetch_failure_leaves_state_and_old_versions_untouched() {
         let kubo = FakeKubo::with(|s| {
             s.fail_fetch.insert("bafy-new".into());
         });
         let fx = Fixture::new(default_policy(), kubo);
-        fx.seed(D, "bafy-old", 10).await;
+        fx.seed(D, "bafy-old", 10, 100).await;
 
         fx.apply(fx.event(D, "bafy-new", Some(20), 200)).await;
 
-        assert_eq!(fx.site_bytes(D).await, 10);
-        assert!(fx.kubo().pinned.contains("bafy-old"));
-        assert!(!fx.kubo().pinned.contains("bafy-new"));
+        assert_eq!(fx.cids(D).await, vec!["bafy-old"]);
+        assert_eq!(fx.kubo().paths(), vec![fx.path(D, 100)]);
         assert!(!fx.state_path.exists());
     }
 
@@ -896,7 +999,20 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn incomplete_content_is_never_pinned() {
+    async fn store_failure_records_nothing() {
+        let kubo = FakeKubo::with(|s| {
+            s.fail_put.insert("bafy-new".into());
+        });
+        let fx = Fixture::new(default_policy(), kubo);
+
+        fx.apply(fx.event(D, "bafy-new", None, 200)).await;
+
+        assert!(fx.cids(D).await.is_empty());
+        assert!(fx.kubo().mfs.is_empty());
+    }
+
+    #[tokio::test]
+    async fn incomplete_content_is_removed_and_not_recorded() {
         let kubo = FakeKubo::with(|s| {
             s.fail_stat.insert("bafy-new".into());
         });
@@ -904,59 +1020,36 @@ mod tests {
 
         fx.apply(fx.event(D, "bafy-new", None, 200)).await;
 
-        assert!(fx.agent.state.lock().await.sites.is_empty());
-        assert!(fx.kubo().pin_calls.is_empty());
-        assert!(fx.agent.state.lock().await.releasing.is_empty());
-    }
-
-    #[tokio::test]
-    async fn content_rejected_by_actual_size_is_never_pinned() {
-        let mut policy = default_policy();
-        policy.max_total_storage = 50;
-        let kubo = FakeKubo::with(|s| {
-            s.sizes.insert("bafy-new".into(), 80);
-        });
-        let fx = Fixture::new(policy, kubo);
-
-        fx.apply(fx.event(D, "bafy-new", None, 200)).await;
-
-        assert!(fx.kubo().pin_calls.is_empty());
-        assert!(fx.agent.state.lock().await.releasing.is_empty());
+        assert!(fx.cids(D).await.is_empty());
+        assert!(fx.kubo().mfs.is_empty());
     }
 
     #[tokio::test]
     async fn oversized_content_is_aborted_during_fetch_even_with_a_small_size_tag() {
         let mut policy = default_policy();
         policy.max_per_site = 50;
-        let kubo = FakeKubo::with(|s| {
-            s.sizes.insert("bafy-liar".into(), 1_000);
-        });
-        let fx = Fixture::new(policy, kubo);
+        let fx = Fixture::new(policy, sized(&[("bafy-liar", 1_000)]));
 
         fx.apply(fx.event(D, "bafy-liar", Some(20), 200)).await;
 
         assert_eq!(fx.kubo().fetched, vec!["bafy-liar".to_string()]);
-        assert!(!fx.kubo().pinned.contains("bafy-liar"));
-        assert!(!fx.agent.state.lock().await.sites.contains_key(&fx.key(D)));
+        assert!(fx.kubo().put_calls.is_empty());
+        assert!(fx.cids(D).await.is_empty());
     }
 
     #[tokio::test]
     async fn actual_size_is_recorded_and_rechecked_instead_of_the_size_tag() {
         let mut policy = default_policy();
         policy.max_total_storage = 100;
-        let kubo = FakeKubo::with(|s| {
-            s.sizes.insert("bafy-liar".into(), 80);
-            s.sizes.insert("bafy-honest".into(), 30);
-        });
-        let fx = Fixture::new(policy, kubo);
-        fx.seed("other.example", "bafy-other", 40).await;
+        let fx = Fixture::new(policy, sized(&[("bafy-liar", 80), ("bafy-honest", 30)]));
+        fx.seed("other.example", "bafy-other", 40, 100).await;
 
         fx.apply(fx.event(D, "bafy-liar", Some(1), 200)).await;
-        assert!(!fx.kubo().pinned.contains("bafy-liar"));
+        assert!(!fx.kubo().stores("bafy-liar"));
         assert_eq!(fx.site_bytes(D).await, 0);
 
         fx.apply(fx.event(D, "bafy-honest", Some(1), 300)).await;
-        assert!(fx.kubo().pinned.contains("bafy-honest"));
+        assert!(fx.kubo().stores("bafy-honest"));
         assert_eq!(fx.site_bytes(D).await, 30);
     }
 
@@ -972,66 +1065,56 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn sizeless_event_within_limits_evicts_oldest_per_keep_versions() {
+    async fn new_version_evicts_the_oldest_per_keep_versions() {
         let mut policy = default_policy();
         policy.keep_versions = 1;
-        let kubo = FakeKubo::with(|s| {
-            s.sizes.insert("bafy-new".into(), 20);
-        });
-        let fx = Fixture::new(policy, kubo);
-        fx.seed(D, "bafy-old", 10).await;
+        let fx = Fixture::new(policy, sized(&[("bafy-new", 20)]));
+        fx.seed(D, "bafy-old", 10, 100).await;
 
         fx.apply(fx.event(D, "bafy-new", None, 200)).await;
 
+        assert_eq!(fx.cids(D).await, vec!["bafy-new"]);
+        assert_eq!(fx.kubo().paths(), vec![fx.path(D, 200)]);
         assert_eq!(fx.site_bytes(D).await, 20);
-        assert!(!fx.kubo().pinned.contains("bafy-old"));
-        assert!(fx.kubo().pinned.contains("bafy-new"));
-        assert!(fx.state_path.exists());
     }
 
     #[tokio::test]
     async fn max_per_account_limits_the_sum_of_an_accounts_sites() {
         let mut policy = default_policy();
         policy.max_per_account = 100;
-        let kubo = FakeKubo::with(|s| {
-            s.sizes.insert("bafy-b".into(), 60);
-            s.sizes.insert("bafy-c".into(), 40);
-        });
-        let fx = Fixture::new(policy, kubo);
-        fx.seed("a.example", "bafy-a", 60).await;
+        let fx = Fixture::new(policy, sized(&[("bafy-b", 60), ("bafy-c", 40)]));
+        fx.seed("a.example", "bafy-a", 60, 100).await;
 
         fx.apply(fx.event("b.example", "bafy-b", None, 200)).await;
-        assert!(!fx.kubo().pinned.contains("bafy-b"));
+        assert!(!fx.kubo().stores("bafy-b"));
 
         fx.apply(fx.event("c.example", "bafy-c", None, 200)).await;
-        assert!(fx.kubo().pinned.contains("bafy-c"));
+        assert!(fx.kubo().stores("bafy-c"));
         assert_eq!(fx.site_bytes("c.example").await, 40);
     }
 
     #[tokio::test]
-    async fn rejected_cid_shared_with_another_site_stays_pinned() {
+    async fn sites_sharing_a_cid_are_stored_and_removed_independently() {
         let mut policy = default_policy();
-        policy.max_per_account = 150;
-        let kubo = FakeKubo::with(|s| {
-            s.sizes.insert("bafy-shared".into(), 100);
-        });
-        let fx = Fixture::new(policy, kubo);
-        fx.seed("a.example", "bafy-shared", 100).await;
+        policy.keep_versions = 1;
+        let fx = Fixture::new(policy, sized(&[("bafy-shared", 10), ("bafy-a2", 10)]));
 
+        fx.apply(fx.event("a.example", "bafy-shared", None, 200))
+            .await;
         fx.apply(fx.event("b.example", "bafy-shared", None, 200))
             .await;
+        fx.apply(fx.event("a.example", "bafy-a2", None, 300)).await;
 
-        assert!(fx.kubo().pinned.contains("bafy-shared"));
-        assert_eq!(fx.site_bytes("a.example").await, 100);
-        assert_eq!(fx.site_bytes("b.example").await, 0);
+        assert_eq!(
+            fx.kubo().paths(),
+            vec![fx.path("a.example", 300), fx.path("b.example", 200)]
+        );
+        assert!(fx.kubo().stores("bafy-shared"));
     }
 
     #[tokio::test]
-    async fn unfollow_during_fetch_does_not_pin() {
-        let kubo = FakeKubo::with(|s| {
-            s.sizes.insert("bafy-new".into(), 10);
-        });
-        let fx = Fixture::new(default_policy(), kubo);
+    async fn unfollow_during_fetch_does_not_store() {
+        let fx = Fixture::new(default_policy(), sized(&[("bafy-new", 10)]));
         let gate = fx.agent.ipfs.gate.write().await;
 
         let agent = Arc::clone(&fx.agent);
@@ -1043,18 +1126,45 @@ mod tests {
         drop(gate);
         task.await.unwrap();
 
-        assert!(!fx.kubo().pinned.contains("bafy-new"));
+        assert!(fx.kubo().mfs.is_empty());
         assert!(fx.agent.state.lock().await.sites.is_empty());
     }
 
     #[tokio::test]
+    async fn unfollow_removes_the_account_directory_and_its_verifications() {
+        let fx = Fixture::new(nip05_policy(Nip05Mode::Warn), FakeKubo::default());
+        fx.seed(D, "bafy-a", 1, 100).await;
+        fx.seed("b.example", "bafy-b", 1, 100).await;
+        fx.agent.nip05.set(
+            "c.example",
+            &fx.pubkey.to_hex(),
+            VerificationResult::Mismatch,
+        );
+        fx.apply(fx.event("c.example", "bafy-c", None, 100)).await;
+        let other = format!("{}/other", fx.agent.layout.agent_root());
+        fx.kubo()
+            .mfs
+            .insert(format!("{other}/x/1"), "bafy-x".into());
+
+        fx.agent.unfollow(fx.pubkey).await;
+
+        assert_eq!(fx.kubo().paths(), vec![format!("{other}/x/1")]);
+        let state = fx.agent.state.lock().await;
+        assert!(state.sites.is_empty());
+        assert!(state.verifications.is_empty());
+    }
+
+    #[tokio::test]
     async fn submit_coalesces_events_for_a_busy_site_to_the_newest() {
-        let kubo = FakeKubo::with(|s| {
-            for cid in ["bafy-1", "bafy-2", "bafy-3", "bafy-other"] {
-                s.sizes.insert(cid.into(), 10);
-            }
-        });
-        let fx = Fixture::new(default_policy(), kubo);
+        let fx = Fixture::new(
+            default_policy(),
+            sized(&[
+                ("bafy-1", 10),
+                ("bafy-2", 10),
+                ("bafy-3", 10),
+                ("bafy-other", 10),
+            ]),
+        );
         let gate = fx.agent.ipfs.gate.write().await;
 
         let mut tasks = JoinSet::new();
@@ -1079,7 +1189,7 @@ mod tests {
         let mut fetched = fx.kubo().fetched.clone();
         fetched.sort();
         assert_eq!(fetched, vec!["bafy-1", "bafy-3", "bafy-other"]);
-        assert!(fx.kubo().pinned.contains("bafy-3"));
+        assert!(fx.kubo().stores("bafy-3"));
         assert!(fx.agent.queue.lock().unwrap().is_empty());
     }
 
@@ -1097,36 +1207,15 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn unfollow_removes_verifications_of_unpinned_sites() {
-        let nip05 = FakeNip05::default();
-        let kubo = FakeKubo::default();
-        let fx = Fixture::with_nip05(nip05_policy(Nip05Mode::Require), kubo, nip05);
-        fx.agent
-            .nip05
-            .set(D, &fx.pubkey.to_hex(), VerificationResult::Mismatch);
-        fx.apply(fx.event(D, "bafy-new", Some(20), 200)).await;
-        assert_eq!(fx.verification(D).await.as_deref(), Some("mismatch"));
-
-        fx.agent.unfollow(fx.pubkey).await;
-        assert_eq!(fx.verification(D).await, None);
-    }
-
-    #[tokio::test]
-    async fn nip05_warn_mode_pins_despite_mismatch_and_records_result() {
-        let fx = Fixture::new(
-            nip05_policy(Nip05Mode::Warn),
-            FakeKubo::with(|s| {
-                s.sizes.insert("bafy-new".into(), 20);
-            }),
-        );
+    async fn nip05_warn_mode_stores_despite_mismatch_and_records_result() {
+        let fx = Fixture::new(nip05_policy(Nip05Mode::Warn), sized(&[("bafy-new", 20)]));
         fx.agent
             .nip05
             .set(D, &fx.pubkey.to_hex(), VerificationResult::Mismatch);
 
         fx.apply(fx.event(D, "bafy-new", Some(20), 200)).await;
 
-        assert!(fx.kubo().pinned.contains("bafy-new"));
-        assert_eq!(fx.site_bytes(D).await, 20);
+        assert!(fx.kubo().stores("bafy-new"));
         assert_eq!(fx.verification(D).await.as_deref(), Some("mismatch"));
     }
 
@@ -1140,12 +1229,12 @@ mod tests {
         fx.apply(fx.event(D, "bafy-new", Some(20), 200)).await;
 
         assert!(fx.kubo().fetched.is_empty());
-        assert!(!fx.agent.state.lock().await.sites.contains_key(&fx.key(D)));
+        assert!(fx.cids(D).await.is_empty());
         assert_eq!(fx.verification(D).await.as_deref(), Some("not_applicable"));
     }
 
     #[tokio::test]
-    async fn nip05_require_mode_pins_when_verified() {
+    async fn nip05_require_mode_stores_when_verified() {
         let fx = Fixture::new(nip05_policy(Nip05Mode::Require), FakeKubo::default());
         fx.agent
             .nip05
@@ -1153,7 +1242,7 @@ mod tests {
 
         fx.apply(fx.event(D, "bafy-new", Some(20), 200)).await;
 
-        assert!(fx.kubo().pinned.contains("bafy-new"));
+        assert!(fx.kubo().stores("bafy-new"));
         assert_eq!(fx.verification(D).await.as_deref(), Some("verified"));
     }
 
@@ -1163,7 +1252,7 @@ mod tests {
 
         fx.apply(fx.event(D, "bafy-new", Some(20), 200)).await;
 
-        assert!(fx.kubo().pinned.contains("bafy-new"));
+        assert!(fx.kubo().stores("bafy-new"));
         assert_eq!(fx.agent.nip05.calls(), 0);
         assert_eq!(fx.verification(D).await, None);
     }
@@ -1178,7 +1267,7 @@ mod tests {
         fx.apply(fx.event(D, "bafy-1", None, 200)).await;
         fx.apply(fx.event(D, "bafy-2", None, 300)).await;
         assert_eq!(fx.agent.nip05.calls(), 1);
-        assert!(fx.kubo().pinned.contains("bafy-2"));
+        assert!(fx.kubo().stores("bafy-2"));
 
         fx.agent
             .state
@@ -1221,78 +1310,11 @@ mod tests {
     #[tokio::test]
     async fn skipped_events_do_not_trigger_nip05() {
         let fx = Fixture::new(nip05_policy(Nip05Mode::Require), FakeKubo::default());
-        fx.seed(D, "bafy-1", 10).await;
+        fx.seed(D, "bafy-1", 10, 100).await;
 
         fx.apply(fx.event(D, "bafy-1", None, 100)).await;
 
         assert_eq!(fx.agent.nip05.calls(), 0);
-    }
-
-    fn manual_pin(cid: &str, size: u64) -> FakeKubo {
-        FakeKubo::with(|s| {
-            s.pinned.insert(cid.into());
-            s.sizes.insert(cid.into(), size);
-        })
-    }
-
-    #[tokio::test]
-    async fn manual_pin_survives_rejection_after_fetch() {
-        let mut policy = default_policy();
-        policy.max_total_storage = 50;
-        let fx = Fixture::new(policy, manual_pin("bafy-manual", 80));
-
-        fx.apply(fx.event(D, "bafy-manual", None, 200)).await;
-
-        assert!(fx.kubo().pinned.contains("bafy-manual"));
-        assert_eq!(fx.site_bytes(D).await, 0);
-    }
-
-    #[tokio::test]
-    async fn manual_pin_survives_eviction_and_unfollow() {
-        let mut policy = default_policy();
-        policy.keep_versions = 1;
-        let kubo = manual_pin("bafy-manual", 10);
-        kubo.s.lock().unwrap().sizes.insert("bafy-next".into(), 10);
-        let fx = Fixture::new(policy, kubo);
-
-        fx.apply(fx.event(D, "bafy-manual", None, 200)).await;
-        assert!(fx.record(D, "bafy-manual").await.unwrap().preexisting_pin);
-        fx.apply(fx.event(D, "bafy-next", None, 300)).await;
-        assert!(fx.record(D, "bafy-manual").await.is_none());
-        assert!(fx.kubo().pinned.contains("bafy-manual"));
-
-        fx.apply(fx.event("b.example", "bafy-manual", None, 200))
-            .await;
-        fx.agent.unfollow(fx.pubkey).await;
-        assert!(fx.kubo().pinned.contains("bafy-manual"));
-        assert!(!fx.kubo().pinned.contains("bafy-next"));
-    }
-
-    #[tokio::test]
-    async fn preexisting_flag_is_inherited_from_existing_records() {
-        let fx = Fixture::new(default_policy(), manual_pin("bafy-manual", 10));
-        fx.apply(fx.event("a.example", "bafy-manual", None, 200))
-            .await;
-        fx.apply(fx.event("b.example", "bafy-manual", None, 200))
-            .await;
-
-        let b = fx.record("b.example", "bafy-manual").await.unwrap();
-        assert!(b.preexisting_pin);
-        fx.agent.unfollow(fx.pubkey).await;
-        assert!(fx.kubo().pinned.contains("bafy-manual"));
-    }
-
-    #[tokio::test]
-    async fn pin_check_failure_aborts_without_pinning() {
-        let kubo = FakeKubo::with(|s| {
-            s.fail_is_pinned.insert("bafy-new".into());
-        });
-        let fx = Fixture::new(default_policy(), kubo);
-
-        fx.apply(fx.event(D, "bafy-new", None, 200)).await;
-
-        assert!(!fx.kubo().pinned.contains("bafy-new"));
-        assert_eq!(fx.record(D, "bafy-new").await, None);
     }
 
     #[tokio::test]
@@ -1300,8 +1322,8 @@ mod tests {
         let mut policy = default_policy();
         policy.max_sites_per_account = 2;
         let fx = Fixture::new(policy, FakeKubo::default());
-        fx.seed("a.example", "bafy-a", 1).await;
-        fx.seed("b.example", "bafy-b", 1).await;
+        fx.seed("a.example", "bafy-a", 1, 100).await;
+        fx.seed("b.example", "bafy-b", 1, 100).await;
 
         fx.apply(fx.event("c.example", "bafy-c", None, 200)).await;
         assert!(fx.kubo().fetched.is_empty());
@@ -1310,26 +1332,31 @@ mod tests {
         assert_eq!(fx.kubo().fetched, vec!["bafy-a2"]);
     }
 
-    #[test]
-    fn limit_sites_per_account_prefers_pinned_then_newest() {
-        let fx = Fixture::new(default_policy(), FakeKubo::default());
-        let other = Keys::generate().public_key();
+    fn stored_state(fx: &Fixture, ds: &[&str]) -> State {
         let mut state = State::default();
-        state.apply_pin(
-            &fx.key("pinned.example"),
-            VersionRecord {
-                cid: "c".into(),
-                size: 1,
-                created_at: 1,
-                pinned_at: 1,
-                preexisting_pin: false,
-            },
-        );
+        for d in ds {
+            state.apply_store(
+                &fx.key(d),
+                VersionRecord {
+                    cid: "c".into(),
+                    size: 1,
+                    created_at: 1,
+                    stored_at: 1,
+                },
+            );
+        }
+        state
+    }
+
+    #[test]
+    fn limit_sites_per_account_prefers_stored_then_newest() {
+        let fx = Fixture::new(default_policy(), FakeKubo::default());
+        let state = stored_state(&fx, &["stored.example"]);
         let mut other_event = fx.event("x.example", "c", None, 1);
-        other_event.pubkey = other;
+        other_event.pubkey = Keys::generate().public_key();
         let events = vec![
             fx.event("old.example", "c", None, 10),
-            fx.event("pinned.example", "c", None, 5),
+            fx.event("stored.example", "c", None, 5),
             fx.event("new.example", "c", None, 30),
             fx.event("mid.example", "c", None, 20),
             other_event,
@@ -1342,26 +1369,14 @@ mod tests {
         selected.sort();
         assert_eq!(
             selected,
-            vec!["mid.example", "new.example", "pinned.example", "x.example"]
+            vec!["mid.example", "new.example", "stored.example", "x.example"]
         );
     }
 
     #[test]
-    fn limit_sites_per_account_keeps_all_pinned_sites_over_the_limit() {
+    fn limit_sites_per_account_keeps_all_stored_sites_over_the_limit() {
         let fx = Fixture::new(default_policy(), FakeKubo::default());
-        let mut state = State::default();
-        for d in ["a.example", "b.example"] {
-            state.apply_pin(
-                &fx.key(d),
-                VersionRecord {
-                    cid: "c".into(),
-                    size: 1,
-                    created_at: 1,
-                    pinned_at: 1,
-                    preexisting_pin: false,
-                },
-            );
-        }
+        let state = stored_state(&fx, &["a.example", "b.example"]);
         let events = vec![
             fx.event("a.example", "c", None, 1),
             fx.event("b.example", "c", None, 1),
@@ -1400,7 +1415,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn verifications_of_unpinned_sites_are_pruned_per_account() {
+    async fn verifications_of_unstored_sites_are_pruned_per_account() {
         let mut policy = nip05_policy(Nip05Mode::Require);
         policy.max_sites_per_account = 2;
         let fx = Fixture::new(policy, FakeKubo::default());
@@ -1414,72 +1429,49 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn failed_unpin_stays_pending_and_is_retried_by_sweep() {
+    async fn failed_removal_is_cleaned_up_by_the_next_sweep() {
         let mut policy = default_policy();
         policy.keep_versions = 1;
-        let kubo = FakeKubo::with(|s| {
-            s.fail_rm.insert("bafy-old".into());
-        });
-        let fx = Fixture::new(policy, kubo);
-        fx.seed(D, "bafy-old", 10).await;
+        let fx = Fixture::new(policy, FakeKubo::default());
+        fx.seed(D, "bafy-old", 10, 100).await;
+        let old_path = fx.path(D, 100);
+        fx.kubo().fail_remove.insert(old_path.clone());
 
         fx.apply(fx.event(D, "bafy-new", None, 200)).await;
-        assert!(fx.kubo().pinned.contains("bafy-old"));
-        assert!(
-            fx.agent
-                .state
-                .lock()
-                .await
-                .releasing
-                .contains_key("bafy-old")
-        );
-        let saved = State::load(&fx.state_path).await.unwrap();
-        assert!(saved.releasing.contains_key("bafy-old"));
+        assert_eq!(fx.cids(D).await, vec!["bafy-new"]);
+        assert!(fx.kubo().mfs.contains_key(&old_path));
 
-        fx.kubo().fail_rm.clear();
+        fx.kubo().fail_remove.clear();
         fx.agent.sweep().await;
-        assert!(!fx.kubo().pinned.contains("bafy-old"));
-        assert!(fx.agent.state.lock().await.releasing.is_empty());
-        let saved = State::load(&fx.state_path).await.unwrap();
-        assert!(saved.releasing.is_empty());
+        assert_eq!(fx.kubo().paths(), vec![fx.path(D, 200)]);
     }
 
     #[tokio::test]
-    async fn pending_release_is_not_mistaken_for_a_manual_pin() {
-        let mut policy = default_policy();
-        policy.keep_versions = 1;
-        let kubo = FakeKubo::with(|s| {
-            s.fail_rm.insert("bafy-x".into());
-        });
-        let fx = Fixture::new(policy, kubo);
-        fx.apply(fx.event("a.example", "bafy-x", None, 200)).await;
-        fx.apply(fx.event("a.example", "bafy-a2", None, 300)).await;
-        assert!(fx.agent.state.lock().await.releasing.contains_key("bafy-x"));
+    async fn sweep_removes_entries_the_state_does_not_reference() {
+        let fx = Fixture::new(default_policy(), FakeKubo::default());
+        fx.seed(D, "bafy-kept", 1, 100).await;
+        let root = fx.agent.layout.agent_root();
+        let account = fx.agent.layout.agent_account(&fx.pubkey.to_hex());
+        let publish = fx.agent.layout.publish_version(&fx.pubkey.to_hex(), D, 1);
+        {
+            let mut kubo = fx.kubo();
+            kubo.mfs.insert(fx.path(D, 50), "bafy-stale".into());
+            kubo.mfs
+                .insert(fx.path("gone.example", 1), "bafy-gone".into());
+            kubo.mfs
+                .insert(format!("{account}/stray-file"), "bafy-f".into());
+            kubo.mfs
+                .insert(format!("{root}/unknown/a/1"), "bafy-u".into());
+            kubo.mfs.insert(format!("{root}/loose"), "bafy-l".into());
+            kubo.mfs.insert(publish.clone(), "bafy-p".into());
+            kubo.mfs.insert("/manual/x".into(), "bafy-m".into());
+        }
 
-        fx.apply(fx.event("b.example", "bafy-x", None, 200)).await;
-        let b = fx.record("b.example", "bafy-x").await.unwrap();
-        assert!(!b.preexisting_pin);
-
-        fx.kubo().fail_rm.clear();
         fx.agent.sweep().await;
-        assert!(fx.kubo().pinned.contains("bafy-x"));
-        assert!(fx.agent.state.lock().await.releasing.is_empty());
 
-        fx.apply(fx.event("b.example", "bafy-b2", None, 300)).await;
-        assert!(!fx.kubo().pinned.contains("bafy-x"));
-    }
-
-    #[tokio::test]
-    async fn sweep_drops_pending_manual_pins_without_unpinning() {
-        let fx = Fixture::new(default_policy(), manual_pin("bafy-manual", 10));
-        fx.agent
-            .state
-            .lock()
-            .await
-            .mark_releasing("bafy-manual", true, 1);
-        fx.agent.sweep().await;
-        assert!(fx.kubo().pinned.contains("bafy-manual"));
-        assert!(fx.agent.state.lock().await.releasing.is_empty());
+        let mut expected = vec![fx.path(D, 100), publish, "/manual/x".to_string()];
+        expected.sort();
+        assert_eq!(fx.kubo().paths(), expected);
     }
 
     #[tokio::test]
@@ -1488,68 +1480,149 @@ mod tests {
         policy.keep_days = 1;
         let fx = Fixture::new(policy, FakeKubo::default());
         let now = now_secs();
-        for (cid, created_at) in [
-            ("bafy-old", now - 3 * 86_400),
-            ("bafy-new", now - 2 * 86_400),
-        ] {
-            fx.agent.state.lock().await.apply_pin(
-                &fx.key(D),
-                VersionRecord {
-                    cid: cid.into(),
-                    size: 1,
-                    created_at,
-                    pinned_at: created_at,
-                    preexisting_pin: false,
-                },
-            );
-            fx.kubo().pinned.insert(cid.into());
-        }
+        fx.seed(D, "bafy-old", 1, now - 3 * 86_400).await;
+        fx.seed(D, "bafy-new", 1, now - 2 * 86_400).await;
 
         fx.agent.sweep().await;
 
-        assert!(!fx.kubo().pinned.contains("bafy-old"));
-        assert!(fx.kubo().pinned.contains("bafy-new"));
-        assert!(fx.record(D, "bafy-new").await.is_some());
-        assert!(fx.record(D, "bafy-old").await.is_none());
+        assert_eq!(fx.cids(D).await, vec!["bafy-new"]);
+        assert_eq!(fx.kubo().paths(), vec![fx.path(D, now - 2 * 86_400)]);
         assert!(fx.state_path.exists());
     }
 
     #[tokio::test]
-    async fn sweep_without_work_does_not_write_state() {
+    async fn sweep_without_retention_work_does_not_write_state() {
         let fx = Fixture::new(default_policy(), FakeKubo::default());
-        fx.seed(D, "bafy-a", 1).await;
+        fx.seed(D, "bafy-a", 1, 100).await;
         fx.agent.sweep().await;
         assert!(!fx.state_path.exists());
+        assert_eq!(fx.kubo().paths(), vec![fx.path(D, 100)]);
     }
 
     #[tokio::test]
-    async fn reconcile_forgets_missing_pins_and_ignores_untracked_ones() {
+    async fn reconcile_forgets_missing_mismatched_and_incomplete_versions() {
         let fx = Fixture::new(default_policy(), FakeKubo::default());
-        fx.seed(D, "bafy-kept", 1).await;
-        fx.seed("gone.example", "bafy-gone", 1).await;
-        fx.kubo().pinned.remove("bafy-gone");
-        fx.kubo().pinned.insert("bafy-untracked".into());
+        fx.seed(D, "bafy-kept", 1, 100).await;
+        fx.seed("missing.example", "bafy-missing", 1, 100).await;
+        fx.seed("moved.example", "bafy-moved", 1, 100).await;
+        fx.seed("broken.example", "bafy-broken", 1, 100).await;
         {
-            let mut state = fx.agent.state.lock().await;
-            state.mark_releasing("bafy-released", false, 1);
-            state.mark_releasing("bafy-kept", false, 1);
+            let mut kubo = fx.kubo();
+            kubo.mfs.remove(&fx.path("missing.example", 100));
+            kubo.mfs
+                .insert(fx.path("moved.example", 100), "bafy-other".into());
+            kubo.fail_stat.insert("bafy-broken".into());
         }
 
         fx.agent.reconcile().await;
 
         let state = fx.agent.state.lock().await;
-        assert!(state.sites.contains_key(&fx.key(D)));
-        assert!(!state.sites.contains_key(&fx.key("gone.example")));
         assert_eq!(
-            state.releasing.keys().collect::<Vec<_>>(),
-            vec!["bafy-kept"]
+            state.sites.keys().cloned().collect::<Vec<_>>(),
+            vec![fx.key(D)]
         );
         drop(state);
-        assert!(fx.kubo().pinned.contains("bafy-untracked"));
         assert!(fx.state_path.exists());
 
-        fx.apply(fx.event("gone.example", "bafy-gone", None, 100))
+        fx.kubo().fail_stat.clear();
+        fx.apply(fx.event("broken.example", "bafy-broken", None, 100))
             .await;
-        assert!(fx.kubo().pinned.contains("bafy-gone"));
+        assert_eq!(fx.cids("broken.example").await, vec!["bafy-broken"]);
+    }
+
+    #[tokio::test]
+    async fn reconcile_without_problems_does_not_write_state() {
+        let fx = Fixture::new(default_policy(), FakeKubo::default());
+        fx.seed(D, "bafy-kept", 1, 100).await;
+        fx.agent.reconcile().await;
+        assert!(!fx.state_path.exists());
+    }
+
+    // Requires the local Kubo used by tests/kubo_integration.rs:
+    //   cargo test --lib agent_stores_and_removes_through_real_kubo -- --ignored
+    #[tokio::test]
+    #[ignore]
+    async fn agent_stores_and_removes_through_real_kubo() {
+        let api = std::env::var("SWING_TEST_IPFS_API")
+            .unwrap_or_else(|_| "http://127.0.0.1:15001".to_string());
+        let kubo = IpfsClient::new(api);
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = format!("/swing-test-agent-{nanos}");
+        let site = tempfile::tempdir().unwrap();
+        std::fs::write(site.path().join("index.html"), format!("{nanos}")).unwrap();
+        let cid = kubo
+            .add_dir(site.path(), &format!("{root}/origin"))
+            .await
+            .unwrap();
+
+        let dir = tempfile::tempdir().unwrap();
+        let mut policy = default_policy();
+        policy.keep_versions = 1;
+        let mut config = test_config(policy);
+        config.ipfs.mfs_root = root.clone();
+        let agent = Agent::new(
+            config,
+            kubo,
+            FakeNip05::default(),
+            State::default(),
+            dir.path().join("state.json"),
+        );
+        let pubkey = Keys::generate().public_key();
+        agent.replace_targets(HashSet::from([pubkey]));
+        let ev = SiteEvent {
+            pubkey,
+            d: "a/b.example".to_string(),
+            cid: cid.clone(),
+            url: None,
+            size: None,
+            created_at: 100,
+        };
+
+        agent.apply_site_event(&ev).await;
+        let path = agent.layout.agent_version(&pubkey.to_hex(), &ev.d, 100);
+        assert_eq!(
+            agent.ipfs.mfs_stat_cid(&path).await.unwrap(),
+            Some(cid.clone())
+        );
+        let size = agent
+            .state
+            .lock()
+            .await
+            .site_bytes(&state::site_key(&pubkey.to_hex(), &ev.d));
+        assert!(size > 0);
+
+        agent.reconcile().await;
+        agent.sweep().await;
+        assert!(agent.ipfs.mfs_stat_cid(&path).await.unwrap().is_some());
+
+        agent
+            .ipfs
+            .mfs_put(
+                &cid,
+                &agent.layout.agent_version(&pubkey.to_hex(), "junk", 1),
+            )
+            .await
+            .unwrap();
+        agent.sweep().await;
+        let sites = agent
+            .ipfs
+            .mfs_list(&agent.layout.agent_account(&pubkey.to_hex()))
+            .await
+            .unwrap();
+        assert_eq!(sites.len(), 1);
+
+        agent.unfollow(pubkey).await;
+        assert!(
+            agent
+                .ipfs
+                .mfs_list(&agent.layout.agent_root())
+                .await
+                .unwrap()
+                .is_empty()
+        );
+        agent.ipfs.mfs_remove(&root).await.unwrap();
     }
 }

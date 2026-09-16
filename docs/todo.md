@@ -4,7 +4,7 @@
 
 | 優先度 | タスク | 出所 |
 |---|---|---|
-| 高 | レプリカ報告イベント（kind 35981、`a` タグで 35980 を参照）を agent が pin 後に publish し、サイトごとのレプリカ数を集計・表示する | plan §17 |
+| 高 | レプリカ報告イベント（kind 35981、`a` タグで 35980 を参照）を agent が保存後に publish し、サイトごとのレプリカ数を集計・表示する | plan §17 |
 | 高 | NIP-46 remote signer 対応。秘密鍵を `.env` に置かずに済む構成にする | plan §12 |
 | 中 | Follow Set を集計して相互フォロー関係を Webring グラフとして表示する | plan §17 |
 | 中 | サイトイベント（35980）に NIP-31 `alt` タグを付ける | レビュー |
@@ -13,11 +13,8 @@
 | 中 | 取得に失敗した CID を覚えて指数バックオフで再試行する。今は poll ごとに同じ CID の取得を試み、そのたびに最大 `SWING_FETCH_IDLE_TIMEOUT` の間、並行枠を 1 つ使う | レビュー（DoS） |
 | 低 | relay から取得するサイトイベントの件数上限。`fetch_events` は件数無制限で、30 秒のタイムアウトだけで抑えている | レビュー（DoS） |
 | 低 | NIP-05 のアドレスフィルタで NAT64（`64:ff9b::/96`）や 6to4（`2002::/16`）に埋め込まれた IPv4 を判定する | レビュー |
-| 中 | `swing publish` が付けた pin を整理する。publish は古い版を unpin しないので、自分のサイトの旧版が agent の容量上限の外で溜まり続ける | レビュー |
-| 低 | SWING が pin した後に運用者が同じ CID を手動で pin しても記録されず、SWING が解放するときに外してしまう | レビュー |
-| 低 | `swing status`: ローカルの state.json と Kubo の pin 一覧の突き合わせ結果を表示する | レビュー |
+| 低 | `swing status`: ローカルの state.json と MFS の突き合わせ結果を表示する | レビュー |
 | 低 | 「全履歴保持」オプション（`keep_versions` / `keep_days` を無制限にする明示的な設定） | plan §4 |
-| 低 | `publish` で `files/stat` に失敗したとき `size` タグ無しで publish している。失敗時の扱いを見直す | レビュー |
 | 低 | Gateway（任意）: Caddy + Kubo Gateway を追加する compose の別プロファイル | plan §17 |
 | 低 | private mode: WireGuard / Tailscale / private IPFS network を使う別モード | plan §17 |
 | 低 | サブパス公開サイト向けに NIP-05 の代替検証（例: `<url>/.well-known/swing.json`）を検討 | レビュー |

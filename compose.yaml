@@ -5,6 +5,7 @@ services:
     restart: unless-stopped
     environment:
       SWING_KUBO_STORAGE_MAX: ${SWING_KUBO_STORAGE_MAX:-${SWING_MAX_TOTAL_STORAGE:-100GB}}
+      SWING_KUBO_PROVIDE_STRATEGY: ${SWING_KUBO_PROVIDE_STRATEGY:-pinned+mfs}
     volumes:
       - ipfs-data:/data/ipfs
       - ./docker/kubo-init.d:/container-init.d:ro

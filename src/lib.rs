@@ -2,6 +2,7 @@ pub mod agent;
 pub mod config;
 pub mod ipfs;
 pub mod key;
+pub mod mfs;
 pub mod mirror;
 pub mod nip05;
 pub mod nostr;

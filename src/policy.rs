@@ -23,16 +23,16 @@ pub struct Usage {
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Decision {
-    pub pin: Option<String>,
-    pub unpin: Vec<String>,
+    pub store: Option<String>,
+    pub evict: Vec<String>,
     pub reason: String,
 }
 
 impl Decision {
     fn skip(reason: impl Into<String>) -> Self {
         Self {
-            pin: None,
-            unpin: Vec::new(),
+            store: None,
+            evict: Vec::new(),
             reason: reason.into(),
         }
     }
@@ -54,23 +54,23 @@ fn evict_oldest_until(
 }
 
 fn evict(versions: &mut Vec<VersionInfo>, cfg: &PolicyConfig, now: u64) -> Vec<String> {
-    let mut unpin = evict_oldest_until(versions, |vs| total_size(vs) <= cfg.max_per_site);
+    let mut evicted = evict_oldest_until(versions, |vs| total_size(vs) <= cfg.max_per_site);
 
     // A `keep_versions` of 0 would otherwise evict the newest version, which
     // is the one just accepted in `decide`.
     let keep_versions = cfg.keep_versions.max(1);
-    unpin.extend(evict_oldest_until(versions, |vs| vs.len() <= keep_versions));
+    evicted.extend(evict_oldest_until(versions, |vs| vs.len() <= keep_versions));
 
     if cfg.keep_days > 0 {
         let cutoff = now.saturating_sub(cfg.keep_days.saturating_mul(86_400));
         let newest_created_at = versions.iter().map(|v| v.created_at).max().unwrap_or(0);
-        let (evicted, kept): (Vec<VersionInfo>, Vec<VersionInfo>) = std::mem::take(versions)
+        let (expired, kept): (Vec<VersionInfo>, Vec<VersionInfo>) = std::mem::take(versions)
             .into_iter()
             .partition(|v| v.created_at < cutoff && v.created_at != newest_created_at);
-        unpin.extend(evicted.into_iter().map(|v| v.cid));
+        evicted.extend(expired.into_iter().map(|v| v.cid));
         *versions = kept;
     }
-    unpin
+    evicted
 }
 
 pub fn retention_evictions(
@@ -138,7 +138,7 @@ pub fn decide(
     if new_size > cfg.max_per_site {
         return Decision::skip("max_per_site_exceeded_alone");
     }
-    let unpin = evict(&mut versions_after, cfg, now);
+    let evicted = evict(&mut versions_after, cfg, now);
 
     let site_after = total_size(&versions_after);
     if usage.other_sites_of_account + site_after > cfg.max_per_account {
@@ -149,8 +149,8 @@ pub fn decide(
     }
 
     Decision {
-        pin: Some(candidate.cid.clone()),
-        unpin,
+        store: Some(candidate.cid.clone()),
+        evict: evicted,
         reason: "accepted".to_string(),
     }
 }
@@ -169,7 +169,7 @@ mod tests {
             keep_versions: 5,
             keep_days: 365,
             min_update_interval: 600,
-            unpin_on_unfollow: true,
+            remove_on_unfollow: true,
             nip05: crate::config::Nip05Mode::Off,
             nip05_cache_ttl: 0,
         }
@@ -203,9 +203,9 @@ mod tests {
         let existing = vec![v("bafy1", 100, 1000)];
         let cand = c("bafy1", Some(100), 2000);
         let d = decide(&existing, Usage::default(), &cand, &cfg(), 3000);
-        assert_eq!(d.pin, None);
+        assert_eq!(d.store, None);
         assert_eq!(d.reason, "duplicate_cid");
-        assert!(d.unpin.is_empty());
+        assert!(d.evict.is_empty());
     }
 
     #[test]
@@ -213,7 +213,7 @@ mod tests {
         let existing = vec![v("bafy1", 100, 1000)];
         let cand = c("bafy2", Some(100), 1000 + 599);
         let d = decide(&existing, Usage::default(), &cand, &cfg(), 2000);
-        assert_eq!(d.pin, None);
+        assert_eq!(d.store, None);
         assert_eq!(d.reason, "min_update_interval");
     }
 
@@ -222,7 +222,7 @@ mod tests {
         let existing = vec![v("bafy1", 100, 1000)];
         let cand = c("bafy2", Some(100), 1000 + 600);
         let d = decide(&existing, Usage::default(), &cand, &cfg(), 2000);
-        assert_eq!(d.pin, Some("bafy2".to_string()));
+        assert_eq!(d.store, Some("bafy2".to_string()));
     }
 
     #[test]
@@ -230,7 +230,7 @@ mod tests {
         let existing: Vec<VersionInfo> = vec![];
         let cand = c("bafy1", Some(251), 1000);
         let d = decide(&existing, Usage::default(), &cand, &cfg(), 2000);
-        assert_eq!(d.pin, None);
+        assert_eq!(d.store, None);
         assert_eq!(d.reason, "max_update_size");
     }
 
@@ -239,7 +239,7 @@ mod tests {
         let existing: Vec<VersionInfo> = vec![];
         let cand = c("bafy1", None, 1000);
         let d = decide(&existing, Usage::default(), &cand, &cfg(), 2000);
-        assert_eq!(d.pin, Some("bafy1".to_string()));
+        assert_eq!(d.store, Some("bafy1".to_string()));
     }
 
     #[test]
@@ -249,8 +249,8 @@ mod tests {
         let existing = vec![v("old1", 150, 1000), v("old2", 100, 1700)];
         let cand = c("new1", Some(100), 3000);
         let d = decide(&existing, Usage::default(), &cand, &c1, 4000);
-        assert_eq!(d.pin, Some("new1".to_string()));
-        assert_eq!(d.unpin, vec!["old1".to_string()]);
+        assert_eq!(d.store, Some("new1".to_string()));
+        assert_eq!(d.evict, vec!["old1".to_string()]);
     }
 
     #[test]
@@ -260,9 +260,9 @@ mod tests {
         let existing: Vec<VersionInfo> = vec![];
         let cand = c("new1", Some(301), 1000);
         let d = decide(&existing, Usage::default(), &cand, &c1, 2000);
-        assert_eq!(d.pin, None);
+        assert_eq!(d.store, None);
         assert_eq!(d.reason, "max_per_site_exceeded_alone");
-        assert!(d.unpin.is_empty());
+        assert!(d.evict.is_empty());
     }
 
     #[test]
@@ -272,9 +272,9 @@ mod tests {
         c1.max_total_storage = 500;
         let cand = c("new1", Some(200), 1000);
         let d = decide(&existing, total_usage(400), &cand, &c1, 2000);
-        assert_eq!(d.pin, None);
+        assert_eq!(d.store, None);
         assert_eq!(d.reason, "max_total_storage");
-        assert!(d.unpin.is_empty());
+        assert!(d.evict.is_empty());
     }
 
     #[test]
@@ -285,8 +285,8 @@ mod tests {
         let existing = vec![v("v1", 10, 1000), v("v2", 10, 1700)];
         let cand = c("v3", Some(10), 2400);
         let d = decide(&existing, Usage::default(), &cand, &c1, 3000);
-        assert_eq!(d.pin, Some("v3".to_string()));
-        assert_eq!(d.unpin, vec!["v1".to_string()]);
+        assert_eq!(d.store, Some("v3".to_string()));
+        assert_eq!(d.evict, vec!["v1".to_string()]);
     }
 
     #[test]
@@ -297,8 +297,8 @@ mod tests {
         let existing = vec![v("v1", 10, 1000)];
         let cand = c("v2", Some(10), 1700);
         let d = decide(&existing, Usage::default(), &cand, &c1, 3000);
-        assert_eq!(d.pin, Some("v2".to_string()));
-        assert_eq!(d.unpin, vec!["v1".to_string()]);
+        assert_eq!(d.store, Some("v2".to_string()));
+        assert_eq!(d.evict, vec!["v1".to_string()]);
     }
 
     #[test]
@@ -312,9 +312,9 @@ mod tests {
         let existing = vec![v("ancient", 10, day), v("recent_old", 10, now - 20 * day)];
         let cand = c("new", Some(10), now - 1);
         let d = decide(&existing, Usage::default(), &cand, &c1, now);
-        assert_eq!(d.pin, Some("new".to_string()));
-        assert!(d.unpin.contains(&"ancient".to_string()));
-        assert!(d.unpin.contains(&"recent_old".to_string()));
+        assert_eq!(d.store, Some("new".to_string()));
+        assert!(d.evict.contains(&"ancient".to_string()));
+        assert!(d.evict.contains(&"recent_old".to_string()));
     }
 
     #[test]
@@ -328,8 +328,8 @@ mod tests {
         let existing: Vec<VersionInfo> = vec![];
         let cand = c("new_but_old_timestamp", Some(10), day);
         let d = decide(&existing, Usage::default(), &cand, &c1, now);
-        assert_eq!(d.pin, Some("new_but_old_timestamp".to_string()));
-        assert!(d.unpin.is_empty());
+        assert_eq!(d.store, Some("new_but_old_timestamp".to_string()));
+        assert!(d.evict.is_empty());
     }
 
     #[test]
@@ -337,8 +337,8 @@ mod tests {
         let existing: Vec<VersionInfo> = vec![];
         let cand = c("bafy1", Some(50), 1000);
         let d = decide(&existing, Usage::default(), &cand, &cfg(), 1000);
-        assert_eq!(d.pin, Some("bafy1".to_string()));
-        assert!(d.unpin.is_empty());
+        assert_eq!(d.store, Some("bafy1".to_string()));
+        assert!(d.evict.is_empty());
         assert_eq!(d.reason, "accepted");
     }
 
@@ -349,12 +349,12 @@ mod tests {
         let existing = vec![v("bafy1", 100, 2000)];
         let same_ts = c("bafy2", Some(100), 2000);
         let d = decide(&existing, Usage::default(), &same_ts, &c1, 3000);
-        assert_eq!(d.pin, None);
+        assert_eq!(d.store, None);
         assert_eq!(d.reason, "stale");
 
         let older_ts = c("bafy3", Some(100), 1000);
         let d = decide(&existing, Usage::default(), &older_ts, &c1, 3000);
-        assert_eq!(d.pin, None);
+        assert_eq!(d.store, None);
         assert_eq!(d.reason, "stale");
     }
 
@@ -369,8 +369,8 @@ mod tests {
         let existing = vec![v("v1", 100, 1000), v("v2", 100, 1100), v("v3", 100, 1200)];
         let cand = c("v4", Some(100), 1300);
         let d = decide(&existing, Usage::default(), &cand, &c1, 2000);
-        assert_eq!(d.pin, Some("v4".to_string()));
-        assert_eq!(d.unpin, vec!["v1".to_string()]);
+        assert_eq!(d.store, Some("v4".to_string()));
+        assert_eq!(d.evict, vec!["v1".to_string()]);
     }
 
     #[test]
@@ -384,7 +384,7 @@ mod tests {
             ..Usage::default()
         };
         let d = decide(&[], usage, &cand, &c1, 2000);
-        assert_eq!(d.pin, None);
+        assert_eq!(d.store, None);
         assert_eq!(d.reason, "max_per_account");
 
         let usage = Usage {
@@ -393,7 +393,7 @@ mod tests {
             ..Usage::default()
         };
         let d = decide(&[], usage, &cand, &c1, 2000);
-        assert_eq!(d.pin, Some("v1".to_string()));
+        assert_eq!(d.store, Some("v1".to_string()));
     }
 
     #[test]
@@ -410,8 +410,8 @@ mod tests {
             ..Usage::default()
         };
         let d = decide(&existing, usage, &cand, &c1, 2000);
-        assert_eq!(d.pin, Some("v2".to_string()));
-        assert_eq!(d.unpin, vec!["v1".to_string()]);
+        assert_eq!(d.store, Some("v2".to_string()));
+        assert_eq!(d.evict, vec!["v1".to_string()]);
     }
 
     #[test]
@@ -428,14 +428,14 @@ mod tests {
 
         let existing = vec![v("v1", 10, 1000)];
         let d = decide(&existing, usage, &c("v2", Some(10), 1100), &c1, 2000);
-        assert_eq!(d.pin, Some("v2".to_string()));
+        assert_eq!(d.store, Some("v2".to_string()));
 
         let usage = Usage {
             other_site_count_of_account: 1,
             ..Usage::default()
         };
         let d = decide(&[], usage, &c("new", Some(10), 1000), &c1, 2000);
-        assert_eq!(d.pin, Some("new".to_string()));
+        assert_eq!(d.store, Some("new".to_string()));
     }
 
     #[test]

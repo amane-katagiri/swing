@@ -26,7 +26,7 @@ SWING が提供するのは、この「誰を保存するか」の表明と、�
 
 Nostr は「更新の通知」と「誰のサイトを保存するか」を伝えるために使います。IPFS はサイトの実データを保存・配送するために使います。
 
-各参加者は `mirror-agent`（このツールの `swing agent`）と、IPFS ノードである Kubo を動かします。mirror-agent は自分が保存すると決めた相手のサイト更新を Nostr 経由で受け取り、ポリシーに沿って CID を Kubo に pin します。
+各参加者は `mirror-agent`（このツールの `swing agent`）と、IPFS ノードである Kubo を動かします。mirror-agent は自分が保存すると決めた相手のサイト更新を Nostr 経由で受け取り、ポリシーに沿って CID を Kubo の MFS（Kubo 内のファイルシステム）に置いて保存します。
 
 ## 必要なもの
 
@@ -95,7 +95,7 @@ docker compose exec mirror swing mirror list
 docker compose exec mirror swing sites
 ```
 
-各サイトについて `d`（サイト識別子）、`cid`、`url`、`size`、`created_at`、NIP-05 の検証結果、pin 状況が 1 行ずつ表示されます。
+各サイトについて `d`（サイト識別子）、`cid`、`url`、`size`、`created_at`、NIP-05 の検証結果、保存状況（`stored` / `not stored`）が 1 行ずつ表示されます。
 
 コンテナのログで動作状況を確認することもできます。
 
@@ -136,17 +136,20 @@ NIP-05
 
 IPFS
   CID: bafy...
-  ✓ added
-  ✓ pinned
+  ✓ added to /swing/publish/<pubkey>/example.jp/1700000000
+  Size: 12345 bytes
 
 Nostr
   ✓ wss://relay.damus.io
   ✓ wss://nos.lol
 
+Old versions (keeping 5)
+  ✓ removed /swing/publish/<pubkey>/example.jp/1690000000
+
 Published.
 ```
 
-処理内容は、ディレクトリを Kubo に追加して pin し、その root CID を含むサイトイベント（`kind 35980`）に自分の鍵で署名し、設定した全 relay に publish する、というものです。
+処理内容は、ディレクトリを Kubo に追加して MFS の `/swing/publish/` の下に置き、その root CID を含むサイトイベント（`kind 35980`）に自分の鍵で署名し、設定した全 relay に publish する、というものです。どれかの relay に受理されたら、同じサイトの古い版を新しい順に `keep_versions`（既定 5）個だけ残して MFS から消します。
 
 NIP-05 は、`d` タグがドメイン名の形をしている場合に、そのドメインの所有者が自分の pubkey を掲載しているかどうかを確認する任意の検証です。確認するには、公開するドメインの `https://{ドメイン}/.well-known/nostr.json` に `{"names": {"_": "<自分の pubkey の hex>"}}` を置きます。検証モードは `--nip05 off|warn|require`（省略時は `.env` の `SWING_PUBLISH_NIP05`、既定 `warn`）で切り替えられ、`warn` は結果を表示するだけで publish を続行し、`require` は検証に成功しない限り publish を中止します。
 
@@ -164,7 +167,7 @@ NIP-05 は、`d` タグがドメイン名の形をしている場合に、その
 | `keep_versions` | `5` | サイトごとに保持する旧バージョンの数。超えた分は古い順に削除される |
 | `keep_days` | `365` | バージョンを保持する日数。最新版を除き、これより古い版は削除される |
 | `min_update_interval` | `10m` | 同じサイトの更新を受け付ける最短間隔。これより短い間隔で来た更新は保存されない |
-| `unpin_on_unfollow` | `true` | 相手をミラー対象から外したときに、自動でそのサイトの保存をやめるかどうか |
+| `remove_on_unfollow` | `true` | 相手をミラー対象から外したときに、自動でそのサイトの保存をやめるかどうか |
 | `nip05` | `warn` | 保存前に行う NIP-05 検証のモード（`off` / `warn` / `require`） |
 | `nip05_cache_ttl` | `1d` | NIP-05 の検証結果を再利用する期間 |
 
@@ -172,7 +175,9 @@ NIP-05 は、`d` タグがドメイン名の形をしている場合に、その
 
 打ち切った取得や削除した版のデータは、Kubo の GC が走るまでディスクに残ります。Docker Compose の構成では Kubo を `--enable-gc` で起動し、GC の基準になる Kubo の `Datastore.StorageMax` を起動のたびに `SWING_KUBO_STORAGE_MAX`（未設定なら `SWING_MAX_TOTAL_STORAGE`）に設定します。GC はこの値の 90% を超えたときに走るので、`SWING_MAX_TOTAL_STORAGE` に少し余裕を足した値を `.env` に書いておくことをおすすめします。
 
-SWING の外で（手動で）pin していた CID は、SWING が保存をやめたときも unpin されません。
+SWING は Kubo の pin を使わず、MFS の `/swing`（`SWING_MFS_ROOT` で変更可）の下だけを使います。手動で付けた pin や、MFS の他の場所に置いたものには触れません。一方で、`/swing/agent` の下は SWING が管理する場所なので、手で置いたものは消されます。
+
+MFS に置いたサイトを他のノードから見つけてもらうには、Kubo の `Provide.Strategy` に `mfs` か `all` が含まれている必要があります。Docker Compose の構成では起動のたびに `SWING_KUBO_PROVIDE_STRATEGY`（既定 `pinned+mfs`）を設定します。
 
 判定の詳しい順序は [`docs/architecture.md`](docs/architecture.md) を参照してください。
 
@@ -188,6 +193,7 @@ TOML の設定ファイル（`swing.toml`）を使う場合と、環境変数だ
 | `SWING_MIRROR_SET` | `nostr.mirror_set` | Follow Set の `d` タグ（既定 `swing`） |
 | `SWING_SITE_EVENT_KIND` | `nostr.site_event_kind` | サイトイベントの kind（既定 `35980`） |
 | `SWING_IPFS_API` | `ipfs.api` | Kubo RPC のエンドポイント |
+| `SWING_MFS_ROOT` | `ipfs.mfs_root` | SWING が使う MFS のディレクトリ（既定 `/swing`） |
 | `SWING_MAX_TOTAL_STORAGE` | `policy.max_total_storage` | 全体容量上限 |
 | `SWING_MAX_PER_SITE` | `policy.max_per_site` | サイト単位の容量上限 |
 | `SWING_MAX_PER_ACCOUNT` | `policy.max_per_account` | アカウント単位の容量上限 |
@@ -196,15 +202,17 @@ TOML の設定ファイル（`swing.toml`）を使う場合と、環境変数だ
 | `SWING_KEEP_VERSIONS` | `policy.keep_versions` | 保持する旧バージョン数 |
 | `SWING_KEEP_DAYS` | `policy.keep_days` | バージョン保持日数 |
 | `SWING_MIN_UPDATE_INTERVAL` | `policy.min_update_interval` | 更新受理の最短間隔 |
-| `SWING_UNPIN_ON_UNFOLLOW` | `policy.unpin_on_unfollow` | unfollow 時に自動 unpin するか |
+| `SWING_REMOVE_ON_UNFOLLOW` | `policy.remove_on_unfollow` | unfollow 時にそのサイトを自動で消すか |
 | `SWING_NIP05` | `policy.nip05` | mirror-agent の NIP-05 検証モード（既定 `warn`） |
 | `SWING_NIP05_CACHE_TTL` | `policy.nip05_cache_ttl` | NIP-05 検証結果のキャッシュ期間（既定 `1d`。`0` で無効） |
 | `SWING_STATE_DIR` | `agent.state_dir` | 状態ファイルを置くディレクトリ |
 | `SWING_POLL_INTERVAL` | `agent.poll_interval` | Follow Set の再取得間隔 |
 | `SWING_CONCURRENCY` | `agent.concurrency` | 同時に取得・保存するサイト数（既定 `4`） |
-| `SWING_PIN_TIMEOUT` | (なし) | 1 サイト分の取得と pin のタイムアウト（既定 15 分） |
+| `SWING_FETCH_TIMEOUT` | (なし) | 1 サイト分の取得のタイムアウト（既定 15 分） |
 | `SWING_FETCH_IDLE_TIMEOUT` | (なし) | 取得中にデータが届かないまま待つ上限（既定 2 分） |
 | `SWING_KUBO_STORAGE_MAX` | (なし、compose の Kubo 用) | Kubo の `Datastore.StorageMax`（既定は `SWING_MAX_TOTAL_STORAGE` と同じ） |
+| `SWING_KUBO_PROVIDE_STRATEGY` | (なし、compose の Kubo 用) | Kubo の `Provide.Strategy`（既定 `pinned+mfs`） |
+| `SWING_PUBLISH_KEEP_VERSIONS` | `publish.keep_versions` | `swing publish` が自分のノードに残す版の数（既定 `5`） |
 | `SWING_PUBLISH_NIP05` | `publish.nip05` | `swing publish` の NIP-05 検証モード（既定 `warn`。CLI の `--nip05` が優先） |
 
 ## プライバシーと注意点

@@ -26,6 +26,7 @@ pub struct NostrFile {
 #[serde(default)]
 pub struct IpfsFile {
     pub api: Option<String>,
+    pub mfs_root: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -39,7 +40,7 @@ pub struct PolicyFile {
     pub keep_versions: Option<usize>,
     pub keep_days: Option<u64>,
     pub min_update_interval: Option<String>,
-    pub unpin_on_unfollow: Option<bool>,
+    pub remove_on_unfollow: Option<bool>,
     pub nip05: Option<String>,
     pub nip05_cache_ttl: Option<String>,
 }
@@ -72,6 +73,7 @@ pub struct AgentFile {
 #[serde(default)]
 pub struct PublishFile {
     pub nip05: Option<String>,
+    pub keep_versions: Option<usize>,
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -124,6 +126,7 @@ pub struct NostrConfig {
 #[derive(Debug, Clone)]
 pub struct IpfsConfig {
     pub api: String,
+    pub mfs_root: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -136,7 +139,7 @@ pub struct PolicyConfig {
     pub keep_versions: usize,
     pub keep_days: u64,
     pub min_update_interval: u64,
-    pub unpin_on_unfollow: bool,
+    pub remove_on_unfollow: bool,
     pub nip05: Nip05Mode,
     pub nip05_cache_ttl: u64,
 }
@@ -145,7 +148,7 @@ pub struct PolicyConfig {
 pub struct AgentConfig {
     pub state_dir: PathBuf,
     pub poll_interval: Duration,
-    pub pin_timeout: Duration,
+    pub fetch_timeout: Duration,
     pub fetch_idle_timeout: Duration,
     pub concurrency: usize,
 }
@@ -153,6 +156,7 @@ pub struct AgentConfig {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PublishConfig {
     pub nip05: Nip05Mode,
+    pub keep_versions: usize,
 }
 
 #[derive(Debug, Clone)]
@@ -264,6 +268,20 @@ pub fn parse_duration_secs(input: &str) -> Result<u64> {
         .with_context(|| format!("duration value too large: {input}"))
 }
 
+pub fn parse_mfs_root(input: &str) -> Result<String> {
+    let trimmed = input.trim().trim_end_matches('/');
+    let Some(rest) = trimmed.strip_prefix('/') else {
+        bail!("MFS root must be an absolute path: {input}");
+    };
+    if rest
+        .split('/')
+        .any(|segment| segment.is_empty() || segment == "." || segment == "..")
+    {
+        bail!("MFS root must be a non-root path without empty, . or .. segments: {input}");
+    }
+    Ok(trimmed.to_string())
+}
+
 fn parse_bool(input: &str) -> Result<bool> {
     match input.trim().to_ascii_lowercase().as_str() {
         "1" | "true" | "yes" | "on" => Ok(true),
@@ -305,6 +323,14 @@ fn build_config(file: ConfigFile, get_env: impl Fn(&str) -> Option<String>) -> R
     let ipfs_api = get_env("SWING_IPFS_API")
         .or(file.ipfs.api)
         .unwrap_or_else(|| "http://127.0.0.1:5001".to_string());
+
+    let mfs_root = match get_env("SWING_MFS_ROOT") {
+        Some(v) => parse_mfs_root(&v).context("invalid SWING_MFS_ROOT")?,
+        None => match file.ipfs.mfs_root {
+            Some(v) => parse_mfs_root(&v).context("invalid [ipfs].mfs_root")?,
+            None => "/swing".to_string(),
+        },
+    };
 
     let max_total_storage = match get_env("SWING_MAX_TOTAL_STORAGE") {
         Some(v) => parse_size(&v).context("invalid SWING_MAX_TOTAL_STORAGE")?,
@@ -370,9 +396,9 @@ fn build_config(file: ConfigFile, get_env: impl Fn(&str) -> Option<String>) -> R
         },
     };
 
-    let unpin_on_unfollow = match get_env("SWING_UNPIN_ON_UNFOLLOW") {
-        Some(v) => parse_bool(&v).context("invalid SWING_UNPIN_ON_UNFOLLOW")?,
-        None => file.policy.unpin_on_unfollow.unwrap_or(true),
+    let remove_on_unfollow = match get_env("SWING_REMOVE_ON_UNFOLLOW") {
+        Some(v) => parse_bool(&v).context("invalid SWING_REMOVE_ON_UNFOLLOW")?,
+        None => file.policy.remove_on_unfollow.unwrap_or(true),
     };
 
     let nip05 = match get_env("SWING_NIP05") {
@@ -406,12 +432,12 @@ fn build_config(file: ConfigFile, get_env: impl Fn(&str) -> Option<String>) -> R
         bail!("poll_interval must be greater than 0");
     }
 
-    let pin_timeout = match get_env("SWING_PIN_TIMEOUT") {
-        Some(v) => parse_duration_secs(&v).context("invalid SWING_PIN_TIMEOUT")?,
+    let fetch_timeout = match get_env("SWING_FETCH_TIMEOUT") {
+        Some(v) => parse_duration_secs(&v).context("invalid SWING_FETCH_TIMEOUT")?,
         None => 900,
     };
-    if pin_timeout == 0 {
-        bail!("SWING_PIN_TIMEOUT must be greater than 0");
+    if fetch_timeout == 0 {
+        bail!("SWING_FETCH_TIMEOUT must be greater than 0");
     }
 
     let fetch_idle_timeout = match get_env("SWING_FETCH_IDLE_TIMEOUT") {
@@ -440,6 +466,16 @@ fn build_config(file: ConfigFile, get_env: impl Fn(&str) -> Option<String>) -> R
         },
     };
 
+    let publish_keep_versions = match get_env("SWING_PUBLISH_KEEP_VERSIONS") {
+        Some(v) => v
+            .parse()
+            .context("invalid SWING_PUBLISH_KEEP_VERSIONS: expected integer")?,
+        None => file.publish.keep_versions.unwrap_or(5),
+    };
+    if publish_keep_versions == 0 {
+        bail!("publish keep_versions must be greater than 0");
+    }
+
     Ok(Config {
         nostr: NostrConfig {
             secret_key: secret_key.into(),
@@ -447,7 +483,10 @@ fn build_config(file: ConfigFile, get_env: impl Fn(&str) -> Option<String>) -> R
             mirror_set,
             site_event_kind,
         },
-        ipfs: IpfsConfig { api: ipfs_api },
+        ipfs: IpfsConfig {
+            api: ipfs_api,
+            mfs_root,
+        },
         policy: PolicyConfig {
             max_total_storage,
             max_per_site,
@@ -457,19 +496,20 @@ fn build_config(file: ConfigFile, get_env: impl Fn(&str) -> Option<String>) -> R
             keep_versions,
             keep_days,
             min_update_interval,
-            unpin_on_unfollow,
+            remove_on_unfollow,
             nip05,
             nip05_cache_ttl,
         },
         agent: AgentConfig {
             state_dir: PathBuf::from(state_dir),
             poll_interval: Duration::from_secs(poll_interval),
-            pin_timeout: Duration::from_secs(pin_timeout),
+            fetch_timeout: Duration::from_secs(fetch_timeout),
             fetch_idle_timeout: Duration::from_secs(fetch_idle_timeout),
             concurrency,
         },
         publish: PublishConfig {
             nip05: publish_nip05,
+            keep_versions: publish_keep_versions,
         },
     })
 }
@@ -580,13 +620,38 @@ mod tests {
     }
 
     #[test]
-    fn zero_pin_timeout_is_rejected() {
+    fn mfs_root_is_normalized_and_validated() {
+        assert_eq!(parse_mfs_root("/swing").unwrap(), "/swing");
+        assert_eq!(parse_mfs_root(" /a/b/ ").unwrap(), "/a/b");
+        for bad in ["", "/", "swing", "/a//b", "/a/./b", "/a/../b"] {
+            assert!(parse_mfs_root(bad).is_err(), "{bad:?} should be rejected");
+        }
+        let cfg = build_config(minimal_file(), |k| match k {
+            "SWING_MFS_ROOT" => Some("/mirror/".into()),
+            _ => None,
+        })
+        .unwrap();
+        assert_eq!(cfg.ipfs.mfs_root, "/mirror");
+    }
+
+    #[test]
+    fn zero_publish_keep_versions_is_rejected() {
         let err = build_config(minimal_file(), |k| match k {
-            "SWING_PIN_TIMEOUT" => Some("0".into()),
+            "SWING_PUBLISH_KEEP_VERSIONS" => Some("0".into()),
             _ => None,
         })
         .unwrap_err();
-        assert!(err.to_string().contains("SWING_PIN_TIMEOUT"));
+        assert!(err.to_string().contains("keep_versions"));
+    }
+
+    #[test]
+    fn zero_fetch_timeout_is_rejected() {
+        let err = build_config(minimal_file(), |k| match k {
+            "SWING_FETCH_TIMEOUT" => Some("0".into()),
+            _ => None,
+        })
+        .unwrap_err();
+        assert!(err.to_string().contains("SWING_FETCH_TIMEOUT"));
     }
 
     #[test]
@@ -648,13 +713,15 @@ mod tests {
         assert_eq!(cfg.policy.keep_versions, 5);
         assert_eq!(cfg.policy.keep_days, 365);
         assert_eq!(cfg.policy.min_update_interval, 600);
-        assert!(cfg.policy.unpin_on_unfollow);
+        assert!(cfg.policy.remove_on_unfollow);
         assert_eq!(cfg.policy.nip05, Nip05Mode::Warn);
         assert_eq!(cfg.policy.nip05_cache_ttl, 86_400);
         assert_eq!(cfg.agent.poll_interval, Duration::from_secs(300));
-        assert_eq!(cfg.agent.pin_timeout, Duration::from_secs(900));
+        assert_eq!(cfg.agent.fetch_timeout, Duration::from_secs(900));
         assert_eq!(cfg.agent.fetch_idle_timeout, Duration::from_secs(120));
         assert_eq!(cfg.agent.concurrency, 4);
+        assert_eq!(cfg.ipfs.mfs_root, "/swing");
+        assert_eq!(cfg.publish.keep_versions, 5);
     }
 
     #[test]
@@ -740,6 +807,7 @@ mod tests {
             },
             publish: PublishFile {
                 nip05: Some("require".into()),
+                ..Default::default()
             },
             ..Default::default()
         };

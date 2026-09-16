@@ -18,7 +18,7 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
-    #[command(about = "Run the mirror agent: follow the mirror set and pin sites to Kubo")]
+    #[command(about = "Run the mirror agent: follow the mirror set and store sites in Kubo MFS")]
     Agent {
         #[arg(long, help = "Config file (default: $SWING_CONFIG or ./swing.toml)")]
         config: Option<PathBuf>,
@@ -45,7 +45,7 @@ enum Command {
         #[command(subcommand)]
         action: MirrorCommand,
     },
-    #[command(about = "Show followed sites, their latest CIDs and pin status")]
+    #[command(about = "Show followed sites, their latest CIDs and storage status")]
     Sites {
         #[arg(long, help = "Config file (default: $SWING_CONFIG or ./swing.toml)")]
         config: Option<PathBuf>,
