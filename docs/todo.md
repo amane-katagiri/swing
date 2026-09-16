@@ -13,6 +13,8 @@
 | 中 | 取得に失敗した CID を覚えて指数バックオフで再試行する。今は poll ごとに同じ CID の取得を試み、そのたびに最大 `SWING_FETCH_IDLE_TIMEOUT` の間、並行枠を 1 つ使う | レビュー（DoS） |
 | 低 | relay から取得するサイトイベントの件数上限。`fetch_events` は件数無制限で、30 秒のタイムアウトだけで抑えている | レビュー（DoS） |
 | 低 | NIP-05 のアドレスフィルタで NAT64（`64:ff9b::/96`）や 6to4（`2002::/16`）に埋め込まれた IPv4 を判定する | レビュー |
+| 中 | `swing publish` が付けた pin を整理する。publish は古い版を unpin しないので、自分のサイトの旧版が agent の容量上限の外で溜まり続ける | レビュー |
+| 低 | SWING が pin した後に運用者が同じ CID を手動で pin しても記録されず、SWING が解放するときに外してしまう | レビュー |
 | 低 | `swing status`: ローカルの state.json と Kubo の pin 一覧の突き合わせ結果を表示する | レビュー |
 | 低 | 「全履歴保持」オプション（`keep_versions` / `keep_days` を無制限にする明示的な設定） | plan §4 |
 | 低 | `publish` で `files/stat` に失敗したとき `size` タグ無しで publish している。失敗時の扱いを見直す | レビュー |

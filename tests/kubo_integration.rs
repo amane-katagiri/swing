@@ -112,6 +112,10 @@ async fn is_pinned_detects_recursive_and_direct_pins() {
 
     client.pin_rm(&cid).await.expect("pin_rm");
     assert!(!client.is_pinned(&cid).await.unwrap());
+    client
+        .pin_rm(&cid)
+        .await
+        .expect("pin_rm of an unpinned CID is treated as done");
 
     let direct = reqwest::Client::new()
         .post(format!(

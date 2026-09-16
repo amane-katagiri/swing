@@ -53,6 +53,36 @@ fn evict_oldest_until(
     removed
 }
 
+fn evict(versions: &mut Vec<VersionInfo>, cfg: &PolicyConfig, now: u64) -> Vec<String> {
+    let mut unpin = evict_oldest_until(versions, |vs| total_size(vs) <= cfg.max_per_site);
+
+    // A `keep_versions` of 0 would otherwise evict the newest version, which
+    // is the one just accepted in `decide`.
+    let keep_versions = cfg.keep_versions.max(1);
+    unpin.extend(evict_oldest_until(versions, |vs| vs.len() <= keep_versions));
+
+    if cfg.keep_days > 0 {
+        let cutoff = now.saturating_sub(cfg.keep_days.saturating_mul(86_400));
+        let newest_created_at = versions.iter().map(|v| v.created_at).max().unwrap_or(0);
+        let (evicted, kept): (Vec<VersionInfo>, Vec<VersionInfo>) = std::mem::take(versions)
+            .into_iter()
+            .partition(|v| v.created_at < cutoff && v.created_at != newest_created_at);
+        unpin.extend(evicted.into_iter().map(|v| v.cid));
+        *versions = kept;
+    }
+    unpin
+}
+
+pub fn retention_evictions(
+    existing_versions: &[VersionInfo],
+    cfg: &PolicyConfig,
+    now: u64,
+) -> Vec<String> {
+    let mut versions = existing_versions.to_vec();
+    versions.sort_by_key(|v| v.created_at);
+    evict(&mut versions, cfg, now)
+}
+
 pub fn fetch_limit(cfg: &PolicyConfig) -> u64 {
     cfg.max_update_size
         .min(cfg.max_per_site)
@@ -108,32 +138,8 @@ pub fn decide(
     if new_size > cfg.max_per_site {
         return Decision::skip("max_per_site_exceeded_alone");
     }
-    let mut unpin =
-        evict_oldest_until(&mut versions_after, |vs| total_size(vs) <= cfg.max_per_site);
+    let unpin = evict(&mut versions_after, cfg, now);
 
-    // A `keep_versions` of 0 would otherwise evict the version we are about
-    // to pin in the same decision; that defeats the purpose of accepting it.
-    let keep_versions = cfg.keep_versions.max(1);
-    unpin.extend(evict_oldest_until(&mut versions_after, |vs| {
-        vs.len() <= keep_versions
-    }));
-
-    if cfg.keep_days > 0 {
-        let cutoff = now.saturating_sub(cfg.keep_days * 86_400);
-        let newest_created_at = versions_after
-            .iter()
-            .map(|v| v.created_at)
-            .max()
-            .unwrap_or(0);
-        let (evicted, kept): (Vec<VersionInfo>, Vec<VersionInfo>) = versions_after
-            .into_iter()
-            .partition(|v| v.created_at < cutoff && v.created_at != newest_created_at);
-        unpin.extend(evicted.into_iter().map(|v| v.cid));
-        versions_after = kept;
-    }
-
-    // All evictions (max_per_site, keep_versions, keep_days) are applied above so
-    // this check reflects the footprint the site would actually have afterwards.
     let site_after = total_size(&versions_after);
     if usage.other_sites_of_account + site_after > cfg.max_per_account {
         return Decision::skip("max_per_account");
@@ -440,5 +446,44 @@ mod tests {
         assert_eq!(fetch_limit(&c1), 100);
         c1.max_per_site = 50;
         assert_eq!(fetch_limit(&c1), 50);
+    }
+
+    #[test]
+    fn retention_evicts_idle_sites_without_a_new_version() {
+        let mut c1 = cfg();
+        c1.keep_versions = 2;
+        c1.keep_days = 1;
+        let now = 10 * 86_400;
+        let existing = vec![
+            v("v3", 10, now - 3 * 86_400),
+            v("v1", 10, now - 5 * 86_400),
+            v("v2", 10, now - 4 * 86_400),
+        ];
+        assert_eq!(
+            retention_evictions(&existing, &c1, now),
+            vec!["v1".to_string(), "v2".to_string()]
+        );
+    }
+
+    #[test]
+    fn retention_keeps_the_newest_version_and_honours_a_lowered_limit() {
+        let mut c1 = cfg();
+        c1.keep_versions = 1;
+        c1.max_per_site = 15;
+        let existing = vec![v("v1", 10, 1000), v("v2", 10, 2000)];
+        assert_eq!(
+            retention_evictions(&existing, &c1, 3000),
+            vec!["v1".to_string()]
+        );
+        assert!(retention_evictions(&[v("v1", 100, 1000)], &c1, 3000).is_empty());
+        assert!(retention_evictions(&[], &c1, 3000).is_empty());
+    }
+
+    #[test]
+    fn keep_days_does_not_overflow() {
+        let mut c1 = cfg();
+        c1.keep_days = u64::MAX;
+        let existing = vec![v("v1", 10, 1000), v("v2", 10, 2000)];
+        assert!(retention_evictions(&existing, &c1, 3000).is_empty());
     }
 }

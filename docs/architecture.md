@@ -210,10 +210,9 @@ kind・`d` タグの既定値は「設定と環境変数」を参照（サイト
 3. 対象 pubkey 群のサイトイベントを過去分も含めて取得し（`kinds=[site_event_kind], authors=targets`）、以後は購読で新着を受ける。同じ `pubkey + d` は `created_at` 最大のものを最新とみなす。
 4. 受理ゲート: 送信元 pubkey が現在の Follow Set に含まれないイベントは warn を出して無視する。購読 ID と kind が一致しない通知は debug ログで捨てる。
 5. サイトイベントはサイト単位のタスクに渡して並行に処理する（後述「並行処理」）。各タスクは次の「pin と unpin の順序」に従って処理し、`state.json` を保存する。
-6. `poll_interval` ごとに Follow Set を再取得する。同時に対象全員のサイトイベントを取り直し、サイトごとの最新版を再投入する。投入するのは pubkey ごとに、pin 済みのサイトすべてと、それ以外のサイトを `created_at` の新しい順に合計 `max_sites_per_account` 件まで（pin 済みだけで上限を超えていれば pin 済みのみ）。これにより一時的な取得失敗や pin 失敗は次の tick で再試行される。
+6. `poll_interval` ごとに、まず sweep（後述「解放と sweep」）を行い、続いて Follow Set を再取得する。同時に対象全員のサイトイベントを取り直し、サイトごとの最新版を再投入する。投入するのは pubkey ごとに、pin 済みのサイトすべてと、それ以外のサイトを `created_at` の新しい順に合計 `max_sites_per_account` 件まで（pin 済みだけで上限を超えていれば pin 済みのみ）。これにより一時的な取得失敗や pin 失敗は次の tick で再試行される。
 7. Follow Set から外れた相手は、`unpin_on_unfollow = true` のときのみ全バージョンを unpin し、その pubkey の `state.sites` と `state.verifications` のエントリを削除する。`false` のときは何もしない。Follow Set の更新はこの削除より先に反映する。
-8. 起動時に `state.json` を読み、Kubo の `pin/ls?type=recursive` と突き合わせて食い違いをログに出す。自動修復はしない。
-9. 起動時に `state.json` を読み、Kubo の `pin/ls?type=recursive` と突き合わせて食い違いをログに出す。自動修復はしない。
+8. 起動時に `state.json` を読み、Kubo の `pin/ls?type=recursive` と突き合わせる。`sites` にあって Kubo に pin が無い版は warn を出して `sites` から消す（次の poll で取り直される）。`releasing` にあって Kubo に pin が無い CID はリストから消す。Kubo にあって state に無い pin は、publish や手動の pin として普通にあるものなので何もしない。
 
 relay の切断や Kubo のエラー、不正なイベントはログに出して処理を続ける。relay への再接続と再購読は nostr-sdk が自動で行う（再試行間隔 10 秒から最大 60 秒）。通知チャネル（容量 2048）が溢れた分は nostr-sdk が黙って捨てるが、6 の定期取り直しで回収される。通知ストリーム自体が終わった場合（relay プールの shutdown）はエラーで終了する。
 
@@ -225,9 +224,27 @@ relay の切断や Kubo のエラー、不正なイベントはログに出し�
 4. ここから先は state のロックを持ったまま行う。作者が Follow Set から外れていれば終わる。
 5. 新版の CID が SWING の外で pin されていたかを決める。state のどこかにその CID があれば、その記録の `preexisting_pin` のどれかが真かどうかを引き継ぐ。無ければ `pin/ls` で recursive と direct の pin を確認する（確認に失敗したら終わる）。そのうえで `pin/add` を `offline=true` で行う。3 で取得しきれなかったブロックがあれば失敗し、ネットワークから追加取得しない。
 6. `dag/stat`（`offline=true`）の `TotalSize` を実サイズとする。失敗したら新版を解放して終わる。`size` タグより大きければ warn を出す。
-7. 実サイズで `policy::decide` する。skip なら新版を解放して終わる。accept なら新版を 5 の結果とともに記録し、evict 対象を state から消してから解放し、state を保存する。
+7. 実サイズで `policy::decide` する。skip なら新版を解放して終わる。accept なら新版を 5 の結果とともに記録し、evict 対象を `sites` から消して state を保存してから解放する。
 
-「解放」は、その CID が state 上のどのサイトからも参照されておらず、かつ SWING の外で pin されていなかった（`preexisting_pin` が偽）ときだけ `pin/rm` することを指す。別のサイトが同じ CID を持っている場合や、運用者が手動で pin していた場合は pin を残す。Kubo は direct pin のある CID を recursive で pin すると direct pin を recursive に置き換えるので、手動の direct pin は残す際に recursive pin になる。`pin/rm` に失敗しても state からは消したままにし、起動時の突き合わせで報告される。
+### 解放と sweep
+
+「解放」は次の手順を指す。
+
+1. CID を `releasing` に入れ（既にあれば `preexisting_pin` は論理和、`since` は最初の値のまま）、state を保存する。
+2. CID ごとに、`sites` のどれかがその CID を持っていれば pin を残す。`preexisting_pin` が真なら pin を残す。どちらでもなければ `pin/rm` する。
+3. pin を残した場合と `pin/rm` に成功した場合は `releasing` から消す。`pin/rm` に失敗したら `releasing` に残す。最後に state を保存する。
+
+`releasing` の CID は `sites` に含まれないので、容量やサイト数の集計には入らない。5 の手動 pin の判定では `releasing` の `preexisting_pin` も引き継ぐので、`pin/rm` に失敗して Kubo に残っている pin を、同じ CID の新しいサイトが手動 pin と取り違えることはない。
+
+Kubo は direct pin のある CID を recursive で pin すると direct pin を recursive に置き換えるので、手動の direct pin は残す際に recursive pin になる。
+
+sweep は `poll_interval` の各 tick で Follow Set を再取得する前に、state のロックを持ったまま行う。最初の tick は起動直後（突き合わせの後）に来るので、起動時にも一度走る。
+
+1. すべてのサイトに `policy::retention_evictions`（`max_per_site`・`keep_versions`・`keep_days`。最新版は必ず残す）を適用し、evict された版を解放する。新しい版が来ないサイトや、設定で上限を下げたサイトにも効く。
+2. sweep 開始時点で `releasing` にあった CID に解放の 2〜3 をもう一度行い、state を保存する。
+3. どちらも対象が無ければ state を保存しない。
+
+`pin/rm` が `not pinned or pinned indirectly` を返したときは、解放済みとして成功扱いにする。
 
 打ち切った取得や解放したコンテンツのブロックは Kubo の blockstore に残り、GC で消える。compose の Kubo は `--enable-gc` で起動する（GC は repo が `Datastore.StorageMax` × `StorageGCWatermark` を超えたときに `Datastore.GCPeriod` ごとに走る）。
 
@@ -304,12 +321,16 @@ agent 側の適用（事前判定の後、取得の前）:
   },
   "verifications": {
     "<pubkey hex>:<d>": { "status": "verified", "detail": null, "checked_at": 1700000100 }
+  },
+  "releasing": {
+    "bafy...": { "preexisting_pin": false, "since": 1700000200 }
   }
 }
 ```
 
 - `status` は `verified` / `mismatch` / `not_applicable` / `error`。
-- `sites` と `verifications` は必須キー（空なら `{}`）。state.json が存在しない、または空白だけのときは空の state として扱う。
+- `releasing` は解放を決めたがまだ pin を外せていない CID（「解放と sweep」参照）。`since` は最初に入れた時刻。
+- `sites`、`verifications`、`releasing` は必須キー（空なら `{}`）。state.json が存在しない、または空白だけのときは空の state として扱う。
 - `sites` の `size` は `dag/stat` の `TotalSize`（`size` タグの値ではない）。
 - `preexisting_pin` は、SWING が pin する前からその CID が Kubo で pin されていたかどうか。必須キーで、このフィールドが無い頃の state.json は読めない。
 - サイズは keep_versions × フォロー中サイト数に比例し、evict や unfollow でエントリは消える。`verifications` は pin されなかったサイトの分も pubkey ごとに `max_sites_per_account` 件まで残り、unfollow で消える。
@@ -322,7 +343,7 @@ agent 側の適用（事前判定の後、取得の前）:
 | pin | `POST /api/v0/pin/add?arg={cid}&recursive=true&offline=true` | `SWING_PIN_TIMEOUT` |
 | 実サイズ | `POST /api/v0/dag/stat?arg={cid}&progress=false&offline=true` → `TotalSize` | 300 秒 |
 | 既存 pin の確認 | `POST /api/v0/pin/ls?arg={cid}&type=recursive`、無ければ `type=direct`。エラーメッセージに `is not pinned` を含む非 2xx は「pin されていない」 | 各 30 秒 |
-| unpin | `POST /api/v0/pin/rm?arg={cid}&recursive=true` | 60 秒 |
+| unpin | `POST /api/v0/pin/rm?arg={cid}&recursive=true`。`not pinned or pinned indirectly` のエラーは成功扱い | 60 秒 |
 | サイズ（publish のみ） | `POST /api/v0/files/stat?arg=/ipfs/{cid}` → `CumulativeSize` | 30 秒 |
 | 一覧 | `POST /api/v0/pin/ls?type=recursive` | 60 秒 |
 | add | `POST /api/v0/add?recursive=true&cid-version=1&pin=true&quieter=true&wrap-with-directory=false` | 300 秒 |

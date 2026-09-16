@@ -34,6 +34,7 @@ pub trait KuboPins {
     ) -> impl Future<Output = Result<()>> + Send;
     fn dag_size_local(&self, cid: &str) -> impl Future<Output = Result<u64>> + Send;
     fn is_pinned(&self, cid: &str) -> impl Future<Output = Result<bool>> + Send;
+    fn recursive_pins(&self) -> impl Future<Output = Result<HashSet<String>>> + Send;
     fn pin_rm(&self, cid: &str) -> impl Future<Output = Result<()>> + Send;
 }
 
@@ -57,6 +58,10 @@ impl KuboPins for IpfsClient {
 
     async fn is_pinned(&self, cid: &str) -> Result<bool> {
         IpfsClient::is_pinned(self, cid).await
+    }
+
+    async fn recursive_pins(&self) -> Result<HashSet<String>> {
+        IpfsClient::pin_ls(self).await
     }
 
     async fn pin_rm(&self, cid: &str) -> Result<()> {
@@ -353,6 +358,9 @@ impl IpfsClient {
         let status = resp.status();
         if !status.is_success() {
             let text = resp.text().await.unwrap_or_default();
+            if text.contains("not pinned or pinned indirectly") {
+                return Ok(());
+            }
             bail!("pin/rm failed: {status}: {text}");
         }
         Ok(())

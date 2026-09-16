@@ -31,8 +31,6 @@ pub async fn run(config: Config) -> Result<()> {
     let state = State::load(&state_path).await?;
     info!(path = %state_path.display(), sites = state.sites.len(), "loaded state");
 
-    reconcile_with_kubo(&ipfs, &state).await;
-
     let site_event_kind = config.nostr.site_event_kind;
     let mut poll_timer = tokio::time::interval(config.agent.poll_interval);
     poll_timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
@@ -43,6 +41,7 @@ pub async fn run(config: Config) -> Result<()> {
         state,
         state_path,
     ));
+    agent.reconcile().await;
     let mut tasks = JoinSet::new();
     let mut notifications = relay.notifications();
 
@@ -73,6 +72,7 @@ pub async fn run(config: Config) -> Result<()> {
                 }
             }
             _ = poll_timer.tick() => {
+                agent.sweep().await;
                 refresh_follow_set(&relay, &agent, &mut tasks).await;
             }
             Some(joined) = tasks.join_next() => {
@@ -88,22 +88,6 @@ pub async fn run(config: Config) -> Result<()> {
         }
     }
     Ok(())
-}
-
-async fn reconcile_with_kubo(ipfs: &IpfsClient, state: &State) {
-    match ipfs.pin_ls().await {
-        Ok(kubo_pins) => {
-            let state_pins: HashSet<String> =
-                state.all_pinned_cids().map(|s| s.to_string()).collect();
-            for cid in state_pins.difference(&kubo_pins) {
-                warn!(cid = %cid, "state.json references a CID not pinned in Kubo");
-            }
-            for cid in kubo_pins.difference(&state_pins) {
-                warn!(cid = %cid, "Kubo has a pin not tracked in state.json");
-            }
-        }
-        Err(e) => warn!(error = %e, "could not query Kubo pin/ls for reconciliation"),
-    }
 }
 
 async fn refresh_follow_set<C, N>(
@@ -201,15 +185,8 @@ fn limit_sites_per_account(
     selected
 }
 
-fn decide(
-    state: &State,
-    key: &SiteKey,
-    pubkey_hex: &str,
-    ev: &SiteEvent,
-    size: Option<u64>,
-    config: &Config,
-) -> Decision {
-    let existing: Vec<VersionInfo> = state
+fn version_infos(state: &State, key: &SiteKey) -> Vec<VersionInfo> {
+    state
         .sites
         .get(key)
         .map(|vs| {
@@ -221,7 +198,18 @@ fn decide(
                 })
                 .collect()
         })
-        .unwrap_or_default();
+        .unwrap_or_default()
+}
+
+fn decide(
+    state: &State,
+    key: &SiteKey,
+    pubkey_hex: &str,
+    ev: &SiteEvent,
+    size: Option<u64>,
+    config: &Config,
+) -> Decision {
+    let existing = version_infos(state, key);
     let site = state.site_bytes(key);
     let usage = Usage {
         other_sites: state.total_bytes() - site,
@@ -235,6 +223,16 @@ fn decide(
         created_at: ev.created_at,
     };
     policy::decide(&existing, usage, &candidate, &config.policy, now_secs())
+}
+
+fn candidate_record(ev: &SiteEvent, size: u64, preexisting_pin: bool) -> VersionRecord {
+    VersionRecord {
+        cid: ev.cid.clone(),
+        size,
+        created_at: ev.created_at,
+        pinned_at: now_secs(),
+        preexisting_pin,
+    }
 }
 
 struct Queued {
@@ -360,18 +358,91 @@ impl<C: KuboPins, N: Nip05Verify> Agent<C, N> {
         }
     }
 
-    async fn release_cid(&self, state: &State, cid: &str, preexisting_pin: bool) {
+    async fn release(&self, state: &mut State, released: Vec<VersionRecord>) {
+        if released.is_empty() {
+            return;
+        }
+        let now = now_secs();
+        for v in &released {
+            state.mark_releasing(&v.cid, v.preexisting_pin, now);
+        }
+        self.save(state, "marking CIDs for release").await;
+        for v in &released {
+            self.try_release(state, &v.cid).await;
+        }
+        self.save(state, "releasing CIDs").await;
+    }
+
+    async fn try_release(&self, state: &mut State, cid: &str) {
+        let Some(preexisting_pin) = state.releasing.get(cid).map(|r| r.preexisting_pin) else {
+            return;
+        };
         if state.references_cid(cid) {
             debug!(cid = %cid, "still referenced by another site; keeping the pin");
-            return;
-        }
-        if preexisting_pin {
+        } else if preexisting_pin {
             info!(cid = %cid, "pinned outside SWING before; keeping the pin");
+        } else {
+            match self.ipfs.pin_rm(cid).await {
+                Ok(()) => info!(cid = %cid, "unpinned"),
+                Err(e) => {
+                    warn!(cid = %cid, error = %e, "pin_rm failed; will retry on next sweep");
+                    return;
+                }
+            }
+        }
+        state.releasing.remove(cid);
+    }
+
+    async fn sweep(&self) {
+        let mut state = self.state.lock().await;
+        let now = now_secs();
+        let retry: Vec<String> = state.releasing.keys().cloned().collect();
+        let keys: Vec<SiteKey> = state.sites.keys().cloned().collect();
+        let mut released = Vec::new();
+        for key in keys {
+            let cids =
+                policy::retention_evictions(&version_infos(&state, &key), &self.config.policy, now);
+            if !cids.is_empty() {
+                info!(site_key = %key, count = cids.len(), "evicting versions past retention");
+                released.extend(state.apply_unpins(&key, &cids));
+            }
+        }
+        self.release(&mut state, released).await;
+        if retry.is_empty() {
             return;
         }
-        match self.ipfs.pin_rm(cid).await {
-            Ok(()) => info!(cid = %cid, "unpinned"),
-            Err(e) => warn!(cid = %cid, error = %e, "pin_rm failed"),
+        for cid in &retry {
+            self.try_release(&mut state, cid).await;
+        }
+        self.save(&state, "sweep").await;
+    }
+
+    async fn reconcile(&self) {
+        let pins = match self.ipfs.recursive_pins().await {
+            Ok(pins) => pins,
+            Err(e) => {
+                warn!(error = %e, "could not query Kubo pins for reconciliation");
+                return;
+            }
+        };
+        let mut state = self.state.lock().await;
+        let mut changed = false;
+        for (key, versions) in state.sites.iter_mut() {
+            versions.retain(|v| {
+                let pinned = pins.contains(&v.cid);
+                if !pinned {
+                    warn!(site_key = %key, cid = %v.cid, "pin missing in Kubo; forgetting the version so it is fetched again");
+                    changed = true;
+                }
+                pinned
+            });
+        }
+        state.sites.retain(|_, versions| !versions.is_empty());
+        let before = state.releasing.len();
+        state.releasing.retain(|cid, _| pins.contains(cid));
+        changed |= state.releasing.len() != before;
+        if changed {
+            self.save(&state, "reconciliation").await;
         }
     }
 
@@ -385,13 +456,13 @@ impl<C: KuboPins, N: Nip05Verify> Agent<C, N> {
             .filter(|k| k.starts_with(&prefix))
             .cloned()
             .collect();
+        let mut released = Vec::new();
         for key in keys {
-            for v in state.remove_site(&key) {
-                self.release_cid(&state, &v.cid, v.preexisting_pin).await;
-            }
-            self.save(&state, "unfollow").await;
-            info!(site_key = %key, "unfollowed and unpinned");
+            released.extend(state.remove_site(&key));
+            info!(site_key = %key, "unfollowed");
         }
+        self.release(&mut state, released).await;
+        self.save(&state, "unfollow").await;
     }
 
     async fn nip05_verified(&self, key: &SiteKey, ev: &SiteEvent, pubkey_hex: &str) -> bool {
@@ -508,7 +579,8 @@ impl<C: KuboPins, N: Nip05Verify> Agent<C, N> {
             Ok(size) => size,
             Err(e) => {
                 warn!(cid = %ev.cid, error = %e, "dag/stat failed after pin; unpinning and retrying later");
-                self.release_cid(&state, &ev.cid, preexisting_pin).await;
+                let released = vec![candidate_record(ev, 0, preexisting_pin)];
+                self.release(&mut state, released).await;
                 return;
             }
         };
@@ -521,24 +593,14 @@ impl<C: KuboPins, N: Nip05Verify> Agent<C, N> {
         let decision = decide(&state, &key, &pubkey_hex, ev, Some(size), &self.config);
         let Some(cid) = decision.pin else {
             warn!(cid = %ev.cid, site = %ev.d, size, reason = %decision.reason, "rejected after fetch; unpinning");
-            self.release_cid(&state, &ev.cid, preexisting_pin).await;
+            let released = vec![candidate_record(ev, size, preexisting_pin)];
+            self.release(&mut state, released).await;
             return;
         };
-        state.apply_pin(
-            &key,
-            VersionRecord {
-                cid: cid.clone(),
-                size,
-                created_at: ev.created_at,
-                pinned_at: now_secs(),
-                preexisting_pin,
-            },
-        );
-        for old in state.apply_unpins(&key, &decision.unpin) {
-            self.release_cid(&state, &old.cid, old.preexisting_pin)
-                .await;
-        }
+        state.apply_pin(&key, candidate_record(ev, size, preexisting_pin));
+        let released = state.apply_unpins(&key, &decision.unpin);
         self.save(&state, "pin").await;
+        self.release(&mut state, released).await;
         info!(cid = %cid, site = %ev.d, pubkey = %pubkey_hex, size, "pinned");
     }
 }
@@ -558,6 +620,7 @@ mod tests {
         fail_fetch: HashSet<String>,
         fail_stat: HashSet<String>,
         fail_is_pinned: HashSet<String>,
+        fail_rm: HashSet<String>,
         sizes: HashMap<String, u64>,
     }
 
@@ -612,8 +675,16 @@ mod tests {
             Ok(s.pinned.contains(cid))
         }
 
+        async fn recursive_pins(&self) -> Result<HashSet<String>> {
+            Ok(self.s.lock().unwrap().pinned.clone())
+        }
+
         async fn pin_rm(&self, cid: &str) -> Result<()> {
-            self.s.lock().unwrap().pinned.remove(cid);
+            let mut s = self.s.lock().unwrap();
+            if s.fail_rm.contains(cid) {
+                anyhow::bail!("simulated pin_rm failure");
+            }
+            s.pinned.remove(cid);
             Ok(())
         }
     }
@@ -1323,5 +1394,145 @@ mod tests {
             fx.apply(fx.event(d, "bafy", None, 200)).await;
         }
         assert_eq!(fx.agent.state.lock().await.verifications.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn failed_unpin_stays_pending_and_is_retried_by_sweep() {
+        let mut policy = default_policy();
+        policy.keep_versions = 1;
+        let kubo = FakeKubo::with(|s| {
+            s.fail_rm.insert("bafy-old".into());
+        });
+        let fx = Fixture::new(policy, kubo);
+        fx.seed(D, "bafy-old", 10).await;
+
+        fx.apply(fx.event(D, "bafy-new", None, 200)).await;
+        assert!(fx.kubo().pinned.contains("bafy-old"));
+        assert!(
+            fx.agent
+                .state
+                .lock()
+                .await
+                .releasing
+                .contains_key("bafy-old")
+        );
+        let saved = State::load(&fx.state_path).await.unwrap();
+        assert!(saved.releasing.contains_key("bafy-old"));
+
+        fx.kubo().fail_rm.clear();
+        fx.agent.sweep().await;
+        assert!(!fx.kubo().pinned.contains("bafy-old"));
+        assert!(fx.agent.state.lock().await.releasing.is_empty());
+        let saved = State::load(&fx.state_path).await.unwrap();
+        assert!(saved.releasing.is_empty());
+    }
+
+    #[tokio::test]
+    async fn pending_release_is_not_mistaken_for_a_manual_pin() {
+        let mut policy = default_policy();
+        policy.keep_versions = 1;
+        let kubo = FakeKubo::with(|s| {
+            s.fail_rm.insert("bafy-x".into());
+        });
+        let fx = Fixture::new(policy, kubo);
+        fx.apply(fx.event("a.example", "bafy-x", None, 200)).await;
+        fx.apply(fx.event("a.example", "bafy-a2", None, 300)).await;
+        assert!(fx.agent.state.lock().await.releasing.contains_key("bafy-x"));
+
+        fx.apply(fx.event("b.example", "bafy-x", None, 200)).await;
+        let b = fx.record("b.example", "bafy-x").await.unwrap();
+        assert!(!b.preexisting_pin);
+
+        fx.kubo().fail_rm.clear();
+        fx.agent.sweep().await;
+        assert!(fx.kubo().pinned.contains("bafy-x"));
+        assert!(fx.agent.state.lock().await.releasing.is_empty());
+
+        fx.apply(fx.event("b.example", "bafy-b2", None, 300)).await;
+        assert!(!fx.kubo().pinned.contains("bafy-x"));
+    }
+
+    #[tokio::test]
+    async fn sweep_drops_pending_manual_pins_without_unpinning() {
+        let fx = Fixture::new(default_policy(), manual_pin("bafy-manual", 10));
+        fx.agent
+            .state
+            .lock()
+            .await
+            .mark_releasing("bafy-manual", true, 1);
+        fx.agent.sweep().await;
+        assert!(fx.kubo().pinned.contains("bafy-manual"));
+        assert!(fx.agent.state.lock().await.releasing.is_empty());
+    }
+
+    #[tokio::test]
+    async fn sweep_applies_retention_to_idle_sites() {
+        let mut policy = default_policy();
+        policy.keep_days = 1;
+        let fx = Fixture::new(policy, FakeKubo::default());
+        let now = now_secs();
+        for (cid, created_at) in [
+            ("bafy-old", now - 3 * 86_400),
+            ("bafy-new", now - 2 * 86_400),
+        ] {
+            fx.agent.state.lock().await.apply_pin(
+                &fx.key(D),
+                VersionRecord {
+                    cid: cid.into(),
+                    size: 1,
+                    created_at,
+                    pinned_at: created_at,
+                    preexisting_pin: false,
+                },
+            );
+            fx.kubo().pinned.insert(cid.into());
+        }
+
+        fx.agent.sweep().await;
+
+        assert!(!fx.kubo().pinned.contains("bafy-old"));
+        assert!(fx.kubo().pinned.contains("bafy-new"));
+        assert!(fx.record(D, "bafy-new").await.is_some());
+        assert!(fx.record(D, "bafy-old").await.is_none());
+        assert!(fx.state_path.exists());
+    }
+
+    #[tokio::test]
+    async fn sweep_without_work_does_not_write_state() {
+        let fx = Fixture::new(default_policy(), FakeKubo::default());
+        fx.seed(D, "bafy-a", 1).await;
+        fx.agent.sweep().await;
+        assert!(!fx.state_path.exists());
+    }
+
+    #[tokio::test]
+    async fn reconcile_forgets_missing_pins_and_ignores_untracked_ones() {
+        let fx = Fixture::new(default_policy(), FakeKubo::default());
+        fx.seed(D, "bafy-kept", 1).await;
+        fx.seed("gone.example", "bafy-gone", 1).await;
+        fx.kubo().pinned.remove("bafy-gone");
+        fx.kubo().pinned.insert("bafy-untracked".into());
+        {
+            let mut state = fx.agent.state.lock().await;
+            state.mark_releasing("bafy-released", false, 1);
+            state.mark_releasing("bafy-kept", false, 1);
+        }
+
+        fx.agent.reconcile().await;
+
+        let state = fx.agent.state.lock().await;
+        assert!(state.sites.contains_key(&fx.key(D)));
+        assert!(!state.sites.contains_key(&fx.key("gone.example")));
+        assert_eq!(
+            state.releasing.keys().collect::<Vec<_>>(),
+            vec!["bafy-kept"]
+        );
+        drop(state);
+        assert!(fx.kubo().pinned.contains("bafy-untracked"));
+        assert!(fx.state_path.exists());
+
+        fx.apply(fx.event("gone.example", "bafy-gone", None, 100))
+            .await;
+        assert!(fx.kubo().pinned.contains("bafy-gone"));
     }
 }

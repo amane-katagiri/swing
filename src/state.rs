@@ -20,6 +20,12 @@ pub struct Verification {
     pub checked_at: u64,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct Releasing {
+    pub preexisting_pin: bool,
+    pub since: u64,
+}
+
 pub type SiteKey = String;
 
 pub fn site_key(pubkey_hex: &str, d: &str) -> SiteKey {
@@ -30,6 +36,7 @@ pub fn site_key(pubkey_hex: &str, d: &str) -> SiteKey {
 pub struct State {
     pub sites: BTreeMap<SiteKey, Vec<VersionRecord>>,
     pub verifications: BTreeMap<SiteKey, Verification>,
+    pub releasing: BTreeMap<String, Releasing>,
 }
 
 impl State {
@@ -115,14 +122,26 @@ impl State {
     }
 
     pub fn preexisting_pin(&self, cid: &str) -> Option<bool> {
-        let mut records = self
+        let mut flags = self
             .sites
             .values()
             .flat_map(|versions| versions.iter())
             .filter(|v| v.cid == cid)
+            .map(|v| v.preexisting_pin)
+            .chain(self.releasing.get(cid).map(|r| r.preexisting_pin))
             .peekable();
-        records.peek()?;
-        Some(records.any(|v| v.preexisting_pin))
+        flags.peek()?;
+        Some(flags.any(|preexisting_pin| preexisting_pin))
+    }
+
+    pub fn mark_releasing(&mut self, cid: &str, preexisting_pin: bool, now: u64) {
+        self.releasing
+            .entry(cid.to_string())
+            .and_modify(|r| r.preexisting_pin |= preexisting_pin)
+            .or_insert(Releasing {
+                preexisting_pin,
+                since: now,
+            });
     }
 
     pub fn prune_unpinned_verifications(&mut self, pubkey_hex: &str, keep: usize) {
@@ -238,6 +257,24 @@ mod tests {
         assert_eq!(state.account_bytes("zz"), 0);
         assert!(state.references_cid("c3"));
         assert!(!state.references_cid("c5"));
+    }
+
+    #[test]
+    fn releasing_entries_count_for_preexisting_pin_and_stay_sticky() {
+        let mut state = State::default();
+        state.mark_releasing("c1", false, 10);
+        assert_eq!(state.preexisting_pin("c1"), Some(false));
+        state.mark_releasing("c1", true, 20);
+        state.mark_releasing("c1", false, 30);
+        assert_eq!(
+            state.releasing.get("c1"),
+            Some(&Releasing {
+                preexisting_pin: true,
+                since: 10
+            })
+        );
+        assert_eq!(state.preexisting_pin("c1"), Some(true));
+        assert!(!state.references_cid("c1"));
     }
 
     #[test]
