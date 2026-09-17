@@ -26,8 +26,12 @@ impl MfsLayout {
         format!("{}/{created_at}", self.agent_site(pubkey_hex, d))
     }
 
+    pub fn publish_account(&self, pubkey_hex: &str) -> String {
+        format!("{}/publish/{pubkey_hex}", self.root)
+    }
+
     pub fn publish_site(&self, pubkey_hex: &str, d: &str) -> String {
-        format!("{}/publish/{pubkey_hex}/{}", self.root, site_name(d))
+        format!("{}/{}", self.publish_account(pubkey_hex), site_name(d))
     }
 
     pub fn publish_version(&self, pubkey_hex: &str, d: &str, created_at: u64) -> String {
@@ -40,6 +44,23 @@ pub fn site_name(d: &str) -> String {
         "." | ".." => d.replace('.', "%2E"),
         _ => percent_encode_segment(d),
     }
+}
+
+pub fn site_from_name(name: &str) -> Option<String> {
+    let mut bytes = Vec::with_capacity(name.len());
+    let mut rest = name.as_bytes();
+    while let Some((&b, tail)) = rest.split_first() {
+        if b == b'%' {
+            let hex = std::str::from_utf8(tail.get(..2)?).ok()?;
+            bytes.push(u8::from_str_radix(hex, 16).ok()?);
+            rest = &tail[2..];
+        } else {
+            bytes.push(b);
+            rest = tail;
+        }
+    }
+    let d = String::from_utf8(bytes).ok()?;
+    (site_name(&d) == name).then_some(d)
 }
 
 pub fn parent(path: &str) -> &str {
@@ -67,6 +88,7 @@ mod tests {
             layout.publish_version("ab", "example.com", 7),
             "/swing/publish/ab/example.com/7"
         );
+        assert_eq!(layout.publish_account("ab"), "/swing/publish/ab");
         assert_eq!(parent("/swing/agent/ab"), "/swing/agent");
     }
 
@@ -76,5 +98,15 @@ mod tests {
         assert_eq!(site_name("."), "%2E");
         assert_eq!(site_name(".."), "%2E%2E");
         assert_eq!(site_name("..."), "...");
+    }
+
+    #[test]
+    fn site_from_name_inverts_site_name_and_rejects_other_spellings() {
+        for d in ["example.com", "a/b %c", ".", "..", "日本.example"] {
+            assert_eq!(site_from_name(&site_name(d)).as_deref(), Some(d));
+        }
+        for name in ["a%2fb", "%2", "%zz", "a b", "%FF", "."] {
+            assert_eq!(site_from_name(name), None, "{name}");
+        }
     }
 }

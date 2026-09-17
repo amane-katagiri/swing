@@ -9,4 +9,5 @@ pub mod nip05;
 pub mod nostr;
 pub mod policy;
 pub mod publish;
+pub mod replicas;
 pub mod state;

@@ -5,7 +5,7 @@
 | 文書 | 内容 |
 |---|---|
 | このファイル | 構成、CLI、設定、イベントの検証、テスト |
-| [`architecture/agent.md`](architecture/agent.md) | mirror-agent の動作、ポリシー判定、`state.json` |
+| [`architecture/agent.md`](architecture/agent.md) | mirror-agent の動作、ポリシー判定、レプリカ報告の送信、`state.json` |
 | [`architecture/nip05.md`](architecture/nip05.md) | NIP-05 検証（agent と publish で共通） |
 | [`architecture/kubo.md`](architecture/kubo.md) | MFS の使い方、Kubo RPC、Kubo のバージョン |
 | [`architecture/docker.md`](architecture/docker.md) | Dockerfile、compose、Gateway |
@@ -32,7 +32,7 @@ swing/
     lib.rs           各モジュールを公開するクレートルート
     main.rs          CLI エントリ (clap)
     config.rs        設定読み込み、サイズ・時間パーサ
-    nostr.rs         relay 接続 / follow set 取得 / site event 購読・発行・パース
+    nostr.rs         relay 接続 / follow set 取得 / site event 購読・発行・パース / レプリカ報告の組み立て・パース
     ipfs.rs          Kubo RPC クライアント
     mfs.rs           MFS 上のパスの組み立て
     key.rs           key generate
@@ -42,6 +42,7 @@ swing/
     health.rs        版と MFS の突き合わせ（agent と status で共通）、status サブコマンド
     publish.rs       publish サブコマンド
     mirror.rs        mirror list/add/remove, sites サブコマンド
+    replicas.rs      レプリカ報告の集計、replicas サブコマンド
     nip05.rs         NIP-05 検証
   tests/
     kubo_integration.rs          Kubo 連携の統合テスト（#[ignore]）
@@ -61,6 +62,7 @@ swing mirror list                      [--config <path>]
 swing mirror add <key>...              [--config <path>]
 swing mirror remove <key>...           [--config <path>]
 swing sites                            [--config <path>]
+swing replicas [<key>...]              [--config <path>]
 swing status                           [--config <path>]
 swing key generate
 ```
@@ -109,8 +111,18 @@ Follow Set の対象者のサイトを MFS に保存・削除し続ける常駐�
 
 読み取り専用。state は作らない。
 
-- Follow Set の対象者ごとに、サイトごとの最新のサイトイベントを 1 行（`d`、`cid`、`url`、`size`、`created_at`、NIP-05 検証結果、`[stored]` / `[not stored]`）表示する。検証結果と保存状況は `state.json` から読む。
+- Follow Set の対象者ごとに、サイトごとの最新のサイトイベントを 1 行（`d`、`cid`、`url`、`size`、`created_at`、NIP-05 検証結果、`replicas`、`[stored]` / `[not stored]`）表示する。検証結果と保存状況は `state.json` から読む。`replicas` は [replicas](#replicas) と同じ集計の最新版のレプリカ数。レプリカ報告の取得に失敗したら `(fetching replica reports failed: ...)` を表示して `-` にする。
 - 続けて、state に版があるのに Follow Set にいない pubkey を `Unfollowed but still stored` 見出しの下に `[unfollowed]` 付きで、サイトごとに state の最新版を 1 行（`url` は `-`）表示する。見出しには `remove_on_unfollow` に応じて、次の poll で消えるか残しているかを添える。Follow Set が見つからなくても表示する。
+
+### replicas
+
+読み取り専用。state は読まない。
+
+- `<key>`（npub / hex / nprofile）を作者として扱う。省略時は自分の pubkey。
+- 作者ごとに、サイトごとの最新のサイトイベントについて `d`、`cid`、`replicas=<最新版を持つ報告者数> (reports=<有効な報告の数>)` を表示し、続けて報告者ごとに npub と `[latest]` / `[older version]` を 1 行ずつ表示する。最新版を持つ報告者を先に、同じ中では hex の順に並べる。
+- 報告者が作者なら `[author]`、報告者の Follow Set（kind 30000、`d = mirror_set`、NIP-01 の置き換え規則で最新のもの）に作者がいなければ `[not following]` を添える。
+- 集計（`replicas::collect_reports`）: サイトイベントの座標（`35980:<作者>:<d>`）を `#a` に入れて `replica_event_kind` の報告を取得し、報告者・`d` ごとに最新の 1 件だけを残す。パースに失敗したもの（検証は下の [Nostr イベントの検証](#nostr-イベントの検証nostrrs)）、`cid` タグが無いもの、`expiration` を過ぎたものは数えない。
+- サイトイベント・報告・Follow Set のどれかの取得に失敗したらエラーで終了する。
 
 ### status
 
@@ -137,6 +149,7 @@ relays = ["wss://relay.damus.io", "wss://nos.lol", "wss://relay.primal.net", "ws
                                     # SWING_NOSTR_RELAYS（カンマ区切り）
 mirror_set = "swing"                # SWING_MIRROR_SET（kind 30000 の d タグ）
 site_event_kind = 35980             # SWING_SITE_EVENT_KIND
+replica_event_kind = 35981          # SWING_REPLICA_EVENT_KIND
 
 [ipfs]
 api = "http://127.0.0.1:5001"       # SWING_IPFS_API
@@ -159,6 +172,7 @@ nip05_cache_ttl = "1d"              # SWING_NIP05_CACHE_TTL
 state_dir = "./data"                # SWING_STATE_DIR
 poll_interval = "5m"                # SWING_POLL_INTERVAL
 concurrency = 4                     # SWING_CONCURRENCY
+report_ttl = "3d"                   # SWING_REPORT_TTL
 
 [publish]
 nip05 = "warn"                      # SWING_PUBLISH_NIP05（--nip05 が優先）
@@ -176,6 +190,7 @@ TOML キーの無い環境変数:
 検証:
 
 - `poll_interval`、`concurrency`、`max_sites_per_account`、`[publish].keep_versions`、`SWING_FETCH_TIMEOUT`、`SWING_FETCH_IDLE_TIMEOUT` は 0 だとエラー。
+- `report_ttl` の半分が `poll_interval` 以下ならエラー。
 - `mfs_root` は `/` で始まる絶対パス。`/` そのもの、空の要素、`.`、`..` を含むとエラー。末尾の `/` は取り除く。
 
 値の形式:
@@ -192,6 +207,8 @@ TOML キーの無い環境変数:
 - `cid`: `cid` クレートでパースできなければイベント全体を拒否する。
 - `url`: 2048 バイト超、または http(s) としてパースできなければ `url` だけを無視する。
 - Follow Set: relay の author フィルタに加え、受信後にも kind・作者・`d`・署名を確かめる。`content`（暗号化 private 部分）は読まない。
+- レプリカ報告: `d` を最初の `:` で分け、作者が小文字 hex の公開鍵でない、サイトの `d` が上の `d` の条件を満たさない、`a` の値が `<site_event_kind>:<作者>:<サイトの d>` と一致しない、`cid` タグのどれかが `cid` クレートでパースできない、のいずれかなら報告全体を拒否する。`cid` タグは 0 個でもよい（取り下げ）。`expiration` は読むだけで、期限切れの判定は使う側が行う。
+- 署名は nostr-sdk が受信時に検証する。
 - relay からの取得（`fetch_events`）は 30 秒でタイムアウトする。
 
 ## テスト
@@ -208,6 +225,6 @@ cargo test --test kubo_integration -- --ignored --test-threads=1
 cargo test --lib agent_stores_and_removes_through_real_kubo -- --ignored
 
 docker run -d --rm -p 127.0.0.1:18080:8080 scsibug/nostr-rs-relay
-# SWING_TEST_RELAY（既定 ws://127.0.0.1:18080）
-cargo test --test nostr_relay_integration -- --ignored
+# SWING_TEST_RELAY（既定 ws://127.0.0.1:18080）。サイトイベント・レプリカ報告・Follow Set の送受信
+cargo test --test nostr_relay_integration -- --ignored --test-threads=1
 ```

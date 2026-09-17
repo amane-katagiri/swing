@@ -20,6 +20,7 @@ pub struct NostrFile {
     pub relays: Option<Vec<String>>,
     pub mirror_set: Option<String>,
     pub site_event_kind: Option<u16>,
+    pub replica_event_kind: Option<u16>,
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -67,6 +68,7 @@ pub struct AgentFile {
     pub state_dir: Option<String>,
     pub poll_interval: Option<String>,
     pub concurrency: Option<usize>,
+    pub report_ttl: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -121,6 +123,7 @@ pub struct NostrConfig {
     pub relays: Vec<String>,
     pub mirror_set: String,
     pub site_event_kind: u16,
+    pub replica_event_kind: u16,
 }
 
 #[derive(Debug, Clone)]
@@ -151,6 +154,7 @@ pub struct AgentConfig {
     pub fetch_timeout: Duration,
     pub fetch_idle_timeout: Duration,
     pub concurrency: usize,
+    pub report_ttl: Duration,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -320,6 +324,13 @@ fn build_config(file: ConfigFile, get_env: impl Fn(&str) -> Option<String>) -> R
         None => file.nostr.site_event_kind.unwrap_or(35980),
     };
 
+    let replica_event_kind = match get_env("SWING_REPLICA_EVENT_KIND") {
+        Some(v) => v
+            .parse()
+            .context("invalid SWING_REPLICA_EVENT_KIND: expected u16")?,
+        None => file.nostr.replica_event_kind.unwrap_or(35981),
+    };
+
     let ipfs_api = get_env("SWING_IPFS_API")
         .or(file.ipfs.api)
         .unwrap_or_else(|| "http://127.0.0.1:5001".to_string());
@@ -458,6 +469,17 @@ fn build_config(file: ConfigFile, get_env: impl Fn(&str) -> Option<String>) -> R
         bail!("concurrency must be greater than 0");
     }
 
+    let report_ttl = match get_env("SWING_REPORT_TTL") {
+        Some(v) => parse_duration_secs(&v).context("invalid SWING_REPORT_TTL")?,
+        None => match file.agent.report_ttl {
+            Some(v) => parse_duration_secs(&v).context("invalid [agent].report_ttl")?,
+            None => 3 * 86_400,
+        },
+    };
+    if report_ttl / 2 <= poll_interval {
+        bail!("report_ttl must be more than twice poll_interval");
+    }
+
     let publish_nip05 = match get_env("SWING_PUBLISH_NIP05") {
         Some(v) => parse_nip05_mode(&v).context("invalid SWING_PUBLISH_NIP05")?,
         None => match file.publish.nip05 {
@@ -482,6 +504,7 @@ fn build_config(file: ConfigFile, get_env: impl Fn(&str) -> Option<String>) -> R
             relays,
             mirror_set,
             site_event_kind,
+            replica_event_kind,
         },
         ipfs: IpfsConfig {
             api: ipfs_api,
@@ -506,6 +529,7 @@ fn build_config(file: ConfigFile, get_env: impl Fn(&str) -> Option<String>) -> R
             fetch_timeout: Duration::from_secs(fetch_timeout),
             fetch_idle_timeout: Duration::from_secs(fetch_idle_timeout),
             concurrency,
+            report_ttl: Duration::from_secs(report_ttl),
         },
         publish: PublishConfig {
             nip05: publish_nip05,
@@ -610,6 +634,21 @@ mod tests {
     }
 
     #[test]
+    fn report_ttl_must_outlast_two_polls() {
+        let env = |ttl: &'static str| {
+            move |k: &str| match k {
+                "SWING_POLL_INTERVAL" => Some("10m".to_string()),
+                "SWING_REPORT_TTL" => Some(ttl.to_string()),
+                _ => None,
+            }
+        };
+        let err = build_config(minimal_file(), env("20m")).unwrap_err();
+        assert!(err.to_string().contains("report_ttl"));
+        let cfg = build_config(minimal_file(), env("21m")).unwrap();
+        assert_eq!(cfg.agent.report_ttl, Duration::from_secs(21 * 60));
+    }
+
+    #[test]
     fn zero_max_sites_per_account_is_rejected() {
         let err = build_config(minimal_file(), |k| match k {
             "SWING_MAX_SITES_PER_ACCOUNT" => Some("0".into()),
@@ -676,6 +715,7 @@ mod tests {
                 relays: Some(vec!["wss://from-file".into()]),
                 mirror_set: Some("from-file-set".into()),
                 site_event_kind: Some(1111),
+                replica_event_kind: Some(2222),
             },
             ..Default::default()
         };
@@ -689,6 +729,7 @@ mod tests {
         assert_eq!(cfg.nostr.relays, vec!["wss://a", "wss://b"]);
         assert_eq!(cfg.nostr.mirror_set, "from-file-set");
         assert_eq!(cfg.nostr.site_event_kind, 1111);
+        assert_eq!(cfg.nostr.replica_event_kind, 2222);
     }
 
     #[test]
@@ -704,6 +745,7 @@ mod tests {
         let cfg = build_config(file, |_| None).unwrap();
         assert_eq!(cfg.nostr.mirror_set, "swing");
         assert_eq!(cfg.nostr.site_event_kind, 35980);
+        assert_eq!(cfg.nostr.replica_event_kind, 35981);
         assert_eq!(cfg.ipfs.api, "http://127.0.0.1:5001");
         assert_eq!(cfg.policy.max_total_storage, 100 * (1u64 << 30));
         assert_eq!(cfg.policy.max_per_site, 10 * (1u64 << 30));
@@ -720,6 +762,7 @@ mod tests {
         assert_eq!(cfg.agent.fetch_timeout, Duration::from_secs(900));
         assert_eq!(cfg.agent.fetch_idle_timeout, Duration::from_secs(120));
         assert_eq!(cfg.agent.concurrency, 4);
+        assert_eq!(cfg.agent.report_ttl, Duration::from_secs(3 * 86_400));
         assert_eq!(cfg.ipfs.mfs_root, "/swing");
         assert_eq!(cfg.publish.keep_versions, 5);
     }

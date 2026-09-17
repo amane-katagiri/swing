@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, RwLock};
 
@@ -12,9 +12,9 @@ use tracing::{debug, error, info, warn};
 use crate::config::{Config, Nip05Mode};
 use crate::health;
 use crate::ipfs::{FetchLimits, Fetched, IpfsClient, KuboStore};
-use crate::mfs::MfsLayout;
+use crate::mfs::{self, MfsLayout};
 use crate::nip05::{self, HttpNip05Verifier, Nip05Verify};
-use crate::nostr::{self, RelayClient, SiteEvent};
+use crate::nostr::{self, RelayClient, ReportRelay, SiteEvent};
 use crate::policy::{self, CandidateEvent, Decision, Usage, VersionInfo};
 use crate::state::{self, SiteKey, State, Verification, VersionRecord};
 
@@ -25,7 +25,8 @@ fn now_secs() -> u64 {
 }
 
 pub async fn run(config: Config) -> Result<()> {
-    let relay = RelayClient::connect(&config.nostr.secret_key, &config.nostr.relays).await?;
+    let relay =
+        Arc::new(RelayClient::connect(&config.nostr.secret_key, &config.nostr.relays).await?);
     info!(relays = ?relay.relays(), "connected to relays");
 
     let ipfs = IpfsClient::new(config.ipfs.api.clone());
@@ -40,6 +41,7 @@ pub async fn run(config: Config) -> Result<()> {
         config,
         ipfs,
         HttpNip05Verifier::public_only(),
+        Arc::clone(&relay),
         state,
         state_path,
     ));
@@ -76,6 +78,7 @@ pub async fn run(config: Config) -> Result<()> {
             _ = poll_timer.tick() => {
                 agent.sweep().await;
                 refresh_follow_set(&relay, &agent, &mut tasks).await;
+                agent.sync_reports().await;
             }
             Some(joined) = tasks.join_next() => {
                 if let Err(e) = joined {
@@ -92,13 +95,14 @@ pub async fn run(config: Config) -> Result<()> {
     Ok(())
 }
 
-async fn refresh_follow_set<C, N>(
+async fn refresh_follow_set<C, N, R>(
     relay: &RelayClient,
-    agent: &Arc<Agent<C, N>>,
+    agent: &Arc<Agent<C, N, R>>,
     tasks: &mut JoinSet<()>,
 ) where
     C: KuboStore + Send + Sync + 'static,
     N: Nip05Verify + Send + Sync + 'static,
+    R: ReportRelay + Send + Sync + 'static,
 {
     let config = &agent.config;
     let (fetched, fetch_succeeded) = match relay.fetch_follow_set(&config.nostr.mirror_set).await {
@@ -252,15 +256,73 @@ fn decide(
     policy::decide(&existing, usage, &candidate, &config.policy, now_secs())
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct SentReport {
+    cids: BTreeSet<String>,
+    created_at: u64,
+}
+
+#[derive(Default)]
+struct ReportBook {
+    loaded: bool,
+    sent: BTreeMap<SiteKey, SentReport>,
+}
+
+#[derive(Debug, Default)]
+struct Held {
+    cids: BTreeMap<SiteKey, BTreeSet<String>>,
+    unknown: BTreeSet<SiteKey>,
+    unknown_prefix: Option<String>,
+}
+
+impl Held {
+    fn is_unknown(&self, key: &str) -> bool {
+        self.unknown.contains(key)
+            || self
+                .unknown_prefix
+                .as_ref()
+                .is_some_and(|prefix| key.starts_with(prefix))
+    }
+}
+
+fn reports_to_send(
+    held: &Held,
+    sent: &BTreeMap<SiteKey, SentReport>,
+    now: u64,
+    refresh_after: u64,
+) -> Vec<(SiteKey, BTreeSet<String>)> {
+    let mut out = Vec::new();
+    for (key, cids) in &held.cids {
+        if held.is_unknown(key) {
+            continue;
+        }
+        match sent.get(key) {
+            Some(prev)
+                if prev.cids == *cids && now < prev.created_at.saturating_add(refresh_after) => {}
+            _ => out.push((key.clone(), cids.clone())),
+        }
+    }
+    for (key, prev) in sent {
+        if prev.cids.is_empty() || held.cids.contains_key(key) || held.is_unknown(key) {
+            continue;
+        }
+        out.push((key.clone(), BTreeSet::new()));
+    }
+    out
+}
+
 struct Queued {
     running_created_at: u64,
     next: Option<SiteEvent>,
 }
 
-struct Agent<C, N> {
+struct Agent<C, N, R> {
     config: Config,
     ipfs: C,
     nip05: N,
+    reporter: R,
+    own: PublicKey,
+    reports: tokio::sync::Mutex<ReportBook>,
     layout: MfsLayout,
     state: tokio::sync::Mutex<State>,
     state_path: PathBuf,
@@ -269,10 +331,11 @@ struct Agent<C, N> {
     permits: Semaphore,
 }
 
-impl<C, N> Agent<C, N>
+impl<C, N, R> Agent<C, N, R>
 where
     C: KuboStore + Send + Sync + 'static,
     N: Nip05Verify + Send + Sync + 'static,
+    R: ReportRelay + Send + Sync + 'static,
 {
     fn submit(self: &Arc<Self>, ev: SiteEvent, tasks: &mut JoinSet<()>) {
         let pubkey_hex = ev.pubkey.to_hex();
@@ -313,13 +376,16 @@ where
     async fn drain(&self, key: SiteKey, first: SiteEvent) {
         let mut ev = first;
         loop {
-            {
+            let stored = {
                 let _permit = self
                     .permits
                     .acquire()
                     .await
                     .expect("the semaphore is never closed");
-                self.apply_site_event(&ev).await;
+                self.apply_site_event(&ev).await
+            };
+            if stored {
+                self.sync_reports().await;
             }
             let next = {
                 let mut queue = self.queue.lock().unwrap();
@@ -344,8 +410,15 @@ where
     }
 }
 
-impl<C: KuboStore, N: Nip05Verify> Agent<C, N> {
-    fn new(config: Config, ipfs: C, nip05: N, state: State, state_path: PathBuf) -> Self {
+impl<C: KuboStore, N: Nip05Verify, R: ReportRelay> Agent<C, N, R> {
+    fn new(
+        config: Config,
+        ipfs: C,
+        nip05: N,
+        reporter: R,
+        state: State,
+        state_path: PathBuf,
+    ) -> Self {
         let permits = Semaphore::new(config.agent.concurrency);
         let layout = MfsLayout::new(config.ipfs.mfs_root.clone());
         Self {
@@ -353,6 +426,9 @@ impl<C: KuboStore, N: Nip05Verify> Agent<C, N> {
             config,
             ipfs,
             nip05,
+            own: reporter.public_key(),
+            reporter,
+            reports: tokio::sync::Mutex::new(ReportBook::default()),
             state: tokio::sync::Mutex::new(state),
             state_path,
             targets: RwLock::new(HashSet::new()),
@@ -526,7 +602,7 @@ impl<C: KuboStore, N: Nip05Verify> Agent<C, N> {
         result.is_verified()
     }
 
-    async fn apply_site_event(&self, ev: &SiteEvent) {
+    async fn apply_site_event(&self, ev: &SiteEvent) -> bool {
         let pubkey_hex = ev.pubkey.to_hex();
         if !self.is_target(&ev.pubkey) {
             warn!(
@@ -534,7 +610,7 @@ impl<C: KuboStore, N: Nip05Verify> Agent<C, N> {
                 pubkey = %pubkey_hex,
                 "ignoring site event from pubkey not in current follow set"
             );
-            return;
+            return false;
         }
         let key = state::site_key(&pubkey_hex, &ev.d);
 
@@ -544,14 +620,14 @@ impl<C: KuboStore, N: Nip05Verify> Agent<C, N> {
         };
         if precheck.store.is_none() {
             info!(site = %ev.d, pubkey = %pubkey_hex, reason = %precheck.reason, "skip");
-            return;
+            return false;
         }
 
         let nip05_mode = self.config.policy.nip05;
         if nip05_mode != Nip05Mode::Off {
             let verified = self.nip05_verified(&key, ev, &pubkey_hex).await;
             if nip05_mode == Nip05Mode::Require && !verified {
-                return;
+                return false;
             }
         }
 
@@ -564,30 +640,30 @@ impl<C: KuboStore, N: Nip05Verify> Agent<C, N> {
             Ok(Fetched::Complete) => {}
             Ok(Fetched::TooLarge) => {
                 warn!(cid = %ev.cid, site = %ev.d, limit = limits.max_bytes, "content exceeds the fetch limit; aborted");
-                return;
+                return false;
             }
             Err(e) => {
                 warn!(cid = %ev.cid, site = %ev.d, error = %e, "fetching content failed; will retry on next poll");
-                return;
+                return false;
             }
         }
 
         let mut state = self.state.lock().await;
         if !self.is_target(&ev.pubkey) {
             info!(site = %ev.d, pubkey = %pubkey_hex, "author left the follow set during fetch; not storing");
-            return;
+            return false;
         }
         let path = self.layout.agent_version(&pubkey_hex, &ev.d, ev.created_at);
         if let Err(e) = self.ipfs.mfs_put(&ev.cid, &path).await {
             error!(cid = %ev.cid, path = %path, error = %e, "storing into MFS failed");
-            return;
+            return false;
         }
         let size = match self.ipfs.dag_size_local(&ev.cid).await {
             Ok(size) => size,
             Err(e) => {
                 warn!(cid = %ev.cid, error = %e, "content is incomplete after fetch; will retry on next poll");
                 self.remove_path(&path).await;
-                return;
+                return false;
             }
         };
         if let Some(declared) = ev.size
@@ -600,7 +676,7 @@ impl<C: KuboStore, N: Nip05Verify> Agent<C, N> {
         let Some(cid) = decision.store else {
             warn!(cid = %ev.cid, site = %ev.d, size, reason = %decision.reason, "rejected after fetch");
             self.remove_path(&path).await;
-            return;
+            return false;
         };
         state.apply_store(
             &key,
@@ -615,6 +691,140 @@ impl<C: KuboStore, N: Nip05Verify> Agent<C, N> {
         self.save(&state, "store").await;
         self.remove_versions(&key, &evicted).await;
         info!(cid = %cid, site = %ev.d, pubkey = %pubkey_hex, size, "stored");
+        true
+    }
+
+    async fn held(&self) -> Held {
+        let mut held = Held::default();
+        {
+            let state = self.state.lock().await;
+            for (key, versions) in &state.sites {
+                held.cids
+                    .entry(key.clone())
+                    .or_default()
+                    .extend(versions.iter().map(|v| v.cid.clone()));
+            }
+        }
+        let own_hex = self.own.to_hex();
+        let account = self.layout.publish_account(&own_hex);
+        let sites = match self.ipfs.mfs_list(&account).await {
+            Ok(sites) => sites,
+            Err(e) => {
+                warn!(path = %account, error = %e, "listing published sites failed; leaving their replica reports as they are");
+                held.unknown_prefix = Some(format!("{own_hex}:"));
+                return held;
+            }
+        };
+        for site in sites.into_iter().filter(|e| e.is_dir) {
+            let Some(d) =
+                mfs::site_from_name(&site.name).filter(|d| nostr::validate_d_tag(d).is_ok())
+            else {
+                continue;
+            };
+            let key = state::site_key(&own_hex, &d);
+            let path = format!("{account}/{}", site.name);
+            match self.ipfs.mfs_list(&path).await {
+                Ok(versions) => {
+                    let cids: BTreeSet<String> = versions
+                        .into_iter()
+                        .filter(|v| v.name.parse::<u64>().is_ok() && !v.cid.is_empty())
+                        .map(|v| v.cid)
+                        .collect();
+                    if !cids.is_empty() {
+                        held.cids.entry(key).or_default().extend(cids);
+                    }
+                }
+                Err(e) => {
+                    warn!(path = %path, error = %e, "listing published versions failed; leaving the replica report as it is");
+                    held.unknown.insert(key);
+                }
+            }
+        }
+        held
+    }
+
+    async fn load_sent_reports(&self, book: &mut ReportBook) {
+        if book.loaded {
+            return;
+        }
+        let kind = self.config.nostr.replica_event_kind;
+        let events = match self.reporter.fetch_own_reports(kind).await {
+            Ok(events) => events,
+            Err(e) => {
+                warn!(error = %e, "fetching own replica reports failed; stale reports are withdrawn after a later fetch succeeds");
+                return;
+            }
+        };
+        let own = events.into_iter().filter(|e| e.pubkey == self.own);
+        for event in nostr::newest_by_address(own) {
+            let report = match nostr::parse_replica_report(
+                &event,
+                kind,
+                self.config.nostr.site_event_kind,
+            ) {
+                Ok(report) => report,
+                Err(e) => {
+                    debug!(event_id = %event.id, error = %e, "ignoring own replica report");
+                    continue;
+                }
+            };
+            let key = state::site_key(&report.author.to_hex(), &report.d);
+            if book
+                .sent
+                .get(&key)
+                .is_none_or(|prev| prev.created_at < report.created_at)
+            {
+                book.sent.insert(
+                    key,
+                    SentReport {
+                        cids: report.cids,
+                        created_at: report.created_at,
+                    },
+                );
+            }
+        }
+        book.loaded = true;
+    }
+
+    async fn sync_reports(&self) {
+        let mut book = self.reports.lock().await;
+        self.load_sent_reports(&mut book).await;
+        let held = self.held().await;
+        let now = now_secs();
+        let ttl = self.config.agent.report_ttl.as_secs();
+        for (key, cids) in reports_to_send(&held, &book.sent, now, ttl / 2) {
+            let Some((author_hex, d)) = state::split_site_key(&key) else {
+                continue;
+            };
+            let Ok(author) = PublicKey::from_hex(author_hex) else {
+                continue;
+            };
+            let created_at = book
+                .sent
+                .get(&key)
+                .map_or(now, |prev| now.max(prev.created_at + 1));
+            let report = nostr::build_replica_report_builder(
+                self.config.nostr.replica_event_kind,
+                self.config.nostr.site_event_kind,
+                &author,
+                d,
+                &cids,
+                Timestamp::from_secs(created_at + ttl),
+            )
+            .custom_created_at(Timestamp::from_secs(created_at));
+            match self.reporter.send_report(report).await {
+                Ok(true) => {
+                    info!(site_key = %key, cids = cids.len(), "sent replica report");
+                    book.sent.insert(key, SentReport { cids, created_at });
+                }
+                Ok(false) => {
+                    warn!(site_key = %key, "no relay accepted the replica report; will retry")
+                }
+                Err(e) => {
+                    warn!(site_key = %key, error = %e, "sending the replica report failed; will retry")
+                }
+            }
+        }
     }
 }
 
@@ -768,6 +978,55 @@ mod tests {
         }
     }
 
+    const REPORT_TTL: u64 = 3 * 86_400;
+
+    #[derive(Default)]
+    struct FakeRelayState {
+        stored: Vec<Event>,
+        sent: Vec<Event>,
+        fail_fetch: bool,
+        reject: bool,
+    }
+
+    struct FakeRelay {
+        keys: Keys,
+        s: Mutex<FakeRelayState>,
+    }
+
+    impl Default for FakeRelay {
+        fn default() -> Self {
+            Self {
+                keys: Keys::generate(),
+                s: Mutex::default(),
+            }
+        }
+    }
+
+    impl ReportRelay for FakeRelay {
+        fn public_key(&self) -> PublicKey {
+            self.keys.public_key()
+        }
+
+        async fn fetch_own_reports(&self, _report_kind: u16) -> Result<Vec<Event>> {
+            let s = self.s.lock().unwrap();
+            if s.fail_fetch {
+                anyhow::bail!("simulated fetch failure");
+            }
+            Ok(s.stored.clone())
+        }
+
+        async fn send_report(&self, report: EventBuilder) -> Result<bool> {
+            let event = report.finalize(&self.keys)?;
+            let mut s = self.s.lock().unwrap();
+            if s.reject {
+                return Ok(false);
+            }
+            s.sent.push(event.clone());
+            s.stored.push(event);
+            Ok(true)
+        }
+    }
+
     fn test_config(policy: PolicyConfig) -> Config {
         Config {
             nostr: NostrConfig {
@@ -775,6 +1034,7 @@ mod tests {
                 relays: vec![],
                 mirror_set: "site-mirror".to_string(),
                 site_event_kind: 35980,
+                replica_event_kind: 35981,
             },
             ipfs: IpfsConfig {
                 api: "http://127.0.0.1:5001".to_string(),
@@ -787,6 +1047,7 @@ mod tests {
                 fetch_timeout: Duration::from_secs(60),
                 fetch_idle_timeout: Duration::from_secs(10),
                 concurrency: 2,
+                report_ttl: Duration::from_secs(REPORT_TTL),
             },
             publish: crate::config::PublishConfig {
                 nip05: Nip05Mode::Off,
@@ -819,7 +1080,7 @@ mod tests {
     }
 
     struct Fixture {
-        agent: Arc<Agent<FakeKubo, FakeNip05>>,
+        agent: Arc<Agent<FakeKubo, FakeNip05, FakeRelay>>,
         pubkey: PublicKey,
         state_path: PathBuf,
         _dir: tempfile::TempDir,
@@ -834,6 +1095,7 @@ mod tests {
                 test_config(policy),
                 kubo,
                 FakeNip05::default(),
+                FakeRelay::default(),
                 State::default(),
                 state_path.clone(),
             );
@@ -904,6 +1166,47 @@ mod tests {
 
         async fn site_bytes(&self, d: &str) -> u64 {
             self.agent.state.lock().await.site_bytes(&self.key(d))
+        }
+
+        fn relay(&self) -> std::sync::MutexGuard<'_, FakeRelayState> {
+            self.agent.reporter.s.lock().unwrap()
+        }
+
+        fn take_reports(&self) -> Vec<(String, Vec<String>)> {
+            let mut out: Vec<(String, Vec<String>)> = std::mem::take(&mut self.relay().sent)
+                .iter()
+                .map(|e| {
+                    assert_eq!(e.pubkey, self.agent.own);
+                    assert_eq!(
+                        e.tags.expiration(),
+                        Some(e.created_at + Duration::from_secs(REPORT_TTL))
+                    );
+                    let cids = e
+                        .tags
+                        .iter()
+                        .filter(|t| t.kind() == "cid")
+                        .filter_map(|t| t.content().map(str::to_string))
+                        .collect();
+                    (e.tags.identifier().unwrap(), cids)
+                })
+                .collect();
+            out.sort();
+            out
+        }
+
+        fn own_key(&self, d: &str) -> SiteKey {
+            state::site_key(&self.agent.own.to_hex(), d)
+        }
+
+        fn publish_path(&self, d: &str, name: &str) -> String {
+            format!(
+                "{}/{name}",
+                self.agent.layout.publish_site(&self.agent.own.to_hex(), d)
+            )
+        }
+
+        async fn sent_created_at(&self, key: &str) -> u64 {
+            self.agent.reports.lock().await.sent[key].created_at
         }
 
         async fn verification(&self, d: &str) -> Option<String> {
@@ -1546,6 +1849,268 @@ mod tests {
         assert!(!fx.state_path.exists());
     }
 
+    fn cids(list: &[&str]) -> Vec<String> {
+        list.iter().map(|c| c.to_string()).collect()
+    }
+
+    #[tokio::test]
+    async fn stored_versions_are_reported_after_each_store() {
+        let mut policy = default_policy();
+        policy.keep_versions = 1;
+        let fx = Fixture::new(policy, FakeKubo::default());
+        let mut tasks = JoinSet::new();
+
+        fx.agent
+            .submit(fx.event(D, "bafy-1", None, 100), &mut tasks);
+        while tasks.join_next().await.is_some() {}
+        assert_eq!(fx.take_reports(), vec![(fx.key(D), cids(&["bafy-1"]))]);
+
+        fx.agent
+            .submit(fx.event(D, "bafy-1", None, 100), &mut tasks);
+        while tasks.join_next().await.is_some() {}
+        assert!(fx.take_reports().is_empty());
+
+        fx.agent
+            .submit(fx.event(D, "bafy-2", None, 200), &mut tasks);
+        while tasks.join_next().await.is_some() {}
+        assert_eq!(fx.take_reports(), vec![(fx.key(D), cids(&["bafy-2"]))]);
+    }
+
+    #[tokio::test]
+    async fn reports_are_refreshed_before_they_expire() {
+        let fx = Fixture::new(default_policy(), FakeKubo::default());
+        fx.seed(D, "bafy-a", 1, 100).await;
+        fx.seed(D, "bafy-b", 1, 200).await;
+
+        fx.agent.sync_reports().await;
+        assert_eq!(
+            fx.take_reports(),
+            vec![(fx.key(D), cids(&["bafy-a", "bafy-b"]))]
+        );
+        fx.agent.sync_reports().await;
+        assert!(fx.take_reports().is_empty());
+
+        let first = fx.sent_created_at(&fx.key(D)).await;
+        fx.agent
+            .reports
+            .lock()
+            .await
+            .sent
+            .get_mut(&fx.key(D))
+            .unwrap()
+            .created_at -= REPORT_TTL / 2;
+        fx.agent.sync_reports().await;
+        assert_eq!(
+            fx.take_reports(),
+            vec![(fx.key(D), cids(&["bafy-a", "bafy-b"]))]
+        );
+        assert!(fx.sent_created_at(&fx.key(D)).await >= first);
+    }
+
+    #[tokio::test]
+    async fn a_changed_report_is_newer_than_the_previous_one_within_a_second() {
+        let fx = Fixture::new(default_policy(), FakeKubo::default());
+        fx.seed(D, "bafy-a", 1, 100).await;
+        fx.agent.sync_reports().await;
+        let first = fx.sent_created_at(&fx.key(D)).await;
+
+        fx.seed(D, "bafy-b", 1, 200).await;
+        fx.agent.sync_reports().await;
+
+        assert!(fx.sent_created_at(&fx.key(D)).await > first);
+        assert_eq!(fx.take_reports().len(), 2);
+    }
+
+    #[tokio::test]
+    async fn unfollowed_sites_are_withdrawn_once() {
+        let fx = Fixture::new(default_policy(), FakeKubo::default());
+        fx.seed(D, "bafy-a", 1, 100).await;
+        fx.agent.sync_reports().await;
+        fx.take_reports();
+
+        fx.agent.replace_targets(HashSet::new());
+        fx.agent.remove_unfollowed().await;
+        fx.agent.sync_reports().await;
+        assert_eq!(fx.take_reports(), vec![(fx.key(D), vec![])]);
+
+        fx.agent.sync_reports().await;
+        assert!(fx.take_reports().is_empty());
+    }
+
+    const CID_A: &str = "bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi";
+    const CID_B: &str = "QmYwAPJzv5CZsnA9LqYKXfRSZryVXxNn7ZP1FyEBgvJvHR";
+
+    #[tokio::test]
+    async fn reports_left_on_relays_are_withdrawn_or_kept_on_startup() {
+        let fx = Fixture::new(default_policy(), FakeKubo::default());
+        fx.seed(D, CID_A, 1, 100).await;
+        let author = fx.pubkey;
+        let now = now_secs();
+        let old = |d: &str, cids: &[&str], created_at: u64| {
+            nostr::build_replica_report_builder(
+                35981,
+                35980,
+                &author,
+                d,
+                &cids.iter().map(|c| c.to_string()).collect(),
+                Timestamp::from_secs(created_at + REPORT_TTL),
+            )
+            .custom_created_at(Timestamp::from_secs(created_at))
+            .finalize(&fx.agent.reporter.keys)
+            .unwrap()
+        };
+        let foreign = nostr::build_replica_report_builder(
+            35981,
+            35980,
+            &author,
+            "foreign.example",
+            &BTreeSet::from([CID_A.to_string()]),
+            Timestamp::from_secs(now + REPORT_TTL),
+        )
+        .finalize(&Keys::generate())
+        .unwrap();
+        fx.relay().stored = vec![
+            old(D, &[CID_A], now - 10),
+            old("gone.example", &[CID_A], now - 20),
+            old("gone.example", &[CID_B], now - 10),
+            old("withdrawn.example", &[], now - 10),
+            foreign,
+        ];
+
+        fx.agent.sync_reports().await;
+
+        assert_eq!(fx.take_reports(), vec![(fx.key("gone.example"), vec![])]);
+        assert!(fx.sent_created_at(&fx.key("gone.example")).await >= now);
+    }
+
+    #[tokio::test]
+    async fn stale_reports_are_withdrawn_once_the_relays_answer() {
+        let fx = Fixture::new(default_policy(), FakeKubo::default());
+        fx.seed(D, "bafy-a", 1, 100).await;
+        let stale = nostr::build_replica_report_builder(
+            35981,
+            35980,
+            &fx.pubkey,
+            "gone.example",
+            &BTreeSet::from([CID_B.to_string()]),
+            Timestamp::from_secs(now_secs() + REPORT_TTL),
+        )
+        .custom_created_at(Timestamp::from_secs(now_secs() - 10))
+        .finalize(&fx.agent.reporter.keys)
+        .unwrap();
+        {
+            let mut relay = fx.relay();
+            relay.stored = vec![stale];
+            relay.fail_fetch = true;
+        }
+
+        fx.agent.sync_reports().await;
+        assert_eq!(fx.take_reports(), vec![(fx.key(D), cids(&["bafy-a"]))]);
+
+        fx.relay().fail_fetch = false;
+        fx.agent.sync_reports().await;
+        assert_eq!(fx.take_reports(), vec![(fx.key("gone.example"), vec![])]);
+    }
+
+    #[tokio::test]
+    async fn rejected_reports_are_retried() {
+        let fx = Fixture::new(default_policy(), FakeKubo::default());
+        fx.seed(D, "bafy-a", 1, 100).await;
+        fx.relay().reject = true;
+        fx.agent.sync_reports().await;
+        assert!(fx.take_reports().is_empty());
+
+        fx.relay().reject = false;
+        fx.agent.sync_reports().await;
+        assert_eq!(fx.take_reports(), vec![(fx.key(D), cids(&["bafy-a"]))]);
+    }
+
+    #[tokio::test]
+    async fn published_versions_are_reported_together_with_mirrored_ones() {
+        let fx = Fixture::new(default_policy(), FakeKubo::default());
+        fx.agent.state.lock().await.apply_store(
+            &fx.own_key(D),
+            VersionRecord {
+                cid: "bafy-mirrored".into(),
+                size: 1,
+                created_at: 100,
+                stored_at: 100,
+            },
+        );
+        {
+            let mut kubo = fx.kubo();
+            kubo.mfs
+                .insert(fx.publish_path(D, "100"), "bafy-mirrored".into());
+            kubo.mfs
+                .insert(fx.publish_path(D, "200"), "bafy-published".into());
+            kubo.mfs
+                .insert(fx.publish_path(D, "notes.txt"), "bafy-ignored".into());
+            kubo.mfs
+                .insert(fx.publish_path("a/b.example", "300"), "bafy-ab".into());
+            let other = fx.agent.layout.publish_version(&fx.pubkey.to_hex(), D, 1);
+            kubo.mfs.insert(other, "bafy-not-mine".into());
+        }
+
+        fx.agent.sync_reports().await;
+
+        let mut expected = vec![
+            (fx.own_key(D), cids(&["bafy-mirrored", "bafy-published"])),
+            (fx.own_key("a/b.example"), cids(&["bafy-ab"])),
+        ];
+        expected.sort();
+        assert_eq!(fx.take_reports(), expected);
+
+        fx.kubo().mfs.retain(|p, _| !p.contains("a%2Fb.example"));
+        fx.agent.sync_reports().await;
+        assert_eq!(fx.take_reports(), vec![(fx.own_key("a/b.example"), vec![])]);
+    }
+
+    #[test]
+    fn reports_are_not_touched_for_sites_whose_listing_failed() {
+        let sent = BTreeMap::from([
+            (
+                "me:a".to_string(),
+                SentReport {
+                    cids: BTreeSet::from(["x".to_string()]),
+                    created_at: 0,
+                },
+            ),
+            (
+                "me:b".to_string(),
+                SentReport {
+                    cids: BTreeSet::from(["x".to_string()]),
+                    created_at: 0,
+                },
+            ),
+            (
+                "other:c".to_string(),
+                SentReport {
+                    cids: BTreeSet::from(["x".to_string()]),
+                    created_at: 0,
+                },
+            ),
+        ]);
+        let held = Held {
+            cids: BTreeMap::from([("me:b".to_string(), BTreeSet::from(["y".to_string()]))]),
+            unknown: BTreeSet::from(["me:a".to_string(), "me:b".to_string()]),
+            unknown_prefix: None,
+        };
+        assert_eq!(
+            reports_to_send(&held, &sent, 1, 100),
+            vec![("other:c".to_string(), BTreeSet::new())]
+        );
+
+        let held = Held {
+            unknown: BTreeSet::new(),
+            unknown_prefix: Some("me:".to_string()),
+            ..held
+        };
+        assert_eq!(
+            reports_to_send(&held, &sent, 1, 100),
+            vec![("other:c".to_string(), BTreeSet::new())]
+        );
+    }
+
     // Requires the local Kubo used by tests/kubo_integration.rs:
     //   cargo test --lib agent_stores_and_removes_through_real_kubo -- --ignored
     #[tokio::test]
@@ -1575,6 +2140,7 @@ mod tests {
             config,
             kubo,
             FakeNip05::default(),
+            FakeRelay::default(),
             State::default(),
             dir.path().join("state.json"),
         );

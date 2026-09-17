@@ -4,6 +4,7 @@ relays = ["wss://relay.damus.io", "wss://nos.lol", "wss://relay.primal.net", "ws
                                     # SWING_NOSTR_RELAYS（カンマ区切り）
 mirror_set = "swing"                # SWING_MIRROR_SET（kind 30000 の d タグ）
 site_event_kind = 35980             # SWING_SITE_EVENT_KIND
+replica_event_kind = 35981          # SWING_REPLICA_EVENT_KIND
 
 [ipfs]
 api = "http://127.0.0.1:5001"       # SWING_IPFS_API
@@ -26,6 +27,7 @@ nip05_cache_ttl = "1d"              # SWING_NIP05_CACHE_TTL
 state_dir = "./data"                # SWING_STATE_DIR
 poll_interval = "5m"                # SWING_POLL_INTERVAL（follow set 再取得間隔）
 concurrency = 4                     # SWING_CONCURRENCY（同時に処理するサイト数）
+report_ttl = "3d"                   # SWING_REPORT_TTL（レプリカ報告の有効期間）
 
 [publish]
 nip05 = "warn"                      # SWING_PUBLISH_NIP05（off / warn / require、--nip05 が優先）

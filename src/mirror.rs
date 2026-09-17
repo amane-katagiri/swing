@@ -5,6 +5,7 @@ use nostr_sdk::prelude::*;
 
 use crate::config::Config;
 use crate::nostr::{self, RelayClient};
+use crate::replicas;
 use crate::state::{self, State, VersionRecord};
 
 const FOLLOW_SET_KIND: u16 = 30000;
@@ -14,7 +15,7 @@ pub fn parse_pubkey_input(input: &str) -> Result<PublicKey> {
     PublicKey::parse(input.trim()).with_context(|| format!("invalid pubkey: {input}"))
 }
 
-fn npub(pk: &PublicKey) -> String {
+pub fn npub(pk: &PublicKey) -> String {
     pk.to_bech32()
         .expect("bech32 encoding of a public key cannot fail")
 }
@@ -282,9 +283,14 @@ fn format_unix_timestamp(secs: u64) -> String {
     format!("{y:04}-{m:02}-{d:02} {hh:02}:{mm:02}:{ss:02} UTC")
 }
 
-fn format_site_line(ev: &nostr::SiteEvent, status: &str, verification: Option<&str>) -> String {
+fn format_site_line(
+    ev: &nostr::SiteEvent,
+    status: &str,
+    verification: Option<&str>,
+    replicas: Option<usize>,
+) -> String {
     format!(
-        "  d={:<24} cid={:<62} url={:<32} size={:<12} created_at={:<25} nip05={:<14} [{}]",
+        "  d={:<24} cid={:<62} url={:<32} size={:<12} created_at={:<25} nip05={:<14} replicas={:<4} [{}]",
         ev.d,
         ev.cid,
         ev.url.clone().unwrap_or_else(|| "-".to_string()),
@@ -293,6 +299,7 @@ fn format_site_line(ev: &nostr::SiteEvent, status: &str, verification: Option<&s
             .unwrap_or_else(|| "-".to_string()),
         format_unix_timestamp(ev.created_at),
         verification.unwrap_or("-"),
+        replicas.map_or_else(|| "-".to_string(), |n| n.to_string()),
         status
     )
 }
@@ -318,7 +325,7 @@ fn unfollowed_sites(
     out
 }
 
-fn print_account_header(pubkey_hex: &str, suffix: &str) -> Result<PublicKey> {
+pub fn print_account_header(pubkey_hex: &str, suffix: &str) -> Result<PublicKey> {
     let pk = PublicKey::from_hex(pubkey_hex).context("parsing pubkey")?;
     println!("{} ({}){suffix}", npub(&pk), pubkey_hex);
     Ok(pk)
@@ -350,6 +357,14 @@ pub async fn sites(config: &Config) -> Result<()> {
             .collect();
         nostr::select_latest(&parsed)
     };
+    let latest_sites: Vec<&nostr::SiteEvent> = latest.values().collect();
+    let reports = match replicas::fetch_for_sites(&relay, config, &latest_sites).await {
+        Ok(reports) => Some(reports),
+        Err(e) => {
+            println!("(fetching replica reports failed: {e:#})");
+            None
+        }
+    };
     relay.client.shutdown().await;
 
     let state = load_state(config).await?;
@@ -378,7 +393,15 @@ pub async fn sites(config: &Config) -> Result<()> {
                 .unwrap_or(false);
             let verification = state.verifications.get(&key).map(|v| v.status.as_str());
             let status = if stored { "stored" } else { "not stored" };
-            println!("{}", format_site_line(ev, status, verification));
+            let replica_count = reports.as_ref().map(|reports| {
+                reports.get(&(ev.pubkey, ev.d.clone())).map_or(0, |r| {
+                    replicas::latest_count(&replicas::replicas_of(r, &ev.cid))
+                })
+            });
+            println!(
+                "{}",
+                format_site_line(ev, status, verification, replica_count)
+            );
         }
     }
 
@@ -408,7 +431,10 @@ pub async fn sites(config: &Config) -> Result<()> {
             };
             let key = state::site_key(&pubkey_hex, &d);
             let verification = state.verifications.get(&key).map(|v| v.status.as_str());
-            println!("{}", format_site_line(&ev, "unfollowed", verification));
+            println!(
+                "{}",
+                format_site_line(&ev, "unfollowed", verification, None)
+            );
         }
     }
     Ok(())

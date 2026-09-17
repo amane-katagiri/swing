@@ -1,4 +1,5 @@
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
+use std::future::Future;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
@@ -72,6 +73,59 @@ impl RelayClient {
         Ok(events.into_iter().collect())
     }
 
+    pub async fn fetch_replica_reports(
+        &self,
+        report_kind: u16,
+        sites: &[Coordinate],
+    ) -> Result<Vec<Event>> {
+        if sites.is_empty() {
+            return Ok(Vec::new());
+        }
+        let filter = Filter::new()
+            .kind(Kind::Custom(report_kind))
+            .coordinates(sites);
+        let events = self
+            .client
+            .fetch_events(filter)
+            .timeout(Duration::from_secs(30))
+            .await
+            .context("fetching replica reports")?;
+        Ok(events.into_iter().collect())
+    }
+
+    pub async fn fetch_follow_sets(
+        &self,
+        mirror_set: &str,
+        authors: &[PublicKey],
+    ) -> Result<HashMap<PublicKey, Event>> {
+        if authors.is_empty() {
+            return Ok(HashMap::new());
+        }
+        let filter = Filter::new()
+            .kind(Kind::Custom(30000))
+            .authors(authors.iter().copied())
+            .identifier(mirror_set);
+        let events = self
+            .client
+            .fetch_events(filter)
+            .timeout(Duration::from_secs(30))
+            .await
+            .context("fetching follow sets")?;
+        let mut newest: HashMap<PublicKey, Event> = HashMap::new();
+        for event in events {
+            if !is_follow_set_of(&event, &event.pubkey, mirror_set) {
+                continue;
+            }
+            match newest.get(&event.pubkey) {
+                Some(current) if !is_newer_replaceable(&event, current) => {}
+                _ => {
+                    newest.insert(event.pubkey, event);
+                }
+            }
+        }
+        Ok(newest)
+    }
+
     pub async fn subscribe_site_events(
         &self,
         site_event_kind: u16,
@@ -110,6 +164,56 @@ impl RelayClient {
             .await
             .context("sending event to relays")?;
         Ok(out)
+    }
+}
+
+pub trait ReportRelay {
+    fn public_key(&self) -> PublicKey;
+    fn fetch_own_reports(
+        &self,
+        report_kind: u16,
+    ) -> impl Future<Output = Result<Vec<Event>>> + Send;
+    fn send_report(&self, report: EventBuilder) -> impl Future<Output = Result<bool>> + Send;
+}
+
+impl ReportRelay for RelayClient {
+    fn public_key(&self) -> PublicKey {
+        self.keys.public_key()
+    }
+
+    async fn fetch_own_reports(&self, report_kind: u16) -> Result<Vec<Event>> {
+        let filter = Filter::new()
+            .kind(Kind::Custom(report_kind))
+            .author(self.keys.public_key());
+        let events = self
+            .client
+            .fetch_events(filter)
+            .timeout(Duration::from_secs(30))
+            .await
+            .context("fetching own replica reports")?;
+        Ok(events.into_iter().collect())
+    }
+
+    async fn send_report(&self, report: EventBuilder) -> Result<bool> {
+        let event = report
+            .finalize(&self.keys)
+            .context("signing replica report")?;
+        let output = self.publish_to_relays(&event).await?;
+        Ok(!output.success.is_empty())
+    }
+}
+
+impl<T: ReportRelay + Send + Sync> ReportRelay for std::sync::Arc<T> {
+    fn public_key(&self) -> PublicKey {
+        T::public_key(self)
+    }
+
+    async fn fetch_own_reports(&self, report_kind: u16) -> Result<Vec<Event>> {
+        T::fetch_own_reports(self, report_kind).await
+    }
+
+    async fn send_report(&self, report: EventBuilder) -> Result<bool> {
+        T::send_report(self, report).await
     }
 }
 
@@ -211,7 +315,7 @@ fn tag_value<'a>(event: &'a Event, kind: &str) -> Option<&'a str> {
 const MAX_D_TAG_BYTES: usize = 253;
 const MAX_URL_TAG_BYTES: usize = 2048;
 
-fn validate_d_tag(d: &str) -> Result<()> {
+pub fn validate_d_tag(d: &str) -> Result<()> {
     if d.is_empty() {
         anyhow::bail!("empty d tag");
     }
@@ -291,6 +395,102 @@ pub fn build_site_event_builder(
         builder = builder.tag(Tag::custom("size", [size.to_string()]));
     }
     builder
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReplicaReport {
+    pub reporter: PublicKey,
+    pub author: PublicKey,
+    pub d: String,
+    pub cids: BTreeSet<String>,
+    pub created_at: u64,
+    pub expiration: Option<u64>,
+}
+
+impl ReplicaReport {
+    pub fn is_expired_at(&self, now: u64) -> bool {
+        self.expiration.is_some_and(|exp| exp <= now)
+    }
+}
+
+pub fn site_coordinate(site_event_kind: u16, author: &PublicKey, d: &str) -> Coordinate {
+    Coordinate::new(Kind::Custom(site_event_kind), *author).identifier(d)
+}
+
+pub fn parse_replica_report(
+    event: &Event,
+    report_kind: u16,
+    site_event_kind: u16,
+) -> Result<ReplicaReport> {
+    if event.kind != Kind::Custom(report_kind) {
+        anyhow::bail!("unexpected kind {}", event.kind);
+    }
+    let identifier = event.tags.identifier().context("missing d tag")?;
+    let (author_hex, d) = identifier
+        .split_once(':')
+        .context("d tag is not <pubkey>:<site>")?;
+    let author = PublicKey::from_hex(author_hex).context("invalid author in d tag")?;
+    if author.to_hex() != author_hex {
+        anyhow::bail!("author in d tag is not lowercase hex");
+    }
+    validate_d_tag(d)?;
+    let expected = site_coordinate(site_event_kind, &author, d).to_string();
+    if tag_value(event, "a") != Some(expected.as_str()) {
+        anyhow::bail!("a tag does not match d tag");
+    }
+    let cids = event
+        .tags
+        .iter()
+        .filter(|t| t.kind() == "cid")
+        .map(|t| {
+            let value = t.content().context("empty cid tag")?;
+            cid::Cid::try_from(value).context("invalid cid tag")?;
+            Ok(value.to_string())
+        })
+        .collect::<Result<BTreeSet<String>>>()?;
+    Ok(ReplicaReport {
+        reporter: event.pubkey,
+        author,
+        d: d.to_string(),
+        cids,
+        created_at: event.created_at.as_secs(),
+        expiration: event.tags.expiration().map(|t| t.as_secs()),
+    })
+}
+
+pub fn newest_by_address(events: impl IntoIterator<Item = Event>) -> Vec<Event> {
+    let mut newest: HashMap<(PublicKey, Kind, Option<String>), Event> = HashMap::new();
+    for event in events {
+        let key = (event.pubkey, event.kind, event.tags.identifier());
+        match newest.get(&key) {
+            Some(current) if !is_newer_replaceable(&event, current) => {}
+            _ => {
+                newest.insert(key, event);
+            }
+        }
+    }
+    newest.into_values().collect()
+}
+
+pub fn build_replica_report_builder(
+    report_kind: u16,
+    site_event_kind: u16,
+    author: &PublicKey,
+    d: &str,
+    cids: &BTreeSet<String>,
+    expiration: Timestamp,
+) -> EventBuilder {
+    let author_hex = author.to_hex();
+    EventBuilder::new(Kind::Custom(report_kind), "")
+        .tag(Tag::identifier(format!("{author_hex}:{d}")))
+        .tag(Tag::custom(
+            "a",
+            [site_coordinate(site_event_kind, author, d).to_string()],
+        ))
+        .tag(Tag::public_key(*author))
+        .tags(cids.iter().map(|cid| Tag::custom("cid", [cid.clone()])))
+        .tag(Tag::expiration(expiration))
+        .tag(Tag::custom("alt", [format!("SWING replica report: {d}")]))
 }
 
 #[cfg(test)]
@@ -636,5 +836,144 @@ mod tests {
 
         let c = choose_follow_set(None, false, Some(new.clone())).unwrap();
         assert_eq!((c.event.id, c.save, c.republish), (new.id, false, false));
+    }
+
+    const CID_A: &str = "bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi";
+    const CID_B: &str = "QmYwAPJzv5CZsnA9LqYKXfRSZryVXxNn7ZP1FyEBgvJvHR";
+
+    fn report(
+        reporter: &Keys,
+        author: &PublicKey,
+        d: &str,
+        cids: &[&str],
+        created_at: u64,
+    ) -> Event {
+        build_replica_report_builder(
+            35981,
+            35980,
+            author,
+            d,
+            &cids.iter().map(|c| c.to_string()).collect(),
+            Timestamp::from_secs(created_at + 100),
+        )
+        .custom_created_at(Timestamp::from_secs(created_at))
+        .finalize(reporter)
+        .unwrap()
+    }
+
+    fn report_with_tags(reporter: &Keys, d: &str, a: &str, cid: &str) -> Event {
+        EventBuilder::new(Kind::Custom(35981), "")
+            .tag(Tag::identifier(d))
+            .tag(Tag::custom("a", [a.to_string()]))
+            .tag(Tag::custom("cid", [cid.to_string()]))
+            .finalize(reporter)
+            .unwrap()
+    }
+
+    #[test]
+    fn replica_report_round_trips() {
+        let reporter = keys();
+        let author = keys().public_key();
+        let ev = report(&reporter, &author, "a:b.example", &[CID_B, CID_A], 1000);
+
+        assert_eq!(
+            ev.tags.identifier().unwrap(),
+            format!("{}:a:b.example", author.to_hex())
+        );
+        assert_eq!(
+            tag_value(&ev, "a").unwrap(),
+            format!("35980:{}:a:b.example", author.to_hex())
+        );
+        assert_eq!(ev.tags.public_keys().collect::<Vec<_>>(), vec![author]);
+        assert_eq!(
+            tag_value(&ev, "alt"),
+            Some("SWING replica report: a:b.example")
+        );
+
+        let parsed = parse_replica_report(&ev, 35981, 35980).unwrap();
+        assert_eq!(parsed.reporter, reporter.public_key());
+        assert_eq!(parsed.author, author);
+        assert_eq!(parsed.d, "a:b.example");
+        assert_eq!(
+            parsed.cids,
+            BTreeSet::from([CID_A.to_string(), CID_B.to_string()])
+        );
+        assert_eq!(parsed.created_at, 1000);
+        assert_eq!(parsed.expiration, Some(1100));
+        assert!(!parsed.is_expired_at(1099));
+        assert!(parsed.is_expired_at(1100));
+    }
+
+    #[test]
+    fn replica_report_without_cids_is_a_withdrawal() {
+        let reporter = keys();
+        let author = keys().public_key();
+        let ev = report(&reporter, &author, "example.com", &[], 1000);
+        let parsed = parse_replica_report(&ev, 35981, 35980).unwrap();
+        assert!(parsed.cids.is_empty());
+    }
+
+    #[test]
+    fn replica_report_rejects_inconsistent_or_invalid_tags() {
+        let reporter = keys();
+        let author = keys().public_key();
+        let hex = author.to_hex();
+        let d = format!("{hex}:example.com");
+        let a = format!("35980:{hex}:example.com");
+
+        assert!(
+            parse_replica_report(&report_with_tags(&reporter, &d, &a, CID_A), 35981, 35980).is_ok()
+        );
+        assert!(
+            parse_replica_report(&report_with_tags(&reporter, &d, &a, CID_A), 35982, 35980)
+                .is_err()
+        );
+
+        let other_site = format!("35980:{hex}:other.example");
+        let other_kind = format!("30023:{hex}:example.com");
+        let other_author = format!("35980:{}:example.com", keys().public_key().to_hex());
+        for bad_a in [other_site, other_kind, other_author] {
+            let ev = report_with_tags(&reporter, &d, &bad_a, CID_A);
+            assert!(parse_replica_report(&ev, 35981, 35980).is_err(), "{bad_a}");
+        }
+
+        let upper = format!("{}:example.com", hex.to_uppercase());
+        for bad_d in [
+            "example.com".to_string(),
+            "abc:example.com".to_string(),
+            upper,
+            format!("{hex}:"),
+        ] {
+            let ev = report_with_tags(&reporter, &bad_d, &a, CID_A);
+            assert!(parse_replica_report(&ev, 35981, 35980).is_err(), "{bad_d}");
+        }
+
+        let ev = report_with_tags(&reporter, &d, &a, "not-a-cid");
+        assert!(parse_replica_report(&ev, 35981, 35980).is_err());
+    }
+
+    #[test]
+    fn newest_by_address_keeps_one_event_per_author_kind_and_d() {
+        let r1 = keys();
+        let r2 = keys();
+        let author = keys().public_key();
+        let old = report(&r1, &author, "example.com", &[CID_A], 100);
+        let new = report(&r1, &author, "example.com", &[CID_B], 200);
+        let other_site = report(&r1, &author, "other.example", &[CID_A], 50);
+        let other_reporter = report(&r2, &author, "example.com", &[CID_A], 50);
+
+        let mut ids: Vec<EventId> = newest_by_address(vec![
+            new.clone(),
+            old,
+            other_site.clone(),
+            other_reporter.clone(),
+        ])
+        .into_iter()
+        .map(|e| e.id)
+        .collect();
+        ids.sort();
+        let mut expected = vec![new.id, other_site.id, other_reporter.id];
+        expected.sort();
+        assert_eq!(ids, expected);
     }
 }

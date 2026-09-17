@@ -95,7 +95,7 @@ docker compose exec mirror swing mirror list
 docker compose exec mirror swing sites
 ```
 
-各サイトについて `d`（サイト識別子）、`cid`、`url`、`size`、`created_at`、NIP-05 の検証結果、保存状況（`stored` / `not stored`）が 1 行ずつ表示されます。mirror-agent は最後に確認したミラー対象リストを状態ファイルに保存しています。relay が古いリストを返したり、リストを失ったりしても、保存済みの新しいリストを使い、relay に送り直します。そのため、relay の不調でミラー対象から外れたと誤認してサイトを消すことはありません。ミラーをやめたい相手は `swing mirror remove` で外してください。
+各サイトについて `d`（サイト識別子）、`cid`、`url`、`size`、`created_at`、NIP-05 の検証結果、最新版のレプリカ数、保存状況（`stored` / `not stored`）が 1 行ずつ表示されます。mirror-agent は最後に確認したミラー対象リストを状態ファイルに保存しています。relay が古いリストを返したり、リストを失ったりしても、保存済みの新しいリストを使い、relay に送り直します。そのため、relay の不調でミラー対象から外れたと誤認してサイトを消すことはありません。ミラーをやめたい相手は `swing mirror remove` で外してください。
 
 ミラー対象から外したのにまだ保存しているサイトは、最後に `[unfollowed]` として表示されます。これを消すには `remove_on_unfollow` を `true` にして mirror-agent を再起動してください。次の Follow Set の確認で消えます。
 
@@ -165,6 +165,24 @@ Published.
 
 NIP-05 は、`d` タグがドメイン名の形をしている場合に、そのドメインの所有者が自分の pubkey を掲載しているかどうかを確認する任意の検証です。確認するには、公開するドメインの `https://{ドメイン}/.well-known/nostr.json` に `{"names": {"_": "<自分の pubkey の hex>"}}` を置きます。検証モードは `--nip05 off|warn|require`（省略時は `.env` の `SWING_PUBLISH_NIP05`、既定 `warn`）で切り替えられ、`warn` は結果を表示するだけで publish を続行し、`require` は検証に成功しない限り publish を中止します。
 
+### 何人が保存しているかを見る
+
+mirror-agent は、保存している版の CID を「レプリカ報告」（`kind 35981`）として Nostr に出し続けます。自分で publish したサイトも、同じ Kubo（同じ `SWING_MFS_ROOT`）で mirror-agent を動かしていれば、作者本人の分として報告されます。`swing replicas` で、自分のサイトを誰が保存しているかを確認できます。
+
+```bash
+docker compose exec mirror swing replicas
+```
+
+```text
+npub1me... (<pubkey>)
+  d=example.jp cid=bafy... replicas=2 (reports=3)
+    npub1alice...  [latest]
+    npub1me...     [latest]  [author]
+    npub1bob...    [older version]  [not following]
+```
+
+`replicas` は最新版を持っていると報告した参加者の数です。`[older version]` は古い版だけを持っている参加者、`[not following]` はミラー対象リストにあなたを入れていないのに報告している参加者です。報告は自己申告なので、実際に配送できるかまでは保証しません。npub などを渡すと、他の人のサイトについても表示します。
+
 ## 自分のサイトをゲートウェイで配信する
 
 `gateway` プロファイルを使うと、決めたホスト名だけを DNSLink で配信する HTTP サーバー（Caddy）が `127.0.0.1:8081` で立ち上がります。TLS は扱わないので、Cloudflare Tunnel などを前段に置いて、そこから `http://127.0.0.1:8081` に転送してください。
@@ -221,6 +239,7 @@ TOML の設定ファイル（`swing.toml`）を使う場合と、環境変数だ
 | `SWING_NOSTR_RELAYS` | `nostr.relays` | 接続する relay（カンマ区切り） |
 | `SWING_MIRROR_SET` | `nostr.mirror_set` | Follow Set の `d` タグ（既定 `swing`） |
 | `SWING_SITE_EVENT_KIND` | `nostr.site_event_kind` | サイトイベントの kind（既定 `35980`） |
+| `SWING_REPLICA_EVENT_KIND` | `nostr.replica_event_kind` | レプリカ報告の kind（既定 `35981`） |
 | `SWING_IPFS_API` | `ipfs.api` | Kubo RPC のエンドポイント |
 | `SWING_MFS_ROOT` | `ipfs.mfs_root` | SWING が使う MFS のディレクトリ（既定 `/swing`） |
 | `SWING_MAX_TOTAL_STORAGE` | `policy.max_total_storage` | 全体容量上限 |
@@ -237,6 +256,7 @@ TOML の設定ファイル（`swing.toml`）を使う場合と、環境変数だ
 | `SWING_STATE_DIR` | `agent.state_dir` | 状態ファイルを置くディレクトリ |
 | `SWING_POLL_INTERVAL` | `agent.poll_interval` | Follow Set の再取得間隔 |
 | `SWING_CONCURRENCY` | `agent.concurrency` | 同時に取得・保存するサイト数（既定 `4`） |
+| `SWING_REPORT_TTL` | `agent.report_ttl` | レプリカ報告の有効期間（既定 `3d`。半分過ぎたら出し直す。`poll_interval` の 2 倍より長くする） |
 | `SWING_FETCH_TIMEOUT` | (なし) | 1 サイト分の取得のタイムアウト（既定 15 分） |
 | `SWING_FETCH_IDLE_TIMEOUT` | (なし) | 取得中にデータが届かないまま待つ上限（既定 2 分） |
 | `SWING_KUBO_STORAGE_MAX` | (なし、compose の Kubo 用) | Kubo の `Datastore.StorageMax`（既定は `SWING_MAX_TOTAL_STORAGE` と同じ） |
@@ -268,7 +288,7 @@ Nostr の秘密鍵は `.env` に平文で保存されます。サイト公開・
 - 決済
 - 独自の Nostr Relay
 
-今後の拡張として、レプリカ数の可視化、Follow Set を集計した Webring 表示、private mode（IP アドレスを隠したい参加者向けの別モード）などを検討しています。NIP-46 remote signer への対応も予定にあります。残タスクの一覧は [`docs/todo.md`](docs/todo.md)、新しい kind や `d` タグの命名規約は [`docs/extensions.md`](docs/extensions.md) を参照してください。
+今後の拡張として、Follow Set を集計した Webring 表示、private mode（IP アドレスを隠したい参加者向けの別モード）などを検討しています。NIP-46 remote signer への対応も予定にあります。残タスクの一覧は [`docs/todo.md`](docs/todo.md)、新しい kind や `d` タグの命名規約は [`docs/extensions.md`](docs/extensions.md) を参照してください。
 
 ## ドキュメント
 
