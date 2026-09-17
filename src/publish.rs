@@ -9,14 +9,6 @@ use crate::mfs::MfsLayout;
 use crate::nip05::{self, Nip05Verify};
 use crate::nostr::{self, RelayClient, build_site_event_builder};
 
-fn host_from_url(url: &str) -> Result<String> {
-    let parsed = reqwest::Url::parse(url).with_context(|| format!("invalid URL: {url}"))?;
-    parsed
-        .host_str()
-        .map(|s| s.to_string())
-        .with_context(|| format!("URL has no host: {url}"))
-}
-
 fn versions_to_prune(names: &[String], keep: usize) -> Vec<String> {
     let mut versions: Vec<(u64, &String)> = names
         .iter()
@@ -98,22 +90,27 @@ async fn check_nip05<V: Nip05Verify>(
 
 pub async fn run(
     config: Config,
-    site: Option<String>,
-    url: String,
+    d: String,
+    url: Option<String>,
     dir: &Path,
     nip05_override: Option<String>,
     message: Option<String>,
 ) -> Result<()> {
-    let d = match site {
-        Some(s) => s,
-        None => host_from_url(&url)?,
-    };
+    nostr::validate_d_tag(&d).context("invalid --site")?;
+    if let Some(url) = &url
+        && !nostr::valid_http_url(url)
+    {
+        anyhow::bail!("invalid --url: {url} is not an http or https URL");
+    }
     let nip05_mode = match nip05_override {
         Some(v) => config::parse_nip05_mode(&v).context("invalid --nip05")?,
         None => config.publish.nip05,
     };
 
-    println!("Site: {url}");
+    println!("Site: {d}");
+    if let Some(url) = &url {
+        println!("URL: {url}");
+    }
     if let Some(message) = &message {
         println!("Message: {message}");
     }
@@ -160,7 +157,7 @@ pub async fn run(
         config.nostr.site_event_kind,
         &d,
         &cid,
-        Some(&url),
+        url.as_deref(),
         Some(size),
         message.as_deref(),
     )
@@ -197,15 +194,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn host_from_url_extracts_hostname() {
-        assert_eq!(host_from_url("https://ama.ne.jp/").unwrap(), "ama.ne.jp");
-        assert_eq!(
-            host_from_url("https://sub.example.com:8080/path").unwrap(),
-            "sub.example.com"
-        );
-    }
-
-    #[test]
     fn versions_to_prune_keeps_the_newest_numeric_entries() {
         let names: Vec<String> = ["100", "300", "junk", "200", "50"]
             .iter()
@@ -213,11 +201,6 @@ mod tests {
             .collect();
         assert_eq!(versions_to_prune(&names, 2), vec!["100", "50"]);
         assert!(versions_to_prune(&names, 4).is_empty());
-    }
-
-    #[test]
-    fn host_from_url_rejects_invalid_url() {
-        assert!(host_from_url("not a url").is_err());
     }
 
     struct FakeNip05(nip05::VerificationResult);

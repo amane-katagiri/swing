@@ -357,7 +357,7 @@ pub fn validate_d_tag(d: &str) -> Result<()> {
     Ok(())
 }
 
-fn valid_http_url(url: &str) -> bool {
+pub fn valid_http_url(url: &str) -> bool {
     if url.len() > MAX_URL_TAG_BYTES {
         return false;
     }

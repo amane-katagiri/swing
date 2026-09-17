@@ -27,10 +27,13 @@ enum Command {
     Publish {
         #[arg(long, help = "Config file (default: $SWING_CONFIG or ./swing.toml)")]
         config: Option<PathBuf>,
-        #[arg(long, help = "Site identifier (d tag); defaults to the URL host")]
-        site: Option<String>,
-        #[arg(long, help = "Canonical HTTPS URL of the site")]
-        url: String,
+        #[arg(long, help = "Site identifier (d tag), e.g. your domain name")]
+        site: String,
+        #[arg(
+            long,
+            help = "Canonical HTTP(S) URL of the site; omit for an IPFS-only site"
+        )]
+        url: Option<String>,
         #[arg(
             long,
             value_name = "MODE",

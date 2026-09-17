@@ -58,7 +58,7 @@ swing/
 
 ```
 swing agent   [--config <path>]
-swing publish [--config <path>] [--site <d-tag>] --url <URL> [--nip05 <off|warn|require>] [-m, --message <TEXT>] <DIR>
+swing publish [--config <path>] --site <d-tag> [--url <URL>] [--nip05 <off|warn|require>] [-m, --message <TEXT>] <DIR>
 swing mirror list                      [--config <path>]
 swing mirror add <key>...              [--config <path>]
 swing mirror remove <key>...           [--config <path>]
@@ -84,9 +84,10 @@ Follow Set の対象者のサイトを MFS に保存・削除し続ける常駐�
 
 `DIR` を Kubo に add して MFS に置き、サイトイベントに署名して全 relay に送り、同じサイトの古い版を MFS から消す。
 
-- `--site` 省略時は `--url` のホスト名を `d` にする。
+- `--site` は必須で、そのまま `d` になる。`d` タグの制約（非空・253 バイト以下・制御文字なし）を満たさなければ何もせず終了する。
+- `--url` は任意。指定すると `url` タグになり、http / https の URL でなければ何もせず終了する。省略すると `url` タグを付けない（IPFS だけで公開するサイト）。
 - `--nip05` 省略時は `[publish].nip05`。
-- `--message` はサイトイベントの `content` になり、`Site:` の次に `Message:` として表示する。省略時は空文字。
+- `--message` はサイトイベントの `content` になる。最初に `Site: <d>`、`--url` があれば `URL:`、`--message` があれば `Message:` を表示する。省略時は空文字。
 
 処理順:
 

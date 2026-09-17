@@ -129,19 +129,20 @@ SWING の publish は、サイト識別子 `d` に自分のドメイン名を使
 Docker Compose で動かしている場合は、サイトのディレクトリをコンテナにマウントして実行します。
 
 ```bash
-docker compose run --rm -v "$PWD/public:/site" mirror publish --url https://example.jp/ /site
+docker compose run --rm -v "$PWD/public:/site" mirror publish --site example.jp --url https://example.jp/ /site
 ```
 
 `cargo build --release` でビルドした `swing` バイナリをホストで直接使う場合は、Kubo の RPC に届く設定（`SWING_IPFS_API`）を用意した上で次のように実行します。
 
 ```bash
-swing publish --url https://example.jp/ ./public
+swing publish --site example.jp --url https://example.jp/ ./public
 ```
 
-`--site` を省略すると、`--url` のホスト名（この例では `example.jp`）がサイト識別子（`d` タグ）になります。`-m`（`--message`）で「ブログに記事を追加」のような更新メモを付けられます。メモはサイトイベントの本文になり、ミラーする側の `swing sites` や、SWING に対応していない Nostr クライアントにも表示されます。実行すると、次のような出力になります。
+`--site` はサイト識別子（`d` タグ）で必須です。`--url` はサイトを HTTP で配信している場合の URL で、省略できます。省略すると、IPFS だけで公開するサイトとして publish します（例: `swing publish --site my-notes ./public`）。`-m`（`--message`）で「ブログに記事を追加」のような更新メモを付けられます。メモはサイトイベントの本文になり、ミラーする側の `swing sites` や、SWING に対応していない Nostr クライアントにも表示されます。実行すると、次のような出力になります。
 
 ```text
-Site: https://example.jp/
+Site: example.jp
+URL: https://example.jp/
 
 NIP-05
   ✓ verified

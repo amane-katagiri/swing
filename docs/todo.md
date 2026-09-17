@@ -6,7 +6,6 @@
 |---|---|---|
 | 高 | NIP-46 remote signer 対応。秘密鍵を `.env` に置かずに済む構成にする | plan §12 |
 | 中 | NIP-05 の実 HTTP 経路の統合テスト（ローカル TLS エンドポイント相手、`#[ignore]`） | レビュー |
-| 中 | `publish` の `--url` を省略可、`--site` を必須にして IPFS のみのサイトを publish できるようにする | レビュー |
 | 中 | 取得に失敗した CID を覚えて指数バックオフで再試行する。今は poll ごとに同じ CID の取得を試み、そのたびに最大 `SWING_FETCH_IDLE_TIMEOUT` の間、並行枠を 1 つ使う | レビュー（DoS） |
 | 低 | relay から取得するサイトイベント・レプリカ報告・Follow Set の件数上限。`fetch_events` は件数無制限で、30 秒のタイムアウトだけで抑えている。レプリカ報告や、`#p` で見つかる Follow Set は誰でも出せるので、`swing replicas` / `sites` / `webring` で特に効く。`webring` はたどるアカウント数の上限も要る | レビュー（DoS） |
 | 低 | レプリカ報告の裏付け。報告に Peer ID を載せ、`routing/findprovs` でその Peer が CID を提供しているかを確かめる | レプリカ報告の実装 |

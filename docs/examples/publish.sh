@@ -4,7 +4,7 @@ set -euo pipefail
 usage() {
   echo "Usage: $0 <site> <url> <dir> [message]" >&2
   echo "  site  d-tag identifying the site (e.g. ama.ne.jp)" >&2
-  echo "  url   https URL of the site (e.g. https://ama.ne.jp/)" >&2
+  echo "  url   https URL of the site (e.g. https://ama.ne.jp/), or \"\" for an IPFS-only site" >&2
   echo "  dir   directory to publish (e.g. ./public)" >&2
   echo "  message  optional update note for readers (event content)" >&2
   exit 1
@@ -33,7 +33,8 @@ SITE_EVENT_KIND="${SITE_EVENT_KIND:-35980}"
   exit 1
 }
 
-echo "Site: $URL"
+echo "Site: $SITE"
+[ -z "$URL" ] || echo "URL: $URL"
 echo
 
 echo "IPFS"
@@ -47,12 +48,14 @@ echo "  pinned"
 echo
 
 echo "Nostr"
+URL_TAG=()
+[ -z "$URL" ] || URL_TAG=(-t url="$URL")
 # shellcheck disable=SC2086  # NOSTR_RELAYS is intentionally word-split into multiple args
 EVENT_JSON=$(nak event \
   -k "$SITE_EVENT_KIND" \
   -d "$SITE" \
   -t cid="$CID" \
-  -t url="$URL" \
+  "${URL_TAG[@]}" \
   -t size="$SIZE" \
   -t alt="SWING site announcement: $SITE" \
   -c "$MESSAGE" \
