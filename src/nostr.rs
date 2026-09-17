@@ -422,7 +422,10 @@ pub fn build_site_event_builder(
     if let Some(size) = size {
         builder = builder.tag(Tag::custom("size", [size.to_string()]));
     }
-    builder
+    builder.tag(Tag::custom(
+        "alt",
+        [format!("SWING site announcement: {d}")],
+    ))
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -556,6 +559,11 @@ mod tests {
         assert_eq!(parsed.size, Some(1234));
         assert_eq!(parsed.created_at, 1000);
         assert_eq!(parsed.pubkey, k.public_key());
+        assert!(
+            ev.tags
+                .iter()
+                .any(|t| t.as_slice() == ["alt", "SWING site announcement: example.com"])
+        );
     }
 
     #[test]

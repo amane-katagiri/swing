@@ -53,6 +53,7 @@ SWING は既存の Nostr と IPFS の仕組みにそのまま乗る。独自の 
   - `cid`（必須）: サイトのディレクトリ root を指す有効な CID。
   - `url`（任意）: サイトの通常の http または https の URL。
   - `size`（任意）: サイトデータの合計バイト数を表す 10 進整数の文字列。Kubo でいう `files/stat` の `CumulativeSize` に相当する量であり、具体的な計測方法は実装に委ねる。
+  - `alt`（任意）: NIP-31 の説明。
 - `content` は空文字である。
 - 同一の `pubkey + kind + d` を持つイベントのうち、`created_at` が最大のものが現在の版である。
 - `created_at` が既知の有効な版と等しい、またはそれより古いイベントは無視すべきである（SHOULD）。
@@ -136,7 +137,8 @@ SWING は既存の Nostr と IPFS の仕組みにそのまま乗る。独自の 
     ["d", "ama.ne.jp"],
     ["cid", "bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi"],
     ["url", "https://ama.ne.jp/"],
-    ["size", "12345678"]
+    ["size", "12345678"],
+    ["alt", "SWING site announcement: ama.ne.jp"]
   ],
   "content": "",
   "pubkey": "...",

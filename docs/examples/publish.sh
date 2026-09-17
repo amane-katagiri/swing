@@ -52,6 +52,7 @@ EVENT_JSON=$(nak event \
   -t cid="$CID" \
   -t url="$URL" \
   -t size="$SIZE" \
+  -t alt="SWING site announcement: $SITE" \
   --sec "$NOSTR_SEC" \
   $NOSTR_RELAYS)
 echo
