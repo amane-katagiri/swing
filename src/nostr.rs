@@ -1,4 +1,4 @@
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::future::Future;
 use std::time::Duration;
 
@@ -124,6 +124,34 @@ impl RelayClient {
             }
         }
         Ok(newest)
+    }
+
+    pub async fn fetch_follow_set_authors_referencing(
+        &self,
+        mirror_set: &str,
+        targets: &[PublicKey],
+    ) -> Result<HashSet<PublicKey>> {
+        if targets.is_empty() {
+            return Ok(HashSet::new());
+        }
+        let filter = Filter::new()
+            .kind(Kind::Custom(30000))
+            .identifier(mirror_set)
+            .pubkeys(targets.iter().copied());
+        let events = self
+            .client
+            .fetch_events(filter)
+            .timeout(Duration::from_secs(30))
+            .await
+            .context("fetching follow sets that reference accounts")?;
+        Ok(events
+            .into_iter()
+            .filter(|e| {
+                is_follow_set_of(e, &e.pubkey, mirror_set)
+                    && e.tags.public_keys().any(|pk| targets.contains(&pk))
+            })
+            .map(|e| e.pubkey)
+            .collect())
     }
 
     pub async fn subscribe_site_events(

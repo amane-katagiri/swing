@@ -183,6 +183,37 @@ npub1me... (<pubkey>)
 
 `replicas` は最新版を持っていると報告した参加者の数です。`[older version]` は古い版だけを持っている参加者、`[not following]` はミラー対象リストにあなたを入れていないのに報告している参加者です。報告は自己申告なので、実際に配送できるかまでは保証しません。npub などを渡すと、他の人のサイトについても表示します。
 
+### 相互ミラーの関係（Webring）を見る
+
+`swing webring` は、自分を起点にミラー対象リストをたどり、誰が誰を保存しているかをグラフとして表示します。自分が保存している相手に加えて、自分をミラー対象に入れている相手もたどります。
+
+```bash
+docker compose exec mirror swing webring
+```
+
+```text
+Webring of mirror set "swing" (depth 2): 4 accounts, 1 mutual, 2 one-way
+
+Accounts
+  example.jp             npub1me...     depth=0  [root]
+  alice.example          npub1alice...  depth=1
+  npub1bob12…xyz789      npub1bob...    depth=1
+  carol.example          npub1carol...  depth=2
+
+Mutual
+  example.jp ↔ alice.example
+
+One-way (A → B: A mirrors B)
+  alice.example → carol.example
+  npub1bob12…xyz789 → example.jp
+```
+
+各アカウントは公開しているサイトの `d` で表示し、サイトが無ければ npub を縮めて表示します。`--depth <N>`（既定 2）でたどる距離を、npub などを渡すと起点を変えられます。`--format dot` で Graphviz、`--format mermaid` で Mermaid の図として出力します。
+
+```bash
+docker compose exec mirror swing webring --format dot | dot -Tsvg > webring.svg
+```
+
 ## 自分のサイトをゲートウェイで配信する
 
 `gateway` プロファイルを使うと、決めたホスト名だけを DNSLink で配信する HTTP サーバー（Caddy）が `127.0.0.1:8081` で立ち上がります。TLS は扱わないので、Cloudflare Tunnel などを前段に置いて、そこから `http://127.0.0.1:8081` に転送してください。
@@ -288,7 +319,7 @@ Nostr の秘密鍵は `.env` に平文で保存されます。サイト公開・
 - 決済
 - 独自の Nostr Relay
 
-今後の拡張として、Follow Set を集計した Webring 表示、private mode（IP アドレスを隠したい参加者向けの別モード）などを検討しています。NIP-46 remote signer への対応も予定にあります。残タスクの一覧は [`docs/todo.md`](docs/todo.md)、新しい kind や `d` タグの命名規約は [`docs/extensions.md`](docs/extensions.md) を参照してください。
+今後の拡張として、private mode（IP アドレスを隠したい参加者向けの別モード）などを検討しています。NIP-46 remote signer への対応も予定にあります。残タスクの一覧は [`docs/todo.md`](docs/todo.md)、新しい kind や `d` タグの命名規約は [`docs/extensions.md`](docs/extensions.md) を参照してください。
 
 ## ドキュメント
 

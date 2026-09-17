@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
-use swing::{agent, config, health, key, mirror, publish, replicas};
+use swing::{agent, config, health, key, mirror, publish, replicas, webring};
 use tracing_subscriber::EnvFilter;
 
 #[derive(Parser)]
@@ -65,6 +65,23 @@ enum Command {
     Status {
         #[arg(long, help = "Config file (default: $SWING_CONFIG or ./swing.toml)")]
         config: Option<PathBuf>,
+    },
+    #[command(
+        about = "Show mutual mirror relations as a webring graph, crawling follow sets from the given accounts (default: yourself)"
+    )]
+    Webring {
+        #[arg(long, help = "Config file (default: $SWING_CONFIG or ./swing.toml)")]
+        config: Option<PathBuf>,
+        #[arg(
+            long,
+            default_value_t = 2,
+            help = "Hops to crawl from the starting accounts, following both directions"
+        )]
+        depth: usize,
+        #[arg(long, value_enum, default_value_t = webring::Format::Text)]
+        format: webring::Format,
+        #[arg(value_name = "KEY", help = "Starting accounts (npub, hex or nprofile)")]
+        keys: Vec<String>,
     },
     #[command(about = "Generate or inspect Nostr keys (no config or secret key required)")]
     Key {
@@ -151,6 +168,15 @@ async fn main() -> Result<()> {
         Command::Status { config } => {
             let cfg = config::Config::load(config.as_deref())?;
             health::status(&cfg).await
+        }
+        Command::Webring {
+            config,
+            depth,
+            format,
+            keys,
+        } => {
+            let cfg = config::Config::load(config.as_deref())?;
+            webring::show(&cfg, &keys, depth, format).await
         }
         Command::Key { action } => match action {
             KeyCommand::Generate => key::generate(),

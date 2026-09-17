@@ -11,3 +11,4 @@ pub mod policy;
 pub mod publish;
 pub mod replicas;
 pub mod state;
+pub mod webring;

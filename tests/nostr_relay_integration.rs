@@ -154,3 +154,48 @@ async fn replica_reports_are_found_by_site_and_replaced_by_withdrawals() {
     reporter.client.shutdown().await;
     other.client.shutdown().await;
 }
+
+async fn publish(relay: &nostr::RelayClient, builder: EventBuilder) {
+    let event = builder.finalize(&relay.keys).unwrap();
+    let out = relay.publish_to_relays(&event).await.unwrap();
+    assert!(!out.success.is_empty(), "relay did not ack the event");
+}
+
+#[tokio::test]
+#[ignore]
+async fn follow_set_authors_are_found_by_referenced_account() {
+    let target = Keys::generate().public_key();
+    let connect = || async {
+        nostr::RelayClient::connect(
+            &Keys::generate().secret_key().to_secret_hex(),
+            &[relay_url()],
+        )
+        .await
+        .expect("connect")
+    };
+    let (follower, former, other_set) = (connect().await, connect().await, connect().await);
+    let now = Timestamp::now().as_secs();
+    let follow_set = |d: &str, pks: &[PublicKey], created_at: u64| {
+        EventBuilder::new(Kind::Custom(30000), "")
+            .tag(Tag::identifier(d))
+            .tags(pks.iter().map(|pk| Tag::public_key(*pk)))
+            .custom_created_at(Timestamp::from_secs(created_at))
+    };
+    publish(&follower, follow_set("swing", &[target], now)).await;
+    publish(&former, follow_set("swing", &[target], now - 10)).await;
+    publish(&former, follow_set("swing", &[], now)).await;
+    publish(&other_set, follow_set("other", &[target], now)).await;
+
+    let authors = follower
+        .fetch_follow_set_authors_referencing("swing", &[target])
+        .await
+        .unwrap();
+    assert_eq!(
+        authors,
+        std::collections::HashSet::from([follower.keys.public_key()])
+    );
+
+    for relay in [follower, former, other_set] {
+        relay.client.shutdown().await;
+    }
+}

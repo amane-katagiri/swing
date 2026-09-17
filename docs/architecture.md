@@ -43,6 +43,7 @@ swing/
     publish.rs       publish サブコマンド
     mirror.rs        mirror list/add/remove, sites サブコマンド
     replicas.rs      レプリカ報告の集計、replicas サブコマンド
+    webring.rs       Follow Set のたどり方とグラフの組み立て・出力、webring サブコマンド
     nip05.rs         NIP-05 検証
   tests/
     kubo_integration.rs          Kubo 連携の統合テスト（#[ignore]）
@@ -64,6 +65,7 @@ swing mirror remove <key>...           [--config <path>]
 swing sites                            [--config <path>]
 swing replicas [<key>...]              [--config <path>]
 swing status                           [--config <path>]
+swing webring [<key>...] [--depth <N>] [--format <text|dot|mermaid>] [--config <path>]
 swing key generate
 ```
 
@@ -133,6 +135,19 @@ Follow Set の対象者のサイトを MFS に保存・削除し続ける常駐�
 - `ok` 以外の版と `Not in state` の項目が 1 つでもあれば、件数を表示して 0 以外で終了する。
 - agent の実行中は、保存途中の版（MFS に置いた後、state を保存する前）が `Not in state` に出ることがある。
 - 全版の DAG をたどるので、保存量に比例して時間がかかる。
+
+### webring
+
+読み取り専用。state は読まない。
+
+- `<key>`（npub / hex / nprofile）を起点にする。省略時は自分の pubkey。`--depth` の既定は 2、`--format` の既定は `text`。
+- たどり方（`webring::crawl`）: 起点を深さ 0 とし、深さ `d` のアカウントについて Follow Set（kind 30000、`d = mirror_set`、作者ごとに NIP-01 の置き換え規則で最新のもの）を取得する。`d < depth` なら、その `p` のアカウントと、`#p` にそのアカウントを含む Follow Set の作者を、まだ見ていなければ深さ `d + 1` にする。`#p` での取得は作者を見つけるためだけに使い、辺は作者で取得した Follow Set からだけ作る。深さ `depth` のアカウントも Follow Set は取得するが、先へは広げない。
+- グラフ（`webring::build_graph`）: 取得した Follow Set の `p` のうち、見つけたアカウントを指すものを辺（A → B は A の Follow Set に B がいる）にする。自分自身への辺は捨てる。辺を向きを無視してたどり、起点につながらないアカウント（`#p` で見つけたが、最新の Follow Set ではもう指していない作者など）は除く。
+- 残ったアカウントのサイトイベントを取得し、サイトごとの最新版の `d` をアカウントの名前にする。
+- `text`: 見出しに件数、`Accounts` にアカウントごとの名前（`d` を `, ` でつないだもの。無ければ縮めた npub。同じ名前が複数あれば縮めた npub を添える）・npub・深さ・`[root]` / `[no follow set]`、`Mutual` に双方向の組、`One-way` に片方向の辺を出す。並びは（深さ、名前）の順。深さの上限の外にいて表示しなかった、残ったアカウントの Follow Set に載っているアカウントがあれば、その数を最後に出す。
+- `dot`: Graphviz の `digraph`。ノード ID は hex、ラベルは名前と縮めた npub。起点は `penwidth=2`、双方向の組は `dir=both` の 1 本にする。
+- `mermaid`: `graph LR`。ノード ID は `n<番号>`（hex 順）、ラベルは名前と縮めた npub で、`#` `&` `"` `<` `>` はエンティティにする。起点は `root` クラス、双方向の組は `<-->` にする。
+- Follow Set・サイトイベントのどれかの取得に失敗したらエラーで終了する。
 
 ### key generate
 
@@ -225,6 +240,6 @@ cargo test --test kubo_integration -- --ignored --test-threads=1
 cargo test --lib agent_stores_and_removes_through_real_kubo -- --ignored
 
 docker run -d --rm -p 127.0.0.1:18080:8080 scsibug/nostr-rs-relay
-# SWING_TEST_RELAY（既定 ws://127.0.0.1:18080）。サイトイベント・レプリカ報告・Follow Set の送受信
+# SWING_TEST_RELAY（既定 ws://127.0.0.1:18080）。サイトイベント・レプリカ報告・Follow Set の送受信と #p での Follow Set の取得
 cargo test --test nostr_relay_integration -- --ignored --test-threads=1
 ```
