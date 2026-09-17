@@ -58,7 +58,7 @@ swing/
 
 ```
 swing agent   [--config <path>]
-swing publish [--config <path>] [--site <d-tag>] --url <URL> [--nip05 <off|warn|require>] <DIR>
+swing publish [--config <path>] [--site <d-tag>] --url <URL> [--nip05 <off|warn|require>] [-m, --message <TEXT>] <DIR>
 swing mirror list                      [--config <path>]
 swing mirror add <key>...              [--config <path>]
 swing mirror remove <key>...           [--config <path>]
@@ -86,6 +86,7 @@ Follow Set の対象者のサイトを MFS に保存・削除し続ける常駐�
 
 - `--site` 省略時は `--url` のホスト名を `d` にする。
 - `--nip05` 省略時は `[publish].nip05`。
+- `--message` はサイトイベントの `content` になり、`Site:` の次に `Message:` として表示する。省略時は空文字。
 
 処理順:
 
@@ -113,7 +114,7 @@ Follow Set の対象者のサイトを MFS に保存・削除し続ける常駐�
 
 読み取り専用。state は作らない。
 
-- Follow Set の対象者ごとに、サイトごとの最新のサイトイベントを 1 行（`d`、`cid`、`url`、`size`、`created_at`、NIP-05 検証結果、`replicas`、`[stored]` / `[not stored]`）表示する。検証結果と保存状況は `state.json` から読む。`replicas` は [replicas](#replicas) と同じ集計の最新版のレプリカ数。レプリカ報告の取得に失敗したら `(fetching replica reports failed: ...)` を表示して `-` にする。
+- Follow Set の対象者ごとに、サイトごとの最新のサイトイベントを 1 行（`d`、`cid`、`url`、`size`、`created_at`、NIP-05 検証結果、`replicas`、`[stored]` / `[not stored]`）表示する。`content` が空でなければ、次の行に `    message: ` として、制御文字を空白に置き換え、前後の空白を削り、200 文字を超える分を `…` に置き換えて表示する。検証結果と保存状況は `state.json` から読む。`replicas` は [replicas](#replicas) と同じ集計の最新版のレプリカ数。レプリカ報告の取得に失敗したら `(fetching replica reports failed: ...)` を表示して `-` にする。
 - 続けて、state に版があるのに Follow Set にいない pubkey を `Unfollowed but still stored` 見出しの下に `[unfollowed]` 付きで、サイトごとに state の最新版を 1 行（`url` は `-`）表示する。見出しには `remove_on_unfollow` に応じて、次の poll で消えるか残しているかを添える。Follow Set が見つからなくても表示する。
 
 ### replicas
@@ -221,6 +222,7 @@ TOML キーの無い環境変数:
 - `d`: 空、253 バイト超、制御文字を含む場合はイベント全体を拒否する。
 - `cid`: `cid` クレートでパースできなければイベント全体を拒否する。
 - `url`: 2048 バイト超、または http(s) としてパースできなければ `url` だけを無視する。
+- `content`: 空でなければ `SiteEvent::message` に入れる。検証せず、保存の判断にも使わない。
 - Follow Set: relay の author フィルタに加え、受信後にも kind・作者・`d`・署名を確かめる。`content`（暗号化 private 部分）は読まない。
 - レプリカ報告: `d` を最初の `:` で分け、作者が小文字 hex の公開鍵でない、サイトの `d` が上の `d` の条件を満たさない、`a` の値が `<site_event_kind>:<作者>:<サイトの d>` と一致しない、`cid` タグのどれかが `cid` クレートでパースできない、のいずれかなら報告全体を拒否する。`cid` タグは 0 個でもよい（取り下げ）。`expiration` は読むだけで、期限切れの判定は使う側が行う。
 - 署名は nostr-sdk が受信時に検証する。

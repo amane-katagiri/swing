@@ -102,6 +102,7 @@ pub async fn run(
     url: String,
     dir: &Path,
     nip05_override: Option<String>,
+    message: Option<String>,
 ) -> Result<()> {
     let d = match site {
         Some(s) => s,
@@ -113,6 +114,9 @@ pub async fn run(
     };
 
     println!("Site: {url}");
+    if let Some(message) = &message {
+        println!("Message: {message}");
+    }
 
     let keys = Keys::parse(&config.nostr.secret_key).context("parsing Nostr secret key")?;
     let pubkey_hex = keys.public_key().to_hex();
@@ -158,6 +162,7 @@ pub async fn run(
         &cid,
         Some(&url),
         Some(size),
+        message.as_deref(),
     )
     .custom_created_at(created_at)
     .finalize(&relay.keys)

@@ -1125,6 +1125,7 @@ mod tests {
                 cid: cid.to_string(),
                 url: None,
                 size,
+                message: None,
                 created_at,
             }
         }
@@ -2152,6 +2153,7 @@ mod tests {
             cid: cid.clone(),
             url: None,
             size: None,
+            message: None,
             created_at: 100,
         };
 

@@ -329,6 +329,7 @@ pub struct SiteEvent {
     pub cid: String,
     pub url: Option<String>,
     pub size: Option<u64>,
+    pub message: Option<String>,
     pub created_at: u64,
 }
 
@@ -388,6 +389,7 @@ pub fn parse_site_event(event: &Event, expected_kind: u16) -> Result<SiteEvent> 
         cid,
         url,
         size,
+        message: Some(event.content.clone()).filter(|m| !m.is_empty()),
         created_at: event.created_at.as_secs(),
     })
 }
@@ -412,8 +414,9 @@ pub fn build_site_event_builder(
     cid: &str,
     url: Option<&str>,
     size: Option<u64>,
+    message: Option<&str>,
 ) -> EventBuilder {
-    let mut builder = EventBuilder::new(Kind::Custom(site_event_kind), "")
+    let mut builder = EventBuilder::new(Kind::Custom(site_event_kind), message.unwrap_or(""))
         .tag(Tag::identifier(d))
         .tag(Tag::custom("cid", [cid.to_string()]));
     if let Some(url) = url {
@@ -533,10 +536,22 @@ mod tests {
     }
 
     fn make_site_event(keys: &Keys, kind: u16, d: &str, cid: &str, created_at: u64) -> Event {
-        build_site_event_builder(kind, d, cid, Some("https://example.com/"), Some(1234))
+        build_site_event_builder(kind, d, cid, Some("https://example.com/"), Some(1234), None)
             .custom_created_at(Timestamp::from_secs(created_at))
             .finalize(keys)
             .unwrap()
+    }
+
+    #[test]
+    fn site_event_content_is_the_message() {
+        let k = keys();
+        let cid = "bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi";
+        let ev = build_site_event_builder(35980, "example.com", cid, None, None, Some("Add posts"))
+            .finalize(&k)
+            .unwrap();
+        assert_eq!(ev.content, "Add posts");
+        let parsed = parse_site_event(&ev, 35980).unwrap();
+        assert_eq!(parsed.message.as_deref(), Some("Add posts"));
     }
 
     #[test]
@@ -559,6 +574,7 @@ mod tests {
         assert_eq!(parsed.size, Some(1234));
         assert_eq!(parsed.created_at, 1000);
         assert_eq!(parsed.pubkey, k.public_key());
+        assert_eq!(parsed.message, None);
         assert!(
             ev.tags
                 .iter()
@@ -761,6 +777,7 @@ mod tests {
                 cid: "bafy-old".into(),
                 url: None,
                 size: None,
+                message: None,
                 created_at: 100,
             },
             SiteEvent {
@@ -769,6 +786,7 @@ mod tests {
                 cid: "bafy-new".into(),
                 url: None,
                 size: None,
+                message: None,
                 created_at: 200,
             },
             SiteEvent {
@@ -777,6 +795,7 @@ mod tests {
                 cid: "bafy-other-site".into(),
                 url: None,
                 size: None,
+                message: None,
                 created_at: 50,
             },
             SiteEvent {
@@ -785,6 +804,7 @@ mod tests {
                 cid: "bafy-k2".into(),
                 url: None,
                 size: None,
+                message: None,
                 created_at: 999,
             },
         ];

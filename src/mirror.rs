@@ -304,6 +304,20 @@ fn format_site_line(
     )
 }
 
+const MAX_MESSAGE_DISPLAY_CHARS: usize = 200;
+
+fn format_message_line(message: &str) -> String {
+    let mut shown: String = message
+        .chars()
+        .map(|c| if c.is_control() { ' ' } else { c })
+        .take(MAX_MESSAGE_DISPLAY_CHARS)
+        .collect();
+    if message.chars().count() > MAX_MESSAGE_DISPLAY_CHARS {
+        shown.push('\u{2026}');
+    }
+    format!("    message: {}", shown.trim())
+}
+
 fn unfollowed_sites(
     state: &State,
     targets: &BTreeSet<String>,
@@ -402,6 +416,9 @@ pub async fn sites(config: &Config) -> Result<()> {
                 "{}",
                 format_site_line(ev, status, verification, replica_count)
             );
+            if let Some(message) = &ev.message {
+                println!("{}", format_message_line(message));
+            }
         }
     }
 
@@ -427,6 +444,7 @@ pub async fn sites(config: &Config) -> Result<()> {
                 cid: version.cid,
                 url: None,
                 size: Some(version.size),
+                message: None,
                 created_at: version.created_at,
             };
             let key = state::site_key(&pubkey_hex, &d);
@@ -446,6 +464,21 @@ mod tests {
 
     fn keys() -> Keys {
         Keys::generate()
+    }
+
+    #[test]
+    fn message_line_neutralizes_control_chars_and_truncates() {
+        assert_eq!(
+            format_message_line("Add posts\n\u{1b}[31mred"),
+            "    message: Add posts  [31mred"
+        );
+        let long = "あ".repeat(MAX_MESSAGE_DISPLAY_CHARS + 1);
+        let line = format_message_line(&long);
+        assert!(line.ends_with("あ\u{2026}"));
+        assert_eq!(
+            line.chars().count(),
+            "    message: ".len() + MAX_MESSAGE_DISPLAY_CHARS + 1
+        );
     }
 
     #[test]

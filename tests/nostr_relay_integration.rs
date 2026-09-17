@@ -22,6 +22,7 @@ async fn publish_and_fetch_site_event_round_trip() {
         "bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
         Some("https://roundtrip.example/"),
         Some(4242),
+        Some("Add a roundtrip page"),
     )
     .finalize(&relay.keys)
     .unwrap();
@@ -41,6 +42,7 @@ async fn publish_and_fetch_site_event_round_trip() {
     let parsed = nostr::parse_site_event(&fetched[0], 35980).unwrap();
     assert_eq!(parsed.d, "roundtrip.example");
     assert_eq!(parsed.size, Some(4242));
+    assert_eq!(parsed.message.as_deref(), Some("Add a roundtrip page"));
 
     relay.client.shutdown().await;
 }

@@ -37,6 +37,8 @@ enum Command {
             help = "NIP-05 check: off, warn, require (default: config or warn)"
         )]
         nip05: Option<String>,
+        #[arg(short, long, help = "Update note shown to readers (event content)")]
+        message: Option<String>,
         #[arg(help = "Directory containing the built static site")]
         dir: PathBuf,
     },
@@ -138,10 +140,11 @@ async fn main() -> Result<()> {
             site,
             url,
             nip05,
+            message,
             dir,
         } => {
             let cfg = config::Config::load(config.as_deref())?;
-            publish::run(cfg, site, url, &dir, nip05).await
+            publish::run(cfg, site, url, &dir, nip05, message).await
         }
         Command::Mirror { action } => match action {
             MirrorCommand::List { config } => {
