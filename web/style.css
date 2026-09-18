@@ -700,6 +700,11 @@ textarea.swing-input {
   align-items: center;
 }
 
+#sites-filter-text {
+  flex: 0 1 28rem;
+  min-width: 0;
+}
+
 .swing-toolbar-end {
   margin-left: auto;
 }
@@ -790,6 +795,10 @@ textarea.swing-input {
   background: var(--swing-accent-soft);
 }
 
+.swing-badge[data-nip05][title] {
+  cursor: help;
+}
+
 .swing-badge[data-nip05="verified"] {
   border-color: var(--swing-ok);
   color: var(--swing-ok);
@@ -869,12 +878,6 @@ textarea.swing-input {
   font-size: 0.9rem;
 }
 
-body[data-view="sites"][data-style="list"] .swing-site-set {
-  display: flex;
-  flex-direction: column;
-  gap: var(--swing-space-3);
-}
-
 .swing-site {
   border-top: 1px solid var(--swing-border);
   padding-top: var(--swing-space-3);
@@ -898,6 +901,13 @@ body[data-view="sites"][data-style="list"] .swing-site-set {
 
 .swing-site-name {
   font-weight: 600;
+}
+
+.swing-site-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--swing-space-2);
+  margin-top: var(--swing-space-1);
 }
 
 .swing-site-meta {

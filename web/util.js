@@ -1,7 +1,7 @@
 import { storage } from './storage.js';
 import { t, currentLang } from './i18n.js';
 
-export const DEFAULT_STYLES = { sites: 'list', webring: 'graph' };
+export const DEFAULT_STYLES = { sites: 'cards', webring: 'graph' };
 
 export const cache = {
   overview: null,

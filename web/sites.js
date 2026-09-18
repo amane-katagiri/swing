@@ -39,7 +39,7 @@ function matchesFilter(site, acct, filterVal, storedOnly) {
 }
 
 function sortAccounts(accounts, mode) {
-  if (mode === 'pubkey') return accounts;
+  if (mode === 'pubkey') return [...accounts].sort((a, b) => (a.npub < b.npub ? -1 : a.npub > b.npub ? 1 : 0));
   const bySite = mode === 'name'
     ? (a, b) => a.d.localeCompare(b.d)
     : (a, b) => (b.created_at || 0) - (a.created_at || 0);
@@ -53,15 +53,27 @@ function sortAccounts(accounts, mode) {
   return [...withSites, ...withoutSites];
 }
 
+const NIP05_KEYS = { verified: 'Verified', mismatch: 'Mismatch', error: 'Error', not_applicable: 'NotApplicable' };
+
+function nip05Badge(status, template) {
+  const key = Object.hasOwn(NIP05_KEYS, status) ? NIP05_KEYS[status] : null;
+  const label = key ? t(`nip05Label${key}`) : status;
+  return el('span', {
+    class: 'swing-badge',
+    'data-nip05': status,
+    title: key ? t(`nip05Desc${key}`) : null,
+  }, template ? t(template, { status: label }) : label);
+}
+
 function buildSiteEntry(site) {
   const wrap = el('div', { class: 'swing-site', 'data-stored': String(!!site.stored) });
-  const row = el('div', { class: 'swing-site-row' }, [
-    el('span', { class: 'swing-site-name' }, site.d),
+  const row = el('div', { class: 'swing-site-row' }, el('span', { class: 'swing-site-name' }, site.d));
+  const badges = el('div', { class: 'swing-site-badges' }, [
     storedBadge(site),
-    site.nip05 ? el('span', { class: 'swing-badge', 'data-nip05': site.nip05 }, t('nip05Badge', { status: site.nip05 })) : null,
+    site.nip05 ? nip05Badge(site.nip05, 'nip05Badge') : null,
     el('span', { class: 'swing-badge' }, t('replicasBadge', { n: site.replicas == null ? '–' : site.replicas })),
   ]);
-  wrap.append(row);
+  wrap.append(row, badges);
 
   const meta = el('div', { class: 'swing-site-meta' }, [
     el('div', { class: 'swing-site-meta-cid' }, [
@@ -88,7 +100,7 @@ function buildSiteTable(sites) {
     const tr = el('tr', { 'data-stored': String(!!site.stored) });
     tr.append(el('td', {}, site.d));
     tr.append(el('td', {}, storedBadge(site)));
-    tr.append(el('td', {}, site.nip05 ? el('span', { class: 'swing-badge', 'data-nip05': site.nip05 }, site.nip05) : '–'));
+    tr.append(el('td', {}, site.nip05 ? nip05Badge(site.nip05) : '–'));
     tr.append(el('td', {}, site.replicas == null ? '–' : String(site.replicas)));
     tr.append(
       el('td', { class: 'swing-mono' }, [

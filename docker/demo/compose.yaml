@@ -22,6 +22,20 @@ services:
       relay:
         condition: service_started
 
+  seed:
+    build:
+      context: docker/demo
+      dockerfile: seed.Dockerfile
+    image: swing-demo-seed
+    profiles: [seed]
+    env_file:
+      - docker/demo/demo.env
+    environment:
+      SWING_IPFS_API: http://ipfs:5001
+      SWING_STATE_DIR: /tmp
+      FAKETIME_DONT_FAKE_MONOTONIC: "1"
+    networks: [isolated]
+
   expose:
     image: alpine/socat:1.8.0.3
     restart: unless-stopped

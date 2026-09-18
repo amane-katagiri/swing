@@ -48,6 +48,7 @@ case "${1:-}" in
     touch "$seeded"
     ;;
   down)
+    [ -f "$env_file" ] || : > "$env_file"
     compose down -v
     rm -f "$env_file" "$root/docker/demo/personas.env" "$seeded"
     ;;

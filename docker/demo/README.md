@@ -43,6 +43,7 @@ docker/demo/demo.sh up                      # 付けずに実行し直せば隔�
 
 相互関係は self↔alice、self↔carol、bob↔eve、frank↔ivan、grace↔judy。自分がミラーするのは alice・bob・carol のサイト（4 件）で、agent が保存してレプリカ報告を出す。
 
+- 各サイトの `created_at` は 3 時間前〜90 日前にばらしてある（`swing publish` は常に現在時刻で署名するので、`seed` サービスのイメージに入れた `faketime` で時計をずらして実行する）。Sites 画面の更新順は bob → carol（`carol.example` → `carol-photos`）→ alice になり、名前順・pubkey 順と見分けられる。
 - `.example` のサイトには `url` を付けている（開いても何も無い）。NIP-05 は `demo.env` で `SWING_NIP05=off` にしてあり、NIP-05 モードでは `warn` になる。
 
 ## 構成
@@ -52,6 +53,7 @@ docker/demo/demo.sh up                      # 付けずに実行し直せば隔�
 | `ipfs` | `isolated` | `--offline` で起動。4001・8080 はホストに公開しない |
 | `relay` | `isolated` | `scsibug/nostr-rs-relay`。mirror の唯一の relay（`ws://relay:8080`）。DB は volume `relay-data` |
 | `mirror` | `isolated`（NIP-05 モードでは `outside` も） | ホストにポートを公開しない |
+| `seed` | `isolated` | `seed.sh` だけが使う（profile `seed`）。mirror のイメージに `faketime` を足した `swing-demo-seed`。ビルド時だけ apt でパッケージを取りに行く |
 | `expose` | `isolated` + `outside` | `alpine/socat` で `127.0.0.1:18082`→`mirror:8082`、`127.0.0.1:18080`→`ipfs:8080` を中継するだけ |
 
 - `isolated` は `internal: true` のネットワークで、ここにしか属さないコンテナは名前解決もインターネットへの接続もできない。コードに見落としがあっても外へは届かない。

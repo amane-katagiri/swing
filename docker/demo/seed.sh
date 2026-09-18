@@ -29,13 +29,12 @@ secret_of() { if [ "$1" = self ]; then echo "$self_secret"; else eval "echo \$${
 public_of() { eval "echo \$${1}_public"; }
 
 run_as() {
-  who=$1
-  shift
-  if ! out=$(compose run --rm --no-deps -T \
+  who=$1 offset=$2
+  shift 2
+  if ! out=$(compose run --rm --no-deps -T --entrypoint faketime \
     -e SWING_NOSTR_SECRET_KEY="$(secret_of "$who")" \
-    -e SWING_STATE_DIR=/tmp \
     -v "$work:/seed:ro" \
-    mirror "$@" 2>&1); then
+    seed -f "$offset" swing "$@" 2>&1); then
     printf '%s\n' "$out" >&2
     exit 1
   fi
@@ -64,9 +63,9 @@ HTML
 }
 
 publish() {
-  who=$1 site=$2 message=$3
-  shift 3
-  run_as "$who" publish --nip05 off --site "$site" -m "$message" "$@" "/seed/$site"
+  who=$1 ago=$2 site=$3 message=$4
+  shift 4
+  run_as "$who" "-$ago" publish --nip05 off --site "$site" -m "$message" "$@" "/seed/$site"
   echo "  $who: $site"
 }
 
@@ -82,38 +81,39 @@ follow() {
     fi
   done
   # shellcheck disable=SC2086
-  run_as "$who" mirror add $keys
+  run_as "$who" +0 mirror add $keys
   echo "  $who -> $*"
 }
 
+compose build seed > /dev/null
+
 echo "publishing sample sites"
 make_site my-garden "わたしの庭" "デモ環境の自分のサイト。" "#234"
-publish self my-garden "サイトを開設"
+publish self 40d my-garden "サイトを開設"
 make_site alice.example "Alice's Notes" "日々のメモ。" "#633"
-publish alice alice.example "初版" --url https://alice.example/
+publish alice 60d alice.example "初版" --url https://alice.example/
 printf '<p>追記: 2 本目の記事。</p>\n' >> "$work/alice.example/index.html"
-sleep 1
-publish alice alice.example "記事を 1 本追加" --url https://alice.example/
+publish alice 6d alice.example "記事を 1 本追加" --url https://alice.example/
 make_site bob-zine "bob zine" "手作りのジン。" "#363"
-publish bob bob-zine "第 1 号"
+publish bob 3h bob-zine "第 1 号"
 make_site carol.example "Carol" "ポートフォリオ。" "#336"
-publish carol carol.example "トップを更新" --url https://carol.example/
+publish carol 1d carol.example "トップを更新" --url https://carol.example/
 make_site carol-photos "Carol's photos" "写真置き場。" "#555"
-publish carol carol-photos ""
+publish carol 14d carol-photos ""
 make_site dave-wiki "dave wiki" "個人 wiki。" "#446"
-publish dave dave-wiki "ページを整理"
+publish dave 9d dave-wiki "ページを整理"
 make_site eve.example "eve" "日記。" "#644"
-publish eve eve.example "引っ越しました" --url https://eve.example/
+publish eve 2d eve.example "引っ越しました" --url https://eve.example/
 make_site frank-recipes "Frank's recipes" "レシピ集。" "#553"
-publish frank frank-recipes "カレーを追加"
+publish frank 20d frank-recipes "カレーを追加"
 make_site grace.example "Grace" "研究ノート。" "#265"
-publish grace grace.example "" --url https://grace.example/
+publish grace 5h grace.example "" --url https://grace.example/
 make_site ivan-lab "ivan lab" "実験場。" "#522"
-publish ivan ivan-lab "試作"
+publish ivan 30d ivan-lab "試作"
 make_site judy.example "Judy" "旅行記。" "#256"
-publish judy judy.example "北海道編" --url https://judy.example/
+publish judy 12d judy.example "北海道編" --url https://judy.example/
 make_site mallory-archive "mallory archive" "古いサイトの保管庫。" "#444"
-publish mallory mallory-archive "アーカイブを公開"
+publish mallory 90d mallory-archive "アーカイブを公開"
 
 echo "publishing follow sets"
 follow self alice bob carol
