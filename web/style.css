@@ -241,19 +241,17 @@ p {
   overflow: hidden;
 }
 
-.swing-ring-logo {
+.swing-logo {
   width: 26px;
   height: 26px;
   flex: none;
 }
 
-.swing-ring-logo-ring {
-  fill: none;
-  stroke: var(--swing-border-strong);
-  stroke-width: 3;
+.swing-logo-body {
+  fill: var(--swing-text);
 }
 
-.swing-ring-logo-node {
+.swing-logo-node {
   fill: var(--swing-accent);
 }
 
