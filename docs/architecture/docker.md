@@ -16,7 +16,9 @@
 | `mirror` | `build: .`、`env_file: .env`。`SWING_IPFS_API=http://ipfs:5001`、`SWING_STATE_DIR=/data`、`SWING_DASHBOARD_LISTEN=${SWING_DASHBOARD_LISTEN:-0.0.0.0:8082}`、`RUST_LOG=info`。volume `swing-data:/data`。公開ポート `${SWING_DASHBOARD_BIND:-127.0.0.1:8082}:8082`。`ipfs` が healthy になるのを待つ |
 | `gateway` | profile `gateway` のときだけ起動する。`caddy:2.11.4-alpine`。`./docker/caddy:/etc/caddy:ro`、`${SWING_GATEWAY_BIND:-127.0.0.1:8081}:80`。`ipfs` が healthy になるのを待つ |
 
-3 サービスとも `restart: unless-stopped`。`.env` は mirror の `env_file` と、compose の変数展開の両方に使われる。
+3 サービスとも `restart: unless-stopped`。
+
+外部ネットワークに出ないデモ用の重ね合わせ（`docker/demo/`）は [`docker/demo/README.md`](../../docker/demo/README.md) を参照。`.env` は mirror の `env_file` と、compose の変数展開の両方に使われる。
 
 ## ダッシュボード（compose）
 

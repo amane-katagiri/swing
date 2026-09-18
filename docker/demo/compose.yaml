@@ -1,0 +1,44 @@
+name: swing-demo
+
+services:
+  ipfs:
+    command: ["daemon", "--migrate=true", "--offline", "--enable-gc"]
+    ports: !reset []
+    networks: !override [isolated]
+
+  relay:
+    image: scsibug/nostr-rs-relay:0.9.0
+    restart: unless-stopped
+    volumes:
+      - relay-data:/usr/src/app/db
+    networks: [isolated]
+
+  mirror:
+    env_file: !override
+      - docker/demo/demo.env
+    ports: !reset []
+    networks: !override [isolated]
+    depends_on:
+      relay:
+        condition: service_started
+
+  expose:
+    image: alpine/socat:1.8.0.3
+    restart: unless-stopped
+    entrypoint:
+      - sh
+      - -c
+      - socat TCP-LISTEN:18082,fork,reuseaddr TCP:mirror:8082 & socat TCP-LISTEN:18080,fork,reuseaddr TCP:ipfs:8080 & wait
+    ports:
+      - "127.0.0.1:18082:18082"
+      - "127.0.0.1:18080:18080"
+    networks: [isolated, outside]
+    depends_on: [mirror]
+
+volumes:
+  relay-data:
+
+networks:
+  isolated:
+    internal: true
+  outside: {}

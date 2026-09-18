@@ -2,3 +2,5 @@
 /data
 /.env
 /swing.toml
+/docker/demo/*.env
+/docker/demo/.seeded

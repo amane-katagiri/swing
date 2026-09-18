@@ -1,0 +1,5 @@
+services:
+  mirror:
+    networks: !override [isolated, outside]
+    environment:
+      SWING_NIP05: warn
