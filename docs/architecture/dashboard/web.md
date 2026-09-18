@@ -93,7 +93,7 @@ NIP-05 の検証結果はバッジで `OK`（`verified`）/ `NG`（`mismatch`）
 
 読み込み順は `style.css` → `/custom.css`（サーバ設定、[`dashboard.md`](../dashboard.md#静的ファイルの配信srcdashboardassetsrs)） → `<style id="user-css">`（ブラウザの localStorage、後勝ち）。
 
-既定は白黒中立基調＋アクセント 1 色（`--swing-accent: #1f5aa8`）の配色。`--swing-root`（webring の root ノードの色）は `var(--swing-accent)` を参照するので、アクセントを変えるだけで揃って変わる。
+既定は白黒中立基調＋アクセント 1 色の配色。アクセントはテーマごとに色相が違い、ダークは黄緑の `--swing-dark-accent: #7dff3c`、ライトはリンク色の濃い青 `--swing-accent: #0645ad`。`--swing-ok` はダークのアクセントと見分けられるようにティール（ライト `#2f7a6e`・ダーク `#6fc9b8`）。`--swing-root`（webring の root ノードの色）は `var(--swing-accent)` を参照するので、アクセントを変えるだけで揃って変わる。
 
 - CSS 変数（`web/style.css` の `:root`）: `--swing-bg` `--swing-surface` `--swing-surface-alt` `--swing-surface-raised` `--swing-border` `--swing-border-strong` `--swing-text` `--swing-text-muted` `--swing-text-faint` `--swing-accent` `--swing-accent-strong` `--swing-accent-soft` `--swing-warn` `--swing-warn-soft` `--swing-danger` `--swing-danger-soft` `--swing-ok` `--swing-ok-soft` `--swing-root` `--swing-focus` `--swing-font-display` `--swing-font-ui` `--swing-font-mono` `--swing-space-1`〜`--swing-space-6` `--swing-radius` `--swing-radius-lg` `--swing-nav-width` `--swing-nav-collapsed-width`（既定 64px） `--swing-graph-label-size`（既定 11px）。
 - テーマ: 既定は `@media (prefers-color-scheme: dark)` に連動。`<html data-theme="light"|"dark">` で上書き（Settings 画面が `localStorage["swing:theme"]` に保存してこの属性を付け替える）。

@@ -8,15 +8,15 @@
   --swing-text: #000000;
   --swing-text-muted: rgb(0 0 0 / 64%);
   --swing-text-faint: rgb(0 0 0 / 44%);
-  --swing-accent: #1f5aa8;
-  --swing-accent-strong: #143c73;
-  --swing-accent-soft: rgb(31 90 168 / 12%);
+  --swing-accent: #0645ad;
+  --swing-accent-strong: #08318f;
+  --swing-accent-soft: rgb(6 69 173 / 12%);
   --swing-warn: #8a6a2e;
   --swing-warn-soft: rgb(138 106 46 / 14%);
   --swing-danger: #93403c;
   --swing-danger-soft: rgb(147 64 60 / 12%);
-  --swing-ok: #4f7a52;
-  --swing-ok-soft: rgb(79 122 82 / 12%);
+  --swing-ok: #2f7a6e;
+  --swing-ok-soft: rgb(47 122 110 / 12%);
   --swing-root: var(--swing-accent);
   --swing-focus: var(--swing-accent);
 
@@ -46,15 +46,15 @@
   --swing-dark-text: #ffffff;
   --swing-dark-text-muted: rgb(255 255 255 / 56%);
   --swing-dark-text-faint: rgb(255 255 255 / 46%);
-  --swing-dark-accent: #7fb0ff;
-  --swing-dark-accent-strong: #a9cbff;
-  --swing-dark-accent-soft: rgb(127 176 255 / 18%);
+  --swing-dark-accent: #7dff3c;
+  --swing-dark-accent-strong: #b1ff8a;
+  --swing-dark-accent-soft: rgb(125 255 60 / 14%);
   --swing-dark-warn: #d3a25a;
   --swing-dark-warn-soft: rgb(211 162 90 / 16%);
   --swing-dark-danger: #d98d86;
   --swing-dark-danger-soft: rgb(217 141 134 / 14%);
-  --swing-dark-ok: #8fb389;
-  --swing-dark-ok-soft: rgb(143 179 137 / 14%);
+  --swing-dark-ok: #6fc9b8;
+  --swing-dark-ok-soft: rgb(111 201 184 / 14%);
 }
 
 @media (prefers-color-scheme: dark) {
