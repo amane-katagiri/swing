@@ -9,10 +9,33 @@
 <style id="user-css"></style>
 </head>
 <body data-view="sites" data-style="list">
+<script src="/boot.js"></script>
 <svg aria-hidden="true" focusable="false" style="position:absolute;width:0;height:0;overflow:hidden">
   <defs>
     <symbol id="icon-reload" viewBox="0 0 24 24">
       <path d="M17.65 6.35A7.95 7.95 0 0 0 12 4a8 8 0 1 0 7.75 10h-2.08A6 6 0 1 1 12 6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"></path>
+    </symbol>
+    <symbol id="icon-sites" viewBox="0 0 24 24">
+      <path d="M12 3 L14.53 9.12 L21.13 9.63 L16.09 13.93 L17.64 20.37 L12 16.9 L6.36 20.37 L7.91 13.93 L2.87 9.63 L9.47 9.12Z"></path>
+    </symbol>
+    <symbol id="icon-webring" viewBox="0 0 24 24">
+      <circle cx="12" cy="12" r="8.4"></circle>
+      <circle cx="12" cy="3.6" r="2.6" fill="currentColor" stroke="none"></circle>
+      <circle cx="20.4" cy="12" r="2.6" fill="currentColor" stroke="none"></circle>
+      <circle cx="12" cy="20.4" r="2.6" fill="currentColor" stroke="none"></circle>
+      <circle cx="3.6" cy="12" r="2.6" fill="currentColor" stroke="none"></circle>
+    </symbol>
+    <symbol id="icon-publish" viewBox="0 0 24 24">
+      <path d="M12 2.3C15.7 4.8 17.1 8.5 17.1 12.6V17.2H6.9V12.6C6.9 8.5 8.3 4.8 12 2.3Z"></path>
+      <circle cx="12" cy="10.2" r="2.1"></circle>
+      <path d="M6.9 12.6L4 15.5V19.6L6.9 17.6M17.1 12.6L20 15.5V19.6L17.1 17.6M10.3 20.2V21.8M13.7 20.2V21.8"></path>
+    </symbol>
+    <symbol id="icon-settings" viewBox="0 0 24 24">
+      <path d="M10.02 4.97 L10.28 2.56 L13.72 2.56 L13.98 4.97 L15.57 5.63 L17.46 4.1 L19.9 6.54 L18.37 8.43 L19.03 10.02 L21.44 10.28 L21.44 13.72 L19.03 13.98 L18.37 15.57 L19.9 17.46 L17.46 19.9 L15.57 18.37 L13.98 19.03 L13.72 21.44 L10.28 21.44 L10.02 19.03 L8.43 18.37 L6.54 19.9 L4.1 17.46 L5.63 15.57 L4.97 13.98 L2.56 13.72 L2.56 10.28 L4.97 10.02 L5.63 8.43 L4.1 6.54 L6.54 4.1 L8.43 5.63Z"></path>
+      <circle cx="12" cy="12" r="3"></circle>
+    </symbol>
+    <symbol id="icon-nav-collapse" viewBox="0 0 24 24">
+      <path d="M15 6L9 12L15 18"></path>
     </symbol>
   </defs>
 </svg>
@@ -22,23 +45,26 @@
       <svg class="swing-ring-logo" viewBox="0 0 48 48" aria-hidden="true">
         <g>
           <circle class="swing-ring-logo-ring" cx="24" cy="24" r="18"></circle>
-          <circle class="swing-ring-logo-node" cx="24" cy="6" r="3"></circle>
-          <circle class="swing-ring-logo-node" cx="42" cy="24" r="3"></circle>
-          <circle class="swing-ring-logo-node" cx="24" cy="42" r="3"></circle>
-          <circle class="swing-ring-logo-node" cx="6" cy="24" r="3"></circle>
+          <circle class="swing-ring-logo-node" cx="24" cy="6" r="3.75"></circle>
+          <circle class="swing-ring-logo-node" cx="42" cy="24" r="3.75"></circle>
+          <circle class="swing-ring-logo-node" cx="24" cy="42" r="3.75"></circle>
+          <circle class="swing-ring-logo-node" cx="6" cy="24" r="3.75"></circle>
         </g>
       </svg>
       <span class="swing-brand-name">SWING</span>
     </div>
     <ul class="swing-nav-list">
-      <li><a href="#/sites" data-route="sites" data-i18n="navSites">Sites</a></li>
-      <li><a href="#/webring" data-route="webring">Webring</a></li>
-      <li><a href="#/publish" data-route="publish" data-i18n="navPublish">Publish</a></li>
-      <li><a href="#/settings" data-route="settings" data-i18n="navSettings">Settings</a></li>
+      <li><a href="#/sites" data-route="sites"><svg class="swing-nav-icon" aria-hidden="true"><use href="#icon-sites"></use></svg><span class="swing-nav-label" data-i18n="navSites">Sites</span></a></li>
+      <li><a href="#/webring" data-route="webring"><svg class="swing-nav-icon" aria-hidden="true"><use href="#icon-webring"></use></svg><span class="swing-nav-label">Webring</span></a></li>
+      <li><a href="#/publish" data-route="publish"><svg class="swing-nav-icon" aria-hidden="true"><use href="#icon-publish"></use></svg><span class="swing-nav-label" data-i18n="navPublish">Publish</span></a></li>
+      <li><a href="#/settings" data-route="settings"><svg class="swing-nav-icon" aria-hidden="true"><use href="#icon-settings"></use></svg><span class="swing-nav-label" data-i18n="navSettings">Settings</span></a></li>
     </ul>
-    <div class="swing-nav-footer">
-      <span class="swing-nav-mirror-set" id="nav-mirror-set"></span>
-      <span class="swing-nav-version" id="nav-version"></span>
+    <div class="swing-nav-bottom">
+      <div class="swing-nav-footer">
+        <span class="swing-nav-mirror-set" id="nav-mirror-set"></span>
+        <span class="swing-nav-version" id="nav-version"></span>
+      </div>
+      <button type="button" class="swing-nav-toggle" id="nav-toggle" aria-expanded="true" aria-label="Collapse sidebar" title="Collapse sidebar"><svg class="swing-nav-icon" aria-hidden="true"><use href="#icon-nav-collapse"></use></svg></button>
     </div>
   </nav>
 

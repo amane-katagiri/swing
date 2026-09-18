@@ -8,6 +8,7 @@ use super::AppState;
 
 const INDEX_HTML: &str = include_str!("../../web/index.html");
 const STYLE_CSS: &str = include_str!("../../web/style.css");
+const BOOT_JS: &str = include_str!("../../web/boot.js");
 const APP_JS: &str = include_str!("../../web/app.js");
 const GRAPH_JS: &str = include_str!("../../web/graph.js");
 const STORAGE_JS: &str = include_str!("../../web/storage.js");
@@ -29,6 +30,10 @@ pub async fn index() -> Response {
 
 pub async fn style() -> Response {
     asset("text/css; charset=utf-8", STYLE_CSS)
+}
+
+pub async fn boot_js() -> Response {
+    asset("text/javascript; charset=utf-8", BOOT_JS)
 }
 
 pub async fn app_js() -> Response {

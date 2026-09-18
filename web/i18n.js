@@ -12,6 +12,8 @@ const MESSAGES = {
     navSites: 'Sites',
     navPublish: 'Publish',
     navSettings: 'Settings',
+    navCollapse: 'Collapse sidebar',
+    navExpand: 'Expand sidebar',
     navFooterMirror: 'mirror set: {name}',
     navFooterVersion: 'v{version}',
 
@@ -182,6 +184,8 @@ const MESSAGES = {
     navSites: 'サイト',
     navPublish: '公開',
     navSettings: '設定',
+    navCollapse: 'サイドメニューを畳む',
+    navExpand: 'サイドメニューを広げる',
     navFooterMirror: 'ミラーセット: {name}',
     navFooterVersion: 'v{version}',
 

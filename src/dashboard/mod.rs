@@ -73,6 +73,7 @@ pub fn router(state: Arc<AppState>) -> Router {
     Router::new()
         .route("/", get(assets::index))
         .route("/style.css", get(assets::style))
+        .route("/boot.js", get(assets::boot_js))
         .route("/app.js", get(assets::app_js))
         .route("/graph.js", get(assets::graph_js))
         .route("/storage.js", get(assets::storage_js))
@@ -230,6 +231,7 @@ mod tests {
     async fn style_and_scripts_have_expected_content_types() {
         for (path, expected) in [
             ("/style.css", "text/css; charset=utf-8"),
+            ("/boot.js", "text/javascript; charset=utf-8"),
             ("/app.js", "text/javascript; charset=utf-8"),
             ("/graph.js", "text/javascript; charset=utf-8"),
             ("/storage.js", "text/javascript; charset=utf-8"),

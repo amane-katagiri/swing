@@ -14,9 +14,10 @@
 | `ui.js` | 複数画面で共有する UI 部品（コピーボタン、バッジ、relay 結果表示など）。`util.js`・`i18n.js` に依存する |
 | `graph.js` | webring 用の自前 force-directed layout。`util.js` の `clamp` だけに依存する |
 | `sites.js` / `webring.js` / `publish.js` / `settings.js` | 各画面（それぞれ Sites・Webring・Publish・Settings） |
+| `boot.js` | 描画前に同期実行する小さな通常スクリプト。サイドナビの折りたたみ状態と、表示言語が英語以外なら翻訳待ちの印を付ける。どのモジュールにも依存しない |
 | `app.js` | ルーター兼エントリポイント。`<script type="module" src="/app.js">` から読み込まれ、各画面モジュールを import する |
 
-`#/sites` `#/webring` `#/publish` `#/settings` の 4 画面をハッシュルーティングで切り替える（既定は `sites`）。書き込みリクエストには `X-Swing-Dashboard: 1` と `Content-Type: application/json` を付ける。relay 由来の文字列は DOM API だけで挿入し、`innerHTML` は使わない。`url` は `^https?://` にマッチするときだけリンクにする。
+`#/sites` `#/webring` `#/publish` `#/settings` の 4 画面をハッシュルーティングで切り替える（既定は `sites`）。現在の画面のナビのリンクには `aria-current="page"` が付く。書き込みリクエストには `X-Swing-Dashboard: 1` と `Content-Type: application/json` を付ける。relay 由来の文字列は DOM API だけで挿入し、`innerHTML` は使わない。`url` は `^https?://` にマッチするときだけリンクにする。
 
 言語切り替え（Settings 画面）は `settings.js` が `swing:langchange` という `CustomEvent` を `document` に投げ、`app.js` がそれを購読して各画面を再描画する。各画面のロードは世代カウンタ（`createLoadGuard`）でガードし、切り替えが速くても古いレスポンスで上書きしない。
 
@@ -58,7 +59,10 @@
 - busy 表示: `setBusy(button, bool)` で `disabled`・`aria-busy`・`.is-busy` を切り替える。ボタン幅は変わらない。`prefers-reduced-motion: reduce` ではスピナーを止め静止表示にする。
 - コピー: 成功で 1.5 秒だけ `data-copied="true"`、失敗で `data-copy-failed="true"`。表示文字列はすべて共通の `copy` キーで、対象の違いは `aria-label` 側で表す。
 - ボタン: `.swing-btn`（主要操作）、`.swing-btn-small`（行単位）、`.swing-copy-btn`（インラインコピー）、`.swing-icon-btn`（アイコンのみ）。
-- モバイル幅: 760px 以下でサイドナビのフッタを隠し、ページ最下部の `<footer id="page-footer">` に同じ内容を表示する。
+- サイドナビ: 各項目はアイコン（`index.html` 冒頭の SVG `<symbol>`。Sites `icon-sites` 星、Webring `icon-webring` ロゴの輪、Publish `icon-publish` ロケット、Settings `icon-settings` 歯車。線幅 1.75 の stroke で揃え、現在の画面は 2）＋ラベル。下端右寄せの枠付きトグル（`#nav-toggle`）で畳むとアイコンだけの幅（`--swing-nav-collapsed-width`）になる。畳んでもアイコン・ロゴの横位置は変わらず、幅だけが縮み、ラベル・ブランド名・フッタは不透明度 0 になって切り取られる（DOM には残るのでスクリーンリーダーには読まれる）。畳んだ状態では各リンクの `title` にラベルを入れる。状態は `localStorage["swing:nav:collapsed"]` に保存し、`<body data-nav="collapsed">` で表す。
+- 読み込み時: `<body>` 直後の通常の（module でない）`<script src="/boot.js">` が同期的に `data-nav` を付ける。最初の描画から畳んだ幅になるので、読み込み時にアニメーションしない。`app.js` の初期化はトグルのラベルと `title` を整える。
+- 表示言語が英語以外に決まるとき（判定は `i18n.js` の `currentLang` と同じ）、`boot.js` が `<html lang>` と `<html data-i18n-pending>` を付け、`[data-i18n]` の要素を `visibility: hidden`、`[data-i18n-placeholder]` のプレースホルダを透明にする。`app.js` が静的な訳を当てた直後にこの属性を外す。`app.js` が動かなかった場合でも、1 秒後に CSS アニメーションで英語のまま表示される。
+- モバイル幅: 760px 以下ではナビを横並びにしてトグルとサイドナビのフッタを隠し（畳んだ状態でもラベルを表示する）、ページ最下部の `<footer id="page-footer">` にフッタと同じ内容を表示する。
 
 ## localStorage キー一覧
 
@@ -71,6 +75,7 @@
 | `swing:sites:stored-only` | `"1"` / `"0"` | Sites の「Stored only」チェックボックスの状態 |
 | `swing:webring:query` | JSON `{root, depth}` | Webring の最後のクエリ（起動時に復元） |
 | `swing:publish:last` | JSON `{site, url, message, nip05}` | Publish フォームの最後の入力（起動時にプリフィル） |
+| `swing:nav:collapsed` | `"1"` / `"0"` | サイドナビを畳んでいるか（既定 `0`） |
 | `swing:theme` | `auto` / `light` / `dark` | 表示テーマ |
 | `swing:lang` | `auto` / `en` / `ja` | 表示言語 |
 | `swing:user-css` | 文字列（CSS） | Settings のカスタム CSS 欄の内容 |
@@ -87,9 +92,9 @@
 
 既定は白黒中立基調＋アクセント 1 色（`--swing-accent: #1f5aa8`）の配色。`--swing-root`（webring の root ノードの色）は `var(--swing-accent)` を参照するので、アクセントを変えるだけで揃って変わる。
 
-- CSS 変数（`web/style.css` の `:root`）: `--swing-bg` `--swing-surface` `--swing-surface-alt` `--swing-surface-raised` `--swing-border` `--swing-border-strong` `--swing-text` `--swing-text-muted` `--swing-text-faint` `--swing-accent` `--swing-accent-strong` `--swing-accent-soft` `--swing-warn` `--swing-warn-soft` `--swing-danger` `--swing-danger-soft` `--swing-ok` `--swing-ok-soft` `--swing-root` `--swing-focus` `--swing-font-display` `--swing-font-ui` `--swing-font-mono` `--swing-space-1`〜`--swing-space-6` `--swing-radius` `--swing-radius-lg` `--swing-nav-width` `--swing-graph-label-size`（既定 11px）。
+- CSS 変数（`web/style.css` の `:root`）: `--swing-bg` `--swing-surface` `--swing-surface-alt` `--swing-surface-raised` `--swing-border` `--swing-border-strong` `--swing-text` `--swing-text-muted` `--swing-text-faint` `--swing-accent` `--swing-accent-strong` `--swing-accent-soft` `--swing-warn` `--swing-warn-soft` `--swing-danger` `--swing-danger-soft` `--swing-ok` `--swing-ok-soft` `--swing-root` `--swing-focus` `--swing-font-display` `--swing-font-ui` `--swing-font-mono` `--swing-space-1`〜`--swing-space-6` `--swing-radius` `--swing-radius-lg` `--swing-nav-width` `--swing-nav-collapsed-width`（既定 64px） `--swing-graph-label-size`（既定 11px）。
 - テーマ: 既定は `@media (prefers-color-scheme: dark)` に連動。`<html data-theme="light"|"dark">` で上書き（Settings 画面が `localStorage["swing:theme"]` に保存してこの属性を付け替える）。
-- 状態フック: `<body data-view="sites|webring|publish|settings" data-style="<現在の表示スタイル>">`。
-- 安定 class（抜粋。`swing-` 接頭辞で統一）: レイアウト系 `swing-shell` `swing-nav` `swing-main` `swing-view` `swing-panel` `swing-toolbar` `swing-style-switch` `swing-sort-switch`。Sites 系 `swing-site` `swing-site-row` `swing-site-meta-cid` `swing-site-meta-info` `swing-account`。共通部品 `swing-badge` `swing-btn`（`swing-btn-accent`/`swing-btn-danger`/`swing-btn-small`）`swing-copy-btn` `swing-icon-btn` `swing-status` `swing-hint` `swing-table` `swing-mono` `swing-pre` `swing-relay-results` `swing-page-footer`。Webring 系 `swing-graph` `swing-node` `swing-edge` `swing-arrow-oneway-fill` `swing-arrow-mutual-fill` `swing-legend` `swing-webring-layout` `swing-node-detail` `swing-source-block`。Publish 系 `swing-my-sites` `swing-progress` `swing-progress-bar` `swing-identity`。
+- 状態フック: `<body data-view="sites|webring|publish|settings" data-style="<現在の表示スタイル>" data-nav="collapsed">`（`data-nav` は畳んでいるときだけ）。
+- 安定 class（抜粋。`swing-` 接頭辞で統一）: レイアウト系 `swing-shell` `swing-nav` `swing-nav-list` `swing-nav-icon` `swing-nav-label` `swing-nav-toggle` `swing-main` `swing-view` `swing-panel` `swing-toolbar` `swing-style-switch` `swing-sort-switch`。Sites 系 `swing-site` `swing-site-row` `swing-site-meta-cid` `swing-site-meta-info` `swing-account`。共通部品 `swing-badge` `swing-btn`（`swing-btn-accent`/`swing-btn-danger`/`swing-btn-small`）`swing-copy-btn` `swing-icon-btn` `swing-status` `swing-hint` `swing-table` `swing-mono` `swing-pre` `swing-relay-results` `swing-page-footer`。Webring 系 `swing-graph` `swing-node` `swing-edge` `swing-arrow-oneway-fill` `swing-arrow-mutual-fill` `swing-legend` `swing-webring-layout` `swing-node-detail` `swing-source-block`。Publish 系 `swing-my-sites` `swing-progress` `swing-progress-bar` `swing-identity`。
 - 状態は data 属性: `data-stored="true|false"`、`data-nip05="verified|mismatch|not_applicable|error"`、`data-health="ok|missing|cid_mismatch|incomplete|check_failed|invalid_key"`、`data-ok="true|false"`（relay 結果）、`data-kind="loading|error|empty"`（`swing-status`）、`data-root`/`data-has-follow-set`/`data-depth`/`data-selected`（グラフのノード）、`data-mutual`（グラフの辺）、`data-style-value`/`data-sort-value`（切替ボタン自身の値）、`data-mirrored="true"`、`data-detail="true|false"`（詳細パネル表示中か）、`data-copied`/`data-copy-failed`、`data-state="uploading|processing|done|error"`（`swing-progress`）、`aria-busy="true"`（busy 中のボタン、再取得中の webring 表示領域）。
 - SVG グラフは class と `data-*` だけを付け、色は JS に書かない（`style.css` 側で `.swing-node[data-root="true"] circle { ... }` のように当てる）。
