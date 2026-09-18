@@ -5,7 +5,7 @@ use nostr_sdk::prelude::*;
 
 use crate::config::Config;
 use crate::nostr::{self, RelayClient};
-use crate::replicas;
+use crate::replicas::{self, SiteAddress};
 use crate::state::{self, State, VersionRecord};
 
 const FOLLOW_SET_KIND: u16 = 30000;
@@ -150,109 +150,201 @@ fn newest_follow_set(
     }
 }
 
-async fn current_follow_set(relay: &RelayClient, config: &Config) -> Result<Option<Event>> {
+async fn current_follow_set(
+    relay: &RelayClient,
+    config: &Config,
+) -> Result<(Option<Event>, Option<&'static str>)> {
     let fetched = relay.fetch_follow_set(&config.nostr.mirror_set).await?;
     let saved = load_state(config).await?.follow_set.filter(|ev| {
         nostr::is_follow_set_of(ev, &relay.keys.public_key(), &config.nostr.mirror_set)
     });
-    let (event, note) = newest_follow_set(fetched, saved);
-    if let Some(note) = note {
+    Ok(newest_follow_set(fetched, saved))
+}
+
+#[derive(Debug, Clone)]
+pub struct MirrorListView {
+    pub note: Option<&'static str>,
+    pub set: Option<MirrorSet>,
+}
+
+pub async fn collect_mirror_list(relay: &RelayClient, config: &Config) -> Result<MirrorListView> {
+    let (event, note) = current_follow_set(relay, config).await?;
+    Ok(MirrorListView {
+        note,
+        set: event.as_ref().map(MirrorSet::from_event),
+    })
+}
+
+fn print_mirror_list(config: &Config, view: &MirrorListView) {
+    if let Some(note) = view.note {
         println!("{note}");
     }
-    Ok(event)
+    match &view.set {
+        Some(set) => print_mirror_set(&config.nostr.mirror_set, set),
+        None => println!("(no follow set found)"),
+    }
 }
 
 pub async fn list(config: &Config) -> Result<()> {
     let relay = RelayClient::connect(&config.nostr.secret_key, &config.nostr.relays).await?;
-    let event = current_follow_set(&relay, config).await?;
-    match event {
-        Some(ev) => print_mirror_set(&config.nostr.mirror_set, &MirrorSet::from_event(&ev)),
-        None => println!("(no follow set found)"),
-    }
+    let view = collect_mirror_list(&relay, config).await?;
     relay.client.shutdown().await;
+    print_mirror_list(config, &view);
     Ok(())
 }
 
-async fn publish_mirror_set(relay: &RelayClient, config: &Config, set: &MirrorSet) -> Result<()> {
+#[derive(Debug, Clone)]
+pub struct MirrorChange {
+    pub note: Option<&'static str>,
+    pub follow_set_found: bool,
+    pub changed: Vec<PublicKey>,
+    pub unchanged: Vec<PublicKey>,
+    pub published: bool,
+    pub relay_results: Vec<nostr::RelaySendResult>,
+    pub set: MirrorSet,
+}
+
+async fn publish_if_changed(
+    relay: &RelayClient,
+    config: &Config,
+    set: &MirrorSet,
+    changed: &[PublicKey],
+) -> Result<(bool, Vec<nostr::RelaySendResult>)> {
+    if changed.is_empty() {
+        return Ok((false, Vec::new()));
+    }
     let event = set
         .build_event_builder(&config.nostr.mirror_set)
         .finalize(&relay.keys)
         .context("signing mirror set event")?;
     let output = relay.publish_to_relays(&event).await?;
-    println!();
-    println!("Nostr");
-    nostr::print_relay_send_results(relay.relays(), &output);
-    println!();
-    print_mirror_set(&config.nostr.mirror_set, set);
-    Ok(())
+    Ok((true, nostr::relay_send_results(relay.relays(), &output)))
 }
 
-pub async fn add(config: &Config, inputs: &[String]) -> Result<()> {
+pub async fn apply_add(
+    relay: &RelayClient,
+    config: &Config,
+    inputs: &[String],
+) -> Result<MirrorChange> {
     let keys = parse_pubkey_inputs(inputs)?;
-    let relay = RelayClient::connect(&config.nostr.secret_key, &config.nostr.relays).await?;
-    let existing = current_follow_set(&relay, config).await?;
+    let (existing, note) = current_follow_set(relay, config).await?;
+    let follow_set_found = existing.is_some();
     let mut set = existing
         .as_ref()
         .map(MirrorSet::from_event)
         .unwrap_or_else(MirrorSet::empty);
 
-    let already_present: Vec<PublicKey> = {
+    let unchanged: Vec<PublicKey> = {
         let current: HashSet<PublicKey> = set.pubkeys().into_iter().collect();
         keys.iter()
             .filter(|k| current.contains(k))
             .copied()
             .collect()
     };
-    for pk in &already_present {
+    let changed = set.add(&keys);
+    let (published, relay_results) = publish_if_changed(relay, config, &set, &changed).await?;
+    Ok(MirrorChange {
+        note,
+        follow_set_found,
+        changed,
+        unchanged,
+        published,
+        relay_results,
+        set,
+    })
+}
+
+fn print_publish_block(config: &Config, change: &MirrorChange) {
+    println!();
+    println!("Nostr");
+    nostr::print_relay_send_result_lines(&change.relay_results);
+    println!();
+    print_mirror_set(&config.nostr.mirror_set, &change.set);
+}
+
+fn print_add_result(config: &Config, change: &MirrorChange) {
+    if let Some(note) = change.note {
+        println!("{note}");
+    }
+    for pk in &change.unchanged {
         println!("already in mirror set: {} ({})", npub(pk), pk.to_hex());
     }
-
-    let added = set.add(&keys);
-    if added.is_empty() {
+    if change.changed.is_empty() {
         println!("no changes; not publishing");
-        relay.client.shutdown().await;
-        return Ok(());
+        return;
     }
-    for pk in &added {
+    for pk in &change.changed {
         println!("added: {} ({})", npub(pk), pk.to_hex());
     }
+    print_publish_block(config, change);
+}
 
-    publish_mirror_set(&relay, config, &set).await?;
+pub async fn add(config: &Config, inputs: &[String]) -> Result<()> {
+    let relay = RelayClient::connect(&config.nostr.secret_key, &config.nostr.relays).await?;
+    let change = apply_add(&relay, config, inputs).await?;
     relay.client.shutdown().await;
+    print_add_result(config, &change);
     Ok(())
 }
 
-pub async fn remove(config: &Config, inputs: &[String]) -> Result<()> {
+pub async fn apply_remove(
+    relay: &RelayClient,
+    config: &Config,
+    inputs: &[String],
+) -> Result<MirrorChange> {
     let keys = parse_pubkey_inputs(inputs)?;
-    let relay = RelayClient::connect(&config.nostr.secret_key, &config.nostr.relays).await?;
-    let existing = current_follow_set(&relay, config).await?;
-    let mut set = match existing {
-        Some(ev) => MirrorSet::from_event(&ev),
-        None => {
-            println!("(no follow set found); no changes");
-            relay.client.shutdown().await;
-            return Ok(());
-        }
-    };
+    let (existing, note) = current_follow_set(relay, config).await?;
+    let follow_set_found = existing.is_some();
+    let mut set = existing
+        .as_ref()
+        .map(MirrorSet::from_event)
+        .unwrap_or_else(MirrorSet::empty);
 
     let removed = set.remove(&keys);
     let removed_set: HashSet<PublicKey> = removed.iter().copied().collect();
-    for pk in &keys {
-        if !removed_set.contains(pk) {
-            println!("not in mirror set: {} ({})", npub(pk), pk.to_hex());
-        }
+    let unchanged: Vec<PublicKey> = keys
+        .iter()
+        .filter(|k| !removed_set.contains(k))
+        .copied()
+        .collect();
+    let (published, relay_results) = publish_if_changed(relay, config, &set, &removed).await?;
+    Ok(MirrorChange {
+        note,
+        follow_set_found,
+        changed: removed,
+        unchanged,
+        published,
+        relay_results,
+        set,
+    })
+}
+
+fn print_remove_result(config: &Config, change: &MirrorChange) {
+    if !change.follow_set_found {
+        println!("(no follow set found); no changes");
+        return;
     }
-    if removed.is_empty() {
+    if let Some(note) = change.note {
+        println!("{note}");
+    }
+    for pk in &change.unchanged {
+        println!("not in mirror set: {} ({})", npub(pk), pk.to_hex());
+    }
+    if change.changed.is_empty() {
         println!("no changes; not publishing");
-        relay.client.shutdown().await;
-        return Ok(());
+        return;
     }
-    for pk in &removed {
+    for pk in &change.changed {
         println!("removed: {} ({})", npub(pk), pk.to_hex());
     }
+    print_publish_block(config, change);
+}
 
-    publish_mirror_set(&relay, config, &set).await?;
+pub async fn remove(config: &Config, inputs: &[String]) -> Result<()> {
+    let relay = RelayClient::connect(&config.nostr.secret_key, &config.nostr.relays).await?;
+    let change = apply_remove(&relay, config, inputs).await?;
     relay.client.shutdown().await;
+    print_remove_result(config, &change);
     Ok(())
 }
 
@@ -283,23 +375,32 @@ fn format_unix_timestamp(secs: u64) -> String {
     format!("{y:04}-{m:02}-{d:02} {hh:02}:{mm:02}:{ss:02} UTC")
 }
 
-fn format_site_line(
-    ev: &nostr::SiteEvent,
-    status: &str,
-    verification: Option<&str>,
-    replicas: Option<usize>,
-) -> String {
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SiteRow {
+    pub d: String,
+    pub cid: String,
+    pub url: Option<String>,
+    pub size: Option<u64>,
+    pub created_at: u64,
+    pub message: Option<String>,
+    pub nip05: Option<String>,
+    pub replicas: Option<usize>,
+    pub stored: bool,
+}
+
+fn format_site_line(row: &SiteRow, status: &str) -> String {
     format!(
         "  d={:<24} cid={:<62} url={:<32} size={:<12} created_at={:<25} nip05={:<14} replicas={:<4} [{}]",
-        ev.d,
-        ev.cid,
-        ev.url.clone().unwrap_or_else(|| "-".to_string()),
-        ev.size
+        row.d,
+        row.cid,
+        row.url.clone().unwrap_or_else(|| "-".to_string()),
+        row.size
             .map(|s| s.to_string())
             .unwrap_or_else(|| "-".to_string()),
-        format_unix_timestamp(ev.created_at),
-        verification.unwrap_or("-"),
-        replicas.map_or_else(|| "-".to_string(), |n| n.to_string()),
+        format_unix_timestamp(row.created_at),
+        row.nip05.as_deref().unwrap_or("-"),
+        row.replicas
+            .map_or_else(|| "-".to_string(), |n| n.to_string()),
         status
     )
 }
@@ -345,19 +446,29 @@ pub fn print_account_header(pubkey_hex: &str, suffix: &str) -> Result<PublicKey>
     Ok(pk)
 }
 
-pub async fn sites(config: &Config) -> Result<()> {
-    let relay = RelayClient::connect(&config.nostr.secret_key, &config.nostr.relays).await?;
-    let follow_event = current_follow_set(&relay, config).await?;
-    let targets = match &follow_event {
-        Some(event) => nostr::extract_follow_set_pubkeys(event),
-        None => {
-            println!("(no follow set found)");
-            Vec::new()
-        }
-    };
-    if follow_event.is_some() && targets.is_empty() {
-        println!("(follow set is empty)");
-    }
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AccountSites {
+    pub pubkey: PublicKey,
+    pub sites: Vec<SiteRow>,
+}
+
+#[derive(Debug, Clone)]
+pub struct SitesView {
+    pub follow_set_found: bool,
+    pub follow_note: Option<&'static str>,
+    pub accounts: Vec<AccountSites>,
+    pub replicas_error: Option<String>,
+    pub remove_on_unfollow: bool,
+    pub unfollowed: Vec<AccountSites>,
+}
+
+pub async fn collect_sites(relay: &RelayClient, config: &Config) -> Result<SitesView> {
+    let (follow_event, follow_note) = current_follow_set(relay, config).await?;
+    let follow_set_found = follow_event.is_some();
+    let targets: Vec<PublicKey> = follow_event
+        .as_ref()
+        .map(nostr::extract_follow_set_pubkeys)
+        .unwrap_or_default();
 
     let latest = if targets.is_empty() {
         Default::default()
@@ -372,14 +483,11 @@ pub async fn sites(config: &Config) -> Result<()> {
         nostr::select_latest(&parsed)
     };
     let latest_sites: Vec<&nostr::SiteEvent> = latest.values().collect();
-    let reports = match replicas::fetch_for_sites(&relay, config, &latest_sites).await {
-        Ok(reports) => Some(reports),
-        Err(e) => {
-            println!("(fetching replica reports failed: {e:#})");
-            None
-        }
-    };
-    relay.client.shutdown().await;
+    let (reports, replicas_error) =
+        match replicas::fetch_for_sites(relay, config, &latest_sites).await {
+            Ok(reports) => (Some(reports), None),
+            Err(e) => (None, Some(format!("{e:#}"))),
+        };
 
     let state = load_state(config).await?;
 
@@ -391,71 +499,137 @@ pub async fn sites(config: &Config) -> Result<()> {
         by_pubkey.entry(ev.pubkey.to_hex()).or_default().push(ev);
     }
 
+    let mut accounts = Vec::with_capacity(by_pubkey.len());
     for (pubkey_hex, mut evs) in by_pubkey {
         evs.sort_by(|a, b| a.d.cmp(&b.d));
-        print_account_header(&pubkey_hex, "")?;
-        if evs.is_empty() {
+        let pubkey = PublicKey::from_hex(&pubkey_hex).context("parsing pubkey")?;
+        let sites = evs
+            .into_iter()
+            .map(|ev| {
+                let key = state::site_key(&pubkey_hex, &ev.d);
+                let stored = state
+                    .sites
+                    .get(&key)
+                    .map(|versions| versions.iter().any(|v| v.cid == ev.cid))
+                    .unwrap_or(false);
+                let nip05 = state.verifications.get(&key).map(|v| v.status.clone());
+                let replicas = replica_count(&reports, ev);
+                SiteRow {
+                    d: ev.d.clone(),
+                    cid: ev.cid.clone(),
+                    url: ev.url.clone(),
+                    size: ev.size,
+                    created_at: ev.created_at,
+                    message: ev.message.clone(),
+                    nip05,
+                    replicas,
+                    stored,
+                }
+            })
+            .collect();
+        accounts.push(AccountSites { pubkey, sites });
+    }
+
+    let target_hex: BTreeSet<String> = targets.iter().map(|pk| pk.to_hex()).collect();
+    let unfollowed_map = unfollowed_sites(&state, &target_hex);
+    let mut unfollowed = Vec::with_capacity(unfollowed_map.len());
+    for (pubkey_hex, sites) in unfollowed_map {
+        let pubkey = PublicKey::from_hex(&pubkey_hex).context("parsing pubkey")?;
+        let sites = sites
+            .into_iter()
+            .map(|(d, version)| {
+                let key = state::site_key(&pubkey_hex, &d);
+                let nip05 = state.verifications.get(&key).map(|v| v.status.clone());
+                SiteRow {
+                    d,
+                    cid: version.cid,
+                    url: None,
+                    size: Some(version.size),
+                    created_at: version.created_at,
+                    message: None,
+                    nip05,
+                    replicas: None,
+                    stored: true,
+                }
+            })
+            .collect();
+        unfollowed.push(AccountSites { pubkey, sites });
+    }
+
+    Ok(SitesView {
+        follow_set_found,
+        follow_note,
+        accounts,
+        replicas_error,
+        remove_on_unfollow: config.policy.remove_on_unfollow,
+        unfollowed,
+    })
+}
+
+fn replica_count(
+    reports: &Option<std::collections::HashMap<SiteAddress, Vec<nostr::ReplicaReport>>>,
+    ev: &nostr::SiteEvent,
+) -> Option<usize> {
+    reports.as_ref().map(|reports| {
+        reports.get(&(ev.pubkey, ev.d.clone())).map_or(0, |r| {
+            replicas::latest_count(&replicas::replicas_of(r, &ev.cid))
+        })
+    })
+}
+
+fn print_sites(view: &SitesView) -> Result<()> {
+    if let Some(note) = view.follow_note {
+        println!("{note}");
+    }
+    if !view.follow_set_found {
+        println!("(no follow set found)");
+    } else if view.accounts.is_empty() {
+        println!("(follow set is empty)");
+    }
+    if let Some(err) = &view.replicas_error {
+        println!("(fetching replica reports failed: {err})");
+    }
+
+    for account in &view.accounts {
+        print_account_header(&account.pubkey.to_hex(), "")?;
+        if account.sites.is_empty() {
             println!("  (no site events)");
             continue;
         }
-        for ev in evs {
-            let key = state::site_key(&pubkey_hex, &ev.d);
-            let stored = state
-                .sites
-                .get(&key)
-                .map(|versions| versions.iter().any(|v| v.cid == ev.cid))
-                .unwrap_or(false);
-            let verification = state.verifications.get(&key).map(|v| v.status.as_str());
-            let status = if stored { "stored" } else { "not stored" };
-            let replica_count = reports.as_ref().map(|reports| {
-                reports.get(&(ev.pubkey, ev.d.clone())).map_or(0, |r| {
-                    replicas::latest_count(&replicas::replicas_of(r, &ev.cid))
-                })
-            });
-            println!(
-                "{}",
-                format_site_line(ev, status, verification, replica_count)
-            );
-            if let Some(message) = &ev.message {
+        for site in &account.sites {
+            let status = if site.stored { "stored" } else { "not stored" };
+            println!("{}", format_site_line(site, status));
+            if let Some(message) = &site.message {
                 println!("{}", format_message_line(message));
             }
         }
     }
 
-    let target_hex: BTreeSet<String> = targets.iter().map(|pk| pk.to_hex()).collect();
-    let unfollowed = unfollowed_sites(&state, &target_hex);
-    if unfollowed.is_empty() {
+    if view.unfollowed.is_empty() {
         return Ok(());
     }
     println!();
-    if config.policy.remove_on_unfollow {
+    if view.remove_on_unfollow {
         println!("Unfollowed but still stored (the agent removes them on its next poll):");
     } else {
         println!(
             "Unfollowed but still stored (kept because remove_on_unfollow is false; set it to true to remove them):"
         );
     }
-    for (pubkey_hex, sites) in unfollowed {
-        let pk = print_account_header(&pubkey_hex, " [unfollowed]")?;
-        for (d, version) in sites {
-            let ev = nostr::SiteEvent {
-                pubkey: pk,
-                d: d.clone(),
-                cid: version.cid,
-                url: None,
-                size: Some(version.size),
-                message: None,
-                created_at: version.created_at,
-            };
-            let key = state::site_key(&pubkey_hex, &d);
-            let verification = state.verifications.get(&key).map(|v| v.status.as_str());
-            println!(
-                "{}",
-                format_site_line(&ev, "unfollowed", verification, None)
-            );
+    for account in &view.unfollowed {
+        print_account_header(&account.pubkey.to_hex(), " [unfollowed]")?;
+        for site in &account.sites {
+            println!("{}", format_site_line(site, "unfollowed"));
         }
     }
     Ok(())
+}
+
+pub async fn sites(config: &Config) -> Result<()> {
+    let relay = RelayClient::connect(&config.nostr.secret_key, &config.nostr.relays).await?;
+    let view = collect_sites(&relay, config).await?;
+    relay.client.shutdown().await;
+    print_sites(&view)
 }
 
 #[cfg(test)]

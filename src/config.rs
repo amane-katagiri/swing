@@ -1,4 +1,5 @@
 use std::env;
+use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -80,12 +81,23 @@ pub struct PublishFile {
 
 #[derive(Debug, Clone, Deserialize, Default)]
 #[serde(default)]
+pub struct DashboardFile {
+    pub listen: Option<String>,
+    pub allowed_hosts: Option<Vec<String>>,
+    pub gateway: Option<String>,
+    pub custom_css: Option<String>,
+    pub max_upload: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(default)]
 pub struct ConfigFile {
     pub nostr: NostrFile,
     pub ipfs: IpfsFile,
     pub policy: PolicyFile,
     pub agent: AgentFile,
     pub publish: PublishFile,
+    pub dashboard: DashboardFile,
 }
 
 #[derive(Clone)]
@@ -163,6 +175,32 @@ pub struct PublishConfig {
     pub keep_versions: usize,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DashboardListen {
+    Off,
+    Addr(SocketAddr),
+}
+
+pub fn parse_dashboard_listen(input: &str) -> Result<DashboardListen> {
+    let trimmed = input.trim();
+    if trimmed.eq_ignore_ascii_case("off") {
+        return Ok(DashboardListen::Off);
+    }
+    trimmed
+        .parse::<SocketAddr>()
+        .map(DashboardListen::Addr)
+        .with_context(|| format!("invalid dashboard listen address: {trimmed}"))
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DashboardConfig {
+    pub listen: DashboardListen,
+    pub allowed_hosts: Vec<String>,
+    pub gateway: Option<String>,
+    pub custom_css: Option<PathBuf>,
+    pub max_upload: u64,
+}
+
 #[derive(Debug, Clone)]
 pub struct Config {
     pub nostr: NostrConfig,
@@ -170,6 +208,8 @@ pub struct Config {
     pub policy: PolicyConfig,
     pub agent: AgentConfig,
     pub publish: PublishConfig,
+    pub dashboard: DashboardConfig,
+    pub config_path: Option<PathBuf>,
 }
 
 fn resolve_config_path(cli_path: Option<&Path>) -> Option<PathBuf> {
@@ -186,22 +226,22 @@ fn resolve_config_path(cli_path: Option<&Path>) -> Option<PathBuf> {
     None
 }
 
-fn load_file(cli_path: Option<&Path>) -> Result<ConfigFile> {
+fn load_file(cli_path: Option<&Path>) -> Result<(ConfigFile, Option<PathBuf>)> {
     match resolve_config_path(cli_path) {
         Some(path) => {
             if !path.exists() {
                 if cli_path.is_some() || env::var("SWING_CONFIG").is_ok() {
                     bail!("config file not found: {}", path.display());
                 }
-                return Ok(ConfigFile::default());
+                return Ok((ConfigFile::default(), None));
             }
             let text = std::fs::read_to_string(&path)
                 .with_context(|| format!("reading config file {}", path.display()))?;
             let file: ConfigFile = toml::from_str(&text)
                 .with_context(|| format!("parsing config file {}", path.display()))?;
-            Ok(file)
+            Ok((file, Some(path)))
         }
-        None => Ok(ConfigFile::default()),
+        None => Ok((ConfigFile::default(), None)),
     }
 }
 
@@ -498,6 +538,49 @@ fn build_config(file: ConfigFile, get_env: impl Fn(&str) -> Option<String>) -> R
         bail!("publish keep_versions must be greater than 0");
     }
 
+    let dashboard_listen = match get_env("SWING_DASHBOARD_LISTEN") {
+        Some(v) => parse_dashboard_listen(&v).context("invalid SWING_DASHBOARD_LISTEN")?,
+        None => match file.dashboard.listen {
+            Some(v) => parse_dashboard_listen(&v).context("invalid [dashboard].listen")?,
+            None => DashboardListen::Addr(([127, 0, 0, 1], 8082).into()),
+        },
+    };
+
+    let dashboard_allowed_hosts = match get_env("SWING_DASHBOARD_ALLOWED_HOSTS") {
+        Some(v) => v
+            .split(',')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect(),
+        None => file.dashboard.allowed_hosts.unwrap_or_default(),
+    };
+
+    let dashboard_gateway = match get_env("SWING_DASHBOARD_GATEWAY") {
+        Some(v) => Some(v),
+        None => Some(
+            file.dashboard
+                .gateway
+                .unwrap_or_else(|| "http://127.0.0.1:8080".to_string()),
+        ),
+    }
+    .filter(|s| !s.is_empty());
+
+    let dashboard_custom_css = match get_env("SWING_DASHBOARD_CUSTOM_CSS") {
+        Some(v) => Some(PathBuf::from(v)),
+        None => file.dashboard.custom_css.map(PathBuf::from),
+    };
+
+    let dashboard_max_upload = match get_env("SWING_DASHBOARD_MAX_UPLOAD") {
+        Some(v) => parse_size(&v).context("invalid SWING_DASHBOARD_MAX_UPLOAD")?,
+        None => match file.dashboard.max_upload {
+            Some(v) => parse_size(&v).context("invalid [dashboard].max_upload")?,
+            None => 2 * (1u64 << 30),
+        },
+    };
+    if dashboard_max_upload == 0 {
+        bail!("dashboard max_upload must be greater than 0");
+    }
+
     Ok(Config {
         nostr: NostrConfig {
             secret_key: secret_key.into(),
@@ -535,13 +618,23 @@ fn build_config(file: ConfigFile, get_env: impl Fn(&str) -> Option<String>) -> R
             nip05: publish_nip05,
             keep_versions: publish_keep_versions,
         },
+        dashboard: DashboardConfig {
+            listen: dashboard_listen,
+            allowed_hosts: dashboard_allowed_hosts,
+            gateway: dashboard_gateway,
+            custom_css: dashboard_custom_css,
+            max_upload: dashboard_max_upload,
+        },
+        config_path: None,
     })
 }
 
 impl Config {
     pub fn load(cli_path: Option<&Path>) -> Result<Self> {
-        let file = load_file(cli_path)?;
-        build_config(file, process_env)
+        let (file, config_path) = load_file(cli_path)?;
+        let mut config = build_config(file, process_env)?;
+        config.config_path = config_path;
+        Ok(config)
     }
 }
 
@@ -885,6 +978,148 @@ mod tests {
         let key = NostrSecretKey::from("super-secret-nsec".to_string());
         assert_eq!(format!("{key:?}"), "<redacted>");
         assert_eq!(key.expose_secret(), "super-secret-nsec");
+    }
+
+    #[test]
+    fn dashboard_defaults_to_localhost_8082_with_default_gateway() {
+        let cfg = build_config(minimal_file(), |_| None).unwrap();
+        assert_eq!(
+            cfg.dashboard.listen,
+            DashboardListen::Addr(([127, 0, 0, 1], 8082).into())
+        );
+        assert!(cfg.dashboard.allowed_hosts.is_empty());
+        assert_eq!(
+            cfg.dashboard.gateway.as_deref(),
+            Some("http://127.0.0.1:8080")
+        );
+        assert_eq!(cfg.dashboard.custom_css, None);
+        assert_eq!(cfg.dashboard.max_upload, 2 * (1u64 << 30));
+    }
+
+    #[test]
+    fn dashboard_max_upload_env_overrides_file() {
+        let file = ConfigFile {
+            nostr: NostrFile {
+                secret_key: Some("k".into()),
+                relays: Some(vec!["wss://r".into()]),
+                ..Default::default()
+            },
+            dashboard: DashboardFile {
+                max_upload: Some("4GB".into()),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let cfg = build_config(file, |k| match k {
+            "SWING_DASHBOARD_MAX_UPLOAD" => Some("512MB".into()),
+            _ => None,
+        })
+        .unwrap();
+        assert_eq!(cfg.dashboard.max_upload, 512 * (1u64 << 20));
+    }
+
+    #[test]
+    fn dashboard_max_upload_zero_is_rejected() {
+        let err = build_config(minimal_file(), |k| match k {
+            "SWING_DASHBOARD_MAX_UPLOAD" => Some("0".into()),
+            _ => None,
+        })
+        .unwrap_err();
+        assert!(err.to_string().contains("max_upload"));
+    }
+
+    #[test]
+    fn dashboard_listen_off_disables_it() {
+        let cfg = build_config(minimal_file(), |k| match k {
+            "SWING_DASHBOARD_LISTEN" => Some("off".into()),
+            _ => None,
+        })
+        .unwrap();
+        assert_eq!(cfg.dashboard.listen, DashboardListen::Off);
+    }
+
+    #[test]
+    fn dashboard_listen_rejects_garbage() {
+        let err = build_config(minimal_file(), |k| match k {
+            "SWING_DASHBOARD_LISTEN" => Some("not-an-address".into()),
+            _ => None,
+        })
+        .unwrap_err();
+        assert!(err.to_string().contains("SWING_DASHBOARD_LISTEN"));
+    }
+
+    #[test]
+    fn dashboard_env_overrides_file() {
+        let file = ConfigFile {
+            nostr: NostrFile {
+                secret_key: Some("k".into()),
+                relays: Some(vec!["wss://r".into()]),
+                ..Default::default()
+            },
+            dashboard: DashboardFile {
+                listen: Some("127.0.0.1:9000".into()),
+                allowed_hosts: Some(vec!["example.com".into()]),
+                gateway: Some("http://gateway.example".into()),
+                custom_css: Some("/etc/swing/custom.css".into()),
+                max_upload: Some("4GB".into()),
+            },
+            ..Default::default()
+        };
+        let cfg = build_config(file, |k| match k {
+            "SWING_DASHBOARD_LISTEN" => Some("0.0.0.0:8082".into()),
+            "SWING_DASHBOARD_ALLOWED_HOSTS" => Some("a.example, b.example".into()),
+            "SWING_DASHBOARD_GATEWAY" => Some("http://env-gateway.example".into()),
+            "SWING_DASHBOARD_CUSTOM_CSS" => Some("/env/custom.css".into()),
+            _ => None,
+        })
+        .unwrap();
+        assert_eq!(
+            cfg.dashboard.listen,
+            DashboardListen::Addr(([0, 0, 0, 0], 8082).into())
+        );
+        assert_eq!(
+            cfg.dashboard.allowed_hosts,
+            vec!["a.example".to_string(), "b.example".to_string()]
+        );
+        assert_eq!(
+            cfg.dashboard.gateway.as_deref(),
+            Some("http://env-gateway.example")
+        );
+        assert_eq!(
+            cfg.dashboard.custom_css,
+            Some(PathBuf::from("/env/custom.css"))
+        );
+    }
+
+    #[test]
+    fn dashboard_gateway_empty_string_in_file_disables_links() {
+        let file = ConfigFile {
+            nostr: NostrFile {
+                secret_key: Some("k".into()),
+                relays: Some(vec!["wss://r".into()]),
+                ..Default::default()
+            },
+            dashboard: DashboardFile {
+                gateway: Some(String::new()),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let cfg = build_config(file, |_| None).unwrap();
+        assert_eq!(cfg.dashboard.gateway, None);
+    }
+
+    #[test]
+    fn config_load_remembers_the_config_file_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("swing.toml");
+        std::fs::write(
+            &path,
+            "[nostr]\nsecret_key = \"k\"\nrelays = [\"wss://r\"]\n",
+        )
+        .unwrap();
+        let cfg = Config::load(Some(&path)).unwrap();
+        assert_eq!(cfg.config_path.as_deref(), Some(path.as_path()));
     }
 
     #[test]

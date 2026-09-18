@@ -1,5 +1,6 @@
 pub mod agent;
 pub mod config;
+pub mod dashboard;
 pub mod health;
 pub mod ipfs;
 pub mod key;

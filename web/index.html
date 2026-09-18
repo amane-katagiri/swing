@@ -1,0 +1,228 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SWING Dashboard</title>
+<link rel="stylesheet" href="/style.css">
+<link rel="stylesheet" href="/custom.css">
+<style id="user-css"></style>
+</head>
+<body data-view="sites" data-style="list">
+<svg aria-hidden="true" focusable="false" style="position:absolute;width:0;height:0;overflow:hidden">
+  <defs>
+    <symbol id="icon-reload" viewBox="0 0 24 24">
+      <path d="M17.65 6.35A7.95 7.95 0 0 0 12 4a8 8 0 1 0 7.75 10h-2.08A6 6 0 1 1 12 6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"></path>
+    </symbol>
+  </defs>
+</svg>
+<div class="swing-shell">
+  <nav class="swing-nav" aria-label="Main navigation">
+    <div class="swing-brand">
+      <svg class="swing-ring-logo" viewBox="0 0 48 48" aria-hidden="true">
+        <g>
+          <circle class="swing-ring-logo-ring" cx="24" cy="24" r="18"></circle>
+          <circle class="swing-ring-logo-node" cx="24" cy="6" r="3"></circle>
+          <circle class="swing-ring-logo-node" cx="42" cy="24" r="3"></circle>
+          <circle class="swing-ring-logo-node" cx="24" cy="42" r="3"></circle>
+          <circle class="swing-ring-logo-node" cx="6" cy="24" r="3"></circle>
+        </g>
+      </svg>
+      <span class="swing-brand-name">SWING</span>
+    </div>
+    <ul class="swing-nav-list">
+      <li><a href="#/sites" data-route="sites" data-i18n="navSites">Sites</a></li>
+      <li><a href="#/webring" data-route="webring">Webring</a></li>
+      <li><a href="#/publish" data-route="publish" data-i18n="navPublish">Publish</a></li>
+      <li><a href="#/settings" data-route="settings" data-i18n="navSettings">Settings</a></li>
+    </ul>
+    <div class="swing-nav-footer">
+      <span class="swing-nav-mirror-set" id="nav-mirror-set"></span>
+      <span class="swing-nav-version" id="nav-version"></span>
+    </div>
+  </nav>
+
+  <main class="swing-main">
+
+    <section id="view-sites" class="swing-view" data-view-name="sites" hidden>
+      <div class="swing-view-head">
+        <div class="swing-heading-row">
+          <h1 data-i18n="sitesHeading">Sites</h1>
+          <button type="button" class="swing-icon-btn" data-action="reload-sites" aria-label="Reload" title="Reload" data-i18n-aria-label="reload" data-i18n-title="reload"><svg class="swing-icon" aria-hidden="true"><use href="#icon-reload"></use></svg></button>
+        </div>
+      </div>
+
+      <div class="swing-panel swing-mirror-add">
+        <h2 data-i18n="addToMirrorHeading">Add to mirror</h2>
+        <form id="mirror-add-form" class="swing-inline-form">
+          <input type="text" name="keys" class="swing-input" data-i18n-placeholder="addToMirrorPlaceholder" placeholder="npub1…, hex, or nprofile1… (space or comma separated)" autocomplete="off">
+          <button type="submit" class="swing-btn swing-btn-accent" data-i18n="add" disabled>Add</button>
+        </form>
+        <div class="swing-op-result" id="mirror-add-result" hidden></div>
+      </div>
+
+      <div class="swing-toolbar swing-toolbar-row">
+        <div class="swing-style-switch" role="group" aria-label="Display style" data-target="sites">
+          <button type="button" data-style-value="list" data-i18n="styleList">List</button>
+          <button type="button" data-style-value="cards" data-i18n="styleCards">Cards</button>
+          <button type="button" data-style-value="table" data-i18n="styleTable">Table</button>
+        </div>
+        <div class="swing-sort-switch" role="group" aria-label="Sort order" data-i18n-aria-label="sortGroupLabel">
+          <button type="button" data-sort-value="updated" data-i18n="sortUpdated">Updated</button>
+          <button type="button" data-sort-value="name" data-i18n="sortName">Name</button>
+          <button type="button" data-sort-value="pubkey" data-i18n="sortPubkey">Pubkey</button>
+        </div>
+        <label class="swing-checkbox swing-toolbar-end"><input type="checkbox" id="sites-filter-stored"> <span data-i18n="storedOnly">Stored only</span></label>
+      </div>
+      <div class="swing-toolbar swing-toolbar-row">
+        <input type="search" id="sites-filter-text" class="swing-input" data-i18n-placeholder="filterPlaceholder" placeholder="Filter by name, domain, cid…">
+      </div>
+
+      <div id="sites-status" class="swing-status" aria-live="polite"></div>
+      <div id="sites-content"></div>
+
+      <section id="sites-unfollowed" class="swing-section" hidden>
+        <h2 data-i18n="unfollowedHeading">Unfollowed but still stored</h2>
+        <p class="swing-hint" id="unfollowed-note"></p>
+        <div id="unfollowed-content"></div>
+      </section>
+
+      <section class="swing-panel swing-storage-check">
+        <h2 data-i18n="storageCheckHeading">Storage check</h2>
+        <p class="swing-hint" data-i18n="storageCheckHint">Compares every stored version against Kubo's MFS. Not run automatically &mdash; it can take a while.</p>
+        <button type="button" id="run-status-check" class="swing-btn" data-i18n="runStorageCheck">Run storage check</button>
+        <div id="status-check-result"></div>
+      </section>
+    </section>
+
+    <section id="view-webring" class="swing-view" data-view-name="webring" hidden>
+      <div class="swing-view-head">
+        <h1>Webring</h1>
+      </div>
+
+      <form id="webring-query-form" class="swing-toolbar">
+        <label class="swing-field"><span data-i18n="rootLabel">Root</span>
+          <input type="text" name="root" class="swing-input" data-i18n-placeholder="rootPlaceholder" placeholder="self">
+        </label>
+        <label class="swing-field"><span data-i18n="depthLabel">Depth</span>
+          <input type="number" name="depth" class="swing-input swing-input-narrow" min="0" max="4" value="2">
+        </label>
+        <button type="submit" class="swing-btn swing-btn-accent" data-i18n="update">Update</button>
+      </form>
+
+      <div class="swing-style-switch" role="group" aria-label="Display style" data-target="webring">
+        <button type="button" data-style-value="graph" data-i18n="styleGraph">Graph</button>
+        <button type="button" data-style-value="list" data-i18n="styleList">List</button>
+        <button type="button" data-style-value="ascii" data-i18n="styleAscii">ASCII</button>
+        <button type="button" data-style-value="source" data-i18n="styleSource">Source</button>
+      </div>
+
+      <div id="webring-status" class="swing-status" aria-live="polite"></div>
+
+      <div id="webring-layout" class="swing-webring-layout" data-detail="false">
+        <div id="webring-content" class="swing-webring-content"></div>
+        <aside id="webring-detail" class="swing-panel swing-node-detail" hidden></aside>
+      </div>
+    </section>
+
+    <section id="view-publish" class="swing-view" data-view-name="publish" hidden>
+      <div class="swing-view-head">
+        <h1 data-i18n="publishHeading">Publish</h1>
+      </div>
+
+      <div class="swing-panel swing-identity">
+        <h2 data-i18n="yourIdentityHeading">Your identity</h2>
+        <dl id="publish-identity">
+          <dt>npub</dt><dd><code id="pub-npub"></code><button type="button" class="swing-btn swing-copy-btn" data-copy-target="pub-npub" data-i18n="copy">Copy</button></dd>
+          <dt>hex</dt><dd><code id="pub-hex"></code><button type="button" class="swing-btn swing-copy-btn" data-copy-target="pub-hex" data-i18n="copy">Copy</button></dd>
+          <dt data-i18n="mirrorSetLabel">Mirror set</dt><dd id="pub-mirror-set"></dd>
+          <dt data-i18n="relaysLabel">Relays</dt><dd><ul id="pub-relays" class="swing-plain-list"></ul></dd>
+        </dl>
+      </div>
+
+      <section class="swing-panel swing-my-sites">
+        <div class="swing-view-head">
+          <div class="swing-heading-row">
+            <h2 data-i18n="mySitesHeading">My sites</h2>
+            <button type="button" class="swing-icon-btn" data-action="reload-my-sites" aria-label="Reload" title="Reload" data-i18n-aria-label="reload" data-i18n-title="reload"><svg class="swing-icon" aria-hidden="true"><use href="#icon-reload"></use></svg></button>
+          </div>
+        </div>
+        <div id="my-sites-status" class="swing-status" aria-live="polite"></div>
+        <div id="my-sites-content"></div>
+      </section>
+
+      <form id="publish-form" class="swing-panel">
+        <h2 data-i18n="publishFormHeading">Publish a site</h2>
+
+        <label class="swing-field"><span data-i18n="folderLabel">Folder</span>
+          <input type="file" name="folder" id="publish-upload-input" webkitdirectory multiple>
+        </label>
+        <p class="swing-hint" id="publish-upload-info"></p>
+        <div class="swing-progress" id="publish-progress" hidden>
+          <div class="swing-progress-bar"></div>
+        </div>
+
+        <label class="swing-field"><span data-i18n="siteLabel">Site (d tag)</span>
+          <input type="text" name="site" class="swing-input" required placeholder="example.com">
+        </label>
+        <label class="swing-field"><span data-i18n="urlLabel">URL (optional)</span>
+          <input type="url" name="url" class="swing-input" placeholder="https://example.com/">
+        </label>
+        <label class="swing-field"><span data-i18n="messageLabel">Message (optional)</span>
+          <textarea name="message" class="swing-input" rows="3"></textarea>
+        </label>
+        <label class="swing-field"><span>NIP-05</span>
+          <select name="nip05" class="swing-input">
+            <option value="" data-i18n="nip05Default">Use configured default</option>
+            <option value="off">off</option>
+            <option value="warn">warn</option>
+            <option value="require">require</option>
+          </select>
+        </label>
+        <button type="submit" class="swing-btn swing-btn-accent" data-i18n="publishBtn" disabled>Publish</button>
+      </form>
+
+      <div id="publish-status" class="swing-status" aria-live="polite"></div>
+      <div id="publish-result" class="swing-panel" hidden></div>
+    </section>
+
+    <section id="view-settings" class="swing-view" data-view-name="settings" hidden>
+      <div class="swing-view-head">
+        <h1 data-i18n="settingsHeading">Settings</h1>
+      </div>
+      <p class="swing-hint" data-i18n="settingsReadonlyHint">Configuration is read-only here. Change swing.toml or the environment on the agent's host, then restart the agent.</p>
+      <div id="settings-config-status" class="swing-status" aria-live="polite"></div>
+      <div id="settings-config-content"></div>
+
+      <div class="swing-panel swing-display-settings">
+        <h2 data-i18n="displayHeading">Display</h2>
+        <label class="swing-field"><span data-i18n="themeLabel">Theme</span>
+          <select id="theme-select" class="swing-input">
+            <option value="auto" data-i18n="themeAuto">Match system</option>
+            <option value="light" data-i18n="themeLight">Light</option>
+            <option value="dark" data-i18n="themeDark">Dark</option>
+          </select>
+        </label>
+        <label class="swing-field"><span data-i18n="langLabel">Language</span>
+          <select id="lang-select" class="swing-input">
+            <option value="auto" data-i18n="langAuto">Auto</option>
+            <option value="en" data-i18n="langEn">English</option>
+            <option value="ja" data-i18n="langJa">日本語</option>
+          </select>
+        </label>
+        <label class="swing-field"><span data-i18n="customCssLabel">Custom CSS</span>
+          <textarea id="user-css-input" class="swing-input swing-mono" rows="10" spellcheck="false" placeholder="/* e.g. */&#10;:root { --swing-accent: hotpink; }"></textarea>
+        </label>
+        <div class="swing-css-actions">
+          <button type="button" id="user-css-apply" class="swing-btn swing-btn-accent" data-i18n="apply">Apply</button>
+          <button type="button" id="user-css-reset" class="swing-btn" data-i18n="reset">Reset</button>
+        </div>
+      </div>
+    </section>
+
+  </main>
+</div>
+<footer class="swing-page-footer" id="page-footer"></footer>
+<script type="module" src="/app.js"></script>
+</body>
+</html>

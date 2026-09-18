@@ -1,7 +1,9 @@
 use std::collections::HashSet;
 use std::fmt;
+use std::path::PathBuf;
 
 use anyhow::{Result, bail};
+use nostr_sdk::prelude::PublicKey;
 
 use crate::config::Config;
 use crate::ipfs::{IpfsClient, KuboStore, MfsEntry};
@@ -65,7 +67,7 @@ pub fn version_path(layout: &MfsLayout, key: &str, created_at: u64) -> Option<St
     Some(layout.agent_version(pubkey_hex, d, created_at))
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct Garbage {
     pub paths: Vec<String>,
     pub unlisted: Vec<(String, String)>,
@@ -143,57 +145,138 @@ pub async fn find_garbage<C: KuboStore>(ipfs: &C, layout: &MfsLayout, state: &St
     garbage
 }
 
-pub async fn status(config: &Config) -> Result<()> {
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VersionStatus {
+    pub pubkey: PublicKey,
+    pub d: String,
+    pub path: String,
+    pub cid: String,
+    pub size: u64,
+    pub created_at: u64,
+    pub health: VersionHealth,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum StatusLine {
+    Version(VersionStatus),
+    InvalidKey { key: String, cid: String },
+}
+
+#[derive(Debug, Clone)]
+pub struct StatusReport {
+    pub state_path: PathBuf,
+    pub lines: Vec<StatusLine>,
+    pub garbage: Garbage,
+    pub problems: usize,
+}
+
+impl StatusReport {
+    pub fn versions(&self) -> impl Iterator<Item = &VersionStatus> {
+        self.lines.iter().filter_map(|line| match line {
+            StatusLine::Version(v) => Some(v),
+            StatusLine::InvalidKey { .. } => None,
+        })
+    }
+}
+
+pub async fn collect_status<C: KuboStore>(ipfs: &C, config: &Config) -> Result<StatusReport> {
     let state_path = config.agent.state_dir.join("state.json");
     let state = State::load(&state_path).await?;
-    let ipfs = IpfsClient::new(config.ipfs.api.clone());
     let layout = MfsLayout::new(config.ipfs.mfs_root.clone());
 
     let mut problems = 0usize;
-    println!("Stored versions ({}):", state_path.display());
-    if state.sites.is_empty() {
-        println!("  (none)");
-    }
+    let mut lines = Vec::new();
     for (key, versions) in &state.sites {
         for v in versions {
-            let Some(path) = version_path(&layout, key, v.created_at) else {
-                println!("  {key} cid={} [invalid site key]", v.cid);
-                problems += 1;
-                continue;
+            let (path, pubkey, d) = match version_path(&layout, key, v.created_at)
+                .zip(state::split_site_key(key))
+                .and_then(|(path, (pubkey_hex, d))| {
+                    PublicKey::from_hex(pubkey_hex)
+                        .ok()
+                        .map(|pubkey| (path, pubkey, d.to_string()))
+                }) {
+                Some(parsed) => parsed,
+                None => {
+                    lines.push(StatusLine::InvalidKey {
+                        key: key.clone(),
+                        cid: v.cid.clone(),
+                    });
+                    problems += 1;
+                    continue;
+                }
             };
-            let health = check_version(&ipfs, &path, &v.cid).await;
-            let detail = match &health {
-                VersionHealth::Ok => String::new(),
-                other => format!(": {other}"),
-            };
-            println!(
-                "  {path} cid={} size={} [{}]{detail}",
-                v.cid,
-                v.size,
-                health.label()
-            );
+            let health = check_version(ipfs, &path, &v.cid).await;
             if health != VersionHealth::Ok {
                 problems += 1;
+            }
+            lines.push(StatusLine::Version(VersionStatus {
+                pubkey,
+                d,
+                path,
+                cid: v.cid.clone(),
+                size: v.size,
+                created_at: v.created_at,
+                health,
+            }));
+        }
+    }
+
+    let garbage = find_garbage(ipfs, &layout, &state).await;
+    problems += garbage.paths.len() + garbage.unlisted.len();
+
+    Ok(StatusReport {
+        state_path,
+        lines,
+        garbage,
+        problems,
+    })
+}
+
+fn print_status(report: &StatusReport) {
+    println!("Stored versions ({}):", report.state_path.display());
+    if report.lines.is_empty() {
+        println!("  (none)");
+    }
+    for line in &report.lines {
+        match line {
+            StatusLine::InvalidKey { key, cid } => {
+                println!("  {key} cid={cid} [invalid site key]");
+            }
+            StatusLine::Version(v) => {
+                let detail = match &v.health {
+                    VersionHealth::Ok => String::new(),
+                    other => format!(": {other}"),
+                };
+                println!(
+                    "  {} cid={} size={} [{}]{detail}",
+                    v.path,
+                    v.cid,
+                    v.size,
+                    v.health.label()
+                );
             }
         }
     }
 
-    let garbage = find_garbage(&ipfs, &layout, &state).await;
     println!();
     println!("Not in state (the agent removes them on its next sweep):");
-    if garbage.paths.is_empty() && garbage.unlisted.is_empty() {
+    if report.garbage.paths.is_empty() && report.garbage.unlisted.is_empty() {
         println!("  (none)");
     }
-    for path in &garbage.paths {
+    for path in &report.garbage.paths {
         println!("  {path}");
     }
-    for (path, error) in &garbage.unlisted {
+    for (path, error) in &report.garbage.unlisted {
         println!("  {path} [list failed]: {error}");
     }
-    problems += garbage.paths.len() + garbage.unlisted.len();
+}
 
-    if problems > 0 {
-        bail!("{problems} problem(s) found");
+pub async fn status(config: &Config) -> Result<()> {
+    let ipfs = IpfsClient::new(config.ipfs.api.clone());
+    let report = collect_status(&ipfs, config).await?;
+    print_status(&report);
+    if report.problems > 0 {
+        bail!("{} problem(s) found", report.problems);
     }
     Ok(())
 }

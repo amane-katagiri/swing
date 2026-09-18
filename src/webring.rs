@@ -94,7 +94,7 @@ pub async fn crawl<S: FollowSetSource>(
     Ok(out)
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Graph {
     pub nodes: BTreeMap<PublicKey, usize>,
     pub without_follow_set: BTreeSet<PublicKey>,
@@ -158,12 +158,12 @@ pub fn build_graph(crawl: &Crawl) -> Graph {
     }
 }
 
-struct Links {
-    mutual: Vec<(PublicKey, PublicKey)>,
-    one_way: Vec<(PublicKey, PublicKey)>,
+pub struct Links {
+    pub mutual: Vec<(PublicKey, PublicKey)>,
+    pub one_way: Vec<(PublicKey, PublicKey)>,
 }
 
-fn split_links<K: Ord>(graph: &Graph, key: impl Fn(&PublicKey) -> K) -> Links {
+pub fn split_links<K: Ord>(graph: &Graph, key: impl Fn(&PublicKey) -> K) -> Links {
     let mut mutual = Vec::new();
     let mut one_way = Vec::new();
     for (from, to) in &graph.edges {
@@ -178,15 +178,15 @@ fn split_links<K: Ord>(graph: &Graph, key: impl Fn(&PublicKey) -> K) -> Links {
     Links { mutual, one_way }
 }
 
-fn short_npub(pk: &PublicKey) -> String {
+pub fn short_npub(pk: &PublicKey) -> String {
     let npub = mirror::npub(pk);
     format!("{}…{}", &npub[..12], &npub[npub.len() - 6..])
 }
 
-fn site_names(
+pub fn site_name_lists(
     nodes: &BTreeMap<PublicKey, usize>,
     sites: &[SiteEvent],
-) -> HashMap<PublicKey, String> {
+) -> HashMap<PublicKey, Vec<String>> {
     let mut by_account: HashMap<PublicKey, BTreeSet<&str>> = HashMap::new();
     for site in sites {
         if nodes.contains_key(&site.pubkey) {
@@ -195,11 +195,22 @@ fn site_names(
     }
     by_account
         .into_iter()
-        .map(|(pk, ds)| (pk, ds.into_iter().collect::<Vec<_>>().join(", ")))
+        .map(|(pk, ds)| (pk, ds.into_iter().map(str::to_string).collect()))
         .collect()
 }
 
-fn text_labels(
+#[cfg(test)]
+fn site_names(
+    nodes: &BTreeMap<PublicKey, usize>,
+    sites: &[SiteEvent],
+) -> HashMap<PublicKey, String> {
+    site_name_lists(nodes, sites)
+        .into_iter()
+        .map(|(pk, ds)| (pk, ds.join(", ")))
+        .collect()
+}
+
+pub fn text_labels(
     nodes: &BTreeMap<PublicKey, usize>,
     names: &HashMap<PublicKey, String>,
 ) -> HashMap<PublicKey, String> {
@@ -227,7 +238,7 @@ fn text_labels(
         .collect()
 }
 
-fn render_text(
+pub fn render_text(
     graph: &Graph,
     names: &HashMap<PublicKey, String>,
     mirror_set: &str,
@@ -295,7 +306,7 @@ fn graph_label(pk: &PublicKey, names: &HashMap<PublicKey, String>) -> (Option<St
     (names.get(pk).cloned(), short_npub(pk))
 }
 
-fn render_dot(graph: &Graph, names: &HashMap<PublicKey, String>) -> String {
+pub fn render_dot(graph: &Graph, names: &HashMap<PublicKey, String>) -> String {
     let escape = |s: &str| s.replace('\\', "\\\\").replace('"', "\\\"");
     let links = split_links(graph, |pk| *pk);
     let mut out = String::from("digraph swing {\n  rankdir=LR;\n  node [shape=box];\n");
@@ -324,7 +335,7 @@ fn render_dot(graph: &Graph, names: &HashMap<PublicKey, String>) -> String {
     out
 }
 
-fn render_mermaid(graph: &Graph, names: &HashMap<PublicKey, String>) -> String {
+pub fn render_mermaid(graph: &Graph, names: &HashMap<PublicKey, String>) -> String {
     let escape = |s: &str| {
         s.replace('#', "#35;")
             .replace('&', "#amp;")
@@ -357,26 +368,21 @@ fn render_mermaid(graph: &Graph, names: &HashMap<PublicKey, String>) -> String {
     out
 }
 
-pub async fn show(config: &Config, inputs: &[String], depth: usize, format: Format) -> Result<()> {
-    let roots = mirror::parse_pubkey_inputs(inputs)?;
-    let relay = RelayClient::connect(&config.nostr.secret_key, &config.nostr.relays).await?;
-    let roots = if roots.is_empty() {
-        vec![relay.keys.public_key()]
-    } else {
-        roots
-    };
-    let result = show_with(&relay, config, &roots, depth, format).await;
-    relay.client.shutdown().await;
-    result
+#[derive(Debug, Clone)]
+pub struct WebringView {
+    pub graph: Graph,
+    pub name_lists: HashMap<PublicKey, Vec<String>>,
+    pub names: HashMap<PublicKey, String>,
+    pub mirror_set: String,
+    pub depth: usize,
 }
 
-async fn show_with(
+pub async fn collect(
     relay: &RelayClient,
     config: &Config,
     roots: &[PublicKey],
     depth: usize,
-    format: Format,
-) -> Result<()> {
+) -> Result<WebringView> {
     let source = RelaySource {
         relay,
         mirror_set: &config.nostr.mirror_set,
@@ -390,11 +396,35 @@ async fn show_with(
         .filter_map(|e| nostr::parse_site_event(e, config.nostr.site_event_kind).ok())
         .collect();
     let latest: Vec<SiteEvent> = nostr::select_latest(&parsed).into_values().collect();
-    let names = site_names(&graph.nodes, &latest);
+    let name_lists = site_name_lists(&graph.nodes, &latest);
+    let names = name_lists
+        .iter()
+        .map(|(pk, ds)| (*pk, ds.join(", ")))
+        .collect();
+    Ok(WebringView {
+        graph,
+        name_lists,
+        names,
+        mirror_set: config.nostr.mirror_set.clone(),
+        depth,
+    })
+}
+
+pub async fn show(config: &Config, inputs: &[String], depth: usize, format: Format) -> Result<()> {
+    let roots = mirror::parse_pubkey_inputs(inputs)?;
+    let relay = RelayClient::connect(&config.nostr.secret_key, &config.nostr.relays).await?;
+    let roots = if roots.is_empty() {
+        vec![relay.keys.public_key()]
+    } else {
+        roots
+    };
+    let result = collect(&relay, config, &roots, depth).await;
+    relay.client.shutdown().await;
+    let view = result?;
     let rendered = match format {
-        Format::Text => render_text(&graph, &names, &config.nostr.mirror_set, depth),
-        Format::Dot => render_dot(&graph, &names),
-        Format::Mermaid => render_mermaid(&graph, &names),
+        Format::Text => render_text(&view.graph, &view.names, &view.mirror_set, view.depth),
+        Format::Dot => render_dot(&view.graph, &view.names),
+        Format::Mermaid => render_mermaid(&view.graph, &view.names),
     };
     print!("{rendered}");
     Ok(())

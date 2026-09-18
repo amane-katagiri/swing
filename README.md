@@ -115,6 +115,31 @@ docker compose exec mirror swing status
 docker compose logs -f mirror
 ```
 
+## ダッシュボード
+
+`mirror` コンテナ（`swing agent`）はブラウザ向けの管理画面も兼ねています。起動後、`http://127.0.0.1:8082/` を開いてください。
+
+```bash
+docker compose up -d
+# ブラウザで http://127.0.0.1:8082/ を開く
+```
+
+- **Sites**: `swing sites` と同じ内容を一覧表示し、そのまま「mirror に追加」「mirror から外す」を操作できます。ボタンひとつで `swing status` 相当のストレージチェックも実行できます。
+- **Webring**: `swing webring` のグラフを、ドラッグ・パン・ズームできる図として表示します。ノードを選ぶとレプリカ数の詳細が見られ、そこから mirror への追加もできます。
+- **Publish**: これまでに公開したサイトの一覧（「My sites」）から選び直したり、新しく publish したりできます。ブラウザから直接フォルダを選んでアップロードする方式なので、**Docker Compose でも volume のマウントは不要**です（既定の上限は 2GB、`SWING_DASHBOARD_MAX_UPLOAD` で変更可）。
+- **Settings**: 現在の設定を読み取り専用で表示します（秘密鍵の値は一切表示されません）。ブラウザ側のテーマ・表示言語（日本語/English）・カスタム CSS もここで設定します。
+
+ダッシュボードは既定で `127.0.0.1` だけで待ち受け、認証はありません（信頼できる利用者だけがアクセスできる前提です）。ホストでの公開先を変えたい場合や、ダッシュボード自体を無効にしたい場合は `.env` に次のように設定してください。
+
+```bash
+# ホストでの公開先を変える（既定は 127.0.0.1:8082）
+SWING_DASHBOARD_BIND=0.0.0.0:8082
+# ダッシュボード自体を無効にする（Docker Compose でも直接バイナリを動かす場合でも共通）
+SWING_DASHBOARD_LISTEN=off
+```
+
+見た目は `--swing-*` の CSS 変数と `SWING_DASHBOARD_CUSTOM_CSS`（`/custom.css` として配信される追加スタイルシート）でカスタマイズできます。API の詳しい仕様やガード（Host 検証、CSRF 対策など）は [`docs/architecture/dashboard.md`](docs/architecture/dashboard.md) を参照してください。
+
 ## 自分のサイトを公開する
 
 自分の静的サイトを SWING に乗せて公開するには、`swing publish` を使います。
@@ -298,12 +323,18 @@ TOML の設定ファイル（`swing.toml`）を使う場合と、環境変数だ
 | `SWING_GATEWAY_BIND` | (なし、compose の gateway 用) | gateway の Caddy を公開するアドレス（既定 `127.0.0.1:8081`） |
 | `SWING_PUBLISH_KEEP_VERSIONS` | `publish.keep_versions` | `swing publish` が自分のノードに残す版の数（既定 `5`） |
 | `SWING_PUBLISH_NIP05` | `publish.nip05` | `swing publish` の NIP-05 検証モード（既定 `warn`。CLI の `--nip05` が優先） |
+| `SWING_DASHBOARD_LISTEN` | `dashboard.listen` | ダッシュボードの待ち受けアドレス（既定 `127.0.0.1:8082`）。`off` で無効。付属の `compose.yaml` ではコンテナ内の既定値として `0.0.0.0:8082` を使うが、`.env` で上書きできる（`off` にすればコンテナでも無効化できる） |
+| `SWING_DASHBOARD_ALLOWED_HOSTS` | `dashboard.allowed_hosts` | Host ヘッダで追加で許可するホスト名（ポート抜き、カンマ区切り） |
+| `SWING_DASHBOARD_GATEWAY` | `dashboard.gateway` | ダッシュボードから保存済みサイトを開くリンクの IPFS Gateway（既定 `http://127.0.0.1:8080`）。環境変数では空文字にできない |
+| `SWING_DASHBOARD_CUSTOM_CSS` | `dashboard.custom_css` | ダッシュボードに読み込ませる追加 CSS ファイルのパス |
+| `SWING_DASHBOARD_MAX_UPLOAD` | `dashboard.max_upload` | Publish 画面のフォルダアップロードで受け付けるボディの上限（既定 `2GB`） |
+| `SWING_DASHBOARD_BIND` | (なし、compose の mirror 用) | ダッシュボードをホストのどこに公開するか（既定 `127.0.0.1:8082`） |
 
 ## プライバシーと注意点
 
 SWING は公開の IPFS Mainnet をそのまま使うため、匿名性は提供しません。他の IPFS peer から、あなたの Peer ID・IP アドレス・提供している CID などの関連を観測される可能性があります。もともと公開 Web サイトを保存することが前提のツールなので、この点は許容した上でご利用ください。
 
-一方で、Kubo の RPC やローカルのゲートウェイ、管理 UI は外部に公開しません。Docker Compose の構成では、外部に公開されるのは IPFS swarm 用のポート（`4001`）だけで、ゲートウェイは `127.0.0.1` だけで待ち受けます。`gateway` プロファイルで外部に配信するのは `SWING_GATEWAY_HOSTS` のホストの DNSLink だけです。
+一方で、Kubo の RPC やローカルのゲートウェイ、ダッシュボード（管理 UI）は外部に公開しません。Docker Compose の構成では、外部に公開されるのは IPFS swarm 用のポート（`4001`）だけで、ゲートウェイ（`8080`）とダッシュボード（`8082`）はどちらも既定で `127.0.0.1` だけで待ち受けます。ダッシュボードには認証が無いため、`SWING_DASHBOARD_BIND` を変えて外部に公開する場合は自己責任で行ってください。`gateway` プロファイルで外部に配信するのは `SWING_GATEWAY_HOSTS` のホストの DNSLink だけです。
 
 Nostr の秘密鍵は `.env` に平文で保存されます。サイト公開・ミラー参加専用の鍵を新しく作り、他の用途の鍵とは分けて扱うことをおすすめします。`.env` を Git にコミットしないよう注意してください。
 

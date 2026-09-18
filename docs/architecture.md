@@ -9,6 +9,7 @@
 | [`architecture/nip05.md`](architecture/nip05.md) | NIP-05 検証（agent と publish で共通） |
 | [`architecture/kubo.md`](architecture/kubo.md) | MFS の使い方、Kubo RPC、Kubo のバージョン |
 | [`architecture/docker.md`](architecture/docker.md) | Dockerfile、compose、Gateway |
+| [`architecture/dashboard.md`](architecture/dashboard.md) | `swing agent` 内蔵の Web ダッシュボード（HTTP API、ガード、画面、CSS カスタマイズ） |
 
 ## 構成要素
 
@@ -17,6 +18,7 @@
 | 言語・ランタイム | Rust (edition 2024)、`tokio` |
 | Nostr | `nostr-sdk` 0.45 |
 | Kubo RPC | `reqwest`（rustls、multipart、stream）で直接呼ぶ |
+| ダッシュボードの HTTP サーバ | `axum` 0.8（`hyper`/`tower` は既存の依存から） |
 | 設定 | `toml` + `serde`、環境変数が TOML を上書き |
 | CLI | `clap` derive |
 | ログ | `tracing` + `tracing-subscriber`（`RUST_LOG`、既定 `info`） |
@@ -45,6 +47,8 @@ swing/
     replicas.rs      レプリカ報告の集計、replicas サブコマンド
     webring.rs       Follow Set のたどり方とグラフの組み立て・出力、webring サブコマンド
     nip05.rs         NIP-05 検証
+    dashboard/       agent 内蔵の Web ダッシュボード（mod.rs, guard.rs, api.rs, dto.rs, assets.rs）。詳細は architecture/dashboard.md
+  web/               ダッシュボードのフロント（index.html, style.css, app.js, graph.js）。ビルド工程なしで include_str! によりバイナリへ埋め込む
   tests/
     kubo_integration.rs          Kubo 連携の統合テスト（#[ignore]）
     nostr_relay_integration.rs   relay 連携の統合テスト（#[ignore]）
@@ -53,6 +57,8 @@ swing/
   Dockerfile, compose.yaml, .env.example, swing.example.toml
   docs/                役割は AGENTS.md を参照
 ```
+
+`mirror.rs`・`health.rs`・`replicas.rs`・`webring.rs`・`publish.rs`・`nostr.rs` は、relay/Kubo とやり取りして値を返す `collect_*` 系の関数と、それを表示する CLI 側の薄い関数とに分かれている。ダッシュボードの API ハンドラは同じ `collect_*` 関数を呼び、DTO に変換するだけで、CLI の出力は変えていない。
 
 ## CLI
 
@@ -78,7 +84,7 @@ swing key generate
 
 ### agent
 
-Follow Set の対象者のサイトを MFS に保存・削除し続ける常駐プロセス。[`architecture/agent.md`](architecture/agent.md) を参照。
+Follow Set の対象者のサイトを MFS に保存・削除し続ける常駐プロセス。[`architecture/agent.md`](architecture/agent.md) を参照。`[dashboard].listen` が `off` でなければ、同じプロセス内でブラウザ向けの管理画面も立ち上がる。詳しくは [`architecture/dashboard.md`](architecture/dashboard.md) を参照。
 
 ### publish
 
@@ -194,6 +200,13 @@ report_ttl = "3d"                   # SWING_REPORT_TTL
 [publish]
 nip05 = "warn"                      # SWING_PUBLISH_NIP05（--nip05 が優先）
 keep_versions = 5                   # SWING_PUBLISH_KEEP_VERSIONS
+
+[dashboard]
+listen = "127.0.0.1:8082"           # SWING_DASHBOARD_LISTEN（"off" で無効）
+allowed_hosts = []                  # SWING_DASHBOARD_ALLOWED_HOSTS（カンマ区切り、ポート抜き）
+gateway = "http://127.0.0.1:8080"   # SWING_DASHBOARD_GATEWAY（空文字でリンクを出さない）
+#custom_css = "/path/to/custom.css" # SWING_DASHBOARD_CUSTOM_CSS
+max_upload = "2GB"                  # SWING_DASHBOARD_MAX_UPLOAD（POST /api/publish/upload のボディ上限。0 はエラー）
 ```
 
 TOML キーの無い環境変数:
@@ -203,6 +216,8 @@ TOML キーの無い環境変数:
 | `SWING_CONFIG` | 設定ファイルのパス | `./swing.toml` |
 | `SWING_FETCH_TIMEOUT` | 1 サイト分の取得（`dag/export`）全体のタイムアウト | `15m` |
 | `SWING_FETCH_IDLE_TIMEOUT` | `dag/export` で次のデータ（最初のブロックを含む）を待つ上限 | `2m` |
+
+ダッシュボード（`[dashboard]`）の詳細は [`architecture/dashboard.md`](architecture/dashboard.md#設定dashboard) を参照。`listen` は `off` か `SocketAddr` としてパースできる値でなければ設定エラー。`SWING_DASHBOARD_GATEWAY` は環境変数では空文字にできず（他の環境変数と同じく空文字は「未設定」扱いになるため）既定値に戻ってしまう。空にしたい場合は TOML の `gateway = ""` を使う。
 
 検証:
 
@@ -231,7 +246,7 @@ TOML キーの無い環境変数:
 
 ## テスト
 
-- ユニットテスト: `cargo test`。agent のテストは MFS をメモリ上で真似る `FakeKubo` と `FakeNip05` を使う。
+- ユニットテスト: `cargo test`。agent のテストは MFS をメモリ上で真似る `FakeKubo` と `FakeNip05` を使う。ダッシュボードのテスト（`src/dashboard/mod.rs`・`guard.rs` の `#[cfg(test)]`）は axum の `Router` に `tower::ServiceExt::oneshot` でリクエストを直接投げ、実際に TCP で listen しない。ガードの Host/Origin 判定は純粋関数（`extract_host`・`host_allowed`・`origin_matches_host`）を単体でも検証する。`/api/config` が秘密鍵の値を一切含まないことも確認する。
 - 統合テスト（`#[ignore]`、ローカルの Kubo / relay が必要。公開ネットワークには接続しない）:
 
 ```bash

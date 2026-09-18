@@ -245,18 +245,44 @@ impl<T: ReportRelay + Send + Sync> ReportRelay for std::sync::Arc<T> {
     }
 }
 
-pub fn print_relay_send_results(
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RelaySendResult {
+    pub relay: String,
+    pub ok: bool,
+    pub error: Option<String>,
+}
+
+pub fn relay_send_results(
     relays: &[String],
     output: &Output<EventId, EventSendStatus, String>,
-) {
-    for relay_url in relays {
-        let sent_ok = RelayUrl::parse(relay_url)
-            .map(|u| output.success.contains_key(&u))
-            .unwrap_or(false);
-        if sent_ok {
-            println!("  \u{2713} {relay_url}");
+) -> Vec<RelaySendResult> {
+    relays
+        .iter()
+        .map(|relay_url| {
+            let parsed = RelayUrl::parse(relay_url).ok();
+            let ok = parsed
+                .as_ref()
+                .is_some_and(|u| output.success.contains_key(u));
+            let error = if ok {
+                None
+            } else {
+                parsed.as_ref().and_then(|u| output.failed.get(u)).cloned()
+            };
+            RelaySendResult {
+                relay: relay_url.clone(),
+                ok,
+                error,
+            }
+        })
+        .collect()
+}
+
+pub fn print_relay_send_result_lines(results: &[RelaySendResult]) {
+    for result in results {
+        if result.ok {
+            println!("  \u{2713} {}", result.relay);
         } else {
-            println!("  \u{2717} {relay_url}");
+            println!("  \u{2717} {}", result.relay);
         }
     }
 }
@@ -1006,6 +1032,49 @@ mod tests {
 
         let ev = report_with_tags(&reporter, &d, &a, "not-a-cid");
         assert!(parse_replica_report(&ev, 35981, 35980).is_err());
+    }
+
+    #[test]
+    fn relay_send_results_reports_success_and_failure_per_relay() {
+        let id = EventBuilder::new(Kind::TextNote, "")
+            .finalize(&keys())
+            .unwrap()
+            .id;
+        let mut output: Output<EventId, EventSendStatus, String> = Output::new(id);
+        let ok_url = RelayUrl::parse("wss://ok.example").unwrap();
+        let failed_url = RelayUrl::parse("wss://failed.example").unwrap();
+        output.success.insert(ok_url, EventSendStatus::Sent);
+        output
+            .failed
+            .insert(failed_url, "connection refused".to_string());
+
+        let relays = vec![
+            "wss://ok.example".to_string(),
+            "wss://failed.example".to_string(),
+            "wss://unknown.example".to_string(),
+        ];
+        let results = relay_send_results(&relays, &output);
+
+        assert_eq!(
+            results,
+            vec![
+                RelaySendResult {
+                    relay: "wss://ok.example".to_string(),
+                    ok: true,
+                    error: None,
+                },
+                RelaySendResult {
+                    relay: "wss://failed.example".to_string(),
+                    ok: false,
+                    error: Some("connection refused".to_string()),
+                },
+                RelaySendResult {
+                    relay: "wss://unknown.example".to_string(),
+                    ok: false,
+                    error: None,
+                },
+            ]
+        );
     }
 
     #[test]

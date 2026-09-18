@@ -28,9 +28,12 @@ services:
     environment:
       SWING_IPFS_API: http://ipfs:5001
       SWING_STATE_DIR: /data
+      SWING_DASHBOARD_LISTEN: ${SWING_DASHBOARD_LISTEN:-0.0.0.0:8082}
       RUST_LOG: info
     volumes:
       - swing-data:/data
+    ports:
+      - "${SWING_DASHBOARD_BIND:-127.0.0.1:8082}:8082"
     depends_on:
       ipfs:
         condition: service_healthy

@@ -1,9 +1,13 @@
 use std::path::PathBuf;
+use std::time::Duration;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 use swing::{agent, config, health, key, mirror, publish, replicas, webring};
 use tracing_subscriber::EnvFilter;
+
+// Not #[tokio::main]: shutdown_timeout keeps a stuck blocking thread from holding the process open.
+const RUNTIME_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(10);
 
 #[derive(Parser)]
 #[command(
@@ -129,10 +133,18 @@ fn init_tracing() {
     tracing_subscriber::fmt().with_env_filter(filter).init();
 }
 
-#[tokio::main]
-async fn main() -> Result<()> {
+fn main() -> Result<()> {
     init_tracing();
     let cli = Cli::parse();
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()?;
+    let result = runtime.block_on(run(cli));
+    runtime.shutdown_timeout(RUNTIME_SHUTDOWN_TIMEOUT);
+    result
+}
+
+async fn run(cli: Cli) -> Result<()> {
     match cli.command {
         Command::Agent { config } => {
             let cfg = config::Config::load(config.as_deref())?;

@@ -7,7 +7,7 @@ use crate::config::{self, Config, Nip05Mode};
 use crate::ipfs::IpfsClient;
 use crate::mfs::MfsLayout;
 use crate::nip05::{self, Nip05Verify};
-use crate::nostr::{self, RelayClient, build_site_event_builder};
+use crate::nostr::{self, RelayClient, RelaySendResult, build_site_event_builder};
 
 fn versions_to_prune(names: &[String], keep: usize) -> Vec<String> {
     let mut versions: Vec<(u64, &String)> = names
@@ -22,21 +22,86 @@ fn versions_to_prune(names: &[String], keep: usize) -> Vec<String> {
         .collect()
 }
 
-async fn prune_old_versions(ipfs: &IpfsClient, site_path: &str, keep: usize) -> Result<()> {
-    let names: Vec<String> = ipfs
-        .mfs_list(site_path)
-        .await?
-        .into_iter()
-        .map(|e| e.name)
-        .collect();
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PruneAttempt {
+    Removed(String),
+    Failed(String, String),
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct PruneOutcome {
+    pub attempts: Vec<PruneAttempt>,
+    pub list_error: Option<String>,
+}
+
+impl PruneOutcome {
+    pub fn pruned(&self) -> Vec<&str> {
+        self.attempts
+            .iter()
+            .filter_map(|a| match a {
+                PruneAttempt::Removed(name) => Some(name.as_str()),
+                PruneAttempt::Failed(..) => None,
+            })
+            .collect()
+    }
+
+    pub fn error_summary(&self) -> Option<String> {
+        if let Some(err) = &self.list_error {
+            return Some(format!("could not list old versions: {err}"));
+        }
+        let failed: Vec<String> = self
+            .attempts
+            .iter()
+            .filter_map(|a| match a {
+                PruneAttempt::Failed(name, err) => Some(format!("{name}: {err}")),
+                PruneAttempt::Removed(_) => None,
+            })
+            .collect();
+        (!failed.is_empty()).then(|| failed.join("; "))
+    }
+}
+
+pub async fn prune_old_versions_collect(
+    ipfs: &IpfsClient,
+    site_path: &str,
+    keep: usize,
+) -> PruneOutcome {
+    let names = match ipfs.mfs_list(site_path).await {
+        Ok(entries) => entries.into_iter().map(|e| e.name).collect::<Vec<_>>(),
+        Err(e) => {
+            return PruneOutcome {
+                attempts: Vec::new(),
+                list_error: Some(format!("{e}")),
+            };
+        }
+    };
+    let mut attempts = Vec::new();
     for name in versions_to_prune(&names, keep) {
         let path = format!("{site_path}/{name}");
         match ipfs.mfs_remove(&path).await {
-            Ok(()) => println!("  \u{2713} removed {path}"),
-            Err(e) => println!("  ! could not remove {path}: {e}"),
+            Ok(()) => attempts.push(PruneAttempt::Removed(name)),
+            Err(e) => attempts.push(PruneAttempt::Failed(name, format!("{e}"))),
         }
     }
-    Ok(())
+    PruneOutcome {
+        attempts,
+        list_error: None,
+    }
+}
+
+fn print_prune_lines(site_path: &str, outcome: &PruneOutcome) {
+    if let Some(err) = &outcome.list_error {
+        println!("  ! could not list old versions: {err}");
+        return;
+    }
+    for attempt in &outcome.attempts {
+        match attempt {
+            PruneAttempt::Removed(name) => println!("  \u{2713} removed {site_path}/{name}"),
+            PruneAttempt::Failed(name, err) => {
+                println!("  ! could not remove {site_path}/{name}: {err}")
+            }
+        }
+    }
 }
 
 fn format_nip05_line(result: &nip05::VerificationResult) -> String {
@@ -71,12 +136,14 @@ fn nip05_abort_message(
     })
 }
 
-struct Nip05Outcome {
-    line: String,
-    abort: Option<String>,
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Nip05Outcome {
+    pub result: nip05::VerificationResult,
+    pub line: String,
+    pub abort: Option<String>,
 }
 
-async fn check_nip05<V: Nip05Verify>(
+pub async fn check_nip05<V: Nip05Verify>(
     verifier: &V,
     mode: Nip05Mode,
     d: &str,
@@ -85,7 +152,66 @@ async fn check_nip05<V: Nip05Verify>(
     let result = verifier.verify(d, pubkey_hex).await;
     let line = format_nip05_line(&result);
     let abort = nip05_abort_message(mode, &result, d, pubkey_hex);
-    Nip05Outcome { line, abort }
+    Nip05Outcome {
+        result,
+        line,
+        abort,
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IpfsStage {
+    pub cid: String,
+    pub size: u64,
+    pub path: String,
+}
+
+pub async fn add_and_measure(
+    ipfs: &IpfsClient,
+    layout: &MfsLayout,
+    pubkey_hex: &str,
+    d: &str,
+    created_at: u64,
+    dir: &Path,
+) -> Result<IpfsStage> {
+    let path = layout.publish_version(pubkey_hex, d, created_at);
+    let cid = ipfs.add_dir(dir, &path).await?;
+    // add with pin=false does not hold Kubo's GC lock, so a GC during the add
+    // could drop blocks before they were linked into MFS.
+    let size = ipfs
+        .dag_size_local(&cid)
+        .await
+        .context("added content is not complete in Kubo")?;
+    Ok(IpfsStage { cid, size, path })
+}
+
+pub struct SiteAnnouncement<'a> {
+    pub site_event_kind: u16,
+    pub d: &'a str,
+    pub cid: &'a str,
+    pub url: Option<&'a str>,
+    pub size: u64,
+    pub message: Option<&'a str>,
+    pub created_at: Timestamp,
+}
+
+pub async fn sign_and_send(
+    relay: &RelayClient,
+    announcement: &SiteAnnouncement<'_>,
+) -> Result<Vec<RelaySendResult>> {
+    let event = build_site_event_builder(
+        announcement.site_event_kind,
+        announcement.d,
+        announcement.cid,
+        announcement.url,
+        Some(announcement.size),
+        announcement.message,
+    )
+    .custom_created_at(announcement.created_at)
+    .finalize(&relay.keys)
+    .context("signing site event")?;
+    let output = relay.publish_to_relays(&event).await?;
+    Ok(nostr::relay_send_results(relay.relays(), &output))
 }
 
 pub async fn run(
@@ -137,52 +263,47 @@ pub async fn run(
     let ipfs = IpfsClient::new(config.ipfs.api.clone());
     let layout = MfsLayout::new(config.ipfs.mfs_root.clone());
     let created_at = Timestamp::now();
-    let path = layout.publish_version(&pubkey_hex, &d, created_at.as_secs());
-    let cid = ipfs.add_dir(dir, &path).await?;
-    println!("  CID: {cid}");
-    println!("  \u{2713} added to {path}");
-    // add with pin=false does not hold Kubo's GC lock, so a GC during the add
-    // could drop blocks before they were linked into MFS.
-    let size = ipfs
-        .dag_size_local(&cid)
-        .await
-        .context("added content is not complete in Kubo")?;
-    println!("  Size: {size} bytes");
+    let stage = add_and_measure(&ipfs, &layout, &pubkey_hex, &d, created_at.as_secs(), dir).await?;
+    println!("  CID: {}", stage.cid);
+    println!("  \u{2713} added to {}", stage.path);
+    println!("  Size: {} bytes", stage.size);
 
     println!();
     println!("Nostr");
 
     let relay = RelayClient::connect(&config.nostr.secret_key, &config.nostr.relays).await?;
-    let event = build_site_event_builder(
-        config.nostr.site_event_kind,
-        &d,
-        &cid,
-        url.as_deref(),
-        Some(size),
-        message.as_deref(),
+    let send_result = sign_and_send(
+        &relay,
+        &SiteAnnouncement {
+            site_event_kind: config.nostr.site_event_kind,
+            d: &d,
+            cid: &stage.cid,
+            url: url.as_deref(),
+            size: stage.size,
+            message: message.as_deref(),
+            created_at,
+        },
     )
-    .custom_created_at(created_at)
-    .finalize(&relay.keys)
-    .context("signing site event")?;
-    let output = relay.publish_to_relays(&event).await?;
+    .await;
+    let results = match send_result {
+        Ok(results) => results,
+        Err(e) => {
+            relay.client.shutdown().await;
+            return Err(e);
+        }
+    };
 
-    nostr::print_relay_send_results(relay.relays(), &output);
+    nostr::print_relay_send_result_lines(&results);
     relay.client.shutdown().await;
-    if output.success.is_empty() {
+    if !results.iter().any(|r| r.ok) {
         anyhow::bail!("no relay accepted the site event; old versions were kept");
     }
 
     println!();
     println!("Old versions (keeping {})", config.publish.keep_versions);
-    if let Err(e) = prune_old_versions(
-        &ipfs,
-        &layout.publish_site(&pubkey_hex, &d),
-        config.publish.keep_versions,
-    )
-    .await
-    {
-        println!("  ! could not list old versions: {e}");
-    }
+    let site_path = layout.publish_site(&pubkey_hex, &d);
+    let prune = prune_old_versions_collect(&ipfs, &site_path, config.publish.keep_versions).await;
+    print_prune_lines(&site_path, &prune);
 
     println!();
     println!("Published.");
@@ -262,5 +383,34 @@ mod tests {
         let fake = FakeNip05(nip05::VerificationResult::Mismatch);
         let outcome = check_nip05(&fake, Nip05Mode::Off, "example.com", "abc123").await;
         assert!(outcome.abort.is_none());
+    }
+
+    #[test]
+    fn prune_outcome_summarizes_list_and_removal_failures() {
+        let list_failed = PruneOutcome {
+            attempts: Vec::new(),
+            list_error: Some("boom".to_string()),
+        };
+        assert_eq!(
+            list_failed.error_summary().as_deref(),
+            Some("could not list old versions: boom")
+        );
+        assert!(list_failed.pruned().is_empty());
+
+        let mixed = PruneOutcome {
+            attempts: vec![
+                PruneAttempt::Removed("100".to_string()),
+                PruneAttempt::Failed("50".to_string(), "denied".to_string()),
+            ],
+            list_error: None,
+        };
+        assert_eq!(mixed.pruned(), vec!["100"]);
+        assert_eq!(mixed.error_summary().as_deref(), Some("50: denied"));
+
+        let clean = PruneOutcome {
+            attempts: vec![PruneAttempt::Removed("100".to_string())],
+            list_error: None,
+        };
+        assert!(clean.error_summary().is_none());
     }
 }

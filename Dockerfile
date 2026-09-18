@@ -2,6 +2,7 @@ FROM rust:1.97-slim-trixie AS builder
 WORKDIR /build
 COPY Cargo.toml Cargo.lock ./
 COPY src ./src
+COPY web ./web
 RUN cargo build --release
 
 FROM debian:trixie-slim

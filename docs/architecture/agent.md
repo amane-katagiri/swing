@@ -1,20 +1,34 @@
 # mirror-agent（agent.rs, health.rs, policy.rs, state.rs）
 
-[`architecture.md`](../architecture.md) の一部。MFS のパスと Kubo RPC は [`kubo.md`](kubo.md)、NIP-05 は [`nip05.md`](nip05.md)。
+[`architecture.md`](../architecture.md) の一部。MFS のパスと Kubo RPC は [`kubo.md`](kubo.md)、NIP-05 は [`nip05.md`](nip05.md)、ダッシュボードは [`dashboard.md`](dashboard.md)。
 
 ## 全体の流れ
 
-1. relay 群に接続し、state を読み、起動時の突き合わせを行う。
-2. `poll_interval` ごとの tick（最初の tick は起動直後）で次を行う。
+1. relay 群に接続し、state を読み、`[dashboard].listen` が `off` でなければダッシュボードの `TcpListener` を bind する（失敗したら agent 全体がエラーで終了する）。続けて `Agent` を組み立て、SIGINT・SIGTERM の永続リスナー（後述）を作ってから起動時の突き合わせ（`agent.reconcile()`）を行う。
+2. 突き合わせの完了前にシグナルが届いたら、突き合わせを打ち切って即座に shutdown へ進む（ダッシュボードはまだ起動していないので、relay を切断するだけで終わる）。
+3. 突き合わせを終えたら、bind できていればダッシュボードの `AppState` を作って `dashboard::serve` を別タスクで起動する（起動前に `<state_dir>/upload/` を掃除する。[`dashboard.md`](dashboard.md#post-apipublishupload) を参照）。
+4. `poll_interval` ごとの tick（最初の tick は起動直後）、および**ダッシュボードでの mirror 変更（`Notify`）**で `poll_once`（次を行う）を実行する。
    1. sweep
    2. Follow Set を決める。決まらなければ警告を出して 3 と 4 を飛ばす。
    3. unfollow
    4. 対象 pubkey 群のサイトイベント（過去分を含む）を取得して購読し直し、pubkey ごとに、保存済みのサイトすべてと、それ以外のサイトを `created_at` の新しい順に合計 `max_sites_per_account` 件まで、サイトごとの最新版をタスクに投入する。一時的な取得・保存の失敗はここで再試行される。
    5. レプリカ報告の同期（Follow Set が決まらなくても行う）
-3. 購読で届いたサイトイベントをタスクに投入する。送信元が今の Follow Set にいなければ warn を出して無視する。購読 ID と kind が一致しない通知は debug ログで捨てる。
-4. タスクはサイト単位で「保存の順序」に従って処理する。新版を記録したら、同時実行の枠を返してからレプリカ報告の同期を行う。
+5. 購読で届いたサイトイベントをタスクに投入する。送信元が今の Follow Set にいなければ warn を出して無視する。購読 ID と kind が一致しない通知は debug ログで捨てる。
+6. タスクはサイト単位で「保存の順序」に従って処理する。新版を記録したら、同時実行の枠を返してからレプリカ報告の同期を行う。
 
-relay の切断、Kubo のエラー、不正なイベントはログに出して続ける。relay への再接続と再購読は nostr-sdk が行う。nostr-sdk の通知チャネル（容量 2048）から溢れた分は 2.4 の取り直しで回収される。通知ストリーム自体が終わったらエラーで終了する。Ctrl-C で終了すると実行中のタスクは中断される。
+relay の切断、Kubo のエラー、不正なイベントはログに出して続ける。relay への再接続と再購読は nostr-sdk が行う。nostr-sdk の通知チャネル（容量 2048）から溢れた分は 2.4 の取り直しで回収される。通知ストリーム自体が終わったらエラーで終了する。
+
+### シグナルと終了
+
+SIGINT・SIGTERM のどちらでも同じように終了する（`docker stop` の SIGTERM でも graceful shutdown が効く）。
+
+- `run()` は起動時に SIGINT・SIGTERM それぞれの永続リスナーを 1 組作り、以後のすべての待ち受けで使い回す。加えて、それとは独立なもう 1 組のリスナー（watchdog）を別タスクで待ち受けさせておく。
+- `agent.reconcile()`（起動時の突き合わせ）と `poll_once()`（poll tick・`Notify` の両方から呼ばれる）は、それぞれ実行している間もシグナルの受信を諦めない。`tokio::select!` は「今実行中の分岐の本体」を他の分岐と同時にはポーリングしないため、素朴に await するとその間（到達不能な relay 相手なら 15 秒以上）シグナルが見えなくなる。これを避けるため、`race_with_shutdown` でこれらの処理と同じ SIGINT/SIGTERM の受信を競争させ、シグナルが先に届いたら処理中の I/O を打ち切って shutdown 側に進む。
+- shutdown 処理（`shutdown_dashboard`）: ダッシュボードの `oneshot::Sender` に送った後、そのサーバタスクの `JoinHandle` を最大 5 秒待つ。5 秒以内に終わらなければ warn ログを出してそのタスクを待つのをやめ（プロセスは終了に進む）、終わればそのまま relay を切断してループを抜ける。
+- watchdog: シグナル受信から 10 秒経っても上記の graceful shutdown が終わっていなければ、`std::process::exit(1)` で強制終了する（ログ: `graceful shutdown did not finish within the grace period; forcing exit`）。
+- `main.rs` は `#[tokio::main]` を使わず、明示的に `tokio::runtime::Runtime` を組み立てて `run()` を `block_on` し、そのランタイムを `shutdown_timeout(10s)` で畳む（ブロッキング呼び出しで詰まったワーカースレッドがあっても、ランタイムの drop がハングしないようにするため）。
+
+ダッシュボードは agent の `Mutex<State>` を直接触らず、`state.json` をディスクから読み直す。agent 側の状態には影響しない（読むだけ）。詳しくは [`dashboard.md`](dashboard.md) を参照。
 
 ## Follow Set の選び方
 

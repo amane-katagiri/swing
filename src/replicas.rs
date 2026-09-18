@@ -72,34 +72,44 @@ pub async fn fetch_for_sites(
     ))
 }
 
-fn follow_mark(
-    author: &PublicKey,
-    reporter: &PublicKey,
-    follows: &HashSet<PublicKey>,
-) -> &'static str {
-    if reporter == author {
+fn follow_mark(is_author: bool, following: bool) -> &'static str {
+    if is_author {
         "  [author]"
-    } else if follows.contains(reporter) {
+    } else if following {
         ""
     } else {
         "  [not following]"
     }
 }
 
-pub async fn show(config: &Config, inputs: &[String]) -> Result<()> {
-    let authors = mirror::parse_pubkey_inputs(inputs)?;
-    let relay = RelayClient::connect(&config.nostr.secret_key, &config.nostr.relays).await?;
-    let authors = if authors.is_empty() {
-        vec![relay.keys.public_key()]
-    } else {
-        authors
-    };
-    let result = show_with(&relay, config, &authors).await;
-    relay.client.shutdown().await;
-    result
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Reporter {
+    pub pubkey: PublicKey,
+    pub latest: bool,
+    pub is_author: bool,
+    pub following: bool,
 }
 
-async fn show_with(relay: &RelayClient, config: &Config, authors: &[PublicKey]) -> Result<()> {
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SiteReplicas {
+    pub d: String,
+    pub cid: String,
+    pub replicas: usize,
+    pub reports: usize,
+    pub reporters: Vec<Reporter>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AuthorReplicas {
+    pub pubkey: PublicKey,
+    pub sites: Vec<SiteReplicas>,
+}
+
+pub async fn collect(
+    relay: &RelayClient,
+    config: &Config,
+    authors: &[PublicKey],
+) -> Result<Vec<AuthorReplicas>> {
     let raw_events = relay
         .fetch_site_events(config.nostr.site_event_kind, authors)
         .await?;
@@ -127,40 +137,88 @@ async fn show_with(relay: &RelayClient, config: &Config, authors: &[PublicKey]) 
     for ev in sites {
         by_author.entry(ev.pubkey.to_hex()).or_default().push(ev);
     }
+
+    let mut out = Vec::with_capacity(by_author.len());
     for (author_hex, mut evs) in by_author {
-        let author = mirror::print_account_header(&author_hex, "")?;
-        if evs.is_empty() {
-            println!("  (no site events)");
-            continue;
-        }
+        let author = mirror::parse_pubkey_input(&author_hex)?;
         evs.sort_by(|a, b| a.d.cmp(&b.d));
         let followers: HashSet<PublicKey> = follow_sets
             .iter()
             .filter(|(_, fs)| nostr::extract_follow_set_pubkeys(fs).contains(&author))
             .map(|(pk, _)| *pk)
             .collect();
-        for ev in evs {
-            let replicas = reports
-                .get(&(ev.pubkey, ev.d.clone()))
-                .map(|r| replicas_of(r, &ev.cid))
-                .unwrap_or_default();
+        let sites = evs
+            .into_iter()
+            .map(|ev| {
+                let replicas = reports
+                    .get(&(ev.pubkey, ev.d.clone()))
+                    .map(|r| replicas_of(r, &ev.cid))
+                    .unwrap_or_default();
+                let reporters = replicas
+                    .iter()
+                    .map(|r| Reporter {
+                        pubkey: r.reporter,
+                        latest: r.latest,
+                        is_author: r.reporter == author,
+                        following: followers.contains(&r.reporter),
+                    })
+                    .collect();
+                SiteReplicas {
+                    d: ev.d.clone(),
+                    cid: ev.cid.clone(),
+                    replicas: latest_count(&replicas),
+                    reports: replicas.len(),
+                    reporters,
+                }
+            })
+            .collect();
+        out.push(AuthorReplicas {
+            pubkey: author,
+            sites,
+        });
+    }
+    Ok(out)
+}
+
+fn print_replicas(authors: &[AuthorReplicas]) {
+    for author in authors {
+        println!(
+            "{} ({})",
+            mirror::npub(&author.pubkey),
+            author.pubkey.to_hex()
+        );
+        if author.sites.is_empty() {
+            println!("  (no site events)");
+            continue;
+        }
+        for site in &author.sites {
             println!(
                 "  d={} cid={} replicas={} (reports={})",
-                ev.d,
-                ev.cid,
-                latest_count(&replicas),
-                replicas.len()
+                site.d, site.cid, site.replicas, site.reports
             );
-            for r in &replicas {
+            for r in &site.reporters {
                 let version = if r.latest { "latest" } else { "older version" };
                 println!(
                     "    {}  [{version}]{}",
-                    mirror::npub(&r.reporter),
-                    follow_mark(&author, &r.reporter, &followers)
+                    mirror::npub(&r.pubkey),
+                    follow_mark(r.is_author, r.following)
                 );
             }
         }
     }
+}
+
+pub async fn show(config: &Config, inputs: &[String]) -> Result<()> {
+    let authors = mirror::parse_pubkey_inputs(inputs)?;
+    let relay = RelayClient::connect(&config.nostr.secret_key, &config.nostr.relays).await?;
+    let authors = if authors.is_empty() {
+        vec![relay.keys.public_key()]
+    } else {
+        authors
+    };
+    let result = collect(&relay, config, &authors).await;
+    relay.client.shutdown().await;
+    print_replicas(&result?);
     Ok(())
 }
 
@@ -251,15 +309,8 @@ mod tests {
 
     #[test]
     fn follow_mark_distinguishes_the_author_and_non_followers() {
-        let author = Keys::generate().public_key();
-        let follower = Keys::generate().public_key();
-        let stranger = Keys::generate().public_key();
-        let follows = HashSet::from([follower]);
-        assert_eq!(follow_mark(&author, &author, &follows), "  [author]");
-        assert_eq!(follow_mark(&author, &follower, &follows), "");
-        assert_eq!(
-            follow_mark(&author, &stranger, &follows),
-            "  [not following]"
-        );
+        assert_eq!(follow_mark(true, false), "  [author]");
+        assert_eq!(follow_mark(false, true), "");
+        assert_eq!(follow_mark(false, false), "  [not following]");
     }
 }

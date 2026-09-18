@@ -2,14 +2,16 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, RwLock};
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use futures_util::StreamExt;
 use nostr_sdk::prelude::*;
-use tokio::sync::Semaphore;
+use tokio::signal::unix::{SignalKind, signal};
+use tokio::sync::{Notify, Semaphore};
 use tokio::task::JoinSet;
 use tracing::{debug, error, info, warn};
 
-use crate::config::{Config, Nip05Mode};
+use crate::config::{Config, DashboardListen, Nip05Mode};
+use crate::dashboard;
 use crate::health;
 use crate::ipfs::{FetchLimits, Fetched, IpfsClient, KuboStore};
 use crate::mfs::{self, MfsLayout};
@@ -19,6 +21,8 @@ use crate::policy::{self, CandidateEvent, Decision, Usage, VersionInfo};
 use crate::state::{self, SiteKey, State, Verification, VersionRecord};
 
 const NIP05_ERROR_CACHE_TTL: u64 = 900;
+const DASHBOARD_SHUTDOWN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+const FORCE_EXIT_GRACE_PERIOD: std::time::Duration = std::time::Duration::from_secs(10);
 
 fn now_secs() -> u64 {
     Timestamp::now().as_secs()
@@ -34,9 +38,20 @@ pub async fn run(config: Config) -> Result<()> {
     let state = State::load(&state_path).await?;
     info!(path = %state_path.display(), sites = state.sites.len(), "loaded state");
 
+    let dashboard_listener = match &config.dashboard.listen {
+        DashboardListen::Off => None,
+        DashboardListen::Addr(addr) => Some(
+            tokio::net::TcpListener::bind(addr)
+                .await
+                .with_context(|| format!("binding dashboard listener on {addr}"))?,
+        ),
+    };
+
     let site_event_kind = config.nostr.site_event_kind;
     let mut poll_timer = tokio::time::interval(config.agent.poll_interval);
     poll_timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    let notify = Arc::new(Notify::new());
+    let dashboard_config = config.clone();
     let agent = Arc::new(Agent::new(
         config,
         ipfs,
@@ -45,7 +60,54 @@ pub async fn run(config: Config) -> Result<()> {
         state,
         state_path,
     ));
-    agent.reconcile().await;
+    let mut sigint = signal(SignalKind::interrupt()).context("registering SIGINT handler")?;
+    let mut sigterm = signal(SignalKind::terminate()).context("registering SIGTERM handler")?;
+
+    // Independent of the main loop so it still fires when that loop is stuck.
+    let mut watchdog_sigint =
+        signal(SignalKind::interrupt()).context("registering watchdog SIGINT handler")?;
+    let mut watchdog_sigterm =
+        signal(SignalKind::terminate()).context("registering watchdog SIGTERM handler")?;
+    tokio::spawn(async move {
+        tokio::select! {
+            _ = watchdog_sigint.recv() => {}
+            _ = watchdog_sigterm.recv() => {}
+        }
+        tokio::time::sleep(FORCE_EXIT_GRACE_PERIOD).await;
+        error!(
+            grace_period = ?FORCE_EXIT_GRACE_PERIOD,
+            "graceful shutdown did not finish within the grace period; forcing exit"
+        );
+        std::process::exit(1);
+    });
+
+    // A select! arm body is not polled against the other arms, so a signal arriving during it would wait for the body to finish.
+    if let Some(signal) = race_with_shutdown(agent.reconcile(), &mut sigint, &mut sigterm).await {
+        info!(signal, "shutdown requested during startup reconciliation");
+        relay.client.shutdown().await;
+        return Ok(());
+    }
+
+    let mut dashboard_shutdown = None;
+    let mut dashboard_task = None;
+    if let Some(listener) = dashboard_listener {
+        dashboard::cleanup_upload_dir(&dashboard_config.agent.state_dir)
+            .await
+            .context("cleaning up leftover dashboard uploads")?;
+        let dashboard_state = Arc::new(dashboard::AppState::new(
+            Some(Arc::clone(&relay)),
+            Arc::new(dashboard_config),
+            Arc::clone(&notify),
+        )?);
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        dashboard_shutdown = Some(tx);
+        dashboard_task = Some(tokio::spawn(async move {
+            if let Err(e) = dashboard::serve(listener, dashboard_state, rx).await {
+                error!(error = %e, "dashboard server stopped");
+            }
+        }));
+    }
+
     let mut tasks = JoinSet::new();
     let mut notifications = relay.notifications();
 
@@ -76,23 +138,93 @@ pub async fn run(config: Config) -> Result<()> {
                 }
             }
             _ = poll_timer.tick() => {
-                agent.sweep().await;
-                refresh_follow_set(&relay, &agent, &mut tasks).await;
-                agent.sync_reports().await;
+                if let Some(signal) = race_with_shutdown(poll_once(&relay, &agent, &mut tasks), &mut sigint, &mut sigterm).await {
+                    info!(signal, "shutdown requested during poll");
+                    shutdown_dashboard(&mut dashboard_shutdown, &mut dashboard_task).await;
+                    relay.client.shutdown().await;
+                    break;
+                }
+            }
+            _ = notify.notified() => {
+                if let Some(signal) = race_with_shutdown(poll_once(&relay, &agent, &mut tasks), &mut sigint, &mut sigterm).await {
+                    info!(signal, "shutdown requested during poll");
+                    shutdown_dashboard(&mut dashboard_shutdown, &mut dashboard_task).await;
+                    relay.client.shutdown().await;
+                    break;
+                }
             }
             Some(joined) = tasks.join_next() => {
                 if let Err(e) = joined {
                     error!(error = %e, "site task panicked");
                 }
             }
-            _ = tokio::signal::ctrl_c() => {
-                info!("shutdown requested");
+            joined = async { dashboard_task.as_mut().unwrap().await }, if dashboard_task.is_some() => {
+                match joined {
+                    Ok(()) => error!("dashboard server task exited unexpectedly"),
+                    Err(e) => error!(error = %e, "dashboard server task panicked"),
+                }
+                dashboard_task = None;
+            }
+            _ = sigint.recv() => {
+                info!(signal = "SIGINT", "shutdown requested");
+                shutdown_dashboard(&mut dashboard_shutdown, &mut dashboard_task).await;
+                relay.client.shutdown().await;
+                break;
+            }
+            _ = sigterm.recv() => {
+                info!(signal = "SIGTERM", "shutdown requested");
+                shutdown_dashboard(&mut dashboard_shutdown, &mut dashboard_task).await;
                 relay.client.shutdown().await;
                 break;
             }
         }
     }
     Ok(())
+}
+
+async fn race_with_shutdown<F: std::future::Future<Output = ()>>(
+    fut: F,
+    sigint: &mut tokio::signal::unix::Signal,
+    sigterm: &mut tokio::signal::unix::Signal,
+) -> Option<&'static str> {
+    tokio::select! {
+        _ = fut => None,
+        _ = sigint.recv() => Some("SIGINT"),
+        _ = sigterm.recv() => Some("SIGTERM"),
+    }
+}
+
+async fn shutdown_dashboard(
+    dashboard_shutdown: &mut Option<tokio::sync::oneshot::Sender<()>>,
+    dashboard_task: &mut Option<tokio::task::JoinHandle<()>>,
+) {
+    if let Some(tx) = dashboard_shutdown.take() {
+        let _ = tx.send(());
+    }
+    if let Some(task) = dashboard_task.take() {
+        match tokio::time::timeout(DASHBOARD_SHUTDOWN_TIMEOUT, task).await {
+            Ok(Ok(())) => {}
+            Ok(Err(e)) => error!(error = %e, "dashboard server task panicked during shutdown"),
+            Err(_) => warn!(
+                timeout = ?DASHBOARD_SHUTDOWN_TIMEOUT,
+                "dashboard server did not shut down in time; leaving it behind"
+            ),
+        }
+    }
+}
+
+async fn poll_once<C, N, R>(
+    relay: &RelayClient,
+    agent: &Arc<Agent<C, N, R>>,
+    tasks: &mut JoinSet<()>,
+) where
+    C: KuboStore + Send + Sync + 'static,
+    N: Nip05Verify + Send + Sync + 'static,
+    R: ReportRelay + Send + Sync + 'static,
+{
+    agent.sweep().await;
+    refresh_follow_set(relay, agent, tasks).await;
+    agent.sync_reports().await;
 }
 
 async fn refresh_follow_set<C, N, R>(
@@ -1053,6 +1185,14 @@ mod tests {
                 nip05: Nip05Mode::Off,
                 keep_versions: 5,
             },
+            dashboard: crate::config::DashboardConfig {
+                listen: crate::config::DashboardListen::Off,
+                allowed_hosts: Vec::new(),
+                gateway: None,
+                custom_css: None,
+                max_upload: 2 * (1u64 << 30),
+            },
+            config_path: None,
         }
     }
 

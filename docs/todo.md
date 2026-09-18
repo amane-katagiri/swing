@@ -7,9 +7,14 @@
 | 高 | NIP-46 remote signer 対応。秘密鍵を `.env` に置かずに済む構成にする | plan §12 |
 | 中 | NIP-05 の実 HTTP 経路の統合テスト（ローカル TLS エンドポイント相手、`#[ignore]`） | レビュー |
 | 中 | 取得に失敗した CID を覚えて指数バックオフで再試行する。今は poll ごとに同じ CID の取得を試み、そのたびに最大 `SWING_FETCH_IDLE_TIMEOUT` の間、並行枠を 1 つ使う | レビュー（DoS） |
-| 低 | relay から取得するサイトイベント・レプリカ報告・Follow Set の件数上限。`fetch_events` は件数無制限で、30 秒のタイムアウトだけで抑えている。レプリカ報告や、`#p` で見つかる Follow Set は誰でも出せるので、`swing replicas` / `sites` / `webring` で特に効く。`webring` はたどるアカウント数の上限も要る | レビュー（DoS） |
+| 低 | relay から取得するサイトイベント・レプリカ報告・Follow Set の件数上限。`fetch_events` は件数無制限で、30 秒のタイムアウトだけで抑えている。レプリカ報告や、`#p` で見つかる Follow Set は誰でも出せるので、`swing replicas` / `sites` / `webring` で特に効く。`webring` はたどるアカウント数の上限も要る。ダッシュボードの `/api/replicas`・`/api/webring`・`/api/sites` も同じ `collect_*` 関数を呼ぶため、認証の無いブラウザからも同じ負荷をかけられる。ダッシュボード側は `keys`/`root`/`key` を 100 件に制限したが、これはリクエスト 1 回あたりの入力サイズを抑えるだけで、relay を引く GET 自体にはサーバ側のキャッシュも同時実行数の制限も無く、何度リクエストしても毎回 relay に取得しに行く | レビュー（DoS） |
+| 中 | ダッシュボードの認証トークン。今は Host 検証・書き込み系の CSRF 対策（`X-Swing-Dashboard` ヘッダ・Origin 検証）だけで、閲覧そのものへの認証は無い。既定の bind 先（`127.0.0.1`）から出さない前提で見送った | レビュー |
+| 低 | `/api/status` が重い。全版の DAG をたどるため保存量に比例して時間がかかるが、進捗表示もタイムアウトも無い（フロントはボタンを押したときだけ呼ぶ運用でしのいでいる） | レビュー |
+| 低 | `SWING_DASHBOARD_GATEWAY` を環境変数で空文字にできない（他の環境変数と同じく空文字は「未設定」として扱われ、既定値に戻る）。TOML の `gateway = ""` でなら無効にできる | レビュー |
+| 低 | ダッシュボードからの設定変更・鍵生成（鍵未設定での初期セットアップを含む）。設定ファイルの書き換えを伴うため今回は見送った | レビュー |
 | 低 | レプリカ報告の裏付け。報告に Peer ID を載せ、`routing/findprovs` でその Peer が CID を提供しているかを確かめる | レプリカ報告の実装 |
 | 低 | NIP-05 のアドレスフィルタで NAT64（`64:ff9b::/96`）や 6to4（`2002::/16`）に埋め込まれた IPv4 を判定する | レビュー |
 | 低 | 「全履歴保持」オプション（`keep_versions` / `keep_days` を無制限にする明示的な設定） | plan §4 |
 | 低 | private mode: WireGuard / Tailscale / private IPFS network を使う別モード | plan §17 |
 | 低 | サブパス公開サイト向けに NIP-05 の代替検証（例: `<url>/.well-known/swing.json`）を検討 | レビュー |
+| 低 | `compose.yaml` の `mirror.env_file: .env` が必須指定なので、`.env` が無いと `docker compose config` も失敗する（`--env-file` では代わりにならない） | 結合確認 |
