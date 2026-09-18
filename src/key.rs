@@ -8,7 +8,7 @@ pub struct GeneratedKeys {
     pub public_hex: String,
 }
 
-pub fn describe(keys: &Keys) -> GeneratedKeys {
+fn describe(keys: &Keys) -> GeneratedKeys {
     GeneratedKeys {
         nsec: keys
             .secret_key()

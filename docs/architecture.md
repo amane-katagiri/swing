@@ -18,7 +18,7 @@
 | 言語・ランタイム | Rust (edition 2024)、`tokio` |
 | Nostr | `nostr-sdk` 0.45 |
 | Kubo RPC | `reqwest`（rustls、multipart、stream）で直接呼ぶ |
-| ダッシュボードの HTTP サーバ | `axum` 0.8（`hyper`/`tower` は既存の依存から） |
+| ダッシュボードの HTTP サーバ | `axum` 0.8（`hyper`/`tower` は既存の依存から）、リクエストタイムアウトに `tower-http`（`timeout` feature） |
 | 設定 | `toml` + `serde`、環境変数が TOML を上書き |
 | CLI | `clap` derive |
 | ログ | `tracing` + `tracing-subscriber`（`RUST_LOG`、既定 `info`） |
@@ -40,7 +40,7 @@ swing/
     key.rs           key generate
     policy.rs        保存ポリシー判定（純粋関数）
     state.rs         state.json の永続化
-    agent.rs         mirror-agent ループ
+    agent/           mirror-agent ループ。詳細は architecture/agent.md
     health.rs        版と MFS の突き合わせ（agent と status で共通）、status サブコマンド
     publish.rs       publish サブコマンド
     mirror.rs        mirror list/add/remove, sites サブコマンド
@@ -48,7 +48,7 @@ swing/
     webring.rs       Follow Set のたどり方とグラフの組み立て・出力、webring サブコマンド
     nip05.rs         NIP-05 検証
     dashboard/       agent 内蔵の Web ダッシュボード（mod.rs, guard.rs, api.rs, dto.rs, assets.rs）。詳細は architecture/dashboard.md
-  web/               ダッシュボードのフロント（index.html, style.css, app.js, graph.js）。ビルド工程なしで include_str! によりバイナリへ埋め込む
+  web/               ダッシュボードのフロント（index.html, style.css, ES modules 一式）。ビルド工程なしで include_str! によりバイナリへ埋め込む。詳細は architecture/dashboard.md
   tests/
     kubo_integration.rs          Kubo 連携の統合テスト（#[ignore]）
     nostr_relay_integration.rs   relay 連携の統合テスト（#[ignore]）

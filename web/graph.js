@@ -1,3 +1,5 @@
+import { clamp } from './util.js';
+
 const NODE_RADIUS = 10;
 const ARROW_LEN = 8;
 const LABEL_MAX = 16;
@@ -9,10 +11,6 @@ const SVG_NS = 'http://www.w3.org/2000/svg';
 function truncateLabel(label) {
   if (label.length <= LABEL_MAX) return label;
   return label.slice(0, LABEL_MAX - 1) + '…';
-}
-
-function clamp(v, lo, hi) {
-  return Math.min(hi, Math.max(lo, v));
 }
 
 function reducedMotion() {

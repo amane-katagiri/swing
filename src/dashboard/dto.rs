@@ -451,9 +451,12 @@ pub fn nip05_off_dto() -> Nip05ResultDto {
 }
 
 pub fn nip05_result_dto(result: &crate::nip05::VerificationResult) -> Nip05ResultDto {
+    if let Some(raw) = result.detail() {
+        tracing::warn!(detail = %raw, "nip05 verification error (dashboard)");
+    }
     Nip05ResultDto {
         status: result.as_state_str().to_string(),
-        detail: result.detail(),
+        detail: result.coarse_detail().map(str::to_string),
     }
 }
 
@@ -574,7 +577,7 @@ pub fn format_bytes(n: u64) -> String {
         if n.is_multiple_of(factor) {
             return format!("{} {unit}", n / factor);
         }
-        if (n * 10).is_multiple_of(factor) {
+        if (u128::from(n) * 10).is_multiple_of(u128::from(factor)) {
             return format!("{:.1} {unit}", n as f64 / factor as f64);
         }
     }
@@ -839,8 +842,28 @@ pub fn config_dto(config: &config::Config) -> ConfigDto {
 mod tests {
     use super::*;
     use crate::health::{Garbage, StatusLine, StatusReport, VersionHealth, VersionStatus};
+    use crate::nip05::{ErrorCategory, VerificationResult};
     use nostr_sdk::prelude::Keys;
     use std::path::PathBuf;
+
+    #[test]
+    fn nip05_result_dto_coarsens_error_detail_and_keeps_other_states_untouched() {
+        let err = VerificationResult::Error(
+            "tcp connect error: connection refused (os error 111) to 10.0.0.5:443".to_string(),
+            ErrorCategory::Unreachable,
+        );
+        let dto = nip05_result_dto(&err);
+        assert_eq!(dto.status, "error");
+        assert_eq!(dto.detail.as_deref(), Some("unreachable"));
+        assert!(!dto.detail.unwrap().contains("10.0.0.5"));
+
+        assert_eq!(nip05_result_dto(&VerificationResult::Verified).detail, None);
+        assert_eq!(nip05_result_dto(&VerificationResult::Mismatch).detail, None);
+        assert_eq!(
+            nip05_result_dto(&VerificationResult::NotApplicable).detail,
+            None
+        );
+    }
 
     #[test]
     fn format_bytes_prefers_the_largest_exact_unit() {

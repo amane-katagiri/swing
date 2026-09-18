@@ -22,7 +22,7 @@
 
 `mirror` サービスはコンテナ内で `SWING_DASHBOARD_LISTEN=${SWING_DASHBOARD_LISTEN:-0.0.0.0:8082}` を待ち受ける。`.env` に `SWING_DASHBOARD_LISTEN` を書けばそれが使われる（`off` にすればコンテナでもダッシュボードを無効化できる）。ホストにどう公開するかは別の変数 `SWING_DASHBOARD_BIND`（既定 `127.0.0.1:8082`）で決める。`SWING_KUBO_GATEWAY_BIND` と同じ流儀で、**`SWING_DASHBOARD_BIND` は compose 専用の変数展開にしか使われず、Rust 側（`swing` バイナリ）はこの名前を読まない**。
 
-ダッシュボードの Publish 画面はブラウザから直接フォルダをアップロードする方式（`POST /api/publish/upload`。上限は `SWING_DASHBOARD_MAX_UPLOAD`、既定 2GB）だけを使うため、`mirror` コンテナに volume をマウントする必要はない。パスを指定する `POST /api/publish`（CLI の `swing publish` と同じ `dir` 方式）は API としては残っているが、UI 調整でダッシュボードの画面からは呼ばなくなった。`POST /api/publish` を直接使う場合（スクリプトなどから叩く場合）だけ、サイトのディレクトリを `mirror` コンテナから見える場所に置く必要がある。CLI の `docker compose run --rm -v "$PWD/public:/site" mirror publish ...` のような一時マウントは使えないため、`compose.yaml` の `mirror` サービスにあらかじめ `volumes` でサイトのディレクトリをマウントしておく。詳しくは [`dashboard.md`](dashboard.md#post-apipublish) と [`dashboard.md`](dashboard.md#post-apipublishupload) を参照。
+ダッシュボードの Publish 画面はブラウザから直接フォルダをアップロードする方式（`POST /api/publish/upload`。上限は `SWING_DASHBOARD_MAX_UPLOAD`、既定 2GB）だけを使うため、`mirror` コンテナに volume をマウントする必要はない。詳しくは [`dashboard.md`](dashboard.md#post-apipublishupload) を参照。CLI の `swing publish` をコンテナで使う場合は `docker compose run --rm -v "$PWD/public:/site" mirror publish ...` のような一時マウントでよい。
 
 ## Kubo の設定
 

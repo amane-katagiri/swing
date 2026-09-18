@@ -7,19 +7,25 @@ mod upload;
 pub use upload::cleanup_upload_dir;
 
 use std::sync::Arc;
+use std::time::Duration;
 
 use anyhow::{Context, Result};
 use axum::Router;
 use axum::extract::DefaultBodyLimit;
+use axum::http::StatusCode;
 use axum::routing::{get, post};
 use nostr_sdk::prelude::{Keys, PublicKey, Timestamp};
 use tokio::net::TcpListener;
 use tokio::sync::{Mutex, Notify, oneshot};
+use tower_http::timeout::TimeoutLayer;
 use tracing::info;
 
 use crate::config::Config;
 use crate::ipfs::IpfsClient;
 use crate::nostr::RelayClient;
+
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(120);
+const UPLOAD_TIMEOUT: Duration = Duration::from_secs(30 * 60);
 
 pub struct AppState {
     pub relay: Option<Arc<RelayClient>>,
@@ -55,11 +61,28 @@ impl AppState {
 
 pub fn router(state: Arc<AppState>) -> Router {
     let max_upload = usize::try_from(state.config.dashboard.max_upload).unwrap_or(usize::MAX);
+
+    let upload_route = Router::new()
+        .route("/api/publish/upload", post(upload::publish_upload))
+        .layer(DefaultBodyLimit::max(max_upload))
+        .layer(TimeoutLayer::with_status_code(
+            StatusCode::REQUEST_TIMEOUT,
+            UPLOAD_TIMEOUT,
+        ));
+
     Router::new()
         .route("/", get(assets::index))
         .route("/style.css", get(assets::style))
         .route("/app.js", get(assets::app_js))
         .route("/graph.js", get(assets::graph_js))
+        .route("/storage.js", get(assets::storage_js))
+        .route("/i18n.js", get(assets::i18n_js))
+        .route("/util.js", get(assets::util_js))
+        .route("/ui.js", get(assets::ui_js))
+        .route("/sites.js", get(assets::sites_js))
+        .route("/webring.js", get(assets::webring_js))
+        .route("/publish.js", get(assets::publish_js))
+        .route("/settings.js", get(assets::settings_js))
         .route("/custom.css", get(assets::custom_css))
         .route("/api/overview", get(api::overview))
         .route("/api/sites", get(api::sites))
@@ -69,13 +92,13 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/api/mirror/remove", post(api::mirror_remove))
         .route("/api/webring", get(api::webring))
         .route("/api/replicas", get(api::replicas))
-        .route("/api/publish", post(api::publish))
-        .route(
-            "/api/publish/upload",
-            post(upload::publish_upload).layer(DefaultBodyLimit::max(max_upload)),
-        )
         .route("/api/publish/sites", get(api::publish_sites))
         .route("/api/config", get(api::config))
+        .layer(TimeoutLayer::with_status_code(
+            StatusCode::REQUEST_TIMEOUT,
+            REQUEST_TIMEOUT,
+        ))
+        .merge(upload_route)
         .layer(axum::middleware::from_fn_with_state(
             Arc::clone(&state),
             guard::security_middleware,
@@ -196,6 +219,11 @@ mod tests {
             "nosniff"
         );
         assert!(resp.headers().get("content-security-policy").is_some());
+        assert_eq!(
+            resp.headers().get("referrer-policy").unwrap(),
+            "no-referrer"
+        );
+        assert_eq!(resp.headers().get("x-frame-options").unwrap(), "DENY");
     }
 
     #[tokio::test]
@@ -204,6 +232,14 @@ mod tests {
             ("/style.css", "text/css; charset=utf-8"),
             ("/app.js", "text/javascript; charset=utf-8"),
             ("/graph.js", "text/javascript; charset=utf-8"),
+            ("/storage.js", "text/javascript; charset=utf-8"),
+            ("/i18n.js", "text/javascript; charset=utf-8"),
+            ("/util.js", "text/javascript; charset=utf-8"),
+            ("/ui.js", "text/javascript; charset=utf-8"),
+            ("/sites.js", "text/javascript; charset=utf-8"),
+            ("/webring.js", "text/javascript; charset=utf-8"),
+            ("/publish.js", "text/javascript; charset=utf-8"),
+            ("/settings.js", "text/javascript; charset=utf-8"),
             ("/custom.css", "text/css; charset=utf-8"),
         ] {
             let app = router(test_state());
@@ -532,6 +568,29 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn upload_rejects_more_files_than_the_limit() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = test_state_with(dir.path().to_path_buf(), 2 * (1u64 << 30));
+        let boundary = "SwingTestBoundary";
+        let mut parts: Vec<(&str, Option<&str>, &[u8])> = vec![("site", None, b"example.com")];
+        let names: Vec<String> = (0..=upload::MAX_UPLOAD_FILES)
+            .map(|i| format!("f{i}.txt"))
+            .collect();
+        for name in &names {
+            parts.push(("file", Some(name.as_str()), b"x"));
+        }
+        let body = multipart_body(boundary, &parts);
+        let app = router(state);
+        let resp = call(
+            app,
+            multipart_request("/api/publish/upload", boundary, body),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+        assert!(upload_dir_entries(dir.path()).is_empty());
+    }
+
+    #[tokio::test]
     async fn upload_rejects_zero_files() {
         let dir = tempfile::tempdir().unwrap();
         let state = test_state_with(dir.path().to_path_buf(), 2 * (1u64 << 30));
@@ -584,6 +643,30 @@ mod tests {
         assert_eq!(resp.status(), StatusCode::PAYLOAD_TOO_LARGE);
         let body = error_body(resp).await;
         assert!(body["error"].is_string());
+        assert!(upload_dir_entries(dir.path()).is_empty());
+    }
+
+    #[tokio::test]
+    async fn upload_rejects_an_invalid_site_before_touching_the_relay() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = test_state_with(dir.path().to_path_buf(), 2 * (1u64 << 30));
+        let boundary = "SwingTestBoundary";
+        let body = multipart_body(
+            boundary,
+            &[
+                ("site", None, b""),
+                ("file", Some("index.html"), b"<html></html>"),
+            ],
+        );
+        let app = router(state);
+        let resp = call(
+            app,
+            multipart_request("/api/publish/upload", boundary, body),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+        let body = error_body(resp).await;
+        assert!(body["error"].as_str().unwrap().contains("invalid site"));
         assert!(upload_dir_entries(dir.path()).is_empty());
     }
 

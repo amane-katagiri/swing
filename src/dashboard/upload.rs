@@ -14,9 +14,18 @@ use super::AppState;
 use super::api::{ApiError, PublishFields, PublishOutcome, run_publish};
 use super::dto;
 
+pub const MAX_UPLOAD_FILES: usize = 10_000;
+pub const MAX_PATH_SEGMENTS: usize = 32;
+pub const MAX_PATH_LEN: usize = 4096;
+
 pub fn validate_relative_path(path: &str) -> Result<(), String> {
     if path.is_empty() {
         return Err("file path must not be empty".to_string());
+    }
+    if path.len() > MAX_PATH_LEN {
+        return Err(format!(
+            "file path must be at most {MAX_PATH_LEN} bytes: {path}"
+        ));
     }
     if path.starts_with('/') {
         return Err(format!("file path must not start with /: {path}"));
@@ -29,7 +38,13 @@ pub fn validate_relative_path(path: &str) -> Result<(), String> {
             "file path must not contain control characters: {path}"
         ));
     }
-    for segment in path.split('/') {
+    let segments: Vec<&str> = path.split('/').collect();
+    if segments.len() > MAX_PATH_SEGMENTS {
+        return Err(format!(
+            "file path must have at most {MAX_PATH_SEGMENTS} segments: {path}"
+        ));
+    }
+    for segment in segments {
         if segment.is_empty() {
             return Err(format!("file path must not contain empty segments: {path}"));
         }
@@ -104,6 +119,11 @@ async fn receive_upload(multipart: &mut Multipart, dest: &Path) -> Result<Parsed
             "message" => message = Some(field.text().await.map_err(multipart_error_to_api)?),
             "nip05" => nip05 = Some(field.text().await.map_err(multipart_error_to_api)?),
             "file" => {
+                if file_count >= MAX_UPLOAD_FILES {
+                    return Err(ApiError::BadRequest(format!(
+                        "file must include at most {MAX_UPLOAD_FILES} entries"
+                    )));
+                }
                 let Some(filename) = field.file_name().map(str::to_string) else {
                     return Err(ApiError::BadRequest(
                         "file part is missing a filename".to_string(),
@@ -225,5 +245,27 @@ mod tests {
         assert!(validate_relative_path("a\u{0}b").is_err());
         assert!(validate_relative_path(".").is_err());
         assert!(validate_relative_path("..").is_err());
+    }
+
+    #[test]
+    fn validate_relative_path_rejects_too_many_segments() {
+        let deep = (0..MAX_PATH_SEGMENTS)
+            .map(|_| "a")
+            .collect::<Vec<_>>()
+            .join("/");
+        assert!(validate_relative_path(&deep).is_ok());
+        let too_deep = (0..=MAX_PATH_SEGMENTS)
+            .map(|_| "a")
+            .collect::<Vec<_>>()
+            .join("/");
+        assert!(validate_relative_path(&too_deep).is_err());
+    }
+
+    #[test]
+    fn validate_relative_path_rejects_too_long_paths() {
+        let ok = "a".repeat(MAX_PATH_LEN);
+        assert!(validate_relative_path(&ok).is_ok());
+        let too_long = "a".repeat(MAX_PATH_LEN + 1);
+        assert!(validate_relative_path(&too_long).is_err());
     }
 }

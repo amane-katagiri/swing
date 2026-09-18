@@ -113,7 +113,7 @@ fn format_nip05_line(result: &nip05::VerificationResult) -> String {
         nip05::VerificationResult::NotApplicable => {
             "- not applicable (d is not a domain)".to_string()
         }
-        nip05::VerificationResult::Error(msg) => format!("! error: {msg}"),
+        nip05::VerificationResult::Error(msg, _) => format!("! error: {msg}"),
     }
 }
 
@@ -214,6 +214,31 @@ pub async fn sign_and_send(
     Ok(nostr::relay_send_results(relay.relays(), &output))
 }
 
+/// Site `d`/`url` validation shared by the CLI and the dashboard API, which
+/// report the same checks under different flag/field names and error types.
+#[derive(Debug)]
+pub enum SiteFieldError {
+    InvalidD(anyhow::Error),
+    InvalidUrl(String),
+}
+
+pub fn validate_site_fields(d: &str, url: Option<&str>) -> Result<(), SiteFieldError> {
+    nostr::validate_d_tag(d).map_err(SiteFieldError::InvalidD)?;
+    if let Some(url) = url
+        && !nostr::valid_http_url(url)
+    {
+        return Err(SiteFieldError::InvalidUrl(url.to_string()));
+    }
+    Ok(())
+}
+
+pub fn resolve_nip05_mode(nip05_override: Option<&str>, default: Nip05Mode) -> Result<Nip05Mode> {
+    match nip05_override {
+        Some(v) => config::parse_nip05_mode(v),
+        None => Ok(default),
+    }
+}
+
 pub async fn run(
     config: Config,
     d: String,
@@ -222,16 +247,16 @@ pub async fn run(
     nip05_override: Option<String>,
     message: Option<String>,
 ) -> Result<()> {
-    nostr::validate_d_tag(&d).context("invalid --site")?;
-    if let Some(url) = &url
-        && !nostr::valid_http_url(url)
-    {
-        anyhow::bail!("invalid --url: {url} is not an http or https URL");
+    if let Err(e) = validate_site_fields(&d, url.as_deref()) {
+        return Err(match e {
+            SiteFieldError::InvalidD(err) => err.context("invalid --site"),
+            SiteFieldError::InvalidUrl(url) => {
+                anyhow::anyhow!("invalid --url: {url} is not an http or https URL")
+            }
+        });
     }
-    let nip05_mode = match nip05_override {
-        Some(v) => config::parse_nip05_mode(&v).context("invalid --nip05")?,
-        None => config.publish.nip05,
-    };
+    let nip05_mode = resolve_nip05_mode(nip05_override.as_deref(), config.publish.nip05)
+        .context("invalid --nip05")?;
 
     println!("Site: {d}");
     if let Some(url) = &url {
@@ -338,7 +363,10 @@ mod tests {
             nip05::VerificationResult::Verified,
             nip05::VerificationResult::Mismatch,
             nip05::VerificationResult::NotApplicable,
-            nip05::VerificationResult::Error("boom".to_string()),
+            nip05::VerificationResult::Error(
+                "boom".to_string(),
+                nip05::ErrorCategory::InvalidResponse,
+            ),
         ] {
             let fake = FakeNip05(result);
             let outcome = check_nip05(&fake, Nip05Mode::Warn, "example.com", "abc123").await;
@@ -373,7 +401,10 @@ mod tests {
 
     #[tokio::test]
     async fn require_mode_aborts_on_error() {
-        let fake = FakeNip05(nip05::VerificationResult::Error("timeout".to_string()));
+        let fake = FakeNip05(nip05::VerificationResult::Error(
+            "timeout".to_string(),
+            nip05::ErrorCategory::Timeout,
+        ));
         let outcome = check_nip05(&fake, Nip05Mode::Require, "example.com", "abc123").await;
         assert!(outcome.abort.is_some());
     }

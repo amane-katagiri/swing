@@ -12,12 +12,29 @@ pub const MAX_BODY_BYTES: usize = 64 * 1024;
 pub const STATE_VERIFIED: &str = "verified";
 pub const STATE_ERROR: &str = "error";
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ErrorCategory {
+    Unreachable,
+    Timeout,
+    InvalidResponse,
+}
+
+impl ErrorCategory {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            ErrorCategory::Unreachable => "unreachable",
+            ErrorCategory::Timeout => "timeout",
+            ErrorCategory::InvalidResponse => "invalid_response",
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum VerificationResult {
     NotApplicable,
     Verified,
     Mismatch,
-    Error(String),
+    Error(String, ErrorCategory),
 }
 
 impl VerificationResult {
@@ -26,13 +43,23 @@ impl VerificationResult {
             VerificationResult::Verified => STATE_VERIFIED,
             VerificationResult::Mismatch => "mismatch",
             VerificationResult::NotApplicable => "not_applicable",
-            VerificationResult::Error(_) => STATE_ERROR,
+            VerificationResult::Error(..) => STATE_ERROR,
         }
     }
 
     pub fn detail(&self) -> Option<String> {
         match self {
-            VerificationResult::Error(msg) => Some(msg.clone()),
+            VerificationResult::Error(msg, _) => Some(msg.clone()),
+            _ => None,
+        }
+    }
+
+    /// A coarse, oracle-resistant classification of `Error`'s detail, safe to
+    /// hand to a network caller that should not learn connect/timeout/TLS
+    /// specifics about hosts it can make the agent probe.
+    pub fn coarse_detail(&self) -> Option<&'static str> {
+        match self {
+            VerificationResult::Error(_, category) => Some(category.as_str()),
             _ => None,
         }
     }
@@ -133,7 +160,12 @@ impl Resolve for PublicOnlyResolver {
 fn evaluate_body(body: &str, pubkey_hex: &str) -> VerificationResult {
     let json: Value = match serde_json::from_str(body) {
         Ok(v) => v,
-        Err(e) => return VerificationResult::Error(format!("invalid JSON: {e}")),
+        Err(e) => {
+            return VerificationResult::Error(
+                format!("invalid JSON: {e}"),
+                ErrorCategory::InvalidResponse,
+            );
+        }
     };
     let found = json
         .get("names")
@@ -179,6 +211,20 @@ impl Default for HttpNip05Verifier {
     }
 }
 
+fn classify_from_flags(timeout: bool, connect: bool) -> ErrorCategory {
+    if timeout {
+        ErrorCategory::Timeout
+    } else if connect {
+        ErrorCategory::Unreachable
+    } else {
+        ErrorCategory::InvalidResponse
+    }
+}
+
+fn classify_reqwest_error(e: &reqwest::Error) -> ErrorCategory {
+    classify_from_flags(e.is_timeout(), e.is_connect())
+}
+
 impl Nip05Verify for HttpNip05Verifier {
     async fn verify(&self, d: &str, pubkey_hex: &str) -> VerificationResult {
         let Some(domain) = normalize_hostname(d) else {
@@ -187,10 +233,16 @@ impl Nip05Verify for HttpNip05Verifier {
         let url = format!("https://{domain}/.well-known/nostr.json?name=_");
         let resp = match self.http.get(&url).timeout(FETCH_TIMEOUT).send().await {
             Ok(r) => r,
-            Err(e) => return VerificationResult::Error(e.to_string()),
+            Err(e) => {
+                let category = classify_reqwest_error(&e);
+                return VerificationResult::Error(e.to_string(), category);
+            }
         };
         if !resp.status().is_success() {
-            return VerificationResult::Error(format!("http status {}", resp.status()));
+            return VerificationResult::Error(
+                format!("http status {}", resp.status()),
+                ErrorCategory::InvalidResponse,
+            );
         }
 
         let mut body = Vec::new();
@@ -198,17 +250,26 @@ impl Nip05Verify for HttpNip05Verifier {
         while let Some(chunk) = stream.next().await {
             let chunk = match chunk {
                 Ok(c) => c,
-                Err(e) => return VerificationResult::Error(e.to_string()),
+                Err(e) => {
+                    let category = classify_reqwest_error(&e);
+                    return VerificationResult::Error(e.to_string(), category);
+                }
             };
             if body.len() + chunk.len() > MAX_BODY_BYTES {
-                return VerificationResult::Error("response body exceeds size cap".to_string());
+                return VerificationResult::Error(
+                    "response body exceeds size cap".to_string(),
+                    ErrorCategory::InvalidResponse,
+                );
             }
             body.extend_from_slice(&chunk);
         }
 
         match String::from_utf8(body) {
             Ok(text) => evaluate_body(&text, pubkey_hex),
-            Err(_) => VerificationResult::Error("response body is not valid UTF-8".to_string()),
+            Err(_) => VerificationResult::Error(
+                "response body is not valid UTF-8".to_string(),
+                ErrorCategory::InvalidResponse,
+            ),
         }
     }
 }
@@ -315,6 +376,34 @@ mod tests {
         assert!(PublicOnlyResolver.resolve(name).await.is_err());
     }
 
+    #[tokio::test]
+    async fn public_only_resolver_refuses_private_ip_literals() {
+        for literal in [
+            "10.0.0.5",
+            "192.168.1.1",
+            "169.254.169.254",
+            "::1",
+            "fc00::1",
+        ] {
+            let name: Name = literal.parse().unwrap();
+            assert!(
+                PublicOnlyResolver.resolve(name).await.is_err(),
+                "{literal} should be refused"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn public_only_resolver_accepts_public_ip_literals() {
+        for literal in ["1.1.1.1", "8.8.8.8"] {
+            let name: Name = literal.parse().unwrap();
+            assert!(
+                PublicOnlyResolver.resolve(name).await.is_ok(),
+                "{literal} should be accepted"
+            );
+        }
+    }
+
     #[test]
     fn normalize_hostname_rejects_too_long() {
         let long_label = "a".repeat(250);
@@ -352,7 +441,7 @@ mod tests {
     #[test]
     fn evaluate_body_error_on_invalid_json() {
         let result = evaluate_body("not json", "abcdef0123");
-        assert!(matches!(result, VerificationResult::Error(_)));
+        assert!(matches!(result, VerificationResult::Error(..)));
     }
 
     #[test]
@@ -363,9 +452,37 @@ mod tests {
             VerificationResult::NotApplicable.as_state_str(),
             "not_applicable"
         );
-        let err = VerificationResult::Error("boom".to_string());
+        let err = VerificationResult::Error("boom".to_string(), ErrorCategory::InvalidResponse);
         assert_eq!(err.as_state_str(), "error");
         assert_eq!(err.detail(), Some("boom".to_string()));
         assert_eq!(VerificationResult::Verified.detail(), None);
+    }
+
+    #[test]
+    fn coarse_detail_hides_the_raw_message() {
+        let err = VerificationResult::Error(
+            "connection refused to 10.0.0.5:443".to_string(),
+            ErrorCategory::Unreachable,
+        );
+        assert_eq!(err.coarse_detail(), Some("unreachable"));
+        assert_eq!(
+            VerificationResult::Error("deadline exceeded".to_string(), ErrorCategory::Timeout)
+                .coarse_detail(),
+            Some("timeout")
+        );
+        assert_eq!(VerificationResult::Verified.coarse_detail(), None);
+        assert_eq!(VerificationResult::Mismatch.coarse_detail(), None);
+        assert_eq!(VerificationResult::NotApplicable.coarse_detail(), None);
+    }
+
+    #[test]
+    fn classify_from_flags_prioritizes_timeout_over_connect() {
+        assert_eq!(classify_from_flags(true, true), ErrorCategory::Timeout);
+        assert_eq!(classify_from_flags(true, false), ErrorCategory::Timeout);
+        assert_eq!(classify_from_flags(false, true), ErrorCategory::Unreachable);
+        assert_eq!(
+            classify_from_flags(false, false),
+            ErrorCategory::InvalidResponse
+        );
     }
 }

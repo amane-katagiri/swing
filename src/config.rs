@@ -249,8 +249,40 @@ fn env_var(name: &str) -> Option<String> {
     env::var(name).ok().filter(|v| !v.is_empty())
 }
 
-fn process_env(name: &str) -> Option<String> {
-    env_var(name)
+/// Resolves a value whose TOML representation is a raw string needing the
+/// same `parse` as the environment variable, trying the environment first.
+fn resolve<T>(
+    get_env: &impl Fn(&str) -> Option<String>,
+    env_key: &str,
+    file_val: Option<String>,
+    parse: impl Fn(&str) -> Result<T>,
+    env_ctx: &str,
+    file_ctx: &str,
+    default: T,
+) -> Result<T> {
+    match get_env(env_key) {
+        Some(v) => parse(&v).context(env_ctx.to_string()),
+        None => match file_val {
+            Some(v) => parse(&v).context(file_ctx.to_string()),
+            None => Ok(default),
+        },
+    }
+}
+
+/// Resolves a value whose TOML representation is already the target type,
+/// only the environment variable needs `parse`.
+fn resolve_typed<T>(
+    get_env: &impl Fn(&str) -> Option<String>,
+    env_key: &str,
+    file_val: Option<T>,
+    parse: impl Fn(&str) -> Result<T>,
+    env_ctx: &str,
+    default: T,
+) -> Result<T> {
+    match get_env(env_key) {
+        Some(v) => parse(&v).context(env_ctx.to_string()),
+        None => Ok(file_val.unwrap_or(default)),
+    }
 }
 
 pub fn parse_size(input: &str) -> Result<u64> {
@@ -357,194 +389,244 @@ fn build_config(file: ConfigFile, get_env: impl Fn(&str) -> Option<String>) -> R
         .or(file.nostr.mirror_set)
         .unwrap_or_else(|| "swing".to_string());
 
-    let site_event_kind = match get_env("SWING_SITE_EVENT_KIND") {
-        Some(v) => v
-            .parse()
-            .context("invalid SWING_SITE_EVENT_KIND: expected u16")?,
-        None => file.nostr.site_event_kind.unwrap_or(35980),
-    };
+    let site_event_kind = resolve_typed(
+        &get_env,
+        "SWING_SITE_EVENT_KIND",
+        file.nostr.site_event_kind,
+        |v| v.parse().context("expected u16"),
+        "invalid SWING_SITE_EVENT_KIND: expected u16",
+        35980,
+    )?;
 
-    let replica_event_kind = match get_env("SWING_REPLICA_EVENT_KIND") {
-        Some(v) => v
-            .parse()
-            .context("invalid SWING_REPLICA_EVENT_KIND: expected u16")?,
-        None => file.nostr.replica_event_kind.unwrap_or(35981),
-    };
+    let replica_event_kind = resolve_typed(
+        &get_env,
+        "SWING_REPLICA_EVENT_KIND",
+        file.nostr.replica_event_kind,
+        |v| v.parse().context("expected u16"),
+        "invalid SWING_REPLICA_EVENT_KIND: expected u16",
+        35981,
+    )?;
 
     let ipfs_api = get_env("SWING_IPFS_API")
         .or(file.ipfs.api)
         .unwrap_or_else(|| "http://127.0.0.1:5001".to_string());
 
-    let mfs_root = match get_env("SWING_MFS_ROOT") {
-        Some(v) => parse_mfs_root(&v).context("invalid SWING_MFS_ROOT")?,
-        None => match file.ipfs.mfs_root {
-            Some(v) => parse_mfs_root(&v).context("invalid [ipfs].mfs_root")?,
-            None => "/swing".to_string(),
-        },
-    };
+    let mfs_root = resolve(
+        &get_env,
+        "SWING_MFS_ROOT",
+        file.ipfs.mfs_root,
+        parse_mfs_root,
+        "invalid SWING_MFS_ROOT",
+        "invalid [ipfs].mfs_root",
+        "/swing".to_string(),
+    )?;
 
-    let max_total_storage = match get_env("SWING_MAX_TOTAL_STORAGE") {
-        Some(v) => parse_size(&v).context("invalid SWING_MAX_TOTAL_STORAGE")?,
-        None => match file.policy.max_total_storage {
-            Some(v) => parse_size(&v).context("invalid [policy].max_total_storage")?,
-            None => 100 * (1u64 << 30),
-        },
-    };
+    let max_total_storage = resolve(
+        &get_env,
+        "SWING_MAX_TOTAL_STORAGE",
+        file.policy.max_total_storage,
+        parse_size,
+        "invalid SWING_MAX_TOTAL_STORAGE",
+        "invalid [policy].max_total_storage",
+        100 * (1u64 << 30),
+    )?;
 
-    let max_per_site = match get_env("SWING_MAX_PER_SITE") {
-        Some(v) => parse_size(&v).context("invalid SWING_MAX_PER_SITE")?,
-        None => match file.policy.max_per_site {
-            Some(v) => parse_size(&v).context("invalid [policy].max_per_site")?,
-            None => 10 * (1u64 << 30),
-        },
-    };
+    let max_per_site = resolve(
+        &get_env,
+        "SWING_MAX_PER_SITE",
+        file.policy.max_per_site,
+        parse_size,
+        "invalid SWING_MAX_PER_SITE",
+        "invalid [policy].max_per_site",
+        10 * (1u64 << 30),
+    )?;
 
-    let max_per_account = match get_env("SWING_MAX_PER_ACCOUNT") {
-        Some(v) => parse_size(&v).context("invalid SWING_MAX_PER_ACCOUNT")?,
-        None => match file.policy.max_per_account {
-            Some(v) => parse_size(&v).context("invalid [policy].max_per_account")?,
-            None => 20 * (1u64 << 30),
-        },
-    };
+    let max_per_account = resolve(
+        &get_env,
+        "SWING_MAX_PER_ACCOUNT",
+        file.policy.max_per_account,
+        parse_size,
+        "invalid SWING_MAX_PER_ACCOUNT",
+        "invalid [policy].max_per_account",
+        20 * (1u64 << 30),
+    )?;
 
-    let max_sites_per_account = match get_env("SWING_MAX_SITES_PER_ACCOUNT") {
-        Some(v) => v
-            .parse()
-            .context("invalid SWING_MAX_SITES_PER_ACCOUNT: expected integer")?,
-        None => file.policy.max_sites_per_account.unwrap_or(10),
-    };
+    let max_sites_per_account = resolve_typed(
+        &get_env,
+        "SWING_MAX_SITES_PER_ACCOUNT",
+        file.policy.max_sites_per_account,
+        |v| v.parse().context("expected integer"),
+        "invalid SWING_MAX_SITES_PER_ACCOUNT: expected integer",
+        10,
+    )?;
     if max_sites_per_account == 0 {
         bail!("max_sites_per_account must be greater than 0");
     }
 
-    let max_update_size = match get_env("SWING_MAX_UPDATE_SIZE") {
-        Some(v) => parse_size(&v).context("invalid SWING_MAX_UPDATE_SIZE")?,
-        None => match file.policy.max_update_size {
-            Some(v) => parse_size(&v).context("invalid [policy].max_update_size")?,
-            None => 2 * (1u64 << 30),
-        },
-    };
+    let max_update_size = resolve(
+        &get_env,
+        "SWING_MAX_UPDATE_SIZE",
+        file.policy.max_update_size,
+        parse_size,
+        "invalid SWING_MAX_UPDATE_SIZE",
+        "invalid [policy].max_update_size",
+        2 * (1u64 << 30),
+    )?;
 
-    let keep_versions = match get_env("SWING_KEEP_VERSIONS") {
-        Some(v) => v
-            .parse()
-            .context("invalid SWING_KEEP_VERSIONS: expected integer")?,
-        None => file.policy.keep_versions.unwrap_or(5),
-    };
+    let keep_versions = resolve_typed(
+        &get_env,
+        "SWING_KEEP_VERSIONS",
+        file.policy.keep_versions,
+        |v| v.parse().context("expected integer"),
+        "invalid SWING_KEEP_VERSIONS: expected integer",
+        5,
+    )?;
 
-    let keep_days = match get_env("SWING_KEEP_DAYS") {
-        Some(v) => v
-            .parse()
-            .context("invalid SWING_KEEP_DAYS: expected integer")?,
-        None => file.policy.keep_days.unwrap_or(365),
-    };
+    let keep_days = resolve_typed(
+        &get_env,
+        "SWING_KEEP_DAYS",
+        file.policy.keep_days,
+        |v| v.parse().context("expected integer"),
+        "invalid SWING_KEEP_DAYS: expected integer",
+        365,
+    )?;
 
-    let min_update_interval = match get_env("SWING_MIN_UPDATE_INTERVAL") {
-        Some(v) => parse_duration_secs(&v).context("invalid SWING_MIN_UPDATE_INTERVAL")?,
-        None => match file.policy.min_update_interval {
-            Some(v) => parse_duration_secs(&v).context("invalid [policy].min_update_interval")?,
-            None => 600,
-        },
-    };
+    let min_update_interval = resolve(
+        &get_env,
+        "SWING_MIN_UPDATE_INTERVAL",
+        file.policy.min_update_interval,
+        parse_duration_secs,
+        "invalid SWING_MIN_UPDATE_INTERVAL",
+        "invalid [policy].min_update_interval",
+        600,
+    )?;
 
-    let remove_on_unfollow = match get_env("SWING_REMOVE_ON_UNFOLLOW") {
-        Some(v) => parse_bool(&v).context("invalid SWING_REMOVE_ON_UNFOLLOW")?,
-        None => file.policy.remove_on_unfollow.unwrap_or(true),
-    };
+    let remove_on_unfollow = resolve_typed(
+        &get_env,
+        "SWING_REMOVE_ON_UNFOLLOW",
+        file.policy.remove_on_unfollow,
+        parse_bool,
+        "invalid SWING_REMOVE_ON_UNFOLLOW",
+        true,
+    )?;
 
-    let nip05 = match get_env("SWING_NIP05") {
-        Some(v) => parse_nip05_mode(&v).context("invalid SWING_NIP05")?,
-        None => match file.policy.nip05 {
-            Some(v) => parse_nip05_mode(&v).context("invalid [policy].nip05")?,
-            None => Nip05Mode::Warn,
-        },
-    };
+    let nip05 = resolve(
+        &get_env,
+        "SWING_NIP05",
+        file.policy.nip05,
+        parse_nip05_mode,
+        "invalid SWING_NIP05",
+        "invalid [policy].nip05",
+        Nip05Mode::Warn,
+    )?;
 
-    let nip05_cache_ttl = match get_env("SWING_NIP05_CACHE_TTL") {
-        Some(v) => parse_duration_secs(&v).context("invalid SWING_NIP05_CACHE_TTL")?,
-        None => match file.policy.nip05_cache_ttl {
-            Some(v) => parse_duration_secs(&v).context("invalid [policy].nip05_cache_ttl")?,
-            None => 86_400,
-        },
-    };
+    let nip05_cache_ttl = resolve(
+        &get_env,
+        "SWING_NIP05_CACHE_TTL",
+        file.policy.nip05_cache_ttl,
+        parse_duration_secs,
+        "invalid SWING_NIP05_CACHE_TTL",
+        "invalid [policy].nip05_cache_ttl",
+        86_400,
+    )?;
 
     let state_dir = get_env("SWING_STATE_DIR")
         .or(file.agent.state_dir)
         .unwrap_or_else(|| "./data".to_string());
 
-    let poll_interval = match get_env("SWING_POLL_INTERVAL") {
-        Some(v) => parse_duration_secs(&v).context("invalid SWING_POLL_INTERVAL")?,
-        None => match file.agent.poll_interval {
-            Some(v) => parse_duration_secs(&v).context("invalid [agent].poll_interval")?,
-            None => 300,
-        },
-    };
+    let poll_interval = resolve(
+        &get_env,
+        "SWING_POLL_INTERVAL",
+        file.agent.poll_interval,
+        parse_duration_secs,
+        "invalid SWING_POLL_INTERVAL",
+        "invalid [agent].poll_interval",
+        300,
+    )?;
     if poll_interval == 0 {
         bail!("poll_interval must be greater than 0");
     }
 
-    let fetch_timeout = match get_env("SWING_FETCH_TIMEOUT") {
-        Some(v) => parse_duration_secs(&v).context("invalid SWING_FETCH_TIMEOUT")?,
-        None => 900,
-    };
+    let fetch_timeout = resolve_typed(
+        &get_env,
+        "SWING_FETCH_TIMEOUT",
+        None,
+        parse_duration_secs,
+        "invalid SWING_FETCH_TIMEOUT",
+        900,
+    )?;
     if fetch_timeout == 0 {
         bail!("SWING_FETCH_TIMEOUT must be greater than 0");
     }
 
-    let fetch_idle_timeout = match get_env("SWING_FETCH_IDLE_TIMEOUT") {
-        Some(v) => parse_duration_secs(&v).context("invalid SWING_FETCH_IDLE_TIMEOUT")?,
-        None => 120,
-    };
+    let fetch_idle_timeout = resolve_typed(
+        &get_env,
+        "SWING_FETCH_IDLE_TIMEOUT",
+        None,
+        parse_duration_secs,
+        "invalid SWING_FETCH_IDLE_TIMEOUT",
+        120,
+    )?;
     if fetch_idle_timeout == 0 {
         bail!("SWING_FETCH_IDLE_TIMEOUT must be greater than 0");
     }
 
-    let concurrency = match get_env("SWING_CONCURRENCY") {
-        Some(v) => v
-            .parse()
-            .context("invalid SWING_CONCURRENCY: expected integer")?,
-        None => file.agent.concurrency.unwrap_or(4),
-    };
+    let concurrency = resolve_typed(
+        &get_env,
+        "SWING_CONCURRENCY",
+        file.agent.concurrency,
+        |v| v.parse().context("expected integer"),
+        "invalid SWING_CONCURRENCY: expected integer",
+        4,
+    )?;
     if concurrency == 0 {
         bail!("concurrency must be greater than 0");
     }
 
-    let report_ttl = match get_env("SWING_REPORT_TTL") {
-        Some(v) => parse_duration_secs(&v).context("invalid SWING_REPORT_TTL")?,
-        None => match file.agent.report_ttl {
-            Some(v) => parse_duration_secs(&v).context("invalid [agent].report_ttl")?,
-            None => 3 * 86_400,
-        },
-    };
+    let report_ttl = resolve(
+        &get_env,
+        "SWING_REPORT_TTL",
+        file.agent.report_ttl,
+        parse_duration_secs,
+        "invalid SWING_REPORT_TTL",
+        "invalid [agent].report_ttl",
+        3 * 86_400,
+    )?;
     if report_ttl / 2 <= poll_interval {
         bail!("report_ttl must be more than twice poll_interval");
     }
 
-    let publish_nip05 = match get_env("SWING_PUBLISH_NIP05") {
-        Some(v) => parse_nip05_mode(&v).context("invalid SWING_PUBLISH_NIP05")?,
-        None => match file.publish.nip05 {
-            Some(v) => parse_nip05_mode(&v).context("invalid [publish].nip05")?,
-            None => Nip05Mode::Warn,
-        },
-    };
+    let publish_nip05 = resolve(
+        &get_env,
+        "SWING_PUBLISH_NIP05",
+        file.publish.nip05,
+        parse_nip05_mode,
+        "invalid SWING_PUBLISH_NIP05",
+        "invalid [publish].nip05",
+        Nip05Mode::Warn,
+    )?;
 
-    let publish_keep_versions = match get_env("SWING_PUBLISH_KEEP_VERSIONS") {
-        Some(v) => v
-            .parse()
-            .context("invalid SWING_PUBLISH_KEEP_VERSIONS: expected integer")?,
-        None => file.publish.keep_versions.unwrap_or(5),
-    };
+    let publish_keep_versions = resolve_typed(
+        &get_env,
+        "SWING_PUBLISH_KEEP_VERSIONS",
+        file.publish.keep_versions,
+        |v| v.parse().context("expected integer"),
+        "invalid SWING_PUBLISH_KEEP_VERSIONS: expected integer",
+        5,
+    )?;
     if publish_keep_versions == 0 {
         bail!("publish keep_versions must be greater than 0");
     }
 
-    let dashboard_listen = match get_env("SWING_DASHBOARD_LISTEN") {
-        Some(v) => parse_dashboard_listen(&v).context("invalid SWING_DASHBOARD_LISTEN")?,
-        None => match file.dashboard.listen {
-            Some(v) => parse_dashboard_listen(&v).context("invalid [dashboard].listen")?,
-            None => DashboardListen::Addr(([127, 0, 0, 1], 8082).into()),
-        },
-    };
+    let dashboard_listen = resolve(
+        &get_env,
+        "SWING_DASHBOARD_LISTEN",
+        file.dashboard.listen,
+        parse_dashboard_listen,
+        "invalid SWING_DASHBOARD_LISTEN",
+        "invalid [dashboard].listen",
+        DashboardListen::Addr(([127, 0, 0, 1], 8082).into()),
+    )?;
 
     let dashboard_allowed_hosts = match get_env("SWING_DASHBOARD_ALLOWED_HOSTS") {
         Some(v) => v
@@ -570,13 +652,15 @@ fn build_config(file: ConfigFile, get_env: impl Fn(&str) -> Option<String>) -> R
         None => file.dashboard.custom_css.map(PathBuf::from),
     };
 
-    let dashboard_max_upload = match get_env("SWING_DASHBOARD_MAX_UPLOAD") {
-        Some(v) => parse_size(&v).context("invalid SWING_DASHBOARD_MAX_UPLOAD")?,
-        None => match file.dashboard.max_upload {
-            Some(v) => parse_size(&v).context("invalid [dashboard].max_upload")?,
-            None => 2 * (1u64 << 30),
-        },
-    };
+    let dashboard_max_upload = resolve(
+        &get_env,
+        "SWING_DASHBOARD_MAX_UPLOAD",
+        file.dashboard.max_upload,
+        parse_size,
+        "invalid SWING_DASHBOARD_MAX_UPLOAD",
+        "invalid [dashboard].max_upload",
+        2 * (1u64 << 30),
+    )?;
     if dashboard_max_upload == 0 {
         bail!("dashboard max_upload must be greater than 0");
     }
@@ -632,7 +716,7 @@ fn build_config(file: ConfigFile, get_env: impl Fn(&str) -> Option<String>) -> R
 impl Config {
     pub fn load(cli_path: Option<&Path>) -> Result<Self> {
         let (file, config_path) = load_file(cli_path)?;
-        let mut config = build_config(file, process_env)?;
+        let mut config = build_config(file, env_var)?;
         config.config_path = config_path;
         Ok(config)
     }

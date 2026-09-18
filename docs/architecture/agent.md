@@ -1,6 +1,19 @@
-# mirror-agent（agent.rs, health.rs, policy.rs, state.rs）
+# mirror-agent（agent/, health.rs, policy.rs, state.rs）
 
 [`architecture.md`](../architecture.md) の一部。MFS のパスと Kubo RPC は [`kubo.md`](kubo.md)、NIP-05 は [`nip05.md`](nip05.md)、ダッシュボードは [`dashboard.md`](dashboard.md)。
+
+## agent/ の構成
+
+| ファイル | 内容 |
+|---|---|
+| `agent/mod.rs` | `Agent` 構造体の定義、`new`、`poll_once`、メンテナンス系（`sweep`・`collect_garbage`・`reconcile`・`remove_unfollowed`）、state 保存の共通ヘルパー（`save`） |
+| `agent/lifecycle.rs` | `run`（プロセスのライフサイクル）、SIGINT/SIGTERM・watchdog の待ち受け、ダッシュボードタスクの起動・終了 |
+| `agent/follow.rs` | `refresh_follow_set`（Follow Set の取得・保存・再送、対象の切り替え、サイトイベントの購読・取得）、`limit_sites_per_account` |
+| `agent/store.rs` | `Agent::submit`/`drain`（キューイングと直列実行）、`apply_site_event`（「保存の順序」の中核）、NIP-05 検証、`decide`/`version_infos` |
+| `agent/replicas.rs` | レプリカ報告の差分計算・送信（`SentReport`・`ReportBook`・`Held`・`reports_to_send`・`held`・`load_sent_reports`・`sync_reports`） |
+| `agent/test_support.rs` | ユニットテスト共通のフィクスチャ（`Fixture`・`FakeKubo`・`FakeNip05`・`FakeRelay`）。`#[cfg(test)]` |
+
+外部からは `swing::agent::run` のみを公開する。テストは対応するモジュールの `#[cfg(test)] mod tests` に置く。
 
 ## 全体の流れ
 
@@ -82,6 +95,7 @@ state の各版について、`health::check_version` で版のパスの CID（`
 
 ## 並行処理
 
+- `submit`（購読通知・過去分の取得の両方から呼ばれる入口）は、キューへの登録やタスク生成より前に対象判定（Follow Set にいるか）を行い、対象外の pubkey のイベントはその場で捨てる。relay がフィルタを無視して対象外のイベントを大量に送っても、キューやタスクは増えない。「保存の順序」4 の判定は、これに加えた多層防御として残っている（`submit` から `drain` までの間に対象から外れた場合に効く）。
 - 「保存の順序」を同時に実行するタスクは最大 `concurrency` 個。
 - 同じ pubkey のタスクは同時に `max_sites_per_account` 個まで。超えたイベントは捨て、次の poll で拾い直す。
 - 同じサイト（`pubkey:d`）のタスクは同時に 1 つ。実行中に来たイベントは、実行中・待機中のものより `created_at` が新しいときだけ待機に置き（1 件、上書き）、実行後に同じタスクで続けて処理する。

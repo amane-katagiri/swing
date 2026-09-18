@@ -35,52 +35,71 @@
   --swing-radius-lg: 10px;
   --swing-nav-width: 208px;
   --swing-graph-label-size: 11px;
+
+  --swing-dark-bg: #0a0a0a;
+  --swing-dark-surface: #0a0a0a;
+  --swing-dark-surface-alt: rgb(255 255 255 / 9%);
+  --swing-dark-surface-raised: #141414;
+  --swing-dark-border: rgb(255 255 255 / 11%);
+  --swing-dark-border-strong: rgb(255 255 255 / 20%);
+  --swing-dark-text: #ffffff;
+  --swing-dark-text-muted: rgb(255 255 255 / 56%);
+  --swing-dark-text-faint: rgb(255 255 255 / 46%);
+  --swing-dark-accent: #7fb0ff;
+  --swing-dark-accent-strong: #a9cbff;
+  --swing-dark-accent-soft: rgb(127 176 255 / 18%);
+  --swing-dark-warn: #d3a25a;
+  --swing-dark-warn-soft: rgb(211 162 90 / 16%);
+  --swing-dark-danger: #d98d86;
+  --swing-dark-danger-soft: rgb(217 141 134 / 14%);
+  --swing-dark-ok: #8fb389;
+  --swing-dark-ok-soft: rgb(143 179 137 / 14%);
 }
 
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
-    --swing-bg: #0a0a0a;
-    --swing-surface: #0a0a0a;
-    --swing-surface-alt: rgb(255 255 255 / 9%);
-    --swing-surface-raised: #141414;
-    --swing-border: rgb(255 255 255 / 11%);
-    --swing-border-strong: rgb(255 255 255 / 20%);
-    --swing-text: #ffffff;
-    --swing-text-muted: rgb(255 255 255 / 56%);
-    --swing-text-faint: rgb(255 255 255 / 46%);
-    --swing-accent: #7fb0ff;
-    --swing-accent-strong: #a9cbff;
-    --swing-accent-soft: rgb(127 176 255 / 18%);
-    --swing-warn: #d3a25a;
-    --swing-warn-soft: rgb(211 162 90 / 16%);
-    --swing-danger: #d98d86;
-    --swing-danger-soft: rgb(217 141 134 / 14%);
-    --swing-ok: #8fb389;
-    --swing-ok-soft: rgb(143 179 137 / 14%);
+    --swing-bg: var(--swing-dark-bg);
+    --swing-surface: var(--swing-dark-surface);
+    --swing-surface-alt: var(--swing-dark-surface-alt);
+    --swing-surface-raised: var(--swing-dark-surface-raised);
+    --swing-border: var(--swing-dark-border);
+    --swing-border-strong: var(--swing-dark-border-strong);
+    --swing-text: var(--swing-dark-text);
+    --swing-text-muted: var(--swing-dark-text-muted);
+    --swing-text-faint: var(--swing-dark-text-faint);
+    --swing-accent: var(--swing-dark-accent);
+    --swing-accent-strong: var(--swing-dark-accent-strong);
+    --swing-accent-soft: var(--swing-dark-accent-soft);
+    --swing-warn: var(--swing-dark-warn);
+    --swing-warn-soft: var(--swing-dark-warn-soft);
+    --swing-danger: var(--swing-dark-danger);
+    --swing-danger-soft: var(--swing-dark-danger-soft);
+    --swing-ok: var(--swing-dark-ok);
+    --swing-ok-soft: var(--swing-dark-ok-soft);
     --swing-root: var(--swing-accent);
     --swing-focus: var(--swing-accent);
   }
 }
 
 :root[data-theme="dark"] {
-  --swing-bg: #0a0a0a;
-  --swing-surface: #0a0a0a;
-  --swing-surface-alt: rgb(255 255 255 / 9%);
-  --swing-surface-raised: #141414;
-  --swing-border: rgb(255 255 255 / 11%);
-  --swing-border-strong: rgb(255 255 255 / 20%);
-  --swing-text: #ffffff;
-  --swing-text-muted: rgb(255 255 255 / 56%);
-  --swing-text-faint: rgb(255 255 255 / 46%);
-  --swing-accent: #7fb0ff;
-  --swing-accent-strong: #a9cbff;
-  --swing-accent-soft: rgb(127 176 255 / 18%);
-  --swing-warn: #d3a25a;
-  --swing-warn-soft: rgb(211 162 90 / 16%);
-  --swing-danger: #d98d86;
-  --swing-danger-soft: rgb(217 141 134 / 14%);
-  --swing-ok: #8fb389;
-  --swing-ok-soft: rgb(143 179 137 / 14%);
+  --swing-bg: var(--swing-dark-bg);
+  --swing-surface: var(--swing-dark-surface);
+  --swing-surface-alt: var(--swing-dark-surface-alt);
+  --swing-surface-raised: var(--swing-dark-surface-raised);
+  --swing-border: var(--swing-dark-border);
+  --swing-border-strong: var(--swing-dark-border-strong);
+  --swing-text: var(--swing-dark-text);
+  --swing-text-muted: var(--swing-dark-text-muted);
+  --swing-text-faint: var(--swing-dark-text-faint);
+  --swing-accent: var(--swing-dark-accent);
+  --swing-accent-strong: var(--swing-dark-accent-strong);
+  --swing-accent-soft: var(--swing-dark-accent-soft);
+  --swing-warn: var(--swing-dark-warn);
+  --swing-warn-soft: var(--swing-dark-warn-soft);
+  --swing-danger: var(--swing-dark-danger);
+  --swing-danger-soft: var(--swing-dark-danger-soft);
+  --swing-ok: var(--swing-dark-ok);
+  --swing-ok-soft: var(--swing-dark-ok-soft);
   --swing-root: var(--swing-accent);
   --swing-focus: var(--swing-accent);
 }
@@ -174,8 +193,6 @@ p {
   outline: 2px solid var(--swing-focus);
   outline-offset: 2px;
 }
-
-/* Layout */
 
 .swing-shell {
   display: flex;
@@ -522,8 +539,6 @@ textarea.swing-input {
   flex: 1 1 auto;
 }
 
-/* Panels and toolbar */
-
 .swing-panel {
   background: var(--swing-surface);
   border: 1px solid var(--swing-border);
@@ -601,8 +616,6 @@ textarea.swing-input {
   margin-bottom: var(--swing-space-4);
 }
 
-/* Status / loading / error / empty */
-
 .swing-status {
   margin-bottom: var(--swing-space-3);
 }
@@ -627,8 +640,6 @@ textarea.swing-input {
   color: var(--swing-text-muted);
   font-style: italic;
 }
-
-/* Badges */
 
 .swing-badge {
   display: inline-block;
@@ -689,8 +700,6 @@ textarea.swing-input {
   color: var(--swing-danger);
   background: var(--swing-danger-soft);
 }
-
-/* Sites view */
 
 .swing-account {
   border: 1px solid var(--swing-border);
@@ -886,8 +895,6 @@ body[data-view="sites"][data-style="table"] .swing-site-set {
   margin-top: var(--swing-space-3);
 }
 
-/* Webring view */
-
 .swing-webring-layout {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
@@ -964,7 +971,6 @@ body[data-view="sites"][data-style="table"] .swing-site-set {
   stroke: var(--swing-root);
   stroke-width: 3;
   fill: var(--swing-root);
-  fill-opacity: 0.2;
 }
 
 .swing-node[data-has-follow-set="false"] circle {
@@ -1038,10 +1044,6 @@ body[data-view="sites"][data-style="table"] .swing-site-set {
 
 .swing-node {
   cursor: pointer;
-}
-
-.swing-webring-list dl {
-  margin: 0;
 }
 
 .swing-webring-group {
@@ -1124,8 +1126,6 @@ pre.swing-pre {
   align-items: center;
   margin-bottom: var(--swing-space-1);
 }
-
-/* Publish view */
 
 .swing-my-sites .swing-view-head {
   margin-bottom: var(--swing-space-3);
@@ -1236,8 +1236,6 @@ pre.swing-pre {
   font-family: var(--swing-font-mono);
   word-break: break-all;
 }
-
-/* Settings view */
 
 .swing-config-section {
   margin-bottom: var(--swing-space-4);

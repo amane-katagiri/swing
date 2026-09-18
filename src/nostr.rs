@@ -35,17 +35,23 @@ impl RelayClient {
         &self.relays
     }
 
+    async fn fetch(&self, filter: Filter, context: &'static str) -> Result<Vec<Event>> {
+        Ok(self
+            .client
+            .fetch_events(filter)
+            .timeout(Duration::from_secs(30))
+            .await
+            .context(context)?
+            .into_iter()
+            .collect())
+    }
+
     pub async fn fetch_follow_set(&self, mirror_set: &str) -> Result<Option<Event>> {
         let filter = Filter::new()
             .kind(Kind::Custom(30000))
             .author(self.keys.public_key())
             .identifier(mirror_set);
-        let events = self
-            .client
-            .fetch_events(filter)
-            .timeout(Duration::from_secs(30))
-            .await
-            .context("fetching follow set")?;
+        let events = self.fetch(filter, "fetching follow set").await?;
         // Defense in depth against a relay that ignores the filter.
         Ok(events
             .into_iter()
@@ -64,13 +70,7 @@ impl RelayClient {
         let filter = Filter::new()
             .kind(Kind::Custom(site_event_kind))
             .authors(authors.iter().copied());
-        let events = self
-            .client
-            .fetch_events(filter)
-            .timeout(Duration::from_secs(30))
-            .await
-            .context("fetching site events")?;
-        Ok(events.into_iter().collect())
+        self.fetch(filter, "fetching site events").await
     }
 
     pub async fn fetch_replica_reports(
@@ -84,13 +84,7 @@ impl RelayClient {
         let filter = Filter::new()
             .kind(Kind::Custom(report_kind))
             .coordinates(sites);
-        let events = self
-            .client
-            .fetch_events(filter)
-            .timeout(Duration::from_secs(30))
-            .await
-            .context("fetching replica reports")?;
-        Ok(events.into_iter().collect())
+        self.fetch(filter, "fetching replica reports").await
     }
 
     pub async fn fetch_follow_sets(
@@ -105,12 +99,7 @@ impl RelayClient {
             .kind(Kind::Custom(30000))
             .authors(authors.iter().copied())
             .identifier(mirror_set);
-        let events = self
-            .client
-            .fetch_events(filter)
-            .timeout(Duration::from_secs(30))
-            .await
-            .context("fetching follow sets")?;
+        let events = self.fetch(filter, "fetching follow sets").await?;
         let mut newest: HashMap<PublicKey, Event> = HashMap::new();
         for event in events {
             if !is_follow_set_of(&event, &event.pubkey, mirror_set) {
@@ -139,11 +128,8 @@ impl RelayClient {
             .identifier(mirror_set)
             .pubkeys(targets.iter().copied());
         let events = self
-            .client
-            .fetch_events(filter)
-            .timeout(Duration::from_secs(30))
-            .await
-            .context("fetching follow sets that reference accounts")?;
+            .fetch(filter, "fetching follow sets that reference accounts")
+            .await?;
         Ok(events
             .into_iter()
             .filter(|e| {
@@ -213,13 +199,7 @@ impl ReportRelay for RelayClient {
         let filter = Filter::new()
             .kind(Kind::Custom(report_kind))
             .author(self.keys.public_key());
-        let events = self
-            .client
-            .fetch_events(filter)
-            .timeout(Duration::from_secs(30))
-            .await
-            .context("fetching own replica reports")?;
-        Ok(events.into_iter().collect())
+        self.fetch(filter, "fetching own replica reports").await
     }
 
     async fn send_report(&self, report: EventBuilder) -> Result<bool> {

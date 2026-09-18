@@ -9,13 +9,13 @@
 - relay 接続は agent が使っているものと同じ `Arc<RelayClient>` を共有する（リクエストのたびに接続し直さない）。
 - 保存状態は agent の `Agent` 構造体が持つ `Mutex<State>` には触れず、CLI の各サブコマンド（`sites`・`status` など）と同じく `state.json` をディスクから読む（`mirror::collect_sites`・`health::collect_status` などが内部で `State::load` する）。`Agent` は private のままで、agent のロックと競合しない。
 - `mirror add` / `mirror remove` が relay に受理されると、`tokio::sync::Notify` で agent の待ち受けループに知らせる。agent 側は poll tick と同じ `poll_once`（sweep → Follow Set の再取得 → レプリカ報告の同期）をその場で実行するので、次の poll を待たずに反映される（`poll_timer.tick()` と `notify.notified()` のどちらの分岐も同じ `poll_once` を呼ぶ）。
-- 自分の公開鍵（`own_pubkey`）は `AppState::new` が起動時に 1 回だけ秘密鍵から求めて保持する（`/api/overview`・`/api/webring`・`/api/replicas`・`/api/publish` はリクエストのたびに鍵をパースし直さない）。この時点で秘密鍵のパースに失敗すると `AppState::new` がエラーを返すが、`agent::run` はこれより前に `RelayClient::connect` で同じ鍵のパースにすでに成功しているため、実運用でここが失敗することはない。
+- 自分の公開鍵（`own_pubkey`）は `AppState::new` が起動時に 1 回だけ秘密鍵から求めて保持する（`/api/overview`・`/api/webring`・`/api/replicas`・`/api/publish/upload` はリクエストのたびに鍵をパースし直さない）。この時点で秘密鍵のパースに失敗すると `AppState::new` がエラーを返すが、`agent::run` はこれより前に `RelayClient::connect` で同じ鍵のパースにすでに成功しているため、実運用でここが失敗することはない。
 
 ### 起動
 
 `agent::run` の中で次の順に行う。詳しい流れ（シグナル絡み）は [`agent.md`](agent.md#シグナルと終了) を参照。
 
-1. relay に接続し、state を読み、`[dashboard].listen` が `Off` でなければ `TcpListener::bind` する。**bind に失敗すると agent の起動自体がエラーで終了する**（黙って続行しない）。`Off` なら何もしない。
+1. relay に接続し、state を読み、`[dashboard].listen` が `Off` でなければ `TcpListener::bind` する。**bind に失敗すると agent の起動自体がエラーで終了する**（黙って続行しない）。`Off` なら何もしない。bind したアドレスがループバック（`127.0.0.1`/`::1`）以外、または `allowed_hosts` が空でなければ、ダッシュボードに認証が無いことを `tracing::warn` で警告する。
 2. `Agent` を組み立て、SIGINT・SIGTERM の永続リスナーを作ってから `reconcile`（起動時の突き合わせ）を行う。この突き合わせはシグナルと競争させており、途中でシグナルが来たら打ち切って shutdown に進む（この時点ではまだダッシュボードを起動していないので、relay を切断するだけで終わる）。
 3. bind できていれば、まず `<state_dir>/upload/` を掃除（`dashboard::cleanup_upload_dir`。前回の異常終了で残った展開先ディレクトリを消す）してから `dashboard::AppState`（relay・config・IpfsClient・Notify・起動時刻・publish 用の Mutex・`own_pubkey`）を作り、`dashboard::serve` を別タスクとして `tokio::spawn` する。`AppState::new` 自体の失敗（秘密鍵パース）も agent の起動失敗として伝播する。
 4. 本体のループ（relay 通知・poll tick・Notify・タスク完了・ダッシュボードタスクの終了・SIGINT・SIGTERM）に入る。
@@ -53,22 +53,40 @@ SIGINT・SIGTERM のどちらでも同じように終了する（`docker stop` �
 2. **書き込み系（GET/HEAD 以外）はさらに**:
    - `X-Swing-Dashboard: 1` ヘッダが無ければ 403。CORS ヘッダを一切返さないので、他オリジンの `fetch` は素の CORS では通らない。
    - `Origin` ヘッダがあれば、そこから取り出した authority（スキームを外し末尾の `/` を削っただけ。ポートを含む）が `Host` ヘッダの値と大文字小文字を無視して一致しなければ 403。
-3. **レスポンスヘッダ**（成功・失敗どちらにも付く。すべてのルートに一律で付く 1〜2 個目はこの middleware で、`/custom.css` の `Cache-Control` だけはハンドラ自身が付ける）:
+3. **レスポンスヘッダ**（成功・失敗どちらにも付く。すべてのルートに一律で付く分はこの middleware で、`/custom.css` の `Cache-Control` だけはハンドラ自身が付ける）:
    - `X-Content-Type-Options: nosniff`
-   - `Content-Security-Policy: default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; frame-ancestors 'none'`
-   - `Cache-Control: no-store`（`/api/` 配下は middleware が付ける。`/custom.css` は `assets::custom_css` 自身が付けており、静的ファイル配信の内容変更後にブラウザキャッシュへ古い CSS が残らないようにしている。`/`・`/style.css`・`/app.js`・`/graph.js` には付かない）
+   - `Content-Security-Policy: default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; frame-ancestors 'none'`（`frame-ancestors 'none'` で iframe 埋め込みを禁止）
+   - `Referrer-Policy: no-referrer`
+   - `X-Frame-Options: DENY`（CSP の `frame-ancestors` に対応しない古いブラウザ向けの保険）
+   - `Cache-Control: no-store`（`/api/` 配下は middleware が付ける。`/custom.css` は `assets::custom_css` 自身が付けており、静的ファイル配信の内容変更後にブラウザキャッシュへ古い CSS が残らないようにしている。`/`・`/style.css`・`web/` 配下の各 ES module（`/app.js` `/graph.js` `/storage.js` `/i18n.js` `/util.js` `/ui.js` `/sites.js` `/webring.js` `/publish.js` `/settings.js`）には付かない）
 4. **秘密鍵**: `Config` に `Serialize` を実装しない（型として JSON に出せない）ことで、`/api/config` を含めどの DTO にも秘密鍵の値が現れない。
+
+## タイムアウト（`src/dashboard/mod.rs`）
+
+`tower_http::timeout::TimeoutLayer` を `router()` に掛けている。タイムアウトすると空ボディの `408 Request Timeout` を返す（`guard::security_middleware` がヘッダーだけ付け足す）。
+
+- `POST /api/publish/upload` 以外の全ルート: 120 秒。relay 通信や重い DAG 走査（`/api/status`）を含めても十分な余裕を持たせつつ、slowloris 的にリクエストを長時間占有する接続を打ち切る。
+- `POST /api/publish/upload`: 30 分。フォルダアップロードは `[dashboard].max_upload`（既定 2GB）まで許容するため、遅い回線での転送を打ち切らないよう別枠で長く取っている。
+- ヘッダー読み取り自体のタイムアウトは、`axum::serve`（configuration を持たない単純なラッパー）を使っている都合上、現状は設定していない（`hyper_util` を直接使う construction に切り替えれば可能）。
 
 ## 静的ファイルの配信（`src/dashboard/assets.rs`）
 
-`web/index.html`・`web/style.css`・`web/app.js`・`web/graph.js` の 4 ファイルをビルド時に `include_str!` でバイナリに埋め込む（実行時にファイルを探しに行かない。単一バイナリ配布と Docker の両方で同じ動きになる）。Dockerfile のビルドステージは `COPY web ./web` してから `cargo build --release` する。
+`web/` 配下の全ファイル（`index.html`・`style.css`・ES module 一式）をビルド時に `include_str!` でバイナリに埋め込む（実行時にファイルを探しに行かない。単一バイナリ配布と Docker の両方で同じ動きになる）。Dockerfile のビルドステージは `COPY web ./web` してから `cargo build --release` する。ファイルを 1 つ追加するときは `assets.rs` に定数+ハンドラを、`mod.rs` の router にルートを 1 対 1 で足す（ビルド工程が無いぶん、この対応関係が単純さの拠り所になっている）。
 
 | ルート | 内容 |
 |---|---|
 | `GET /` | `index.html`（`text/html; charset=utf-8`） |
 | `GET /style.css` | `style.css`（`text/css; charset=utf-8`） |
-| `GET /app.js` | `app.js`（`text/javascript; charset=utf-8`） |
-| `GET /graph.js` | `graph.js`（`text/javascript; charset=utf-8`） |
+| `GET /app.js` | `app.js`（`text/javascript; charset=utf-8`。ルーター兼エントリポイント） |
+| `GET /graph.js` | `graph.js`（`text/javascript; charset=utf-8`。webring の force-directed layout） |
+| `GET /storage.js` | `storage.js`（`text/javascript; charset=utf-8`。localStorage の薄いラッパー） |
+| `GET /i18n.js` | `i18n.js`（`text/javascript; charset=utf-8`。`MESSAGES`・`t`・`currentLang`・`applyStaticI18n`） |
+| `GET /util.js` | `util.js`（`text/javascript; charset=utf-8`。`cache`・DOM/fetch共通ユーティリティ） |
+| `GET /ui.js` | `ui.js`（`text/javascript; charset=utf-8`。複数画面で共有する UI 部品） |
+| `GET /sites.js` | `sites.js`（`text/javascript; charset=utf-8`。Sites 画面） |
+| `GET /webring.js` | `webring.js`（`text/javascript; charset=utf-8`。Webring 画面） |
+| `GET /publish.js` | `publish.js`（`text/javascript; charset=utf-8`。Publish 画面） |
+| `GET /settings.js` | `settings.js`（`text/javascript; charset=utf-8`。Settings 画面） |
 | `GET /custom.css` | `[dashboard].custom_css` の中身をリクエストのたびにディスクから読んで返す（`text/css; charset=utf-8`、`Cache-Control: no-store`）。未設定・読み込み失敗なら空文字 |
 
 ## HTTP API（`src/dashboard/api.rs`, `src/dashboard/dto.rs`）
@@ -84,8 +102,9 @@ SIGINT・SIGTERM のどちらでも同じように終了する（`docker stop` �
 ### 既知の性質
 
 - relay を引く GET はキャッシュ・同時実行制限・レート制限のいずれも無い（上記）。件数上限（`MAX_KEYS`、webring の depth 上限）はあるが、リクエスト頻度そのものは制限していない。
-- `POST /api/publish` の 409 は、**ダッシュボード内で同時に来た publish リクエストどうし**しか排他しない。ダッシュボードで publish している間に、同じホスト上で CLI の `swing publish` を別途実行した場合は排他されない（`publish_lock` は `AppState` 内だけのロック）。
+- `POST /api/publish/upload` の 409 は、**ダッシュボード内で同時に来た publish リクエストどうし**しか排他しない。ダッシュボードで publish している間に、同じホスト上で CLI の `swing publish` を別途実行した場合は排他されない（`publish_lock` は `AppState` 内だけのロック）。
 - ダッシュボードには認証が無く、ガードは Host 検証・Origin 検証・書き込み系ヘッダの 3 点だけ。`allowed_hosts` を広げて `localhost`/`127.0.0.1` 以外のホスト名からアクセスできるようにする構成は、認証が無いまま到達範囲を広げることになるため想定していない。
+- `run_publish`（NIP-05 検証）は `nip05::HttpNip05Verifier::public_only()` を使い、プライベート/ループバック/リンクローカルなどに解決されるホストへの接続を拒否する（SSRF 対策。`src/agent/` が他人の `d` を検証する場合と同じ verifier）。それでも接続エラーの詳細（TCP 接続拒否・TLS 失敗・タイムアウトなど）はレスポンスの `nip05.detail` にそのまま出さず、`unreachable`/`timeout`/`invalid_response` の粗い分類にしてから返す。生のエラー文字列は `tracing::warn` にだけ出す（内部ネットワークに対するポートスキャン用オラクルにしない）。
 
 ### GET /api/overview
 
@@ -222,17 +241,33 @@ Follow Set が無ければ `title: null`、`members: []`。
 
 `following: false` が CLI の `[not following]` に相当する。
 
-### POST /api/publish
+### POST /api/publish/upload
 
-リクエスト:
+`multipart/form-data`。ガードは他の書き込み系と同じ（`X-Swing-Dashboard: 1` ヘッダと Origin 検証。`Content-Type` は multipart なので `AppJson` の JSON 判定は関係しない）。
 
-```json
-{ "dir": "/path/on/agent/host", "site": "example.com", "url": "https://example.com/", "message": "note", "nip05": "warn" }
-```
+パート（テキストパートはファイルより先に送る想定）:
 
-`url` / `message` / `nip05` は省略可（`nip05` 省略時は `[publish].nip05`）。`dir` は**エージェントの実行環境（Docker ならコンテナの中）のパス**で、ディレクトリでなければ 400。`site` は `d` タグの制約、`url` を指定するなら http/https URL であることを CLI と同じ規則で検証し、違反は 400。
+- `site`（必須）・`url`・`message`・`nip05`（`url`/`message`/`nip05` は省略可、`nip05` 省略時は `[publish].nip05`）。`site` は `d` タグの制約、`url` を指定するなら http/https URL であることを CLI と同じ規則で検証し、違反は 400。
+- `file`（1 個以上）: 各パートの `filename` がサイトルートからの相対パス（`/` 区切り。ブラウザは `webkitRelativePath` の先頭フォルダ名を取り除いて送る）
+
+サーバの検証（`upload::validate_relative_path`、違反はすべて 400 で何も書かない）:
+
+- パスは非空、`/` で始まらない、`\` を含まない、制御文字を含まない
+- パスの長さは `MAX_PATH_LEN`（4096 バイト）以下、セグメント数（`/` の個数 + 1）は `MAX_PATH_SEGMENTS`（32）以下
+- 各セグメントが非空・`.`・`..` のいずれでもない（`a//b`、`a/./b`、`a/../b`、絶対パス、相対パスの親ディレクトリ参照はすべて拒否）
+- 同じパスが 2 回来たら 400、`file` パートが 0 個なら 400、`site` が無ければ 400
+- `file` パートの総数は `MAX_UPLOAD_FILES`（10,000）まで。超えた時点で以降のパートを読まずに 400 を返す
+
+いずれの上限も固定の定数（`src/dashboard/upload.rs`）で、設定項目にはしていない。`[dashboard].max_upload`（ボディサイズ）と組み合わせても、1 パートあたりのバイト数を小さくして大量のファイル・深いディレクトリを作らせる DoS（ディスク/inode 枯渇）を防ぐのが目的。超過時はどの検証もアップロード先の展開ディレクトリを丸ごと削除してから 400 を返す（成功・失敗どちらでも同じ後始末経路を通る、下記「処理」参照）。
 
 同時に実行できる publish は 1 本だけ（`AppState.publish_lock` を `try_lock`）。実行中にもう 1 本来たら 409。
+
+処理:
+
+1. `<state_dir>/upload/<ランダム名>/`（現在時刻のナノ秒・プロセス ID・カウンタから作る名前）を作り、各 `file` パートをストリーミングで書き込む（メモリに全体を載せない）。
+2. `api::run_publish`（NIP-05 検証 → Kubo に add して MFS に置く → サイトイベントを署名して送信 → 古い版を `[publish].keep_versions` 個まで残して削除）を、展開先ディレクトリをサイトのディレクトリとして呼ぶ。処理順は CLI の `swing publish` と同じ。削除に失敗した版は `prune_error` に理由文字列が入るだけで、レスポンス全体は成功扱い。
+3. **成功でも失敗でも**展開先ディレクトリを削除する（`tokio::fs::remove_dir_all`。削除に失敗したら warn ログを出すだけで、エラーはレスポンスに影響しない）。`<state_dir>/upload/` 自体は agent 起動時に丸ごと掃除される（前回の異常終了で残った分の後始末）。
+4. ボディが `[dashboard].max_upload` を超えたら 413（`axum::extract::DefaultBodyLimit` をこのルートだけに `layer` している。ストリーミング中に超えた場合も打ち切って 413 にする。413 かどうかは multipart のエラーチェーンに `"length limit"` という文字列が含まれるかで判定している）。
 
 ```json
 {
@@ -243,40 +278,15 @@ Follow Set が無ければ `title: null`、`members: []`。
   "relays": [ { "relay": "wss://…", "ok": true, "error": null } ],
   "pruned": ["1780000000"],
   "prune_error": null,
-  "gateway_url": "http://127.0.0.1:8080/ipfs/bafy…/"
+  "gateway_url": "http://127.0.0.1:8080/ipfs/bafy…/",
+  "files": 3
 }
 ```
 
 - `nip05.status` は `off` / `verified` / `mismatch` / `not_applicable` / `error`。
 - `require` で検証が通らなければ、add する前に 422 を返す: `{ "error": "...", "nip05": { "status": "...", "detail": "..." } }`。
-- どの relay にも受理されなければ 502（CLI と同じく、Kubo に add した内容と古い版はそのまま残す）。
-- 処理順は CLI の `swing publish` と同じ: NIP-05 検証 → Kubo に add して MFS に置く → サイトイベントを署名して送信 → 古い版を `[publish].keep_versions` 個まで残して削除。削除に失敗した版は `prune_error` に理由文字列が入るだけで、レスポンス全体は成功扱い。
-- `POST /api/publish` と `POST /api/publish/upload` は、NIP-05 検証以降の処理（`api::run_publish`）を共有している。違いはサイトのディレクトリの出所（ホスト上のパス／アップロードを展開した先）だけで、それ以外の検証・処理順・エラーの扱いはどちらも同じ。
-- **UI 調整の結果、ダッシュボードの画面からはこのエンドポイント（パス指定）を呼ばなくなった**。Publish 画面は常に `POST /api/publish/upload`（フォルダアップロード）だけを使う。`POST /api/publish` 自体は API として残っており、スクリプトなど画面を介さずに叩く用途には使える。
-
-### POST /api/publish/upload
-
-`multipart/form-data`。ガードは他の書き込み系と同じ（`X-Swing-Dashboard: 1` ヘッダと Origin 検証。`Content-Type` は multipart なので `AppJson` の JSON 判定は関係しない）。
-
-パート（テキストパートはファイルより先に送る想定。`site` 必須、`url`/`message`/`nip05` は `POST /api/publish` と同じ意味・同じ検証）:
-
-- `site`、`url`、`message`、`nip05`
-- `file`（1 個以上）: 各パートの `filename` がサイトルートからの相対パス（`/` 区切り。ブラウザは `webkitRelativePath` の先頭フォルダ名を取り除いて送る）
-
-サーバの検証（`upload::validate_relative_path`、違反はすべて 400 で何も書かない）:
-
-- パスは非空、`/` で始まらない、`\` を含まない、制御文字を含まない
-- 各セグメントが非空・`.`・`..` のいずれでもない（`a//b`、`a/./b`、`a/../b`、絶対パス、相対パスの親ディレクトリ参照はすべて拒否）
-- 同じパスが 2 回来たら 400、`file` パートが 0 個なら 400、`site` が無ければ 400
-
-処理:
-
-1. `<state_dir>/upload/<ランダム名>/`（現在時刻のナノ秒・プロセス ID・カウンタから作る名前）を作り、各 `file` パートをストリーミングで書き込む（メモリに全体を載せない）。
-2. `POST /api/publish` と同じ `run_publish`（NIP-05 → Kubo に add+size → 署名・送信 → prune）を、展開先ディレクトリをサイトのディレクトリとして呼ぶ。排他も同じ `publish_lock`（409）。
-3. **成功でも失敗でも**展開先ディレクトリを削除する（`tokio::fs::remove_dir_all`。削除に失敗したら warn ログを出すだけで、エラーはレスポンスに影響しない）。`<state_dir>/upload/` 自体は agent 起動時に丸ごと掃除される（前回の異常終了で残った分の後始末）。
-4. ボディが `[dashboard].max_upload` を超えたら 413（`axum::extract::DefaultBodyLimit` をこのルートだけに `layer` している。ストリーミング中に超えた場合も打ち切って 413 にする。413 かどうかは multipart のエラーチェーンに `"length limit"` という文字列が含まれるかで判定している）。
-
-レスポンスは `POST /api/publish` と同一の形に `"files": <受け取ったファイル数>` を足したもの（`PublishUploadResultDto`、`#[serde(flatten)]`）。ステータスコードの意味も同じ（422 = NIP-05 `require` 失敗、502 = 全 relay 拒否、409 = 実行中の publish と衝突）。
+- どの relay にも受理されなければ 502（Kubo に add した内容と古い版はそのまま残す）。
+- `files` は受け取ったファイル数（`PublishUploadResultDto`、`#[serde(flatten)]` で他のフィールドは publish の結果そのもの）。
 
 ### GET /api/publish/sites
 
@@ -315,11 +325,28 @@ Follow Set が無ければ `title: null`、`members: []`。
   - `max_sites_per_account`・`keep_versions`・`keep_days`・`concurrency` は素の個数・日数なので `display` は付かない。
 - `config_path` は実際に読んだ設定ファイルのパス。環境変数だけで動いているなら `null`。
 
-## 画面（`web/index.html`, `web/app.js`, `web/graph.js`）
+## 画面（`web/index.html`, `web/*.js`）
 
-ビルド工程なし・外部依存なしの素の HTML + CSS + ES modules。`#/sites` `#/webring` `#/publish` `#/settings` の 4 画面をハッシュルーティングで切り替える（`location.hash` → `document.body.dataset.view`。既定は `sites`）。書き込みリクエストには `X-Swing-Dashboard: 1` と `Content-Type: application/json` を付ける（`apiFetch`）。relay 由来の文字列は DOM API（`textContent` / `el()` ヘルパ）だけで挿入し、`innerHTML` は使わない。`url` は `^https?://` にマッチするときだけ `<a>`（`rel="noopener noreferrer" target="_blank"`）にする。
+ビルド工程なし・外部依存なしの素の HTML + CSS + ES modules。フロントは役割ごとに次のファイルへ分かれている（依存は下から上への一方向で、循環 import は無い）。
 
-各画面の取得は世代カウンタ（`sitesLoadGen`・`webringLoadGen`・`selectNodeGen`・`statusCheckGen`・`publishLoadGen`・`mySitesLoadGen`・`settingsLoadGen`）でガードしている。呼び出しのたびにカウンタをインクリメントし、`fetch` が返ってきた時点で自分が呼んだときの値と食い違っていたら描画せずに捨てる。画面を素早く切り替えたり、webring の root/depth を続けて変えたり、グラフのノードを連続でクリックしたりしても、古いレスポンスが新しい画面の上に描画されない。
+| ファイル | 役割 |
+|---|---|
+| `storage.js` | `localStorage` の薄いラッパー（`get`/`set`/`remove`、例外を握りつぶす）。他のどのモジュールにも依存しない |
+| `i18n.js` | `MESSAGES`（en/ja 辞書）・`t()`・`currentLang()`・`applyStaticI18n()`（`data-i18n*` 属性への流し込み）。`storage.js` にだけ依存する |
+| `util.js` | `cache`（全画面で共有する取得結果のキャッシュ）、`el()`・`clamp()` などの DOM/汎用ユーティリティ、`apiFetch`・`copyWithFeedback`・`setBusy` などの共通処理、`getStyle`/`setStyle`/`wireStyleSwitch`/`wireSortSwitch`（表示スタイル・並び順切替の配線）、`createLoadGuard()`（世代カウンタ付き非同期ロードのガード）。`storage.js`・`i18n.js` に依存する |
+| `ui.js` | 複数画面で共有する UI 部品（`copyButton`・`storedBadge`・`appendLinksAndMessage`・`renderRelayResults`・`renderMirrorOpResult`・`renderOpError`・`buildRemoveControl`）。`util.js`・`i18n.js` に依存する |
+| `graph.js` | webring 用の自前 force-directed layout（`createWebringGraph`）。`util.js` の `clamp` だけに依存する |
+| `sites.js` | Sites 画面（`SitesView`、mirror 追加・削除、Storage check） |
+| `webring.js` | Webring 画面（`WebringView`、ノード詳細、`graph.js` を利用） |
+| `publish.js` | Publish 画面（`PublishView`、My sites、フォルダアップロード） |
+| `settings.js` | Settings 画面（`SettingsView`、テーマ・言語・カスタム CSS） |
+| `app.js` | ルーター兼エントリポイント（`VIEWS`・`showRoute`・`applyLanguage`・`init`）。`<script type="module" src="/app.js">` から読み込まれ、他の画面モジュールを import する起点 |
+
+`#/sites` `#/webring` `#/publish` `#/settings` の 4 画面をハッシュルーティングで切り替える（`location.hash` → `document.body.dataset.view`。既定は `sites`）。書き込みリクエストには `X-Swing-Dashboard: 1` と `Content-Type: application/json` を付ける（`apiFetch`）。relay 由来の文字列は DOM API（`textContent` / `el()` ヘルパ）だけで挿入し、`innerHTML` は使わない。`url` は `^https?://` にマッチするときだけ `<a>`（`rel="noopener noreferrer" target="_blank"`）にする。
+
+言語切り替え（Settings 画面のセレクタ）は `settings.js` が `swing:langchange` という `CustomEvent` を `document` に投げ、`app.js` がそれを購読して各画面の再描画（`applyLanguage`）をまとめて行う。これは `settings.js` → `app.js` → `settings.js` の循環 import を避けるための構成で、`applyLanguage` 自体は `sites.js`/`webring.js`/`publish.js`/`settings.js` の描画関数をすべて呼べる `app.js` 側に置いている。
+
+各画面の取得は世代カウンタ付きの非同期ロードでガードしている（`util.js` の `createLoadGuard()` が返す `{ start(), isCurrent(gen) }` を各画面のロード関数が使う）。呼び出しのたびに `start()` でカウンタをインクリメントし、`fetch` が返ってきた時点で `isCurrent(gen)` が false なら描画せずに捨てる。画面を素早く切り替えたり、webring の root/depth を続けて変えたり、グラフのノードを連続でクリックしたりしても、古いレスポンスが新しい画面の上に描画されない。
 
 再読み込みの UI は画面ごとに異なる。UI 調整で「画面の下に大きな Reload ボタン」という統一パターンをやめ、各画面に合う形にした:
 
@@ -361,7 +388,7 @@ Follow Set が無ければ `title: null`、`members: []`。
   - 自分自身: ミラー操作のボタンは出さない。
   - ミラー済み: `.swing-badge[data-mirrored="true"]` バッジと「ミラーから削除」ボタン（確認ステップ付き、Sites 画面の「mirror から外す」と同じ `buildRemoveControl`）。
   - 未ミラー: 「ミラーに追加」ボタン。
-- 「Fit」ボタンの表示文字列は `createWebringGraph()` に渡す `labels`（`app.js` の `t()` で作る）経由で i18n されており、英語は "Fit to view"、日本語は「全体表示」。
+- 「Fit」ボタンの表示文字列は `createWebringGraph()` に渡す `labels`（`webring.js` の `t()` で作る）経由で i18n されており、英語は "Fit to view"、日本語は「全体表示」。
 
 ### Webring のグラフ（`web/graph.js`）
 
@@ -402,7 +429,7 @@ Follow Set が無ければ `title: null`、`members: []`。
 
 ## 表示言語（i18n）
 
-`web/app.js` 内に `MESSAGES = { en: {...}, ja: {...} }` を持ち、`t(key, vars)`（`{vars}` プレースホルダを置換）で参照する。静的な HTML の文字列は `data-i18n`（テキスト）／`data-i18n-placeholder`（`placeholder` 属性）を付けた要素に対して起動時とビュー描画時に流し込む。
+`web/i18n.js` 内に `MESSAGES = { en: {...}, ja: {...} }` を持ち、`t(key, vars)`（`{vars}` プレースホルダを置換）で参照する。静的な HTML の文字列は `data-i18n`（テキスト）／`data-i18n-placeholder`（`placeholder` 属性）を付けた要素に対して起動時とビュー描画時に流し込む。
 
 - 言語の決定: `localStorage["swing:lang"]`（`auto`/`en`/`ja`、Settings 画面のセレクタで変更）。`auto` のときは `navigator.language` が `ja` で始まるかどうかで判定する。切り替えは再読み込み不要。
 - 訳が無いキーは英語にフォールバックする。

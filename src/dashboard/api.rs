@@ -1,4 +1,3 @@
-use std::path::PathBuf;
 use std::sync::Arc;
 
 use axum::Json;
@@ -253,15 +252,6 @@ pub async fn replicas(
     Ok(Json(dto::replicas_dto(&authors_data)))
 }
 
-#[derive(Debug, Deserialize)]
-pub struct PublishRequest {
-    dir: String,
-    site: String,
-    url: Option<String>,
-    message: Option<String>,
-    nip05: Option<String>,
-}
-
 pub(super) struct PublishFields {
     pub site: String,
     pub url: Option<String>,
@@ -279,21 +269,17 @@ pub(super) async fn run_publish(
     dir: &std::path::Path,
     fields: PublishFields,
 ) -> Result<PublishOutcome, ApiError> {
-    crate::nostr::validate_d_tag(&fields.site)
-        .map_err(|e| ApiError::BadRequest(format!("invalid site: {e:#}")))?;
-    if let Some(url) = &fields.url
-        && !crate::nostr::valid_http_url(url)
-    {
-        return Err(ApiError::BadRequest(format!(
-            "invalid url: {url} is not an http or https URL"
-        )));
-    }
-    let nip05_mode = match &fields.nip05 {
-        Some(v) => {
-            config::parse_nip05_mode(v).map_err(|e| ApiError::BadRequest(format!("{e:#}")))?
+    publish::validate_site_fields(&fields.site, fields.url.as_deref()).map_err(|e| match e {
+        publish::SiteFieldError::InvalidD(err) => {
+            ApiError::BadRequest(format!("invalid site: {err:#}"))
         }
-        None => state.config.publish.nip05,
-    };
+        publish::SiteFieldError::InvalidUrl(url) => {
+            ApiError::BadRequest(format!("invalid url: {url} is not an http or https URL"))
+        }
+    })?;
+    let nip05_mode =
+        publish::resolve_nip05_mode(fields.nip05.as_deref(), state.config.publish.nip05)
+            .map_err(|e| ApiError::BadRequest(format!("{e:#}")))?;
 
     let Ok(_permit) = state.publish_lock.try_lock() else {
         return Err(ApiError::Conflict(
@@ -304,7 +290,7 @@ pub(super) async fn run_publish(
     let pubkey_hex = state.own_pubkey.to_hex();
 
     let nip05_dto = if nip05_mode != config::Nip05Mode::Off {
-        let verifier = nip05::HttpNip05Verifier::new();
+        let verifier = nip05::HttpNip05Verifier::public_only();
         let outcome = publish::check_nip05(&verifier, nip05_mode, &fields.site, &pubkey_hex).await;
         if let Some(abort) = outcome.abort {
             let body = serde_json::json!({
@@ -382,33 +368,6 @@ pub(super) async fn run_publish(
         prune_error: prune.error_summary(),
         gateway_url,
     }))
-}
-
-pub async fn publish(
-    State(state): State<Arc<AppState>>,
-    AppJson(req): AppJson<PublishRequest>,
-) -> Result<Response, ApiError> {
-    let dir = PathBuf::from(&req.dir);
-    let is_dir = tokio::fs::metadata(&dir)
-        .await
-        .map(|m| m.is_dir())
-        .unwrap_or(false);
-    if !is_dir {
-        return Err(ApiError::BadRequest(format!(
-            "not a directory: {}",
-            req.dir
-        )));
-    }
-    let fields = PublishFields {
-        site: req.site,
-        url: req.url,
-        message: req.message,
-        nip05: req.nip05,
-    };
-    match run_publish(&state, &dir, fields).await? {
-        PublishOutcome::Success(result) => Ok(Json(result).into_response()),
-        PublishOutcome::Nip05Failed(resp) => Ok(resp),
-    }
 }
 
 pub async fn publish_sites(

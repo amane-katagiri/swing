@@ -221,10 +221,16 @@ async fn publish_if_changed(
     Ok((true, nostr::relay_send_results(relay.relays(), &output)))
 }
 
-pub async fn apply_add(
+enum MirrorOp {
+    Add,
+    Remove,
+}
+
+async fn apply_change(
     relay: &RelayClient,
     config: &Config,
     inputs: &[String],
+    op: MirrorOp,
 ) -> Result<MirrorChange> {
     let keys = parse_pubkey_inputs(inputs)?;
     let (existing, note) = current_follow_set(relay, config).await?;
@@ -234,14 +240,27 @@ pub async fn apply_add(
         .map(MirrorSet::from_event)
         .unwrap_or_else(MirrorSet::empty);
 
-    let unchanged: Vec<PublicKey> = {
-        let current: HashSet<PublicKey> = set.pubkeys().into_iter().collect();
-        keys.iter()
-            .filter(|k| current.contains(k))
-            .copied()
-            .collect()
+    let (changed, unchanged) = match op {
+        MirrorOp::Add => {
+            let current: HashSet<PublicKey> = set.pubkeys().into_iter().collect();
+            let unchanged = keys
+                .iter()
+                .filter(|k| current.contains(k))
+                .copied()
+                .collect();
+            (set.add(&keys), unchanged)
+        }
+        MirrorOp::Remove => {
+            let changed = set.remove(&keys);
+            let changed_set: HashSet<PublicKey> = changed.iter().copied().collect();
+            let unchanged = keys
+                .iter()
+                .filter(|k| !changed_set.contains(k))
+                .copied()
+                .collect();
+            (changed, unchanged)
+        }
     };
-    let changed = set.add(&keys);
     let (published, relay_results) = publish_if_changed(relay, config, &set, &changed).await?;
     Ok(MirrorChange {
         note,
@@ -254,6 +273,22 @@ pub async fn apply_add(
     })
 }
 
+pub async fn apply_add(
+    relay: &RelayClient,
+    config: &Config,
+    inputs: &[String],
+) -> Result<MirrorChange> {
+    apply_change(relay, config, inputs, MirrorOp::Add).await
+}
+
+pub async fn apply_remove(
+    relay: &RelayClient,
+    config: &Config,
+    inputs: &[String],
+) -> Result<MirrorChange> {
+    apply_change(relay, config, inputs, MirrorOp::Remove).await
+}
+
 fn print_publish_block(config: &Config, change: &MirrorChange) {
     println!();
     println!("Nostr");
@@ -262,21 +297,35 @@ fn print_publish_block(config: &Config, change: &MirrorChange) {
     print_mirror_set(&config.nostr.mirror_set, &change.set);
 }
 
-fn print_add_result(config: &Config, change: &MirrorChange) {
+fn print_change_result(
+    config: &Config,
+    change: &MirrorChange,
+    unchanged_label: &str,
+    changed_label: &str,
+    requires_follow_set: bool,
+) {
+    if requires_follow_set && !change.follow_set_found {
+        println!("(no follow set found); no changes");
+        return;
+    }
     if let Some(note) = change.note {
         println!("{note}");
     }
     for pk in &change.unchanged {
-        println!("already in mirror set: {} ({})", npub(pk), pk.to_hex());
+        println!("{unchanged_label}: {} ({})", npub(pk), pk.to_hex());
     }
     if change.changed.is_empty() {
         println!("no changes; not publishing");
         return;
     }
     for pk in &change.changed {
-        println!("added: {} ({})", npub(pk), pk.to_hex());
+        println!("{changed_label}: {} ({})", npub(pk), pk.to_hex());
     }
     print_publish_block(config, change);
+}
+
+fn print_add_result(config: &Config, change: &MirrorChange) {
+    print_change_result(config, change, "already in mirror set", "added", false);
 }
 
 pub async fn add(config: &Config, inputs: &[String]) -> Result<()> {
@@ -287,57 +336,8 @@ pub async fn add(config: &Config, inputs: &[String]) -> Result<()> {
     Ok(())
 }
 
-pub async fn apply_remove(
-    relay: &RelayClient,
-    config: &Config,
-    inputs: &[String],
-) -> Result<MirrorChange> {
-    let keys = parse_pubkey_inputs(inputs)?;
-    let (existing, note) = current_follow_set(relay, config).await?;
-    let follow_set_found = existing.is_some();
-    let mut set = existing
-        .as_ref()
-        .map(MirrorSet::from_event)
-        .unwrap_or_else(MirrorSet::empty);
-
-    let removed = set.remove(&keys);
-    let removed_set: HashSet<PublicKey> = removed.iter().copied().collect();
-    let unchanged: Vec<PublicKey> = keys
-        .iter()
-        .filter(|k| !removed_set.contains(k))
-        .copied()
-        .collect();
-    let (published, relay_results) = publish_if_changed(relay, config, &set, &removed).await?;
-    Ok(MirrorChange {
-        note,
-        follow_set_found,
-        changed: removed,
-        unchanged,
-        published,
-        relay_results,
-        set,
-    })
-}
-
 fn print_remove_result(config: &Config, change: &MirrorChange) {
-    if !change.follow_set_found {
-        println!("(no follow set found); no changes");
-        return;
-    }
-    if let Some(note) = change.note {
-        println!("{note}");
-    }
-    for pk in &change.unchanged {
-        println!("not in mirror set: {} ({})", npub(pk), pk.to_hex());
-    }
-    if change.changed.is_empty() {
-        println!("no changes; not publishing");
-        return;
-    }
-    for pk in &change.changed {
-        println!("removed: {} ({})", npub(pk), pk.to_hex());
-    }
-    print_publish_block(config, change);
+    print_change_result(config, change, "not in mirror set", "removed", true);
 }
 
 pub async fn remove(config: &Config, inputs: &[String]) -> Result<()> {
@@ -440,7 +440,7 @@ fn unfollowed_sites(
     out
 }
 
-pub fn print_account_header(pubkey_hex: &str, suffix: &str) -> Result<PublicKey> {
+fn print_account_header(pubkey_hex: &str, suffix: &str) -> Result<PublicKey> {
     let pk = PublicKey::from_hex(pubkey_hex).context("parsing pubkey")?;
     println!("{} ({}){suffix}", npub(&pk), pubkey_hex);
     Ok(pk)

@@ -39,7 +39,7 @@ impl MfsLayout {
     }
 }
 
-pub fn site_name(d: &str) -> String {
+fn site_name(d: &str) -> String {
     match d {
         "." | ".." => d.replace('.', "%2E"),
         _ => percent_encode_segment(d),

@@ -52,14 +52,13 @@ impl State {
         Ok(state)
     }
 
-    fn save_sync(&self, path: &Path) -> Result<()> {
+    fn write_sync(path: &Path, text: &str) -> Result<()> {
         if let Some(parent) = path.parent()
             && !parent.as_os_str().is_empty()
         {
             std::fs::create_dir_all(parent)
                 .with_context(|| format!("creating state dir {}", parent.display()))?;
         }
-        let text = serde_json::to_string_pretty(self).context("serializing state")?;
         let tmp: PathBuf = path.with_extension("json.tmp");
         std::fs::write(&tmp, text).with_context(|| format!("writing {}", tmp.display()))?;
         std::fs::rename(&tmp, path)
@@ -75,9 +74,9 @@ impl State {
     }
 
     pub async fn save(&self, path: &Path) -> Result<()> {
+        let text = serde_json::to_string_pretty(self).context("serializing state")?;
         let path = path.to_path_buf();
-        let state = self.clone();
-        tokio::task::spawn_blocking(move || state.save_sync(&path))
+        tokio::task::spawn_blocking(move || Self::write_sync(&path, &text))
             .await
             .context("state save task panicked")?
     }
@@ -174,7 +173,7 @@ impl State {
         removed
     }
 
-    pub fn remove_site(&mut self, key: &SiteKey) -> Vec<VersionRecord> {
+    fn remove_site(&mut self, key: &SiteKey) -> Vec<VersionRecord> {
         self.verifications.remove(key);
         self.sites.remove(key).unwrap_or_default()
     }

@@ -342,7 +342,7 @@ impl IpfsClient {
         Ok(parsed.total_size)
     }
 
-    pub async fn mfs_mkdir(&self, path: &str) -> Result<()> {
+    async fn mfs_mkdir(&self, path: &str) -> Result<()> {
         self.call(
             "files/mkdir",
             &format!("arg={}&parents=true", query_path(path)),

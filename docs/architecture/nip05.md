@@ -19,14 +19,18 @@
 | `_` が無い、または値が異なる | `Mismatch` |
 | タイムアウト（10 秒）、非 2xx、64 KiB 超のボディ、非 UTF-8、JSON パース失敗 | `Error` |
 
+`Error` はメッセージ文字列（`String`）に加えて粗い分類（`ErrorCategory`: `Unreachable` / `Timeout` / `InvalidResponse`）を持つ。分類は `reqwest::Error::is_timeout()`/`is_connect()`（タイムアウトを優先、次に接続エラー、それ以外は `InvalidResponse`）で決め、HTTP ステータス異常・ボディサイズ超過・非 UTF-8・JSON パース失敗は常に `InvalidResponse`。`VerificationResult::detail()` は生のメッセージ文字列、`coarse_detail()` は分類名（`"unreachable"`/`"timeout"`/`"invalid_response"`）だけを返す。CLI の `swing publish` は `detail()`（生のメッセージ）を表示に使い、dashboard の API レスポンスは `coarse_detail()` だけを返して生のメッセージは `tracing::warn` にのみ出す（内部ネットワークへの到達性オラクルにしないため。詳細は [`dashboard.md`](dashboard.md#既知の性質)）。
+
 検証は `Nip05Verify` トレイトで、テストはインメモリの fake を使う。
 
 ## クライアント
 
-agent は `HttpNip05Verifier::public_only()`、publish は `HttpNip05Verifier::new()` を使う。`public_only()` は次の制限を加える。
+agent と dashboard は `HttpNip05Verifier::public_only()`、CLI の `swing publish`（`--dir` 指定のホスト上のパス、オペレーター自身の入力）は `HttpNip05Verifier::new()` を使う。`public_only()` は次の制限を加える。
 
 - 名前解決の結果から公開アドレス以外を除き、残らなければ `Error`。除外するのは IPv4 の unspecified・loopback・private・link-local・broadcast・documentation・multicast・`0.0.0.0/8`・`240.0.0.0/4`・`100.64.0.0/10`・`198.18.0.0/15`・`192.0.0.0/24`、IPv6 の unspecified・loopback・multicast・`fc00::/7`・`fe80::/10`・`2001:db8::/32`、中身がこれらの IPv4 である IPv4-mapped アドレス。
 - プロキシ環境変数を無視する。
+
+dashboard の `POST /api/publish/upload` はネットワーク越しに渡ってくる `site`（`d` タグ）をこの verifier で検証するため、`new()`（フィルタなし）のままだと SSRF になり得る（内部ネットワークへの盲目的な HTTPS リクエストや、エラー文字列を使った到達性オラクル）。`public_only()` に統一しているのはこのため。
 
 ## agent での適用
 
