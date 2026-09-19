@@ -89,31 +89,31 @@ compose build seed > /dev/null
 
 echo "publishing sample sites"
 make_site my-garden "わたしの庭" "デモ環境の自分のサイト。" "#234"
-publish self 40d my-garden "サイトを開設"
+publish self 40d my-garden "サイトを開設" --title "わたしの庭"
 make_site alice.example "Alice's Notes" "日々のメモ。" "#633"
-publish alice 60d alice.example "初版" --url https://alice.example/
+publish alice 60d alice.example "初版" --url https://alice.example/ --title "ありすの部屋"
 printf '<p>追記: 2 本目の記事。</p>\n' >> "$work/alice.example/index.html"
-publish alice 6d alice.example "記事を 1 本追加" --url https://alice.example/
+publish alice 6d alice.example "記事を 1 本追加" --url https://alice.example/ --title "ありすの部屋"
 make_site bob-zine "bob zine" "手作りのジン。" "#363"
-publish bob 3h bob-zine "第 1 号"
+publish bob 3h bob-zine "第 1 号" --title "BOB ZINE 電子版"
 make_site carol.example "Carol" "ポートフォリオ。" "#336"
 publish carol 1d carol.example "トップを更新" --url https://carol.example/
 make_site carol-photos "Carol's photos" "写真置き場。" "#555"
-publish carol 14d carol-photos ""
+publish carol 14d carol-photos "" --title "きゃろる写真館"
 make_site dave-wiki "dave wiki" "個人 wiki。" "#446"
 publish dave 9d dave-wiki "ページを整理"
 make_site eve.example "eve" "日記。" "#644"
-publish eve 2d eve.example "引っ越しました" --url https://eve.example/
+publish eve 2d eve.example "引っ越しました" --url https://eve.example/ --title "えびの引っ越し日記"
 make_site frank-recipes "Frank's recipes" "レシピ集。" "#553"
-publish frank 20d frank-recipes "カレーを追加"
+publish frank 20d frank-recipes "カレーを追加" --title "フランクのキッチン"
 make_site grace.example "Grace" "研究ノート。" "#265"
-publish grace 5h grace.example "" --url https://grace.example/
+publish grace 5h grace.example "" --url https://grace.example/ --title "ぐれいすの研究ノート"
 make_site ivan-lab "ivan lab" "実験場。" "#522"
 publish ivan 30d ivan-lab "試作"
 make_site judy.example "Judy" "旅行記。" "#256"
-publish judy 12d judy.example "北海道編" --url https://judy.example/
+publish judy 12d judy.example "北海道編" --url https://judy.example/ --title "じゅでぃの旅日記"
 make_site mallory-archive "mallory archive" "古いサイトの保管庫。" "#444"
-publish mallory 90d mallory-archive "アーカイブを公開"
+publish mallory 90d mallory-archive "アーカイブを公開" --title "マロリーの書庫"
 
 echo "publishing follow sets"
 follow self alice bob carol

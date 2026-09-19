@@ -14,6 +14,7 @@ import {
   setBusy,
   setFormDisabled,
   createLoadGuard,
+  sanitizeMessage,
 } from './util.js';
 import { appendLinksAndMessage, renderRelayResults } from './ui.js';
 
@@ -112,7 +113,13 @@ function hideProgress() {
 
 function buildMySiteEntry(site) {
   const wrap = el('div', { class: 'swing-site' });
-  wrap.append(el('div', { class: 'swing-site-row' }, el('span', { class: 'swing-site-name' }, site.d)));
+  const title = sanitizeMessage(site.title);
+  wrap.append(
+    el('div', { class: 'swing-site-row' }, [
+      el('span', { class: 'swing-site-name' }, site.d),
+      title ? el('span', { class: 'swing-hint' }, title) : null,
+    ]),
+  );
   wrap.append(el('div', { class: 'swing-site-meta' }, `${formatBytes(site.size)} · ${formatTime(site.created_at)}`));
   appendLinksAndMessage(wrap, site);
   wrap.append(
@@ -126,6 +133,7 @@ function buildMySiteEntry(site) {
 function useMySite(site) {
   publishEls.form.elements.site.value = site.d;
   publishEls.form.elements.url.value = site.url || '';
+  publishEls.form.elements.title.value = site.title || '';
   refreshSubmitState();
 }
 
@@ -192,6 +200,7 @@ function renderPublishResult(result, errBody) {
     const addRow = (k, v) => dl.append(el('dt', {}, k), el('dd', {}, v));
     addRow(t('resultSite'), result.site);
     if (result.url) addRow(t('resultUrl'), result.url);
+    if (result.title) addRow(t('resultTitle'), result.title);
     addRow(t('resultNip05'), `${result.nip05.status}${result.nip05.detail ? ` — ${result.nip05.detail}` : ''}`);
     addRow(t('resultCid'), result.cid);
     addRow(t('resultSize'), formatBytes(result.size));
@@ -225,10 +234,11 @@ function handlePublishHttpError(status, body) {
   }
 }
 
-function buildUploadFormData({ site, url, message, nip05, files }) {
+function buildUploadFormData({ site, url, title, message, nip05, files }) {
   const fd = new FormData();
   fd.append('site', site);
   if (url) fd.append('url', url);
+  if (title) fd.append('title', title);
   if (message) fd.append('message', message);
   if (nip05) fd.append('nip05', nip05);
   for (const file of files) {
@@ -237,7 +247,7 @@ function buildUploadFormData({ site, url, message, nip05, files }) {
   return fd;
 }
 
-function submitUpload({ site, url, message, nip05, files }) {
+function submitUpload({ site, url, title, message, nip05, files }) {
   const submitBtn = publishEls.form.querySelector('button[type="submit"]');
   return new Promise((resolve) => {
     publishing = true;
@@ -276,7 +286,7 @@ function submitUpload({ site, url, message, nip05, files }) {
         showProgress('done', 100);
         clearStatus(publishEls.status);
         renderPublishResult(body, null);
-        saveLastPublish({ site, url, message, nip05 });
+        saveLastPublish({ site, url, title, message, nip05 });
         publishEls.uploadInput.value = '';
         updateUploadInfo();
       } else {
@@ -286,7 +296,7 @@ function submitUpload({ site, url, message, nip05, files }) {
       finishUpload();
       resolve();
     });
-    xhr.send(buildUploadFormData({ site, url, message, nip05, files }));
+    xhr.send(buildUploadFormData({ site, url, title, message, nip05, files }));
   });
 
   function finishUpload() {
@@ -308,6 +318,7 @@ export const PublishView = {
       const form = publishEls.form;
       if (last.site) form.elements.site.value = last.site;
       if (last.url) form.elements.url.value = last.url;
+      if (last.title) form.elements.title.value = last.title;
       if (last.message) form.elements.message.value = last.message;
       if (last.nip05) form.elements.nip05.value = last.nip05;
     }
@@ -320,6 +331,7 @@ export const PublishView = {
       const fd = new FormData(publishEls.form);
       const site = String(fd.get('site') || '').trim();
       const url = String(fd.get('url') || '').trim();
+      const title = String(fd.get('title') || '').trim();
       const message = String(fd.get('message') || '').trim();
       const nip05 = String(fd.get('nip05') || '');
 
@@ -328,7 +340,7 @@ export const PublishView = {
         setStatus(publishEls.status, 'error', t('chooseFolderToUpload'));
         return;
       }
-      submitUpload({ site, url, message, nip05, files });
+      submitUpload({ site, url, title, message, nip05, files });
     });
   },
   onShow() {

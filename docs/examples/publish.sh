@@ -2,20 +2,22 @@
 set -euo pipefail
 
 usage() {
-  echo "Usage: $0 <site> <url> <dir> [message]" >&2
+  echo "Usage: $0 <site> <url> <dir> [message] [title]" >&2
   echo "  site  d-tag identifying the site (e.g. ama.ne.jp)" >&2
   echo "  url   https URL of the site (e.g. https://ama.ne.jp/), or \"\" for an IPFS-only site" >&2
   echo "  dir   directory to publish (e.g. ./public)" >&2
   echo "  message  optional update note for readers (event content)" >&2
+  echo "  title    optional self-claimed display title (not verified by receivers)" >&2
   exit 1
 }
 
-[ "$#" -eq 3 ] || [ "$#" -eq 4 ] || usage
+[ "$#" -ge 3 ] && [ "$#" -le 5 ] || usage
 
 SITE="$1"
 URL="$2"
 DIR="$3"
 MESSAGE="${4:-}"
+TITLE="${5:-}"
 
 for bin in ipfs nak; do
   command -v "$bin" >/dev/null 2>&1 || {
@@ -50,6 +52,8 @@ echo
 echo "Nostr"
 URL_TAG=()
 [ -z "$URL" ] || URL_TAG=(-t url="$URL")
+TITLE_TAG=()
+[ -z "$TITLE" ] || TITLE_TAG=(-t title="$TITLE")
 # shellcheck disable=SC2086  # NOSTR_RELAYS is intentionally word-split into multiple args
 EVENT_JSON=$(nak event \
   -k "$SITE_EVENT_KIND" \
@@ -57,6 +61,7 @@ EVENT_JSON=$(nak event \
   -t cid="$CID" \
   "${URL_TAG[@]}" \
   -t size="$SIZE" \
+  "${TITLE_TAG[@]}" \
   -t alt="SWING site announcement: $SITE" \
   -c "$MESSAGE" \
   --sec "$NOSTR_SEC" \

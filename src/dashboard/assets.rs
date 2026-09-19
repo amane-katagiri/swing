@@ -8,6 +8,7 @@ use super::AppState;
 
 const INDEX_HTML: &str = include_str!("../../web/index.html");
 const STYLE_CSS: &str = include_str!("../../web/style.css");
+const DESKTOP_CSS: &str = include_str!("../../web/desktop.css");
 const BOOT_JS: &str = include_str!("../../web/boot.js");
 const APP_JS: &str = include_str!("../../web/app.js");
 const GRAPH_JS: &str = include_str!("../../web/graph.js");
@@ -19,8 +20,14 @@ const SITES_JS: &str = include_str!("../../web/sites.js");
 const WEBRING_JS: &str = include_str!("../../web/webring.js");
 const PUBLISH_JS: &str = include_str!("../../web/publish.js");
 const SETTINGS_JS: &str = include_str!("../../web/settings.js");
+const DESKTOP_JS: &str = include_str!("../../web/desktop.js");
+const DESKTOP_BANNER_PNG: &[u8] = include_bytes!("../../web/desktop-banner.png");
 
 fn asset(content_type: &'static str, body: &'static str) -> Response {
+    ([(header::CONTENT_TYPE, content_type)], body).into_response()
+}
+
+fn binary_asset(content_type: &'static str, body: &'static [u8]) -> Response {
     ([(header::CONTENT_TYPE, content_type)], body).into_response()
 }
 
@@ -30,6 +37,10 @@ pub async fn index() -> Response {
 
 pub async fn style() -> Response {
     asset("text/css; charset=utf-8", STYLE_CSS)
+}
+
+pub async fn desktop_css() -> Response {
+    asset("text/css; charset=utf-8", DESKTOP_CSS)
 }
 
 pub async fn boot_js() -> Response {
@@ -74,6 +85,14 @@ pub async fn publish_js() -> Response {
 
 pub async fn settings_js() -> Response {
     asset("text/javascript; charset=utf-8", SETTINGS_JS)
+}
+
+pub async fn desktop_js() -> Response {
+    asset("text/javascript; charset=utf-8", DESKTOP_JS)
+}
+
+pub async fn desktop_banner_png() -> Response {
+    binary_asset("image/png", DESKTOP_BANNER_PNG)
 }
 
 pub async fn custom_css(State(state): State<Arc<AppState>>) -> Response {

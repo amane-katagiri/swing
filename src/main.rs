@@ -44,6 +44,11 @@ enum Command {
             help = "NIP-05 check: off, warn, require (default: config or warn)"
         )]
         nip05: Option<String>,
+        #[arg(
+            long,
+            help = "Display title of the site (self-claimed, shown to readers)"
+        )]
+        title: Option<String>,
         #[arg(short, long, help = "Update note shown to readers (event content)")]
         message: Option<String>,
         #[arg(help = "Directory containing the built static site")]
@@ -155,11 +160,12 @@ async fn run(cli: Cli) -> Result<()> {
             site,
             url,
             nip05,
+            title,
             message,
             dir,
         } => {
             let cfg = config::Config::load(config.as_deref())?;
-            publish::run(cfg, site, url, &dir, nip05, message).await
+            publish::run(cfg, site, url, &dir, nip05, title, message).await
         }
         Command::Mirror { action } => match action {
             MirrorCommand::List { config } => {

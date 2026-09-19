@@ -335,6 +335,7 @@ pub struct SiteEvent {
     pub cid: String,
     pub url: Option<String>,
     pub size: Option<u64>,
+    pub title: Option<String>,
     pub message: Option<String>,
     pub created_at: u64,
 }
@@ -349,6 +350,7 @@ fn tag_value<'a>(event: &'a Event, kind: &str) -> Option<&'a str> {
 
 const MAX_D_TAG_BYTES: usize = 253;
 const MAX_URL_TAG_BYTES: usize = 2048;
+const MAX_TITLE_TAG_BYTES: usize = 256;
 
 pub fn validate_d_tag(d: &str) -> Result<()> {
     if d.is_empty() {
@@ -373,6 +375,12 @@ pub fn valid_http_url(url: &str) -> bool {
     }
 }
 
+pub fn valid_title(title: &str) -> bool {
+    !title.is_empty()
+        && title.len() <= MAX_TITLE_TAG_BYTES
+        && !title.chars().any(|c| c.is_control())
+}
+
 pub fn parse_site_event(event: &Event, expected_kind: u16) -> Result<SiteEvent> {
     if event.kind != Kind::Custom(expected_kind) {
         anyhow::bail!("unexpected kind {}", event.kind);
@@ -389,12 +397,16 @@ pub fn parse_site_event(event: &Event, expected_kind: u16) -> Result<SiteEvent> 
         .map(|s| s.to_string())
         .filter(|u| valid_http_url(u));
     let size = tag_value(event, "size").and_then(|s| s.parse::<u64>().ok());
+    let title = tag_value(event, "title")
+        .map(|s| s.to_string())
+        .filter(|t| valid_title(t));
     Ok(SiteEvent {
         pubkey: event.pubkey,
         d,
         cid,
         url,
         size,
+        title,
         message: Some(event.content.clone()).filter(|m| !m.is_empty()),
         created_at: event.created_at.as_secs(),
     })
@@ -414,12 +426,14 @@ pub fn select_latest(events: &[SiteEvent]) -> HashMap<(String, String), SiteEven
     latest
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn build_site_event_builder(
     site_event_kind: u16,
     d: &str,
     cid: &str,
     url: Option<&str>,
     size: Option<u64>,
+    title: Option<&str>,
     message: Option<&str>,
 ) -> EventBuilder {
     let mut builder = EventBuilder::new(Kind::Custom(site_event_kind), message.unwrap_or(""))
@@ -430,6 +444,9 @@ pub fn build_site_event_builder(
     }
     if let Some(size) = size {
         builder = builder.tag(Tag::custom("size", [size.to_string()]));
+    }
+    if let Some(title) = title {
+        builder = builder.tag(Tag::custom("title", [title.to_string()]));
     }
     builder.tag(Tag::custom(
         "alt",
@@ -542,19 +559,35 @@ mod tests {
     }
 
     fn make_site_event(keys: &Keys, kind: u16, d: &str, cid: &str, created_at: u64) -> Event {
-        build_site_event_builder(kind, d, cid, Some("https://example.com/"), Some(1234), None)
-            .custom_created_at(Timestamp::from_secs(created_at))
-            .finalize(keys)
-            .unwrap()
+        build_site_event_builder(
+            kind,
+            d,
+            cid,
+            Some("https://example.com/"),
+            Some(1234),
+            None,
+            None,
+        )
+        .custom_created_at(Timestamp::from_secs(created_at))
+        .finalize(keys)
+        .unwrap()
     }
 
     #[test]
     fn site_event_content_is_the_message() {
         let k = keys();
         let cid = "bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi";
-        let ev = build_site_event_builder(35980, "example.com", cid, None, None, Some("Add posts"))
-            .finalize(&k)
-            .unwrap();
+        let ev = build_site_event_builder(
+            35980,
+            "example.com",
+            cid,
+            None,
+            None,
+            None,
+            Some("Add posts"),
+        )
+        .finalize(&k)
+        .unwrap();
         assert_eq!(ev.content, "Add posts");
         let parsed = parse_site_event(&ev, 35980).unwrap();
         assert_eq!(parsed.message.as_deref(), Some("Add posts"));
@@ -581,6 +614,7 @@ mod tests {
         assert_eq!(parsed.created_at, 1000);
         assert_eq!(parsed.pubkey, k.public_key());
         assert_eq!(parsed.message, None);
+        assert_eq!(parsed.title, None);
         assert!(
             ev.tags
                 .iter()
@@ -756,6 +790,73 @@ mod tests {
     }
 
     #[test]
+    fn title_round_trips() {
+        let k = keys();
+        let cid = "bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi";
+        let ev = build_site_event_builder(
+            35980,
+            "example.com",
+            cid,
+            None,
+            None,
+            Some("あまねけ！"),
+            None,
+        )
+        .finalize(&k)
+        .unwrap();
+        let parsed = parse_site_event(&ev, 35980).unwrap();
+        assert_eq!(parsed.title.as_deref(), Some("あまねけ！"));
+    }
+
+    #[test]
+    fn drops_oversized_title_but_keeps_event() {
+        let k = keys();
+        let long_title = "a".repeat(257);
+        let ev = EventBuilder::new(Kind::Custom(35980), "")
+            .tag(Tag::identifier("example.com"))
+            .tag(Tag::custom(
+                "cid",
+                ["bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi".to_string()],
+            ))
+            .tag(Tag::custom("title", [long_title]))
+            .finalize(&k)
+            .unwrap();
+        let parsed = parse_site_event(&ev, 35980).unwrap();
+        assert_eq!(parsed.title, None);
+    }
+
+    #[test]
+    fn drops_title_with_control_characters() {
+        let k = keys();
+        let ev = EventBuilder::new(Kind::Custom(35980), "")
+            .tag(Tag::identifier("example.com"))
+            .tag(Tag::custom(
+                "cid",
+                ["bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi".to_string()],
+            ))
+            .tag(Tag::custom("title", ["hello\nworld".to_string()]))
+            .finalize(&k)
+            .unwrap();
+        let parsed = parse_site_event(&ev, 35980).unwrap();
+        assert_eq!(parsed.title, None);
+    }
+
+    #[test]
+    fn absent_title_is_none() {
+        let k = keys();
+        let ev = EventBuilder::new(Kind::Custom(35980), "")
+            .tag(Tag::identifier("example.com"))
+            .tag(Tag::custom(
+                "cid",
+                ["bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi".to_string()],
+            ))
+            .finalize(&k)
+            .unwrap();
+        let parsed = parse_site_event(&ev, 35980).unwrap();
+        assert_eq!(parsed.title, None);
+    }
+
+    #[test]
     fn extracts_follow_set_pubkeys() {
         let author = keys();
         let target1 = keys().public_key();
@@ -783,6 +884,7 @@ mod tests {
                 cid: "bafy-old".into(),
                 url: None,
                 size: None,
+                title: None,
                 message: None,
                 created_at: 100,
             },
@@ -792,6 +894,7 @@ mod tests {
                 cid: "bafy-new".into(),
                 url: None,
                 size: None,
+                title: None,
                 message: None,
                 created_at: 200,
             },
@@ -801,6 +904,7 @@ mod tests {
                 cid: "bafy-other-site".into(),
                 url: None,
                 size: None,
+                title: None,
                 message: None,
                 created_at: 50,
             },
@@ -810,6 +914,7 @@ mod tests {
                 cid: "bafy-k2".into(),
                 url: None,
                 size: None,
+                title: None,
                 message: None,
                 created_at: 999,
             },

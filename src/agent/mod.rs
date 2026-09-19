@@ -442,6 +442,7 @@ mod tests {
             cid: cid.clone(),
             url: None,
             size: None,
+            title: None,
             message: None,
             created_at: 100,
         };

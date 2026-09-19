@@ -255,6 +255,7 @@ pub async fn replicas(
 pub(super) struct PublishFields {
     pub site: String,
     pub url: Option<String>,
+    pub title: Option<String>,
     pub message: Option<String>,
     pub nip05: Option<String>,
 }
@@ -276,6 +277,13 @@ pub(super) async fn run_publish(
         publish::SiteFieldError::InvalidUrl(url) => {
             ApiError::BadRequest(format!("invalid url: {url} is not an http or https URL"))
         }
+        publish::SiteFieldError::InvalidTitle => unreachable!(),
+    })?;
+    let title = publish::normalize_title(fields.title.as_deref()).map_err(|_| {
+        ApiError::BadRequest(
+            "invalid title: must not exceed 256 bytes and must not contain control characters"
+                .to_string(),
+        )
     })?;
     let nip05_mode =
         publish::resolve_nip05_mode(fields.nip05.as_deref(), state.config.publish.nip05)
@@ -328,6 +336,7 @@ pub(super) async fn run_publish(
             cid: &stage.cid,
             url: fields.url.as_deref(),
             size: stage.size,
+            title,
             message: fields.message.as_deref(),
             created_at,
         },
@@ -354,6 +363,7 @@ pub(super) async fn run_publish(
     Ok(PublishOutcome::Success(dto::PublishResultDto {
         site: fields.site,
         url: fields.url,
+        title: title.map(str::to_string),
         message: fields.message,
         nip05: nip05_dto,
         cid: stage.cid,

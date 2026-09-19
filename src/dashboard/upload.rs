@@ -102,6 +102,7 @@ struct ParsedUpload {
 async fn receive_upload(multipart: &mut Multipart, dest: &Path) -> Result<ParsedUpload, ApiError> {
     let mut site: Option<String> = None;
     let mut url: Option<String> = None;
+    let mut title: Option<String> = None;
     let mut message: Option<String> = None;
     let mut nip05: Option<String> = None;
     let mut seen_paths: HashSet<String> = HashSet::new();
@@ -116,6 +117,7 @@ async fn receive_upload(multipart: &mut Multipart, dest: &Path) -> Result<Parsed
         match field.name().unwrap_or("") {
             "site" => site = Some(field.text().await.map_err(multipart_error_to_api)?),
             "url" => url = Some(field.text().await.map_err(multipart_error_to_api)?),
+            "title" => title = Some(field.text().await.map_err(multipart_error_to_api)?),
             "message" => message = Some(field.text().await.map_err(multipart_error_to_api)?),
             "nip05" => nip05 = Some(field.text().await.map_err(multipart_error_to_api)?),
             "file" => {
@@ -176,6 +178,7 @@ async fn receive_upload(multipart: &mut Multipart, dest: &Path) -> Result<Parsed
         fields: PublishFields {
             site,
             url,
+            title,
             message,
             nip05,
         },

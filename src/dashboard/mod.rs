@@ -73,6 +73,7 @@ pub fn router(state: Arc<AppState>) -> Router {
     Router::new()
         .route("/", get(assets::index))
         .route("/style.css", get(assets::style))
+        .route("/desktop.css", get(assets::desktop_css))
         .route("/boot.js", get(assets::boot_js))
         .route("/app.js", get(assets::app_js))
         .route("/graph.js", get(assets::graph_js))
@@ -84,6 +85,8 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/webring.js", get(assets::webring_js))
         .route("/publish.js", get(assets::publish_js))
         .route("/settings.js", get(assets::settings_js))
+        .route("/desktop.js", get(assets::desktop_js))
+        .route("/desktop-banner.png", get(assets::desktop_banner_png))
         .route("/custom.css", get(assets::custom_css))
         .route("/api/overview", get(api::overview))
         .route("/api/sites", get(api::sites))
@@ -231,6 +234,7 @@ mod tests {
     async fn style_and_scripts_have_expected_content_types() {
         for (path, expected) in [
             ("/style.css", "text/css; charset=utf-8"),
+            ("/desktop.css", "text/css; charset=utf-8"),
             ("/boot.js", "text/javascript; charset=utf-8"),
             ("/app.js", "text/javascript; charset=utf-8"),
             ("/graph.js", "text/javascript; charset=utf-8"),
@@ -242,6 +246,8 @@ mod tests {
             ("/webring.js", "text/javascript; charset=utf-8"),
             ("/publish.js", "text/javascript; charset=utf-8"),
             ("/settings.js", "text/javascript; charset=utf-8"),
+            ("/desktop.js", "text/javascript; charset=utf-8"),
+            ("/desktop-banner.png", "image/png"),
             ("/custom.css", "text/css; charset=utf-8"),
         ] {
             let app = router(test_state());
@@ -669,6 +675,31 @@ mod tests {
         assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
         let body = error_body(resp).await;
         assert!(body["error"].as_str().unwrap().contains("invalid site"));
+        assert!(upload_dir_entries(dir.path()).is_empty());
+    }
+
+    #[tokio::test]
+    async fn upload_rejects_an_invalid_title_before_touching_the_relay() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = test_state_with(dir.path().to_path_buf(), 2 * (1u64 << 30));
+        let boundary = "SwingTestBoundary";
+        let body = multipart_body(
+            boundary,
+            &[
+                ("site", None, b"example.com"),
+                ("title", None, b"bad\ntitle"),
+                ("file", Some("index.html"), b"<html></html>"),
+            ],
+        );
+        let app = router(state);
+        let resp = call(
+            app,
+            multipart_request("/api/publish/upload", boundary, body),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+        let body = error_body(resp).await;
+        assert!(body["error"].as_str().unwrap().contains("invalid title"));
         assert!(upload_dir_entries(dir.path()).is_empty());
     }
 

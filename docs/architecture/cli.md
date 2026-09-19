@@ -19,7 +19,8 @@ Follow Set の対象者のサイトを MFS に保存・削除し続ける常駐�
 - `--site` は必須で、そのまま `d` になる。[`d` の条件](../architecture.md#nostr-イベントの検証nostrrs)を満たさなければ何もせず終了する。
 - `--url` は任意。指定すると `url` タグになり、http / https の URL でなければ何もせず終了する。省略すると `url` タグを付けない（IPFS だけで公開するサイト）。
 - `--nip05` 省略時は `[publish].nip05`。
-- `--message` はサイトイベントの `content` になる。最初に `Site: <d>`、`--url` があれば `URL:`、`--message` があれば `Message:` を表示する。省略時は空文字。
+- `--title` は任意。指定すると `title` タグになる。空文字・空白のみは付けない扱いにする。256 バイトを超える、または制御文字を含む場合は何もせず終了する。
+- `--message` はサイトイベントの `content` になる。最初に `Site: <d>`、`--url` があれば `URL:`、`--title` があれば `Title:`、`--message` があれば `Message:` を表示する。省略時は空文字。
 
 処理順:
 
@@ -42,7 +43,7 @@ Follow Set の対象者のサイトを MFS に保存・削除し続ける常駐�
 
 ## sites
 
-- Follow Set の対象者ごとに、サイトごとの最新のサイトイベントを 1 行（`d`、`cid`、`url`、`size`、`created_at`、NIP-05 検証結果、`replicas`、`[stored]` / `[not stored]`）表示する。`content` が空でなければ、次の行に `    message: ` として、制御文字を空白に置き換え、前後の空白を削り、200 文字を超える分を `…` に置き換えて表示する。検証結果と保存状況は `state.json` から読む。`replicas` は [replicas](#replicas) と同じ集計の最新版のレプリカ数。レプリカ報告の取得に失敗したら `(fetching replica reports failed: ...)` を表示して `-` にする。
+- Follow Set の対象者ごとに、サイトごとの最新のサイトイベントを 1 行（`d`、`cid`、`url`、`size`、`created_at`、NIP-05 検証結果、`replicas`、`[stored]` / `[not stored]`）表示する。`title` タグが有効なら次の行に `    title: ` として、`content` が空でなければ続けて `    message: ` として、それぞれ制御文字を空白に置き換え、前後の空白を削り、200 文字を超える分を `…` に置き換えて表示する。検証結果と保存状況は `state.json` から読む。`replicas` は [replicas](#replicas) と同じ集計の最新版のレプリカ数。レプリカ報告の取得に失敗したら `(fetching replica reports failed: ...)` を表示して `-` にする。
 - 続けて、state に版があるのに Follow Set にいない pubkey を `Unfollowed but still stored` 見出しの下に `[unfollowed]` 付きで、サイトごとに state の最新版を 1 行（`url` は `-`）表示する。見出しには `remove_on_unfollow` に応じて、次の poll で消えるか残しているかを添える。Follow Set が見つからなくても表示する。
 
 ## replicas

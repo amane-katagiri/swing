@@ -67,7 +67,7 @@ swing/
 
 ```
 swing agent   [--config <path>]
-swing publish [--config <path>] --site <d-tag> [--url <URL>] [--nip05 <off|warn|require>] [-m, --message <TEXT>] <DIR>
+swing publish [--config <path>] --site <d-tag> [--url <URL>] [--nip05 <off|warn|require>] [--title <TEXT>] [-m, --message <TEXT>] <DIR>
 swing mirror list                      [--config <path>]
 swing mirror add <key>...              [--config <path>]
 swing mirror remove <key>...           [--config <path>]
@@ -164,6 +164,7 @@ TOML キーの無い環境変数:
 - `d`: 空、253 バイト超、制御文字を含む場合はイベント全体を拒否する。
 - `cid`: `cid` クレートでパースできなければイベント全体を拒否する。
 - `url`: 2048 バイト超、または http(s) としてパースできなければ `url` だけを無視する。
+- `title`: 空、256 バイト超、制御文字を含む場合は `title` だけを無視する。検証せず、保存の判断にも使わない。
 - `content`: 空でなければ `SiteEvent::message` に入れる。検証せず、保存の判断にも使わない。
 - Follow Set: relay の author フィルタに加え、受信後にも kind・作者・`d`・署名を確かめる。`content`（暗号化 private 部分）は読まない。
 - レプリカ報告: `d` を最初の `:` で分け、作者が小文字 hex の公開鍵でない、サイトの `d` が上の `d` の条件を満たさない、`a` の値が `<site_event_kind>:<作者>:<サイトの d>` と一致しない、`cid` タグのどれかが `cid` クレートでパースできない、のいずれかなら報告全体を拒否する。`cid` タグは 0 個でもよい（取り下げ）。`expiration` は読むだけで、期限切れの判定は使う側が行う。

@@ -87,6 +87,7 @@ pub struct SiteDto {
     pub url: Option<String>,
     pub size: Option<u64>,
     pub created_at: u64,
+    pub title: Option<String>,
     pub message: Option<String>,
     pub nip05: Option<String>,
     pub replicas: Option<usize>,
@@ -108,6 +109,7 @@ fn site_dto(site: &mirror::SiteRow, gateway: Option<&str>) -> SiteDto {
         url: site.url.clone(),
         size: site.size,
         created_at: site.created_at,
+        title: site.title.clone(),
         message: site.message.clone(),
         nip05: site.nip05.clone(),
         replicas: site.replicas,
@@ -464,6 +466,7 @@ pub fn nip05_result_dto(result: &crate::nip05::VerificationResult) -> Nip05Resul
 pub struct PublishResultDto {
     pub site: String,
     pub url: Option<String>,
+    pub title: Option<String>,
     pub message: Option<String>,
     pub nip05: Nip05ResultDto,
     pub cid: String,
@@ -490,6 +493,7 @@ pub struct PublishSiteDto {
     pub cid: String,
     pub size: Option<u64>,
     pub created_at: u64,
+    pub title: Option<String>,
     pub message: Option<String>,
     pub gateway_url: Option<String>,
 }
@@ -512,6 +516,7 @@ pub fn publish_sites_dto(
                 cid: ev.cid.clone(),
                 size: ev.size,
                 created_at: ev.created_at,
+                title: ev.title.clone(),
                 message: ev.message.clone(),
                 gateway_url: gateway_url(gateway, &ev.cid, true),
             })

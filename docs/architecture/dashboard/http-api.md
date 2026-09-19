@@ -28,13 +28,13 @@
 
 ```json
 { "follow_set": { "found": true, "note": null },
-  "accounts": [ { "pubkey": "…", "npub": "…", "sites": [ { "d": "example.com", "cid": "bafy…", "url": "…", "size": 12345, "created_at": 1790000000, "message": "…", "nip05": "verified", "replicas": 3, "stored": true, "gateway_url": "…" } ] } ],
+  "accounts": [ { "pubkey": "…", "npub": "…", "sites": [ { "d": "example.com", "cid": "bafy…", "url": "…", "size": 12345, "created_at": 1790000000, "title": "…", "message": "…", "nip05": "verified", "replicas": 3, "stored": true, "gateway_url": "…" } ] } ],
   "replicas_error": null,
-  "unfollowed": { "remove_on_unfollow": true, "accounts": [ { "...": "同じ形。ただし url・message・replicas は常に null、stored は常に true" } ] } }
+  "unfollowed": { "remove_on_unfollow": true, "accounts": [ { "...": "同じ形。ただし url・title・message・replicas は常に null、stored は常に true" } ] } }
 ```
 
 - `follow_set.note`: CLI が括弧付きで出す注記から括弧を外した文字列。無ければ `null`。
-- `nip05`・`message`・`size` は値が無ければ `null`。`message` は生の `content`（サニタイズ・切り詰めはフロントの責務）。
+- `nip05`・`title`・`message`・`size` は値が無ければ `null`。`title` は作者の自己申告で受信側は信頼しない（`docs/protocol.md` 第 4 節）。`message` は生の `content`（サニタイズ・切り詰めはフロントの責務）。`title` も同様にサニタイズはフロントの責務。
 - `replicas`: レプリカ報告の取得に失敗すると全サイトで `null` になり、`replicas_error` に理由が入る。
 - `gateway_url`: `stored` が true かつ gateway 設定がある版だけに付く。
 
@@ -100,7 +100,7 @@ Follow Set が無ければ `title: null`、`members: []`。
 
 `multipart/form-data`。ガードは他の書き込み系と同じ（`X-Swing-Dashboard: 1` ヘッダと Origin 検証、multipart なので `AppJson` は使わない）。
 
-パート: `site`（必須）・`url`・`message`・`nip05`（省略可、`nip05` 省略時は `[publish].nip05`）。`site`/`url` は CLI と同じ規則で検証し違反は 400。`file`（1 個以上）: 各パートの `filename` がサイトルートからの相対パス（`/` 区切り。ブラウザは `webkitRelativePath` の先頭フォルダ名を取り除いて送る）。
+パート: `site`（必須）・`url`・`title`・`message`・`nip05`（省略可、`nip05` 省略時は `[publish].nip05`）。`site`/`url`/`title` は CLI と同じ規則で検証し違反は 400。`title` が空白のみなら未指定として扱う。`file`（1 個以上）: 各パートの `filename` がサイトルートからの相対パス（`/` 区切り。ブラウザは `webkitRelativePath` の先頭フォルダ名を取り除いて送る）。
 
 サーバの検証（`upload::validate_relative_path`、違反はすべて 400 で何も書かない）:
 
@@ -116,7 +116,7 @@ Follow Set が無ければ `title: null`、`members: []`。
 処理: (1) `<state_dir>/upload/` 配下に一時ディレクトリを作り、各 `file` パートをストリーミングで書き込む。(2) `api::run_publish`（NIP-05 検証 → Kubo に add して MFS に置く → サイトイベントを署名して送信 → 古い版を `[publish].keep_versions` 個まで残して削除、処理順は CLI の `swing publish`（[`architecture/cli.md#publish`](../cli.md#publish)）と同じ）を、展開先ディレクトリをサイトのディレクトリとして呼ぶ。削除に失敗した版は `prune_error` に理由が入るだけでレスポンス全体は成功扱い。(3) 成功でも失敗でも展開先ディレクトリを削除する（`<state_dir>/upload/` 自体は agent 起動時に丸ごと掃除される）。(4) ボディが `[dashboard].max_upload` を超えたら 413（ストリーミング中に超えた場合も打ち切る）。
 
 ```json
-{ "site": "example.com", "url": "…", "message": "note", "nip05": { "status": "verified", "detail": null },
+{ "site": "example.com", "url": "…", "title": "…", "message": "note", "nip05": { "status": "verified", "detail": null },
   "cid": "bafy…", "size": 12345, "created_at": 1790000000, "mfs_path": "/swing/publish/<hex>/example.com/1790000000",
   "relays": [ { "relay": "wss://…", "ok": true, "error": null } ], "pruned": ["1780000000"], "prune_error": null,
   "gateway_url": "…", "files": 3 }
@@ -131,7 +131,7 @@ Follow Set が無ければ `title: null`、`members: []`。
 自分（agent の鍵）が過去に公開したサイトの一覧。relay から自分の pubkey のサイトイベントを取得し、`d` ごとの最新版を `d` の順に返す。
 
 ```json
-{ "sites": [ { "d": "example.com", "url": "https://example.com/", "cid": "bafy…", "size": 123, "created_at": 1790000000, "message": null, "gateway_url": "http://127.0.0.1:8080/ipfs/bafy…/" } ] }
+{ "sites": [ { "d": "example.com", "url": "https://example.com/", "cid": "bafy…", "size": 123, "created_at": 1790000000, "title": null, "message": null, "gateway_url": "http://localhost:8080/ipfs/bafy…/" } ] }
 ```
 
 `gateway_url` は gateway 設定があれば付ける（`stored` 判定はしない）。relay の取得に失敗したら 502。state.json は見ない。

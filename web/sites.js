@@ -17,12 +17,13 @@ import {
   wireStyleSwitch,
   wireSortSwitch,
   createLoadGuard,
+  sanitizeMessage,
 } from './util.js';
 import { copyButton, storedBadge, appendLinksAndMessage, renderMirrorOpResult, renderOpError, buildRemoveControl } from './ui.js';
 
 const MAX_MIRROR_KEYS = 100;
 
-const SITE_FIELD_DEFAULTS = { url: null, message: null, nip05: null, replicas: null, stored: null, gateway_url: null };
+const SITE_FIELD_DEFAULTS = { url: null, title: null, message: null, nip05: null, replicas: null, stored: null, gateway_url: null };
 
 function normalizeSite(site, contextDefaults) {
   return Object.assign({}, SITE_FIELD_DEFAULTS, contextDefaults || {}, site);
@@ -67,7 +68,11 @@ function nip05Badge(status, template) {
 
 function buildSiteEntry(site) {
   const wrap = el('div', { class: 'swing-site', 'data-stored': String(!!site.stored) });
-  const row = el('div', { class: 'swing-site-row' }, el('span', { class: 'swing-site-name' }, site.d));
+  const title = sanitizeMessage(site.title);
+  const row = el('div', { class: 'swing-site-row' }, [
+    el('span', { class: 'swing-site-name' }, site.d),
+    title ? el('span', { class: 'swing-hint' }, title) : null,
+  ]);
   const badges = el('div', { class: 'swing-site-badges' }, [
     storedBadge(site),
     site.nip05 ? nip05Badge(site.nip05, 'nip05Badge') : null,

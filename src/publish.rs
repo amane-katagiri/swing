@@ -191,6 +191,7 @@ pub struct SiteAnnouncement<'a> {
     pub cid: &'a str,
     pub url: Option<&'a str>,
     pub size: u64,
+    pub title: Option<&'a str>,
     pub message: Option<&'a str>,
     pub created_at: Timestamp,
 }
@@ -205,6 +206,7 @@ pub async fn sign_and_send(
         announcement.cid,
         announcement.url,
         Some(announcement.size),
+        announcement.title,
         announcement.message,
     )
     .custom_created_at(announcement.created_at)
@@ -214,12 +216,14 @@ pub async fn sign_and_send(
     Ok(nostr::relay_send_results(relay.relays(), &output))
 }
 
-/// Site `d`/`url` validation shared by the CLI and the dashboard API, which
-/// report the same checks under different flag/field names and error types.
+/// Site `d`/`url`/`title` validation shared by the CLI and the dashboard API,
+/// which report the same checks under different flag/field names and error
+/// types.
 #[derive(Debug)]
 pub enum SiteFieldError {
     InvalidD(anyhow::Error),
     InvalidUrl(String),
+    InvalidTitle,
 }
 
 pub fn validate_site_fields(d: &str, url: Option<&str>) -> Result<(), SiteFieldError> {
@@ -230,6 +234,21 @@ pub fn validate_site_fields(d: &str, url: Option<&str>) -> Result<(), SiteFieldE
         return Err(SiteFieldError::InvalidUrl(url.to_string()));
     }
     Ok(())
+}
+
+/// An empty or whitespace-only title is treated as absent, not invalid.
+pub fn normalize_title(title: Option<&str>) -> Result<Option<&str>, SiteFieldError> {
+    let Some(title) = title else {
+        return Ok(None);
+    };
+    let trimmed = title.trim();
+    if trimmed.is_empty() {
+        return Ok(None);
+    }
+    if !nostr::valid_title(trimmed) {
+        return Err(SiteFieldError::InvalidTitle);
+    }
+    Ok(Some(trimmed))
 }
 
 pub fn resolve_nip05_mode(nip05_override: Option<&str>, default: Nip05Mode) -> Result<Nip05Mode> {
@@ -245,6 +264,7 @@ pub async fn run(
     url: Option<String>,
     dir: &Path,
     nip05_override: Option<String>,
+    title: Option<String>,
     message: Option<String>,
 ) -> Result<()> {
     if let Err(e) = validate_site_fields(&d, url.as_deref()) {
@@ -253,14 +273,27 @@ pub async fn run(
             SiteFieldError::InvalidUrl(url) => {
                 anyhow::anyhow!("invalid --url: {url} is not an http or https URL")
             }
+            SiteFieldError::InvalidTitle => unreachable!(),
         });
     }
+    let title = match normalize_title(title.as_deref()) {
+        Ok(title) => title,
+        Err(SiteFieldError::InvalidTitle) => {
+            anyhow::bail!(
+                "invalid --title: must not exceed 256 bytes and must not contain control characters"
+            )
+        }
+        Err(_) => unreachable!(),
+    };
     let nip05_mode = resolve_nip05_mode(nip05_override.as_deref(), config.publish.nip05)
         .context("invalid --nip05")?;
 
     println!("Site: {d}");
     if let Some(url) = &url {
         println!("URL: {url}");
+    }
+    if let Some(title) = &title {
+        println!("Title: {title}");
     }
     if let Some(message) = &message {
         println!("Message: {message}");
@@ -305,6 +338,7 @@ pub async fn run(
             cid: &stage.cid,
             url: url.as_deref(),
             size: stage.size,
+            title,
             message: message.as_deref(),
             created_at,
         },
@@ -347,6 +381,34 @@ mod tests {
             .collect();
         assert_eq!(versions_to_prune(&names, 2), vec!["100", "50"]);
         assert!(versions_to_prune(&names, 4).is_empty());
+    }
+
+    #[test]
+    fn normalize_title_treats_absent_and_whitespace_only_as_none() {
+        assert!(normalize_title(None).unwrap().is_none());
+        assert!(normalize_title(Some("")).unwrap().is_none());
+        assert!(normalize_title(Some("   \t  ")).unwrap().is_none());
+    }
+
+    #[test]
+    fn normalize_title_trims_and_keeps_a_valid_title() {
+        assert_eq!(
+            normalize_title(Some("  My Site  ")).unwrap(),
+            Some("My Site")
+        );
+    }
+
+    #[test]
+    fn normalize_title_rejects_oversized_or_control_titles() {
+        let long = "a".repeat(257);
+        assert!(matches!(
+            normalize_title(Some(&long)),
+            Err(SiteFieldError::InvalidTitle)
+        ));
+        assert!(matches!(
+            normalize_title(Some("bad\ntitle")),
+            Err(SiteFieldError::InvalidTitle)
+        ));
     }
 
     struct FakeNip05(nip05::VerificationResult);

@@ -317,6 +317,7 @@ impl Fixture {
             cid: cid.to_string(),
             url: None,
             size,
+            title: None,
             message: None,
             created_at,
         }

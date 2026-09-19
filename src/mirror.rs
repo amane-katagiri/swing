@@ -382,6 +382,7 @@ pub struct SiteRow {
     pub url: Option<String>,
     pub size: Option<u64>,
     pub created_at: u64,
+    pub title: Option<String>,
     pub message: Option<String>,
     pub nip05: Option<String>,
     pub replicas: Option<usize>,
@@ -407,16 +408,30 @@ fn format_site_line(row: &SiteRow, status: &str) -> String {
 
 const MAX_MESSAGE_DISPLAY_CHARS: usize = 200;
 
-fn format_message_line(message: &str) -> String {
-    let mut shown: String = message
+fn sanitize_display_text(text: &str, max_chars: usize) -> String {
+    let mut shown: String = text
         .chars()
         .map(|c| if c.is_control() { ' ' } else { c })
-        .take(MAX_MESSAGE_DISPLAY_CHARS)
+        .take(max_chars)
         .collect();
-    if message.chars().count() > MAX_MESSAGE_DISPLAY_CHARS {
+    if text.chars().count() > max_chars {
         shown.push('\u{2026}');
     }
-    format!("    message: {}", shown.trim())
+    shown.trim().to_string()
+}
+
+fn format_title_line(title: &str) -> String {
+    format!(
+        "    title: {}",
+        sanitize_display_text(title, MAX_MESSAGE_DISPLAY_CHARS)
+    )
+}
+
+fn format_message_line(message: &str) -> String {
+    format!(
+        "    message: {}",
+        sanitize_display_text(message, MAX_MESSAGE_DISPLAY_CHARS)
+    )
 }
 
 fn unfollowed_sites(
@@ -520,6 +535,7 @@ pub async fn collect_sites(relay: &RelayClient, config: &Config) -> Result<Sites
                     url: ev.url.clone(),
                     size: ev.size,
                     created_at: ev.created_at,
+                    title: ev.title.clone(),
                     message: ev.message.clone(),
                     nip05,
                     replicas,
@@ -546,6 +562,7 @@ pub async fn collect_sites(relay: &RelayClient, config: &Config) -> Result<Sites
                     url: None,
                     size: Some(version.size),
                     created_at: version.created_at,
+                    title: None,
                     message: None,
                     nip05,
                     replicas: None,
@@ -599,6 +616,9 @@ fn print_sites(view: &SitesView) -> Result<()> {
         for site in &account.sites {
             let status = if site.stored { "stored" } else { "not stored" };
             println!("{}", format_site_line(site, status));
+            if let Some(title) = &site.title {
+                println!("{}", format_title_line(title));
+            }
             if let Some(message) = &site.message {
                 println!("{}", format_message_line(message));
             }

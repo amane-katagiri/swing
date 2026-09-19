@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>SWING Dashboard</title>
 <link rel="stylesheet" href="/style.css">
+<link rel="stylesheet" href="/desktop.css">
 <link rel="stylesheet" href="/custom.css">
 <style id="user-css"></style>
 </head>
@@ -17,6 +18,10 @@
     </symbol>
     <symbol id="icon-sites" viewBox="0 0 24 24">
       <path d="M12 3 L14.53 9.12 L21.13 9.63 L16.09 13.93 L17.64 20.37 L12 16.9 L6.36 20.37 L7.91 13.93 L2.87 9.63 L9.47 9.12Z"></path>
+    </symbol>
+    <symbol id="icon-desktop" viewBox="0 0 24 24">
+      <rect x="3" y="4.5" width="18" height="12" rx="1"></rect>
+      <path d="M9 20h6M12 16.5V20"></path>
     </symbol>
     <symbol id="icon-webring" viewBox="0 0 24 24">
       <circle cx="12" cy="12" r="8.4"></circle>
@@ -37,6 +42,429 @@
     <symbol id="icon-nav-collapse" viewBox="0 0 24 24">
       <path d="M15 6L9 12L15 18"></path>
     </symbol>
+    <symbol id="icon-desk-trash" viewBox="0 0 24 24">
+      <path d="M5 7h14M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2M7 7l1 13a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1l1-13"></path>
+      <path d="M10 11v6M14 11v6"></path>
+    </symbol>
+    <symbol id="icon-desk-start" viewBox="72 24 432 432">
+      <circle cx="256" cy="256" r="62" fill="#ffcc33"></circle>
+      <path d="M188 334 C108 290 106 172 244 134 C314 114 392 94 440 86 L444 112 C394 118 320 136 270 150 C176 176 150 262 188 334 Z" fill="#e0332f"></path>
+      <circle cx="452" cy="92" r="40" fill="#e0332f"></circle>
+      <g transform="rotate(180 256 256)">
+        <path d="M188 334 C110 290 110 176 244 138 C300 122 346 110 386 104 L389 126 C350 132 318 142 270 152 C176 178 150 262 188 334 Z" fill="#2f8f3f"></path>
+        <circle cx="400" cy="112" r="28" fill="#2f8f3f"></circle>
+      </g>
+    </symbol>
+    <symbol id="icon-desk-swing" viewBox="72 24 432 432">
+      <circle cx="256" cy="256" r="62"></circle>
+      <path d="M188 334 C108 290 106 172 244 134 C314 114 392 94 440 86 L444 112 C394 118 320 136 270 150 C176 176 150 262 188 334 Z"></path>
+      <circle cx="452" cy="92" r="40"></circle>
+      <g transform="rotate(180 256 256)">
+        <path d="M188 334 C110 290 110 176 244 138 C300 122 346 110 386 104 L389 126 C350 132 318 142 270 152 C176 178 150 262 188 334 Z"></path>
+        <circle cx="400" cy="112" r="28"></circle>
+      </g>
+    </symbol>
+    <symbol id="icon-desk-tray-volume" viewBox="0 0 16 16" shape-rendering="crispEdges">
+      <rect x="12" y="3" width="1" height="1" fill="#000000"></rect>
+      <rect x="6" y="4" width="2" height="1" fill="#000000"></rect>
+      <rect x="9" y="4" width="1" height="1" fill="#000000"></rect>
+      <rect x="13" y="4" width="1" height="1" fill="#000000"></rect>
+      <rect x="5" y="5" width="1" height="1" fill="#000000"></rect>
+      <rect x="6" y="5" width="1" height="1" fill="#ffff00"></rect>
+      <rect x="7" y="5" width="1" height="1" fill="#000000"></rect>
+      <rect x="10" y="5" width="1" height="1" fill="#000000"></rect>
+      <rect x="13" y="5" width="1" height="1" fill="#000000"></rect>
+      <rect x="2" y="6" width="3" height="1" fill="#000000"></rect>
+      <rect x="5" y="6" width="2" height="1" fill="#ffff00"></rect>
+      <rect x="7" y="6" width="1" height="1" fill="#000000"></rect>
+      <rect x="10" y="6" width="1" height="1" fill="#000000"></rect>
+      <rect x="13" y="6" width="1" height="1" fill="#000000"></rect>
+      <rect x="2" y="7" width="1" height="1" fill="#000000"></rect>
+      <rect x="3" y="7" width="4" height="1" fill="#ffff00"></rect>
+      <rect x="7" y="7" width="1" height="1" fill="#000000"></rect>
+      <rect x="10" y="7" width="1" height="1" fill="#000000"></rect>
+      <rect x="13" y="7" width="1" height="1" fill="#000000"></rect>
+      <rect x="2" y="8" width="1" height="1" fill="#000000"></rect>
+      <rect x="3" y="8" width="4" height="1" fill="#ffff00"></rect>
+      <rect x="7" y="8" width="1" height="1" fill="#000000"></rect>
+      <rect x="10" y="8" width="1" height="1" fill="#000000"></rect>
+      <rect x="13" y="8" width="1" height="1" fill="#000000"></rect>
+      <rect x="2" y="9" width="3" height="1" fill="#000000"></rect>
+      <rect x="5" y="9" width="2" height="1" fill="#ffff00"></rect>
+      <rect x="7" y="9" width="1" height="1" fill="#000000"></rect>
+      <rect x="10" y="9" width="1" height="1" fill="#000000"></rect>
+      <rect x="13" y="9" width="1" height="1" fill="#000000"></rect>
+      <rect x="5" y="10" width="1" height="1" fill="#000000"></rect>
+      <rect x="6" y="10" width="1" height="1" fill="#ffff00"></rect>
+      <rect x="7" y="10" width="1" height="1" fill="#000000"></rect>
+      <rect x="10" y="10" width="1" height="1" fill="#000000"></rect>
+      <rect x="13" y="10" width="1" height="1" fill="#000000"></rect>
+      <rect x="6" y="11" width="2" height="1" fill="#000000"></rect>
+      <rect x="9" y="11" width="1" height="1" fill="#000000"></rect>
+      <rect x="13" y="11" width="1" height="1" fill="#000000"></rect>
+      <rect x="12" y="12" width="1" height="1" fill="#000000"></rect>
+    </symbol>
+    <symbol id="icon-desk-tray-network" viewBox="0 0 16 16" shape-rendering="crispEdges">
+      <rect x="0" y="0" width="9" height="1" fill="#000000"></rect>
+      <rect x="0" y="1" width="1" height="1" fill="#000000"></rect>
+      <rect x="1" y="1" width="7" height="1" fill="#008080"></rect>
+      <rect x="8" y="1" width="1" height="1" fill="#000000"></rect>
+      <rect x="0" y="2" width="1" height="1" fill="#000000"></rect>
+      <rect x="1" y="2" width="7" height="1" fill="#008080"></rect>
+      <rect x="8" y="2" width="1" height="1" fill="#000000"></rect>
+      <rect x="0" y="3" width="1" height="1" fill="#000000"></rect>
+      <rect x="1" y="3" width="7" height="1" fill="#008080"></rect>
+      <rect x="8" y="3" width="1" height="1" fill="#000000"></rect>
+      <rect x="0" y="4" width="1" height="1" fill="#000000"></rect>
+      <rect x="1" y="4" width="7" height="1" fill="#008080"></rect>
+      <rect x="8" y="4" width="1" height="1" fill="#000000"></rect>
+      <rect x="0" y="5" width="1" height="1" fill="#000000"></rect>
+      <rect x="1" y="5" width="6" height="1" fill="#c0c0c0"></rect>
+      <rect x="7" y="5" width="9" height="1" fill="#000000"></rect>
+      <rect x="0" y="6" width="8" height="1" fill="#000000"></rect>
+      <rect x="8" y="6" width="7" height="1" fill="#00ffff"></rect>
+      <rect x="15" y="6" width="1" height="1" fill="#000000"></rect>
+      <rect x="7" y="7" width="1" height="1" fill="#000000"></rect>
+      <rect x="8" y="7" width="7" height="1" fill="#00ffff"></rect>
+      <rect x="15" y="7" width="1" height="1" fill="#000000"></rect>
+      <rect x="7" y="8" width="1" height="1" fill="#000000"></rect>
+      <rect x="8" y="8" width="7" height="1" fill="#00ffff"></rect>
+      <rect x="15" y="8" width="1" height="1" fill="#000000"></rect>
+      <rect x="7" y="9" width="1" height="1" fill="#000000"></rect>
+      <rect x="8" y="9" width="7" height="1" fill="#00ffff"></rect>
+      <rect x="15" y="9" width="1" height="1" fill="#000000"></rect>
+      <rect x="7" y="10" width="1" height="1" fill="#000000"></rect>
+      <rect x="8" y="10" width="7" height="1" fill="#c0c0c0"></rect>
+      <rect x="15" y="10" width="1" height="1" fill="#000000"></rect>
+      <rect x="7" y="11" width="9" height="1" fill="#000000"></rect>
+    </symbol>
+    <symbol id="icon-desk-tray-mirror" viewBox="0 0 16 16" shape-rendering="crispEdges">
+      <rect x="5" y="1" width="6" height="1" fill="#ff0000"></rect>
+      <rect x="3" y="2" width="10" height="1" fill="#ff0000"></rect>
+      <rect x="2" y="3" width="3" height="1" fill="#ff0000"></rect>
+      <rect x="11" y="3" width="3" height="1" fill="#ff0000"></rect>
+      <rect x="1" y="4" width="3" height="1" fill="#ff0000"></rect>
+      <rect x="12" y="4" width="3" height="1" fill="#ff0000"></rect>
+      <rect x="1" y="5" width="2" height="1" fill="#ff0000"></rect>
+      <rect x="6" y="5" width="4" height="1" fill="#000000"></rect>
+      <rect x="13" y="5" width="2" height="1" fill="#ff0000"></rect>
+      <rect x="5" y="6" width="1" height="1" fill="#000000"></rect>
+      <rect x="6" y="6" width="4" height="1" fill="#ffff00"></rect>
+      <rect x="10" y="6" width="1" height="1" fill="#000000"></rect>
+      <rect x="5" y="7" width="1" height="1" fill="#000000"></rect>
+      <rect x="6" y="7" width="4" height="1" fill="#ffff00"></rect>
+      <rect x="10" y="7" width="1" height="1" fill="#000000"></rect>
+      <rect x="5" y="8" width="1" height="1" fill="#000000"></rect>
+      <rect x="6" y="8" width="4" height="1" fill="#ffff00"></rect>
+      <rect x="10" y="8" width="1" height="1" fill="#000000"></rect>
+      <rect x="5" y="9" width="1" height="1" fill="#000000"></rect>
+      <rect x="6" y="9" width="4" height="1" fill="#ffff00"></rect>
+      <rect x="10" y="9" width="1" height="1" fill="#000000"></rect>
+      <rect x="1" y="10" width="2" height="1" fill="#008000"></rect>
+      <rect x="6" y="10" width="4" height="1" fill="#000000"></rect>
+      <rect x="13" y="10" width="2" height="1" fill="#008000"></rect>
+      <rect x="1" y="11" width="3" height="1" fill="#008000"></rect>
+      <rect x="12" y="11" width="3" height="1" fill="#008000"></rect>
+      <rect x="2" y="12" width="3" height="1" fill="#008000"></rect>
+      <rect x="11" y="12" width="3" height="1" fill="#008000"></rect>
+      <rect x="3" y="13" width="10" height="1" fill="#008000"></rect>
+      <rect x="5" y="14" width="6" height="1" fill="#008000"></rect>
+    </symbol>
+    <symbol id="icon-desk-tb-back" viewBox="0 0 16 16" shape-rendering="crispEdges">
+      <rect x="10" y="2" width="1" height="1" fill="#000000"></rect>
+      <rect x="9" y="3" width="2" height="1" fill="#000000"></rect>
+      <rect x="8" y="4" width="1" height="1" fill="#000000"></rect>
+      <rect x="9" y="4" width="1" height="1" fill="#008000"></rect>
+      <rect x="10" y="4" width="1" height="1" fill="#000000"></rect>
+      <rect x="7" y="5" width="1" height="1" fill="#000000"></rect>
+      <rect x="8" y="5" width="2" height="1" fill="#008000"></rect>
+      <rect x="10" y="5" width="1" height="1" fill="#000000"></rect>
+      <rect x="5" y="6" width="2" height="1" fill="#000000"></rect>
+      <rect x="7" y="6" width="3" height="1" fill="#008000"></rect>
+      <rect x="10" y="6" width="1" height="1" fill="#000000"></rect>
+      <rect x="4" y="7" width="1" height="1" fill="#000000"></rect>
+      <rect x="5" y="7" width="5" height="1" fill="#008000"></rect>
+      <rect x="10" y="7" width="1" height="1" fill="#000000"></rect>
+      <rect x="5" y="8" width="2" height="1" fill="#000000"></rect>
+      <rect x="7" y="8" width="3" height="1" fill="#008000"></rect>
+      <rect x="10" y="8" width="1" height="1" fill="#000000"></rect>
+      <rect x="7" y="9" width="1" height="1" fill="#000000"></rect>
+      <rect x="8" y="9" width="2" height="1" fill="#008000"></rect>
+      <rect x="10" y="9" width="1" height="1" fill="#000000"></rect>
+      <rect x="8" y="10" width="1" height="1" fill="#000000"></rect>
+      <rect x="9" y="10" width="1" height="1" fill="#008000"></rect>
+      <rect x="10" y="10" width="1" height="1" fill="#000000"></rect>
+      <rect x="9" y="11" width="2" height="1" fill="#000000"></rect>
+      <rect x="10" y="12" width="1" height="1" fill="#000000"></rect>
+    </symbol>
+    <symbol id="icon-desk-tb-forward" viewBox="0 0 16 16" shape-rendering="crispEdges">
+      <rect x="4" y="2" width="1" height="1" fill="#000000"></rect>
+      <rect x="4" y="3" width="2" height="1" fill="#000000"></rect>
+      <rect x="4" y="4" width="1" height="1" fill="#000000"></rect>
+      <rect x="5" y="4" width="1" height="1" fill="#008000"></rect>
+      <rect x="6" y="4" width="1" height="1" fill="#000000"></rect>
+      <rect x="4" y="5" width="1" height="1" fill="#000000"></rect>
+      <rect x="5" y="5" width="2" height="1" fill="#008000"></rect>
+      <rect x="7" y="5" width="1" height="1" fill="#000000"></rect>
+      <rect x="4" y="6" width="1" height="1" fill="#000000"></rect>
+      <rect x="5" y="6" width="3" height="1" fill="#008000"></rect>
+      <rect x="8" y="6" width="2" height="1" fill="#000000"></rect>
+      <rect x="4" y="7" width="1" height="1" fill="#000000"></rect>
+      <rect x="5" y="7" width="5" height="1" fill="#008000"></rect>
+      <rect x="10" y="7" width="1" height="1" fill="#000000"></rect>
+      <rect x="4" y="8" width="1" height="1" fill="#000000"></rect>
+      <rect x="5" y="8" width="3" height="1" fill="#008000"></rect>
+      <rect x="8" y="8" width="2" height="1" fill="#000000"></rect>
+      <rect x="4" y="9" width="1" height="1" fill="#000000"></rect>
+      <rect x="5" y="9" width="2" height="1" fill="#008000"></rect>
+      <rect x="7" y="9" width="1" height="1" fill="#000000"></rect>
+      <rect x="4" y="10" width="1" height="1" fill="#000000"></rect>
+      <rect x="5" y="10" width="1" height="1" fill="#008000"></rect>
+      <rect x="6" y="10" width="1" height="1" fill="#000000"></rect>
+      <rect x="4" y="11" width="2" height="1" fill="#000000"></rect>
+      <rect x="4" y="12" width="1" height="1" fill="#000000"></rect>
+    </symbol>
+    <symbol id="icon-desk-tb-stop" viewBox="0 0 16 16" shape-rendering="crispEdges">
+      <rect x="5" y="1" width="6" height="1" fill="#000000"></rect>
+      <rect x="3" y="2" width="2" height="1" fill="#000000"></rect>
+      <rect x="5" y="2" width="6" height="1" fill="#ff0000"></rect>
+      <rect x="11" y="2" width="2" height="1" fill="#000000"></rect>
+      <rect x="2" y="3" width="1" height="1" fill="#000000"></rect>
+      <rect x="3" y="3" width="10" height="1" fill="#ff0000"></rect>
+      <rect x="13" y="3" width="1" height="1" fill="#000000"></rect>
+      <rect x="2" y="4" width="1" height="1" fill="#000000"></rect>
+      <rect x="3" y="4" width="1" height="1" fill="#ff0000"></rect>
+      <rect x="4" y="4" width="2" height="1" fill="#ffffff"></rect>
+      <rect x="6" y="4" width="4" height="1" fill="#ff0000"></rect>
+      <rect x="10" y="4" width="2" height="1" fill="#ffffff"></rect>
+      <rect x="12" y="4" width="1" height="1" fill="#ff0000"></rect>
+      <rect x="13" y="4" width="1" height="1" fill="#000000"></rect>
+      <rect x="1" y="5" width="1" height="1" fill="#000000"></rect>
+      <rect x="2" y="5" width="2" height="1" fill="#ff0000"></rect>
+      <rect x="4" y="5" width="3" height="1" fill="#ffffff"></rect>
+      <rect x="7" y="5" width="2" height="1" fill="#ff0000"></rect>
+      <rect x="9" y="5" width="3" height="1" fill="#ffffff"></rect>
+      <rect x="12" y="5" width="2" height="1" fill="#ff0000"></rect>
+      <rect x="14" y="5" width="1" height="1" fill="#000000"></rect>
+      <rect x="1" y="6" width="1" height="1" fill="#000000"></rect>
+      <rect x="2" y="6" width="3" height="1" fill="#ff0000"></rect>
+      <rect x="5" y="6" width="6" height="1" fill="#ffffff"></rect>
+      <rect x="11" y="6" width="3" height="1" fill="#ff0000"></rect>
+      <rect x="14" y="6" width="1" height="1" fill="#000000"></rect>
+      <rect x="1" y="7" width="1" height="1" fill="#000000"></rect>
+      <rect x="2" y="7" width="4" height="1" fill="#ff0000"></rect>
+      <rect x="6" y="7" width="4" height="1" fill="#ffffff"></rect>
+      <rect x="10" y="7" width="4" height="1" fill="#ff0000"></rect>
+      <rect x="14" y="7" width="1" height="1" fill="#000000"></rect>
+      <rect x="1" y="8" width="1" height="1" fill="#000000"></rect>
+      <rect x="2" y="8" width="4" height="1" fill="#ff0000"></rect>
+      <rect x="6" y="8" width="4" height="1" fill="#ffffff"></rect>
+      <rect x="10" y="8" width="4" height="1" fill="#ff0000"></rect>
+      <rect x="14" y="8" width="1" height="1" fill="#000000"></rect>
+      <rect x="1" y="9" width="1" height="1" fill="#000000"></rect>
+      <rect x="2" y="9" width="3" height="1" fill="#ff0000"></rect>
+      <rect x="5" y="9" width="6" height="1" fill="#ffffff"></rect>
+      <rect x="11" y="9" width="3" height="1" fill="#ff0000"></rect>
+      <rect x="14" y="9" width="1" height="1" fill="#000000"></rect>
+      <rect x="1" y="10" width="1" height="1" fill="#000000"></rect>
+      <rect x="2" y="10" width="2" height="1" fill="#ff0000"></rect>
+      <rect x="4" y="10" width="3" height="1" fill="#ffffff"></rect>
+      <rect x="7" y="10" width="2" height="1" fill="#ff0000"></rect>
+      <rect x="9" y="10" width="3" height="1" fill="#ffffff"></rect>
+      <rect x="12" y="10" width="2" height="1" fill="#ff0000"></rect>
+      <rect x="14" y="10" width="1" height="1" fill="#000000"></rect>
+      <rect x="2" y="11" width="1" height="1" fill="#000000"></rect>
+      <rect x="3" y="11" width="1" height="1" fill="#ff0000"></rect>
+      <rect x="4" y="11" width="2" height="1" fill="#ffffff"></rect>
+      <rect x="6" y="11" width="4" height="1" fill="#ff0000"></rect>
+      <rect x="10" y="11" width="2" height="1" fill="#ffffff"></rect>
+      <rect x="12" y="11" width="1" height="1" fill="#ff0000"></rect>
+      <rect x="13" y="11" width="1" height="1" fill="#000000"></rect>
+      <rect x="2" y="12" width="1" height="1" fill="#000000"></rect>
+      <rect x="3" y="12" width="10" height="1" fill="#ff0000"></rect>
+      <rect x="13" y="12" width="1" height="1" fill="#000000"></rect>
+      <rect x="3" y="13" width="2" height="1" fill="#000000"></rect>
+      <rect x="5" y="13" width="6" height="1" fill="#ff0000"></rect>
+      <rect x="11" y="13" width="2" height="1" fill="#000000"></rect>
+      <rect x="5" y="14" width="6" height="1" fill="#000000"></rect>
+    </symbol>
+    <symbol id="icon-desk-tb-reload" viewBox="0 0 16 16" shape-rendering="crispEdges">
+      <rect x="6" y="0" width="4" height="1" fill="#000000"></rect>
+      <rect x="13" y="0" width="1" height="1" fill="#000000"></rect>
+      <rect x="4" y="1" width="2" height="1" fill="#000000"></rect>
+      <rect x="6" y="1" width="4" height="1" fill="#008000"></rect>
+      <rect x="10" y="1" width="1" height="1" fill="#000000"></rect>
+      <rect x="12" y="1" width="1" height="1" fill="#000000"></rect>
+      <rect x="13" y="1" width="1" height="1" fill="#008000"></rect>
+      <rect x="14" y="1" width="1" height="1" fill="#000000"></rect>
+      <rect x="3" y="2" width="1" height="1" fill="#000000"></rect>
+      <rect x="4" y="2" width="6" height="1" fill="#008000"></rect>
+      <rect x="10" y="2" width="2" height="1" fill="#000000"></rect>
+      <rect x="12" y="2" width="2" height="1" fill="#008000"></rect>
+      <rect x="14" y="2" width="1" height="1" fill="#000000"></rect>
+      <rect x="2" y="3" width="1" height="1" fill="#000000"></rect>
+      <rect x="3" y="3" width="3" height="1" fill="#008000"></rect>
+      <rect x="6" y="3" width="3" height="1" fill="#000000"></rect>
+      <rect x="9" y="3" width="5" height="1" fill="#008000"></rect>
+      <rect x="14" y="3" width="1" height="1" fill="#000000"></rect>
+      <rect x="1" y="4" width="1" height="1" fill="#000000"></rect>
+      <rect x="2" y="4" width="3" height="1" fill="#008000"></rect>
+      <rect x="5" y="4" width="1" height="1" fill="#000000"></rect>
+      <rect x="9" y="4" width="1" height="1" fill="#000000"></rect>
+      <rect x="10" y="4" width="4" height="1" fill="#008000"></rect>
+      <rect x="14" y="4" width="1" height="1" fill="#000000"></rect>
+      <rect x="1" y="5" width="1" height="1" fill="#000000"></rect>
+      <rect x="2" y="5" width="2" height="1" fill="#008000"></rect>
+      <rect x="4" y="5" width="1" height="1" fill="#000000"></rect>
+      <rect x="8" y="5" width="1" height="1" fill="#000000"></rect>
+      <rect x="9" y="5" width="5" height="1" fill="#008000"></rect>
+      <rect x="14" y="5" width="1" height="1" fill="#000000"></rect>
+      <rect x="2" y="6" width="2" height="1" fill="#000000"></rect>
+      <rect x="9" y="6" width="5" height="1" fill="#000000"></rect>
+      <rect x="2" y="9" width="5" height="1" fill="#000000"></rect>
+      <rect x="12" y="9" width="2" height="1" fill="#000000"></rect>
+      <rect x="1" y="10" width="1" height="1" fill="#000000"></rect>
+      <rect x="2" y="10" width="5" height="1" fill="#008000"></rect>
+      <rect x="7" y="10" width="1" height="1" fill="#000000"></rect>
+      <rect x="11" y="10" width="1" height="1" fill="#000000"></rect>
+      <rect x="12" y="10" width="2" height="1" fill="#008000"></rect>
+      <rect x="14" y="10" width="1" height="1" fill="#000000"></rect>
+      <rect x="1" y="11" width="1" height="1" fill="#000000"></rect>
+      <rect x="2" y="11" width="4" height="1" fill="#008000"></rect>
+      <rect x="6" y="11" width="1" height="1" fill="#000000"></rect>
+      <rect x="10" y="11" width="1" height="1" fill="#000000"></rect>
+      <rect x="11" y="11" width="3" height="1" fill="#008000"></rect>
+      <rect x="14" y="11" width="1" height="1" fill="#000000"></rect>
+      <rect x="1" y="12" width="1" height="1" fill="#000000"></rect>
+      <rect x="2" y="12" width="5" height="1" fill="#008000"></rect>
+      <rect x="7" y="12" width="3" height="1" fill="#000000"></rect>
+      <rect x="10" y="12" width="3" height="1" fill="#008000"></rect>
+      <rect x="13" y="12" width="1" height="1" fill="#000000"></rect>
+      <rect x="1" y="13" width="1" height="1" fill="#000000"></rect>
+      <rect x="2" y="13" width="2" height="1" fill="#008000"></rect>
+      <rect x="4" y="13" width="2" height="1" fill="#000000"></rect>
+      <rect x="6" y="13" width="6" height="1" fill="#008000"></rect>
+      <rect x="12" y="13" width="1" height="1" fill="#000000"></rect>
+      <rect x="1" y="14" width="1" height="1" fill="#000000"></rect>
+      <rect x="2" y="14" width="1" height="1" fill="#008000"></rect>
+      <rect x="3" y="14" width="1" height="1" fill="#000000"></rect>
+      <rect x="5" y="14" width="1" height="1" fill="#000000"></rect>
+      <rect x="6" y="14" width="4" height="1" fill="#008000"></rect>
+      <rect x="10" y="14" width="2" height="1" fill="#000000"></rect>
+      <rect x="2" y="15" width="1" height="1" fill="#000000"></rect>
+      <rect x="6" y="15" width="4" height="1" fill="#000000"></rect>
+    </symbol>
+    <symbol id="icon-desk-tb-home" viewBox="0 0 16 16" shape-rendering="crispEdges">
+      <rect x="7" y="1" width="2" height="1" fill="#000000"></rect>
+      <rect x="6" y="2" width="1" height="1" fill="#000000"></rect>
+      <rect x="7" y="2" width="2" height="1" fill="#ff0000"></rect>
+      <rect x="9" y="2" width="1" height="1" fill="#000000"></rect>
+      <rect x="11" y="2" width="3" height="1" fill="#000000"></rect>
+      <rect x="5" y="3" width="1" height="1" fill="#000000"></rect>
+      <rect x="6" y="3" width="4" height="1" fill="#ff0000"></rect>
+      <rect x="10" y="3" width="2" height="1" fill="#000000"></rect>
+      <rect x="12" y="3" width="1" height="1" fill="#808080"></rect>
+      <rect x="13" y="3" width="1" height="1" fill="#000000"></rect>
+      <rect x="4" y="4" width="1" height="1" fill="#000000"></rect>
+      <rect x="5" y="4" width="6" height="1" fill="#ff0000"></rect>
+      <rect x="11" y="4" width="1" height="1" fill="#000000"></rect>
+      <rect x="12" y="4" width="1" height="1" fill="#808080"></rect>
+      <rect x="13" y="4" width="1" height="1" fill="#000000"></rect>
+      <rect x="3" y="5" width="1" height="1" fill="#000000"></rect>
+      <rect x="4" y="5" width="8" height="1" fill="#ff0000"></rect>
+      <rect x="12" y="5" width="2" height="1" fill="#000000"></rect>
+      <rect x="2" y="6" width="1" height="1" fill="#000000"></rect>
+      <rect x="3" y="6" width="10" height="1" fill="#ff0000"></rect>
+      <rect x="13" y="6" width="1" height="1" fill="#000000"></rect>
+      <rect x="1" y="7" width="1" height="1" fill="#000000"></rect>
+      <rect x="2" y="7" width="12" height="1" fill="#ff0000"></rect>
+      <rect x="14" y="7" width="1" height="1" fill="#000000"></rect>
+      <rect x="0" y="8" width="16" height="1" fill="#000000"></rect>
+      <rect x="2" y="9" width="1" height="1" fill="#000000"></rect>
+      <rect x="3" y="9" width="10" height="1" fill="#ffffff"></rect>
+      <rect x="13" y="9" width="1" height="1" fill="#000000"></rect>
+      <rect x="2" y="10" width="1" height="1" fill="#000000"></rect>
+      <rect x="3" y="10" width="1" height="1" fill="#ffffff"></rect>
+      <rect x="4" y="10" width="4" height="1" fill="#000000"></rect>
+      <rect x="8" y="10" width="2" height="1" fill="#ffffff"></rect>
+      <rect x="10" y="10" width="2" height="1" fill="#00ffff"></rect>
+      <rect x="12" y="10" width="1" height="1" fill="#ffffff"></rect>
+      <rect x="13" y="10" width="1" height="1" fill="#000000"></rect>
+      <rect x="2" y="11" width="1" height="1" fill="#000000"></rect>
+      <rect x="3" y="11" width="1" height="1" fill="#ffffff"></rect>
+      <rect x="4" y="11" width="1" height="1" fill="#000000"></rect>
+      <rect x="5" y="11" width="2" height="1" fill="#800000"></rect>
+      <rect x="7" y="11" width="1" height="1" fill="#000000"></rect>
+      <rect x="8" y="11" width="2" height="1" fill="#ffffff"></rect>
+      <rect x="10" y="11" width="2" height="1" fill="#00ffff"></rect>
+      <rect x="12" y="11" width="1" height="1" fill="#ffffff"></rect>
+      <rect x="13" y="11" width="1" height="1" fill="#000000"></rect>
+      <rect x="2" y="12" width="1" height="1" fill="#000000"></rect>
+      <rect x="3" y="12" width="1" height="1" fill="#ffffff"></rect>
+      <rect x="4" y="12" width="1" height="1" fill="#000000"></rect>
+      <rect x="5" y="12" width="2" height="1" fill="#800000"></rect>
+      <rect x="7" y="12" width="1" height="1" fill="#000000"></rect>
+      <rect x="8" y="12" width="5" height="1" fill="#ffffff"></rect>
+      <rect x="13" y="12" width="1" height="1" fill="#000000"></rect>
+      <rect x="2" y="13" width="1" height="1" fill="#000000"></rect>
+      <rect x="3" y="13" width="1" height="1" fill="#ffffff"></rect>
+      <rect x="4" y="13" width="1" height="1" fill="#000000"></rect>
+      <rect x="5" y="13" width="2" height="1" fill="#800000"></rect>
+      <rect x="7" y="13" width="1" height="1" fill="#000000"></rect>
+      <rect x="8" y="13" width="5" height="1" fill="#ffffff"></rect>
+      <rect x="13" y="13" width="1" height="1" fill="#000000"></rect>
+      <rect x="2" y="14" width="12" height="1" fill="#000000"></rect>
+    </symbol>
+    <symbol id="icon-desk-construction" viewBox="0 0 16 16" shape-rendering="crispEdges">
+      <rect x="7" y="2" width="2" height="1" fill="#000000"></rect>
+      <rect x="7" y="3" width="2" height="1" fill="#000000"></rect>
+      <rect x="6" y="4" width="1" height="1" fill="#000000"></rect>
+      <rect x="7" y="4" width="2" height="1" fill="#ffff00"></rect>
+      <rect x="9" y="4" width="1" height="1" fill="#000000"></rect>
+      <rect x="6" y="5" width="1" height="1" fill="#000000"></rect>
+      <rect x="7" y="5" width="2" height="1" fill="#ffff00"></rect>
+      <rect x="9" y="5" width="1" height="1" fill="#000000"></rect>
+      <rect x="5" y="6" width="1" height="1" fill="#000000"></rect>
+      <rect x="6" y="6" width="1" height="1" fill="#ffff00"></rect>
+      <rect x="7" y="6" width="2" height="1" fill="#000000"></rect>
+      <rect x="9" y="6" width="1" height="1" fill="#ffff00"></rect>
+      <rect x="10" y="6" width="1" height="1" fill="#000000"></rect>
+      <rect x="4" y="7" width="1" height="1" fill="#000000"></rect>
+      <rect x="5" y="7" width="2" height="1" fill="#ffff00"></rect>
+      <rect x="7" y="7" width="2" height="1" fill="#000000"></rect>
+      <rect x="9" y="7" width="1" height="1" fill="#ffff00"></rect>
+      <rect x="10" y="7" width="1" height="1" fill="#000000"></rect>
+      <rect x="4" y="8" width="1" height="1" fill="#000000"></rect>
+      <rect x="5" y="8" width="2" height="1" fill="#ffff00"></rect>
+      <rect x="7" y="8" width="2" height="1" fill="#000000"></rect>
+      <rect x="9" y="8" width="2" height="1" fill="#ffff00"></rect>
+      <rect x="11" y="8" width="1" height="1" fill="#000000"></rect>
+      <rect x="3" y="9" width="1" height="1" fill="#000000"></rect>
+      <rect x="4" y="9" width="3" height="1" fill="#ffff00"></rect>
+      <rect x="7" y="9" width="2" height="1" fill="#000000"></rect>
+      <rect x="9" y="9" width="3" height="1" fill="#ffff00"></rect>
+      <rect x="12" y="9" width="1" height="1" fill="#000000"></rect>
+      <rect x="3" y="10" width="1" height="1" fill="#000000"></rect>
+      <rect x="4" y="10" width="8" height="1" fill="#ffff00"></rect>
+      <rect x="12" y="10" width="1" height="1" fill="#000000"></rect>
+      <rect x="2" y="11" width="1" height="1" fill="#000000"></rect>
+      <rect x="3" y="11" width="4" height="1" fill="#ffff00"></rect>
+      <rect x="7" y="11" width="2" height="1" fill="#000000"></rect>
+      <rect x="9" y="11" width="4" height="1" fill="#ffff00"></rect>
+      <rect x="13" y="11" width="1" height="1" fill="#000000"></rect>
+      <rect x="2" y="12" width="1" height="1" fill="#000000"></rect>
+      <rect x="3" y="12" width="10" height="1" fill="#ffff00"></rect>
+      <rect x="13" y="12" width="1" height="1" fill="#000000"></rect>
+      <rect x="1" y="13" width="14" height="1" fill="#000000"></rect>
+    </symbol>
+    <symbol id="icon-desk-mycomputer" viewBox="0 0 24 24">
+      <rect x="3" y="1.5" width="18" height="13.5" rx="1.125"></rect>
+      <rect x="5.25" y="3.75" width="13.5" height="9" rx="0.375"></rect>
+      <path d="M9.75 15v2.25M14.25 15v2.25"></path>
+      <rect x="1.5" y="17.25" width="21" height="5.25" rx="1.125"></rect>
+      <path d="M4.5 19.875h7.5"></path>
+      <circle cx="19.125" cy="19.875" r="0.75"></circle>
+    </symbol>
   </defs>
 </svg>
 <div class="swing-shell">
@@ -54,6 +482,7 @@
       <span class="swing-brand-name">SWING</span>
     </div>
     <ul class="swing-nav-list">
+      <li><a href="#/desktop" data-route="desktop"><svg class="swing-nav-icon" aria-hidden="true"><use href="#icon-desktop"></use></svg><span class="swing-nav-label" data-i18n="navDesktop">Desktop</span></a></li>
       <li><a href="#/sites" data-route="sites"><svg class="swing-nav-icon" aria-hidden="true"><use href="#icon-sites"></use></svg><span class="swing-nav-label" data-i18n="navSites">Sites</span></a></li>
       <li><a href="#/webring" data-route="webring"><svg class="swing-nav-icon" aria-hidden="true"><use href="#icon-webring"></use></svg><span class="swing-nav-label">Webring</span></a></li>
       <li><a href="#/publish" data-route="publish"><svg class="swing-nav-icon" aria-hidden="true"><use href="#icon-publish"></use></svg><span class="swing-nav-label" data-i18n="navPublish">Publish</span></a></li>
@@ -69,6 +498,179 @@
   </nav>
 
   <main class="swing-main">
+
+    <section id="view-desktop" class="swing-view" data-view-name="desktop" hidden lang="ja">
+      <div class="desk-screen" id="desk-screen">
+        <div class="desk-icons">
+          <div class="desk-icon" aria-hidden="true">
+            <svg class="desk-icon-glyph" aria-hidden="true"><use href="#icon-desk-mycomputer"></use></svg>
+            <span>マイ コンピュータ</span>
+          </div>
+          <div class="desk-icon desk-icon-shortcut" id="desk-icon-explorer" tabindex="0" role="button" aria-label="SWING Explorer を開く">
+            <svg class="desk-icon-glyph desk-icon-glyph-solid" aria-hidden="true"><use href="#icon-desk-swing"></use></svg>
+            <span>SWING Explorer</span>
+          </div>
+          <div class="desk-icon" aria-hidden="true">
+            <svg class="desk-icon-glyph" aria-hidden="true"><use href="#icon-desk-trash"></use></svg>
+            <span>ごみ箱</span>
+          </div>
+        </div>
+
+        <div class="desk-window" id="desk-window">
+          <div class="desk-titlebar" id="desk-titlebar">
+            <svg class="desk-titlebar-icon" aria-hidden="true"><use href="#icon-desk-start"></use></svg>
+            <span class="desk-titlebar-text" id="desk-titlebar-text">リンク集 - SWING Explorer</span>
+            <div class="desk-titlebar-btns">
+              <button type="button" class="desk-tbtn desk-tbtn-min" id="desk-btn-min" aria-label="最小化" title="最小化"><span class="desk-glyph desk-glyph-min" aria-hidden="true"></span></button>
+              <button type="button" class="desk-tbtn desk-tbtn-max" id="desk-btn-max" aria-label="最大化" title="最大化"><span class="desk-glyph desk-glyph-max" id="desk-glyph-max" aria-hidden="true"></span></button>
+              <button type="button" class="desk-tbtn desk-tbtn-close" id="desk-btn-close" aria-label="閉じる" title="閉じる"><svg class="desk-glyph desk-glyph-close" width="8" height="7" viewBox="0 0 8 7" shape-rendering="crispEdges" aria-hidden="true">
+                <rect x="0" y="0" width="2" height="1"></rect><rect x="6" y="0" width="2" height="1"></rect>
+                <rect x="1" y="1" width="2" height="1"></rect><rect x="5" y="1" width="2" height="1"></rect>
+                <rect x="2" y="2" width="2" height="1"></rect><rect x="4" y="2" width="2" height="1"></rect>
+                <rect x="3" y="3" width="2" height="1"></rect>
+                <rect x="2" y="4" width="2" height="1"></rect><rect x="4" y="4" width="2" height="1"></rect>
+                <rect x="1" y="5" width="2" height="1"></rect><rect x="5" y="5" width="2" height="1"></rect>
+                <rect x="0" y="6" width="2" height="1"></rect><rect x="6" y="6" width="2" height="1"></rect>
+              </svg></button>
+            </div>
+          </div>
+          <div class="desk-menubar" aria-hidden="true">
+            <span>ファイル(F)</span><span>編集(E)</span><span>表示(V)</span><span>お気に入り(A)</span><span>ヘルプ(H)</span>
+          </div>
+          <div class="desk-toolbar">
+            <span class="desk-toolbtn" aria-hidden="true"><svg class="desk-toolbtn-icon" aria-hidden="true"><use href="#icon-desk-tb-back"></use></svg>戻る</span>
+            <span class="desk-toolbtn" aria-hidden="true"><svg class="desk-toolbtn-icon" aria-hidden="true"><use href="#icon-desk-tb-forward"></use></svg>進む</span>
+            <span class="desk-toolbtn" aria-hidden="true"><svg class="desk-toolbtn-icon" aria-hidden="true"><use href="#icon-desk-tb-stop"></use></svg>中止</span>
+            <button type="button" class="desk-toolbtn desk-toolbtn-reload" id="desk-reload" aria-label="更新" title="更新"><svg class="desk-toolbtn-icon" aria-hidden="true"><use href="#icon-desk-tb-reload"></use></svg>更新</button>
+            <span class="desk-toolbtn" aria-hidden="true"><svg class="desk-toolbtn-icon" aria-hidden="true"><use href="#icon-desk-tb-home"></use></svg>ホーム</span>
+          </div>
+          <div class="desk-address-row" aria-hidden="true">
+            <span class="desk-address-label">アドレス(D)</span>
+            <span class="desk-address-bar">http://qm.example.ne.jp/~yureko/links/index.html</span>
+          </div>
+
+          <div class="desk-page" id="desk-page">
+            <div class="desk-page-inner">
+              <header class="desk-hero">
+                <p class="desk-hero-eyebrow">ゆれ子のホームページへようこそ！</p>
+                <h1 class="desk-hero-title">SWING<span>ミラー</span>リンク集</h1>
+                <p class="desk-hero-sub">Since 2026 ★ SWINGでフォロー中のサイト様を紹介する非公式リンク集です</p>
+              </header>
+
+              <div class="desk-rainbow-hr" role="separator" aria-hidden="true"></div>
+
+              <div class="desk-marquee" aria-hidden="true">
+                <div class="desk-marquee-track"><span id="desk-marquee-text">よみこみちゅう…</span></div>
+              </div>
+
+              <nav class="desk-sitemenu" aria-label="サイト内メニュー">
+                <ul class="desk-sitemenu-list">
+                  <li class="desk-sitemenu-item"><svg class="desk-sitemenu-icon" aria-hidden="true"><use href="#icon-desk-construction"></use></svg>[ トップ ]</li>
+                  <li class="desk-sitemenu-item"><svg class="desk-sitemenu-icon" aria-hidden="true"><use href="#icon-desk-construction"></use></svg>[ プロフィール ]</li>
+                  <li class="desk-sitemenu-item"><svg class="desk-sitemenu-icon" aria-hidden="true"><use href="#icon-desk-construction"></use></svg>[ 日記 ]</li>
+                  <li class="desk-sitemenu-item"><svg class="desk-sitemenu-icon" aria-hidden="true"><use href="#icon-desk-construction"></use></svg>[ 掲示板 ]</li>
+                  <li class="desk-sitemenu-item desk-sitemenu-current">[ リンク集 ]</li>
+                </ul>
+                <p class="desk-sitemenu-note">トップ・プロフィール・日記・掲示板は工事中です。もうしばらくお待ちください m(_ _)m</p>
+              </nav>
+
+              <section class="desk-panel" aria-labelledby="desk-links-heading">
+                <h2 id="desk-links-heading">更新履歴 &amp; リンク集</h2>
+                <p class="desk-panel-hint">ゆれ子が保存中のミラーサイトを、更新が新しい順にならべています。</p>
+                <div id="desk-page-status" class="desk-page-status" aria-live="polite"></div>
+                <ul id="desk-link-list" class="desk-link-list"></ul>
+              </section>
+
+              <div class="desk-rainbow-hr" role="separator" aria-hidden="true"></div>
+
+              <footer class="desk-footer">
+                <p class="desk-counter-row">あなたは <span class="desk-counter" id="desk-counter" aria-label="訪問者数">000000</span> 人目のお客様です</p>
+                <img class="desk-banner" src="/desktop-banner.png" width="88" height="31" alt="SWING ミラーリンク集のバナー（88×31、お持ち帰り自由）">
+                <p class="desk-linkfree">相互リンク歓迎！リンクフリーです。バナーはご自由にお持ち帰りください。</p>
+                <p class="desk-browser-note">このホームページは Internet Explorer 4.0 以上・画面解像度 800×600 での閲覧を推奨します。</p>
+              </footer>
+            </div>
+          </div>
+
+          <div class="desk-statusbar" aria-hidden="true">
+            <span class="desk-status-text" id="desk-status-text">完了</span>
+            <span class="desk-zone">インターネット ゾーン</span>
+            <span class="desk-grip" id="desk-grip">
+              <svg width="12" height="12" viewBox="0 0 12 12" shape-rendering="crispEdges">
+                <rect x="11" y="0" width="1" height="1" fill="#ffffff"/>
+                <rect x="10" y="1" width="1" height="1" fill="#ffffff"/>
+                <rect x="11" y="1" width="1" height="1" fill="#808080"/>
+                <rect x="9" y="2" width="1" height="1" fill="#ffffff"/>
+                <rect x="10" y="2" width="2" height="1" fill="#808080"/>
+                <rect x="8" y="3" width="1" height="1" fill="#ffffff"/>
+                <rect x="9" y="3" width="2" height="1" fill="#808080"/>
+                <rect x="7" y="4" width="1" height="1" fill="#ffffff"/>
+                <rect x="8" y="4" width="2" height="1" fill="#808080"/>
+                <rect x="11" y="4" width="1" height="1" fill="#ffffff"/>
+                <rect x="6" y="5" width="1" height="1" fill="#ffffff"/>
+                <rect x="7" y="5" width="2" height="1" fill="#808080"/>
+                <rect x="10" y="5" width="1" height="1" fill="#ffffff"/>
+                <rect x="11" y="5" width="1" height="1" fill="#808080"/>
+                <rect x="5" y="6" width="1" height="1" fill="#ffffff"/>
+                <rect x="6" y="6" width="2" height="1" fill="#808080"/>
+                <rect x="9" y="6" width="1" height="1" fill="#ffffff"/>
+                <rect x="10" y="6" width="2" height="1" fill="#808080"/>
+                <rect x="4" y="7" width="1" height="1" fill="#ffffff"/>
+                <rect x="5" y="7" width="2" height="1" fill="#808080"/>
+                <rect x="8" y="7" width="1" height="1" fill="#ffffff"/>
+                <rect x="9" y="7" width="2" height="1" fill="#808080"/>
+                <rect x="3" y="8" width="1" height="1" fill="#ffffff"/>
+                <rect x="4" y="8" width="2" height="1" fill="#808080"/>
+                <rect x="7" y="8" width="1" height="1" fill="#ffffff"/>
+                <rect x="8" y="8" width="2" height="1" fill="#808080"/>
+                <rect x="11" y="8" width="1" height="1" fill="#ffffff"/>
+                <rect x="2" y="9" width="1" height="1" fill="#ffffff"/>
+                <rect x="3" y="9" width="2" height="1" fill="#808080"/>
+                <rect x="6" y="9" width="1" height="1" fill="#ffffff"/>
+                <rect x="7" y="9" width="2" height="1" fill="#808080"/>
+                <rect x="10" y="9" width="1" height="1" fill="#ffffff"/>
+                <rect x="11" y="9" width="1" height="1" fill="#808080"/>
+                <rect x="1" y="10" width="1" height="1" fill="#ffffff"/>
+                <rect x="2" y="10" width="2" height="1" fill="#808080"/>
+                <rect x="5" y="10" width="1" height="1" fill="#ffffff"/>
+                <rect x="6" y="10" width="2" height="1" fill="#808080"/>
+                <rect x="9" y="10" width="1" height="1" fill="#ffffff"/>
+                <rect x="10" y="10" width="2" height="1" fill="#808080"/>
+                <rect x="0" y="11" width="1" height="1" fill="#ffffff"/>
+                <rect x="1" y="11" width="2" height="1" fill="#808080"/>
+                <rect x="4" y="11" width="1" height="1" fill="#ffffff"/>
+                <rect x="5" y="11" width="2" height="1" fill="#808080"/>
+                <rect x="8" y="11" width="1" height="1" fill="#ffffff"/>
+                <rect x="9" y="11" width="2" height="1" fill="#808080"/>
+              </svg>
+            </span>
+          </div>
+
+          <div class="desk-resize desk-resize-n" data-dir="n"></div>
+          <div class="desk-resize desk-resize-s" data-dir="s"></div>
+          <div class="desk-resize desk-resize-e" data-dir="e"></div>
+          <div class="desk-resize desk-resize-w" data-dir="w"></div>
+          <div class="desk-resize desk-resize-ne" data-dir="ne"></div>
+          <div class="desk-resize desk-resize-nw" data-dir="nw"></div>
+          <div class="desk-resize desk-resize-sw" data-dir="sw"></div>
+          <div class="desk-resize desk-resize-se" data-dir="se"></div>
+        </div>
+      </div>
+
+      <div class="desk-taskbar">
+        <span class="desk-start" aria-hidden="true"><svg class="desk-start-icon" aria-hidden="true"><use href="#icon-desk-start"></use></svg>スタート</span>
+        <button type="button" class="desk-taskbtn is-active" id="desk-taskbtn" aria-pressed="true">
+          <svg class="desk-taskbtn-icon" aria-hidden="true"><use href="#icon-desk-start"></use></svg>
+          <span id="desk-taskbtn-text">リンク集 - SWING Explorer</span>
+        </button>
+        <span class="desk-tray">
+          <svg class="desk-tray-icon" aria-hidden="true"><use href="#icon-desk-tray-mirror"></use></svg>
+          <svg class="desk-tray-icon" aria-hidden="true"><use href="#icon-desk-tray-network"></use></svg>
+          <svg class="desk-tray-icon" aria-hidden="true"><use href="#icon-desk-tray-volume"></use></svg>
+          <span id="desk-clock"></span>
+        </span>
+      </div>
+    </section>
 
     <section id="view-sites" class="swing-view" data-view-name="sites" hidden>
       <div class="swing-view-head">
@@ -192,6 +794,9 @@
         </label>
         <label class="swing-field"><span data-i18n="urlLabel">URL (optional)</span>
           <input type="url" name="url" class="swing-input" placeholder="https://example.com/">
+        </label>
+        <label class="swing-field"><span data-i18n="titleLabel">Title (optional)</span>
+          <input type="text" name="title" class="swing-input" maxlength="256" placeholder="My site">
         </label>
         <label class="swing-field"><span data-i18n="messageLabel">Message (optional)</span>
           <textarea name="message" class="swing-input" rows="3"></textarea>

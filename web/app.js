@@ -1,12 +1,13 @@
 import { applyStaticI18n, t } from './i18n.js';
 import { storage } from './storage.js';
 import { cache, copyWithFeedback, getStyle } from './util.js';
+import { DesktopView } from './desktop.js';
 import { SitesView, renderStatusCheck } from './sites.js';
 import { WebringView, renderWebringIfLoaded } from './webring.js';
 import { PublishView, renderIdentity, updateNavFooter, updateUploadInfo, renderMySites, loadOverview } from './publish.js';
 import { SettingsView, renderConfig } from './settings.js';
 
-const VIEWS = { sites: SitesView, webring: WebringView, publish: PublishView, settings: SettingsView };
+const VIEWS = { desktop: DesktopView, sites: SitesView, webring: WebringView, publish: PublishView, settings: SettingsView };
 
 function currentRoute() {
   const hash = location.hash.replace(/^#\/?/, '');
@@ -85,6 +86,7 @@ function init() {
   delete document.documentElement.dataset.i18nPending;
   applyNavState();
   wireNavToggle();
+  DesktopView.init();
   SitesView.init();
   WebringView.init();
   PublishView.init();
