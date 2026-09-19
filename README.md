@@ -325,7 +325,7 @@ TOML の設定ファイル（`swing.toml`）を使う場合と、環境変数だ
 | `SWING_PUBLISH_NIP05` | `publish.nip05` | `swing publish` の NIP-05 検証モード（既定 `warn`。CLI の `--nip05` が優先） |
 | `SWING_DASHBOARD_LISTEN` | `dashboard.listen` | ダッシュボードの待ち受けアドレス（既定 `127.0.0.1:8082`）。`off` で無効。付属の `compose.yaml` ではコンテナ内の既定値として `0.0.0.0:8082` を使うが、`.env` で上書きできる（`off` にすればコンテナでも無効化できる） |
 | `SWING_DASHBOARD_ALLOWED_HOSTS` | `dashboard.allowed_hosts` | Host ヘッダで追加で許可するホスト名（ポート抜き、カンマ区切り） |
-| `SWING_DASHBOARD_GATEWAY` | `dashboard.gateway` | ダッシュボードから保存済みサイトを開くリンクの IPFS Gateway（既定 `http://127.0.0.1:8080`）。環境変数では空文字にできない |
+| `SWING_DASHBOARD_GATEWAY` | `dashboard.gateway` | ダッシュボードから保存済みサイトを開くリンクの IPFS Gateway（既定 `http://localhost:8080`）。環境変数では空文字にできない |
 | `SWING_DASHBOARD_CUSTOM_CSS` | `dashboard.custom_css` | ダッシュボードに読み込ませる追加 CSS ファイルのパス |
 | `SWING_DASHBOARD_MAX_UPLOAD` | `dashboard.max_upload` | Publish 画面のフォルダアップロードで受け付けるボディの上限（既定 `2GB`） |
 | `SWING_DASHBOARD_BIND` | (なし、compose の mirror 用) | ダッシュボードをホストのどこに公開するか（既定 `127.0.0.1:8082`） |

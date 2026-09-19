@@ -642,7 +642,7 @@ fn build_config(file: ConfigFile, get_env: impl Fn(&str) -> Option<String>) -> R
         None => Some(
             file.dashboard
                 .gateway
-                .unwrap_or_else(|| "http://127.0.0.1:8080".to_string()),
+                .unwrap_or_else(|| "http://localhost:8080".to_string()),
         ),
     }
     .filter(|s| !s.is_empty());
@@ -1074,7 +1074,7 @@ mod tests {
         assert!(cfg.dashboard.allowed_hosts.is_empty());
         assert_eq!(
             cfg.dashboard.gateway.as_deref(),
-            Some("http://127.0.0.1:8080")
+            Some("http://localhost:8080")
         );
         assert_eq!(cfg.dashboard.custom_css, None);
         assert_eq!(cfg.dashboard.max_upload, 2 * (1u64 << 30));

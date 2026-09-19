@@ -17,7 +17,7 @@
 ## GET /api/overview
 
 ```json
-{ "version": "0.1.0", "pubkey": "ab12…", "npub": "npub1…", "relays": ["wss://relay.damus.io"], "mirror_set": "swing", "gateway": "http://127.0.0.1:8080", "started_at": 1790000000, "max_upload": 2147483648 }
+{ "version": "0.1.0", "pubkey": "ab12…", "npub": "npub1…", "relays": ["wss://relay.damus.io"], "mirror_set": "swing", "gateway": "http://localhost:8080", "started_at": 1790000000, "max_upload": 2147483648 }
 ```
 
 `gateway` は `[dashboard].gateway` が空なら `null`。`started_at` はダッシュボードが有効になった起動時刻。`max_upload` は `[dashboard].max_upload` のバイト数。

@@ -183,7 +183,7 @@ mod tests {
             dashboard: DashboardConfig {
                 listen,
                 allowed_hosts: Vec::new(),
-                gateway: Some("http://127.0.0.1:8080".to_string()),
+                gateway: Some("http://localhost:8080".to_string()),
                 custom_css: None,
                 max_upload: 2 * (1u64 << 30),
             },

@@ -130,7 +130,7 @@ keep_versions = 5                   # SWING_PUBLISH_KEEP_VERSIONS
 [dashboard]
 listen = "127.0.0.1:8082"           # SWING_DASHBOARD_LISTEN（"off" で無効）
 allowed_hosts = []                  # SWING_DASHBOARD_ALLOWED_HOSTS（カンマ区切り、ポート抜き）
-gateway = "http://127.0.0.1:8080"   # SWING_DASHBOARD_GATEWAY（空文字でリンクを出さない）
+gateway = "http://localhost:8080"   # SWING_DASHBOARD_GATEWAY（空文字でリンクを出さない）
 #custom_css = "/path/to/custom.css" # SWING_DASHBOARD_CUSTOM_CSS
 max_upload = "2GB"                  # SWING_DASHBOARD_MAX_UPLOAD（POST /api/publish/upload のボディ上限。0 はエラー）
 ```
