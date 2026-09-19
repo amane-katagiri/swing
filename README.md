@@ -367,3 +367,5 @@ Nostr の秘密鍵は `.env` に平文で保存されます。サイト公開・
 ## ライセンス
 
 [MIT License](LICENSE)
+
+ダッシュボードの Desktop 画面は同梱フォント PixelMplus12（[M+ FONT LICENSE](web/fonts/LICENSE-PixelMplus.txt)、Copyright (C) 2002-2013 M+ FONTS PROJECT）を使用しています。

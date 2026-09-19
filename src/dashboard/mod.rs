@@ -87,6 +87,14 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/settings.js", get(assets::settings_js))
         .route("/desktop.js", get(assets::desktop_js))
         .route("/desktop-banner.png", get(assets::desktop_banner_png))
+        .route(
+            "/fonts/pixelmplus12-regular.woff2",
+            get(assets::font_pixelmplus12_regular),
+        )
+        .route(
+            "/fonts/pixelmplus12-bold.woff2",
+            get(assets::font_pixelmplus12_bold),
+        )
         .route("/custom.css", get(assets::custom_css))
         .route("/api/overview", get(api::overview))
         .route("/api/sites", get(api::sites))
@@ -248,6 +256,8 @@ mod tests {
             ("/settings.js", "text/javascript; charset=utf-8"),
             ("/desktop.js", "text/javascript; charset=utf-8"),
             ("/desktop-banner.png", "image/png"),
+            ("/fonts/pixelmplus12-regular.woff2", "font/woff2"),
+            ("/fonts/pixelmplus12-bold.woff2", "font/woff2"),
             ("/custom.css", "text/css; charset=utf-8"),
         ] {
             let app = router(test_state());

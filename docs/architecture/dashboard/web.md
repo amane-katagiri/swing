@@ -37,6 +37,16 @@ CSS は `style.css`（全画面共通）に加え、Desktop 画面専用の `des
 
 Win95/98 風デスクトップ（テールグリーンの背景、デスクトップアイコン、タスクバー、Start 風ボタン、`setInterval` で 30 秒ごとに更新する時計）と、その上に浮かぶ「SWING Explorer」ウィンドウ（タイトルバー・メニューバー・ツールバー・アドレス行・ページ本文・ステータスバー）を `#view-desktop` の中に静的 HTML（`index.html`）で組む。ツールバーとアドレス行（`アドレス(D)` ラベル+URL 表示）は別々の行に分け、間に薄い彫り込み線（`box-shadow` のハイライト+シャドウ）を挟む（ラベルとボタン類は `white-space: nowrap; flex: none`、URL 側と本文側は `flex: 1 1 auto; min-width: 0` + 省略記号にして、320×240 まで縮めても折り返さない）。ウィンドウの移動・リサイズ・最小化・最大化・閉じる/再オープンは `desktop.js` の素の JS（pointer events）で動く。それ以外（デスクトップアイコンのうち 2 個、Start ボタン、メニューバー、ツールバー、アドレス行、ステータスバー、タスクバー本体、トレイのアイコン）は完全に装飾で、`cursor: default`・`user-select: none` にして見た目だけクリックできそうに見えないようにしてある。実際に押せるボタン・ハンドル類も含め、カーソルは基本的に矢印のまま変えない（後述）。配色はダッシュボードのテーマ（`--swing-*` 変数）を参照せず、`desktop.css` の `#view-desktop` スコープに直書きしたレトロパレット（`--desk-teal` `--desk-face` `--desk-navy` など）を固定で使う。ライト/ダークどちらのテーマでも見た目は変わらない。
 
+### フォント
+
+`#view-desktop` は同梱の PixelMplus12（Regular/Bold の 2 ウェイトのみ、`@font-face` で `/fonts/pixelmplus12-regular.woff2` `/fonts/pixelmplus12-bold.woff2` を読み込む）をフォントスタックの先頭に置く: `--desk-font-ui: "PixelMplus12", "MS UI Gothic", "MS PGothic", "ＭＳ Ｐゴシック", Osaka, "Yu Gothic", sans-serif;`（`--desk-font-page` も同様、先頭以外は元のフォールバック列のまま）。OS 依存のフォールバック（Windows の MS UI Gothic など）に頼らず、同梱フォントで全 OS の見た目を揃えるための選択。`#view-desktop` に `-webkit-font-smoothing: none; font-smooth: never;` を当ててアンチエイリアスを切り、ビットマップ由来のドットをそのまま出す。
+
+PixelMplus12 はビットマップフォントを元にしたアウトラインフォントで、12px の倍数以外のサイズでは輪郭が滲む。そのため `#view-desktop` 内のテキストは（`.desk-counter` を除き）すべて 12px の倍数: 本文・chrome 系は 12px、`.desk-hero-title`（タイトル）は 24px・`font-weight: 400`、`.desk-panel h2`（見出し）は 12px・`font-weight: 700`。ウェイトは 400/700 の 2 つのみ（合成太字は使わない）。ステータスアイコンの外枠は 12px テキストに合わせて 36×16px。`.desk-counter`（来訪者カウンタ）だけは意図的に対象外で `"Courier New", monospace` の 13px のまま。
+
+`.desk-page h1, .desk-page h2, .desk-page h3` に `font-family: var(--desk-font-page); letter-spacing: normal; border-bottom: 0; padding-bottom: 0;` を当てる規則が別にある。`style.css` のダッシュボード全体向け `h1, h2, h3` ルール（フォント・字間・`h2` のボーダー）が要素セレクタの詳細度で `.desk-page-inner` からの継承に勝ってしまうため、`.desk-page` 配下で明示的に打ち消している。
+
+ライセンスは `web/fonts/LICENSE-PixelMplus.txt`（M+ FONT LICENSE）。CSP の `font-src` は個別に設定しておらず `default-src 'self'` にフォールバックする（同一オリジンの `/fonts/*` は許可される）。
+
 ### 装飾 vs 実機能
 
 `#view-desktop` に `cursor: default; user-select: none;` を 1 回だけ書いて継承させ、機能する要素だけ選択的に戻す（`.desk-page` とその中身だけ `user-select: text`、`.desk-page a[href]` だけ `cursor: pointer`）。装飾要素は `aria-hidden="true"` を個別に持ち、スクリーンリーダーやキーボード操作からも外れる（メニューバー・ツールバーのようにマウスオーバーだけ反応するものも同様。テキストを持つ `.desk-sitemenu` はクリック不可でも情報として意味があるので `aria-hidden` にしない）。実際に押せるタイトルバーのボタン・タスクボタン・「更新」ボタン・デスクトップアイコンも `cursor: pointer` にはしない（Windows 95 の実機がそうだったのに合わせている）。矢印以外のカーソルが出るのは、本文中のハイパーリンク（`pointer`）と 8 個の `.desk-resize` ハンドル（各方向のリサイズカーソル）だけ。
@@ -83,7 +93,7 @@ Start ボタンとタイトルバーのアイコン、タスクボタンのア�
   1. `nip05 === "mismatch"` → `data-status="ng"`（赤地に `✕`。`DESK_TEXT.iconMismatchDesc`）
   2. `nip05 === "error"`、またはこの 5 つ（`mismatch`/`error`/`not_applicable`/`null`/`"verified"`）のどれにも一致しない未知の文字列 → `data-status="err"`（灰色地に `?`。`DESK_TEXT.iconErrorDesc`）
   3. 上記に当たらない（`null`・`"verified"`・`"not_applicable"`）場合は更新の新しさで決める: `created_at` から 7 日以内 → `data-status="new"`（赤字に `NEW`、点滅。`DESK_TEXT.iconNewDesc`）。30 日以内 → `data-status="up"`（青地に `UP`。`DESK_TEXT.iconUpDesc`）。それ以外 → `data-status="default"`（緑地に `★`。`DESK_TEXT.iconDefaultDesc`）。`not_applicable`（`d` がドメイン形でなく検証しようがない）はこの新しさ判定に普通に乗る — 警告ではないので NIP-05 の問題扱いにはしない
-- `.desk-status-icon` はどの `data-status` でも同じ外枠（32×14px）を持つので、行ごとにアイコンの見た目が違っても日付・タイトルの開始位置は揃う。`.desk-link-date` も固定幅（72px）+ `font-variant-numeric: tabular-nums`。メッセージ行のインデント（38px）はこのアイコン+隙間の幅に合わせてある。
+- `.desk-status-icon` はどの `data-status` でも同じ外枠（36×16px）を持つので、行ごとにアイコンの見た目が違っても日付・タイトルの開始位置は揃う。`.desk-link-date` も固定幅（72px）+ `font-variant-numeric: tabular-nums`。メッセージ行のインデント（38px）はこのアイコン+隙間の幅に合わせてある。
 - 日付は `2026.09.19` 形式（`created_at` をローカル時刻で整形）。
 - タイトルは自己申告の `title`（サニタイズ済み、最大 120 文字）があればそれを、無ければ `d` を表示する。`title` を出すときは必ず `d` も括弧付きの小さい文字で併記する（`title` は未検証の自己申告のため）。
 - リンク先: `gateway_url` があればそれを一次リンクにし、`url` もあれば `[本家]` という第二リンクを追加する。`gateway_url` が無ければ `url` を一次リンクにする。どちらも無ければリンクにしない（プレーンテキスト）。リンクは `util.js` の `maybeLink()`（`target="_blank" rel="noopener noreferrer"`、`^https?://` のみ）をそのまま使う。npub・cid・size・replicas は表示しない。

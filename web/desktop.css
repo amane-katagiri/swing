@@ -1,3 +1,17 @@
+@font-face {
+  font-family: "PixelMplus12";
+  src: url("/fonts/pixelmplus12-regular.woff2") format("woff2");
+  font-weight: 400;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "PixelMplus12";
+  src: url("/fonts/pixelmplus12-bold.woff2") format("woff2");
+  font-weight: 700;
+  font-display: swap;
+}
+
 body[data-view="desktop"] .swing-shell {
   height: 100vh;
   height: 100dvh;
@@ -24,8 +38,9 @@ body[data-view="desktop"] .swing-main {
   --desk-text: #000000;
   --desk-link: #0000ff;
   --desk-visited: #800080;
-  --desk-font-ui: "MS UI Gothic", "MS PGothic", "ＭＳ Ｐゴシック", Osaka, "Yu Gothic", sans-serif;
-  --desk-font-page: "MS PGothic", "ＭＳ Ｐゴシック", Osaka, "Yu Gothic", sans-serif;
+  --desk-font-ui: "PixelMplus12", "MS UI Gothic", "MS PGothic", "ＭＳ Ｐゴシック", Osaka, "Yu Gothic",
+    sans-serif;
+  --desk-font-page: "PixelMplus12", "MS PGothic", "ＭＳ Ｐゴシック", Osaka, "Yu Gothic", sans-serif;
 
   display: flex;
   flex-direction: column;
@@ -33,6 +48,8 @@ body[data-view="desktop"] .swing-main {
   min-height: 0;
   font-family: var(--desk-font-ui);
   color: var(--desk-text);
+  -webkit-font-smoothing: none;
+  font-smooth: never;
 }
 
 /* Inherited from the root instead of `#view-desktop *`, whose ID specificity would beat the per-class overrides below. */
@@ -103,7 +120,7 @@ body[data-view="desktop"] .swing-main {
 }
 
 .desk-icon span {
-  font-size: 11px;
+  font-size: 12px;
   line-height: 1.3;
   padding: 1px 2px;
   color: #ffffff;
@@ -284,7 +301,7 @@ body[data-view="desktop"] .swing-main {
   padding: 3px 6px;
   background: var(--desk-face);
   border-bottom: 1px solid var(--desk-shadow);
-  font-size: 11px;
+  font-size: 12px;
   overflow: hidden;
 }
 
@@ -323,7 +340,7 @@ body[data-view="desktop"] .swing-main {
   border: 0;
   color: var(--desk-text);
   font: inherit;
-  font-size: 11px;
+  font-size: 12px;
   white-space: nowrap;
   cursor: default;
   box-shadow: inset 1px 1px 0 transparent, inset -1px -1px 0 transparent;
@@ -364,7 +381,7 @@ button.desk-toolbtn:focus-visible {
   background: var(--desk-face);
   border-bottom: 1px solid var(--desk-shadow);
   box-shadow: inset 0 1px 0 var(--desk-highlight);
-  font-size: 11px;
+  font-size: 12px;
   overflow: hidden;
   pointer-events: none;
 }
@@ -416,6 +433,19 @@ button.desk-toolbtn:focus-visible {
   box-shadow: 3px 3px 0 rgb(0 0 0 / 45%);
 }
 
+.desk-page h1,
+.desk-page h2,
+.desk-page h3 {
+  font-family: var(--desk-font-page);
+  letter-spacing: normal;
+  border-bottom: 0;
+  padding-bottom: 0;
+}
+
+.desk-panel h2 {
+  font-weight: 700;
+}
+
 .desk-hero {
   text-align: center;
   padding: 4px 8px 14px;
@@ -429,8 +459,8 @@ button.desk-toolbtn:focus-visible {
 
 .desk-hero-title {
   margin: 0 0 6px;
-  font-size: 28px;
-  font-weight: 900;
+  font-size: 24px;
+  font-weight: 400;
   color: #0000cc;
   text-shadow: 2px 2px 0 #ffcc00;
   letter-spacing: 0.02em;
@@ -531,7 +561,7 @@ button.desk-toolbtn:focus-visible {
 
 .desk-sitemenu-note {
   margin: 0;
-  font-size: 11px;
+  font-size: 12px;
   color: #663300;
 }
 
@@ -544,13 +574,13 @@ button.desk-toolbtn:focus-visible {
 
 .desk-panel h2 {
   margin: 0 0 4px;
-  font-size: 15px;
+  font-size: 12px;
   color: #000080;
 }
 
 .desk-panel-hint {
   margin: 0 0 10px;
-  font-size: 11px;
+  font-size: 12px;
   color: #444444;
 }
 
@@ -585,7 +615,7 @@ button.desk-toolbtn:focus-visible {
   gap: 6px;
   padding: 5px 2px;
   border-bottom: 1px dashed #bbbbdd;
-  font-size: 13px;
+  font-size: 12px;
   line-height: 1.5;
 }
 
@@ -599,12 +629,12 @@ button.desk-toolbtn:focus-visible {
   flex: none;
   align-items: center;
   justify-content: center;
-  width: 32px;
-  height: 14px;
+  width: 36px;
+  height: 16px;
   padding: 0 2px;
   border: 1px solid #000000;
   font-family: var(--desk-font-ui);
-  font-size: 9px;
+  font-size: 12px;
   font-weight: 700;
   line-height: 1;
   color: #ffffff;
@@ -649,7 +679,7 @@ button.desk-toolbtn:focus-visible {
   flex: none;
   width: 72px;
   color: #555555;
-  font-size: 11px;
+  font-size: 12px;
   font-variant-numeric: tabular-nums;
 }
 
@@ -671,13 +701,13 @@ span.desk-link-title {
 
 .desk-link-d {
   flex: none;
-  font-size: 11px;
+  font-size: 12px;
   color: #666666;
 }
 
 .desk-link-honke {
   flex: none;
-  font-size: 11px;
+  font-size: 12px;
   color: var(--desk-link);
 }
 
@@ -692,7 +722,7 @@ span.desk-link-title {
   margin-top: 14px;
   padding-top: 10px;
   text-align: center;
-  font-size: 11px;
+  font-size: 12px;
   color: #333333;
 }
 
@@ -739,7 +769,7 @@ span.desk-link-title {
   background: var(--desk-face);
   border-top: 1px solid var(--desk-highlight);
   box-shadow: inset 1px 1px 0 var(--desk-shadow);
-  font-size: 11px;
+  font-size: 12px;
   position: relative;
   overflow: hidden;
   pointer-events: none;
@@ -886,7 +916,7 @@ span.desk-link-title {
   border: 0;
   color: var(--desk-text);
   font: inherit;
-  font-size: 11px;
+  font-size: 12px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -917,7 +947,7 @@ span.desk-link-title {
   gap: 3px;
   padding: 2px 8px;
   background: var(--desk-face);
-  font-size: 11px;
+  font-size: 12px;
   box-shadow: inset 1px 1px 0 var(--desk-shadow), inset -1px -1px 0 var(--desk-highlight);
   pointer-events: none;
 }
@@ -1079,7 +1109,7 @@ span.desk-link-title {
   }
 
   .desk-hero-title {
-    font-size: 22px;
+    font-size: 24px;
   }
 
   .desk-page-inner {

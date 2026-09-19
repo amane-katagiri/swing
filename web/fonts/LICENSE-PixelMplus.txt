@@ -1,0 +1,32 @@
+PixelMplus（ピクセル・エムプラス）
+=================================
+
+Copyright (C) 2002-2013 M+ FONTS PROJECT
+
+http://itouhiro.hatenablog.com/entry/20130602/font
+
+--
+Itou Hiroki <itouhiro at users dot sourceforge dot jp>
+
+
+License
+-------
+
+M+ FONT LICENSE
+
+M+ FONTS                                Copyright (C) 2002-2013 M+ FONTS PROJECT
+
+-
+
+LICENSE_E
+
+
+
+
+These fonts are free software.
+Unlimited permission is granted to use, copy, and distribute them, with
+or without modification, either commercially or noncommercially.
+THESE FONTS ARE PROVIDED "AS IS" WITHOUT WARRANTY.
+
+
+http://mplus-fonts.sourceforge.jp/mplus-outline-fonts/

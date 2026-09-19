@@ -22,6 +22,9 @@ const PUBLISH_JS: &str = include_str!("../../web/publish.js");
 const SETTINGS_JS: &str = include_str!("../../web/settings.js");
 const DESKTOP_JS: &str = include_str!("../../web/desktop.js");
 const DESKTOP_BANNER_PNG: &[u8] = include_bytes!("../../web/desktop-banner.png");
+const FONT_PIXELMPLUS12_REGULAR: &[u8] =
+    include_bytes!("../../web/fonts/pixelmplus12-regular.woff2");
+const FONT_PIXELMPLUS12_BOLD: &[u8] = include_bytes!("../../web/fonts/pixelmplus12-bold.woff2");
 
 fn asset(content_type: &'static str, body: &'static str) -> Response {
     ([(header::CONTENT_TYPE, content_type)], body).into_response()
@@ -93,6 +96,14 @@ pub async fn desktop_js() -> Response {
 
 pub async fn desktop_banner_png() -> Response {
     binary_asset("image/png", DESKTOP_BANNER_PNG)
+}
+
+pub async fn font_pixelmplus12_regular() -> Response {
+    binary_asset("font/woff2", FONT_PIXELMPLUS12_REGULAR)
+}
+
+pub async fn font_pixelmplus12_bold() -> Response {
+    binary_asset("font/woff2", FONT_PIXELMPLUS12_BOLD)
 }
 
 pub async fn custom_css(State(state): State<Arc<AppState>>) -> Response {
