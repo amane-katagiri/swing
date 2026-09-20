@@ -93,7 +93,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/desktop-page.html", get(assets::desktop_page))
         .route("/desktop-page.css", get(assets::desktop_page_css))
         .route("/desktop-frame.css", get(assets::desktop_frame_css))
-        .route("/desktop-banner.png", get(assets::desktop_banner))
+        .route("/desktop-banner", get(assets::desktop_banner))
         .route(
             "/fonts/pixelmplus12-regular.woff2",
             get(assets::font_pixelmplus12_regular),
@@ -268,7 +268,7 @@ mod tests {
             ("/desktop-page.html", "text/html; charset=utf-8"),
             ("/desktop-page.css", "text/css; charset=utf-8"),
             ("/desktop-frame.css", "text/css; charset=utf-8"),
-            ("/desktop-banner.png", "image/png"),
+            ("/desktop-banner", "image/gif"),
             ("/fonts/pixelmplus12-regular.woff2", "font/woff2"),
             ("/fonts/pixelmplus12-bold.woff2", "font/woff2"),
             ("/custom.css", "text/css; charset=utf-8"),
@@ -317,7 +317,7 @@ mod tests {
                 "text/css; charset=utf-8",
                 b"body { color: red }",
             ),
-            ("/desktop-banner.png", "image/gif", b"GIF89a"),
+            ("/desktop-banner", "image/gif", b"GIF89a"),
         ] {
             let app = router(Arc::clone(&state));
             let req = Request::builder()

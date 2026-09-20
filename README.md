@@ -330,7 +330,7 @@ TOML の設定ファイル（`swing.toml`）を使う場合と、環境変数だ
 | `SWING_DASHBOARD_CUSTOM_CSS` | `dashboard.custom_css` | ダッシュボードに読み込ませる追加 CSS ファイルのパス |
 | `SWING_DASHBOARD_DESKTOP_PAGE` | `dashboard.desktop_page` | Desktop 画面のリンク集ページ（HTML ファイル）のパス。未設定なら同梱のページ |
 | `SWING_DASHBOARD_DESKTOP_PAGE_CSS` | `dashboard.desktop_page_css` | そのリンク集ページ専用の CSS ファイルのパス。未設定なら同梱の CSS |
-| `SWING_DASHBOARD_DESKTOP_BANNER` | `dashboard.desktop_banner` | リンク集ページの 88×31 バナー画像のパス（`.png` `.gif` `.jpg` `.jpeg` `.webp` `.svg`）。未設定なら同梱の PNG |
+| `SWING_DASHBOARD_DESKTOP_BANNER` | `dashboard.desktop_banner` | リンク集ページの 88×31 バナー画像のパス（`.png` `.gif` `.jpg` `.jpeg` `.webp` `.svg`）。未設定なら同梱の GIF |
 | `SWING_DASHBOARD_MAX_UPLOAD` | `dashboard.max_upload` | Publish 画面のフォルダアップロードで受け付けるボディの上限（既定 `2GB`） |
 | `SWING_DASHBOARD_BIND` | (なし、compose の mirror 用) | ダッシュボードをホストのどこに公開するか（既定 `127.0.0.1:8082`） |
 

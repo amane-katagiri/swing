@@ -115,7 +115,7 @@ Start ボタンの `icon-desk-start` は中心円（黄）・大きい方の腕+
 - マーキーの下にはサイト内メニュー（`.desk-sitemenu`、`<nav>`）を置く。当時のリンク集ページによくある「`[ トップ ] [ プロフィール ] [ 日記 ] [ 掲示板 ] [ リンク集 ]`」形式で、`リンク集` だけが現在地（`.desk-sitemenu-current`、太字・紺色、非リンク）。残り 4 項目は未実装のページで、`<a>` にはせず（デッドリンクを作らない）、それぞれ工事中サインの小さいドット絵アイコン（`icon-desk-construction`、16×16、黄色い三角に黒い「!」、`.desk-sitemenu-icon`）付きのプレーンテキストで表示し、下にゆれ子の声で断り書き（`.desk-sitemenu-note`: 「トップ・プロフィール・日記・掲示板は工事中です。もうしばらくお待ちください m(_ _)m」）を添える。カーソルは `cursor: default` のまま、`aria-hidden` にはしない（意味のある文言なので読み上げは妨げない）。旧 `.desk-construction-bar`（縞模様バーに「工事中」とだけ書いた飾り）は撤去した。
 - 読み込み中・エラー・空はどれも `#desk-page-status`（`data-kind="loading"|"error"|"empty"`）にレトロな文面で出すが、実際の技術的な詳細（`describeError` の結果）もエラーメッセージに含める。
 - 来訪者カウンタ（`.desk-counter`）は `localStorage["swing:desktop:visits"]`（アプリ起動＝ページ読み込みのたびに +1、`DesktopView.init()` で加算）に、保存中サイト数から求めた基準値（`1000 + サイト数 * 37`）を足して 6 桁ゼロ埋めで表示する。永続化はブラウザの localStorage のみで、サーバには送らない。
-- フッタのバナー（`.desk-banner`）は CSS ではなく実物の 88×31 画像（`/desktop-banner.png`、`<img>`、`image-rendering: pixelated`）。設定で差し替えられる（下記「リンク集ページ（iframe）」）。右クリックから保存でき、「バナーはご自由にお持ち帰りください」の一文がそのまま成り立つようにしている。リンクにはしていない（本家に飛ばず、クリックしても何も起きない）。画像は 1px 枠+青のグラデーション地に SWING のオービットマーク（小、3 色）と "SWING" / "ゆれ子リンク集" の文字（後者は MS ゴシックをアンチエイリアス無しで焼き込んだドット文字）。`web/desktop-banner.png` として repo に置き、`assets.rs`（`include_bytes!`）+ `mod.rs`（`GET /desktop-banner.png`、`image/png`）で配信する（詳細は [`dashboard.md`](../dashboard.md#静的ファイルの配信srcdashboardassetsrs)）。
+- フッタのバナー（`.desk-banner`）は CSS ではなく実物の 88×31 画像（`/desktop-banner`、`<img>`、`image-rendering: pixelated`）。設定で差し替えられる（下記「リンク集ページ（iframe）」）ので、ルートは拡張子を持たない。右クリックから保存でき、「バナーはご自由にお持ち帰りください」の一文がそのまま成り立つようにしている。リンクにはしていない（本家に飛ばず、クリックしても何も起きない）。同梱の画像は「JOIN SWING NETWORK!」のアニメーション GIF（181 コマ・約 16.5 秒ループ・86KB）。`web/desktop-banner.gif` として repo に置き、`assets.rs`（`include_bytes!`）+ `mod.rs`（`GET /desktop-banner`、`image/gif`）で配信する（詳細は [`dashboard.md`](../dashboard.md#静的ファイルの配信srcdashboardassetsrs)）。GIF のアニメーションは CSS で止められないので、ページの `prefers-reduced-motion` 対応（マーキー・NEW アイコン）の対象外になる。
 
 ### リンク集ページ（iframe）
 
@@ -127,7 +127,7 @@ Start ボタンの `icon-desk-start` は中心円（黄）・大きい方の腕+
 |---|---|---|
 | `/desktop-page.html` | `web/desktop-page.html` | ページ本体。`desktop-page.css` を `<link>` で読み、工事中アイコンの `<symbol>` を自前で持つ |
 | `/desktop-page.css` | `web/desktop-page.css` | そのページ専用の CSS。`:root` の `--desk-*`・`@font-face`・`box-sizing` のリセットまで自己完結 |
-| `/desktop-banner.png` | `web/desktop-banner.png` | フッタの 88×31 バナー |
+| `/desktop-banner` | `web/desktop-banner.gif` | フッタの 88×31 バナー |
 
 差し替えの対象外が 1 つだけある。`/desktop-frame.css`（`web/desktop-frame.css`）は窓の持ち物（今はスクロールバーだけ）で、ページの HTML が何であっても `desktop.js` が `head` の先頭に差し込む。「外のスタイルは中に入らない」の唯一の例外で、OS 側の見た目をページ作者の責任にしないための線引き。
 

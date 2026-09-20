@@ -28,7 +28,7 @@ const DESKTOP_JS: &str = include_str!("../../web/desktop.js");
 const DESKTOP_PAGE_HTML: &str = include_str!("../../web/desktop-page.html");
 const DESKTOP_PAGE_CSS: &str = include_str!("../../web/desktop-page.css");
 const DESKTOP_FRAME_CSS: &str = include_str!("../../web/desktop-frame.css");
-const DESKTOP_BANNER_PNG: &[u8] = include_bytes!("../../web/desktop-banner.png");
+const DESKTOP_BANNER_GIF: &[u8] = include_bytes!("../../web/desktop-banner.gif");
 const FONT_PIXELMPLUS12_REGULAR: &[u8] =
     include_bytes!("../../web/fonts/pixelmplus12-regular.woff2");
 const FONT_PIXELMPLUS12_BOLD: &[u8] = include_bytes!("../../web/fonts/pixelmplus12-bold.woff2");
@@ -164,10 +164,10 @@ impl DesktopAssets {
                 config.desktop_page_css.as_deref(),
                 DESKTOP_PAGE_CSS.as_bytes(),
             )?,
-            banner: read_override(config.desktop_banner.as_deref(), DESKTOP_BANNER_PNG)?,
+            banner: read_override(config.desktop_banner.as_deref(), DESKTOP_BANNER_GIF)?,
             banner_content_type: match config.desktop_banner.as_deref() {
                 Some(path) => image_content_type(path)?,
-                None => "image/png",
+                None => "image/gif",
             },
         })
     }
