@@ -21,15 +21,43 @@ const DESK_TEXT = {
 };
 
 const deskEls = {
-  page: document.getElementById('desk-page'),
-  status: document.getElementById('desk-page-status'),
-  list: document.getElementById('desk-link-list'),
-  marquee: document.getElementById('desk-marquee-text'),
-  counter: document.getElementById('desk-counter'),
+  frame: document.getElementById('desk-page-frame'),
   clock: document.getElementById('desk-clock'),
   statusText: document.getElementById('desk-status-text'),
   reloadBtn: document.getElementById('desk-reload'),
 };
+
+/*
+ * The link page lives in a same-origin iframe so that no style crosses either
+ * way. Its markup is replaceable, so every element below is optional and is
+ * looked up again whenever the frame document changes.
+ */
+const pageEls = { status: null, list: null, marquee: null, counter: null };
+
+function pageDocument() {
+  try {
+    return deskEls.frame ? deskEls.frame.contentDocument : null;
+  } catch {
+    return null;
+  }
+}
+
+function capturePageEls() {
+  const doc = pageDocument();
+  pageEls.status = doc ? doc.getElementById('desk-page-status') : null;
+  pageEls.list = doc ? doc.getElementById('desk-link-list') : null;
+  pageEls.marquee = doc ? doc.getElementById('desk-marquee-text') : null;
+  pageEls.counter = doc ? doc.getElementById('desk-counter') : null;
+  return doc;
+}
+
+const FRAME_CHROME_CSS = '/desktop-frame.css';
+const FRAME_CHROME_ID = 'desk-frame-chrome';
+let frameChromeReady = Promise.resolve();
+
+const DESK_FONT = '12px PixelMplus12';
+const DESK_FONT_BOLD = '700 12px PixelMplus12';
+const REVEAL_TIMEOUT = 1500;
 
 const NEW_DAYS = 7;
 const UP_DAYS = 30;
@@ -121,29 +149,32 @@ function buildLinkRow(site) {
 }
 
 function renderPageStatus(kind, message) {
+  if (!pageEls.status) return;
   if (!message) {
-    deskEls.status.removeAttribute('data-kind');
-    deskEls.status.textContent = '';
+    pageEls.status.removeAttribute('data-kind');
+    pageEls.status.textContent = '';
     return;
   }
-  deskEls.status.dataset.kind = kind;
-  deskEls.status.textContent = message;
+  pageEls.status.dataset.kind = kind;
+  pageEls.status.textContent = message;
 }
 
 function renderMarquee(sites) {
+  if (!pageEls.marquee) return;
   if (sites.length === 0) {
-    deskEls.marquee.textContent = DESK_TEXT.marqueeEmpty;
+    pageEls.marquee.textContent = DESK_TEXT.marqueeEmpty;
     return;
   }
   const top = sites[0];
   const label = sanitizeMessage(top.title, 60) || top.d;
-  deskEls.marquee.textContent = DESK_TEXT.marqueeLatest(formatRetroDate(top.created_at), label);
+  pageEls.marquee.textContent = DESK_TEXT.marqueeLatest(formatRetroDate(top.created_at), label);
 }
 
 function renderCounter(sites) {
+  if (!pageEls.counter) return;
   const visits = Number.parseInt(storage.get('swing:desktop:visits', '1'), 10) || 1;
   const base = 1000 + sites.length * 37;
-  deskEls.counter.textContent = String(base + visits).padStart(6, '0');
+  pageEls.counter.textContent = String(base + visits).padStart(6, '0');
 }
 
 function bumpVisitCounter() {
@@ -197,6 +228,7 @@ const winState = {
   closed: false,
   initialized: false,
   userPositioned: false,
+  revealed: false,
 };
 
 function isNarrowLayout() {
@@ -468,8 +500,94 @@ function wireWindowChrome() {
   new ResizeObserver(() => reflowWindow()).observe(winEls.screen);
 }
 
+/*
+ * The scrollbar of the link page belongs to the window around it, not to the
+ * page, so its stylesheet is injected here instead of living in the
+ * replaceable page CSS (a parent document cannot style a child frame's
+ * scrollbar through CSS). It goes in first so a replaced page can override it.
+ */
+function injectFrameChrome(doc) {
+  if (!doc || !doc.head) return Promise.resolve();
+  if (doc.getElementById(FRAME_CHROME_ID)) return Promise.resolve();
+  return new Promise((resolve) => {
+    const link = doc.createElement('link');
+    link.id = FRAME_CHROME_ID;
+    link.rel = 'stylesheet';
+    link.href = FRAME_CHROME_CSS;
+    link.addEventListener('load', () => resolve(), { once: true });
+    link.addEventListener('error', () => resolve(), { once: true });
+    doc.head.prepend(link);
+  });
+}
+
+function wirePageFrame() {
+  if (!deskEls.frame) return;
+  const onLoad = () => {
+    const doc = capturePageEls();
+    frameChromeReady = injectFrameChrome(doc);
+    if (doc) doc.addEventListener('click', () => selectDesktopIcon(null));
+    if (cache.sites) DesktopView.render();
+  };
+  deskEls.frame.addEventListener('load', onLoad);
+  const doc = pageDocument();
+  if (doc && doc.readyState === 'complete') onLoad();
+}
+
+function pageFrameLoaded() {
+  return new Promise((resolve) => {
+    if (!deskEls.frame) {
+      resolve();
+      return;
+    }
+    const doc = pageDocument();
+    if (doc && doc.readyState === 'complete' && doc.URL !== 'about:blank') {
+      resolve();
+      return;
+    }
+    deskEls.frame.addEventListener('load', () => resolve(), { once: true });
+  });
+}
+
+/* The bundled pixel font is only requested once something using it is painted, so it is asked for up front instead. */
+function loadDeskFont(doc) {
+  if (!doc || !doc.fonts) return Promise.resolve();
+  return Promise.all([doc.fonts.load(DESK_FONT), doc.fonts.load(DESK_FONT_BOLD)]).catch(() => {});
+}
+
+function warmDeskFonts() {
+  loadDeskFont(document);
+  pageFrameLoaded().then(() => loadDeskFont(pageDocument()));
+}
+
+function afterNextFrames() {
+  return new Promise((resolve) => {
+    requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+  });
+}
+
+/*
+ * The window stays hidden until the first time this view is actually on screen
+ * and everything in it is settled. Firefox gives a `display: none` iframe no
+ * layout at all, so its stylesheet and font only take effect once the view is
+ * shown; waiting at startup instead would reveal the window before that work
+ * has happened.
+ */
+function revealWindowWhenReady() {
+  if (winState.revealed) return;
+  winState.revealed = true;
+  const ready = pageFrameLoaded()
+    .then(() => Promise.all([frameChromeReady, loadDeskFont(document), loadDeskFont(pageDocument())]))
+    .then(afterNextFrames)
+    .catch(() => {});
+  const fallback = new Promise((resolve) => setTimeout(resolve, REVEAL_TIMEOUT));
+  const reveal = () => winEls.win.classList.remove('is-loading');
+  Promise.race([ready, fallback]).then(reveal, reveal);
+}
+
 export const DesktopView = {
   init() {
+    wirePageFrame();
+    warmDeskFonts();
     if (deskEls.reloadBtn) {
       deskEls.reloadBtn.addEventListener('click', () => this.load(true, deskEls.reloadBtn));
     }
@@ -479,6 +597,7 @@ export const DesktopView = {
     wireWindowChrome();
   },
   onShow() {
+    revealWindowWhenReady();
     if (cache.sites) this.render();
     else this.load();
     requestAnimationFrame(() => reflowWindow());
@@ -499,7 +618,7 @@ export const DesktopView = {
       if (!desktopLoadGuard.isCurrent(gen)) return;
       cache.sites = null;
       renderPageStatus('error', DESK_TEXT.error(describeError(err)));
-      if (deskEls.list) deskEls.list.replaceChildren();
+      if (pageEls.list) pageEls.list.replaceChildren();
       if (deskEls.statusText) deskEls.statusText.textContent = DESK_TEXT.errorStatus;
       return;
     } finally {
@@ -519,8 +638,8 @@ export const DesktopView = {
     } else {
       renderPageStatus(null, null);
     }
-    if (deskEls.list) {
-      deskEls.list.replaceChildren(...sites.map(buildLinkRow));
+    if (pageEls.list) {
+      pageEls.list.replaceChildren(...sites.map(buildLinkRow));
     }
     renderMarquee(sites);
     renderCounter(sites);

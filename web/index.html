@@ -4,6 +4,8 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>SWING Dashboard</title>
+<link rel="preload" href="/fonts/pixelmplus12-regular.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="/fonts/pixelmplus12-bold.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="/style.css">
 <link rel="stylesheet" href="/desktop.css">
 <link rel="stylesheet" href="/custom.css">
@@ -415,48 +417,6 @@
       <rect x="13" y="13" width="1" height="1" fill="#000000"></rect>
       <rect x="2" y="14" width="12" height="1" fill="#000000"></rect>
     </symbol>
-    <symbol id="icon-desk-construction" viewBox="0 0 16 16" shape-rendering="crispEdges">
-      <rect x="7" y="2" width="2" height="1" fill="#000000"></rect>
-      <rect x="7" y="3" width="2" height="1" fill="#000000"></rect>
-      <rect x="6" y="4" width="1" height="1" fill="#000000"></rect>
-      <rect x="7" y="4" width="2" height="1" fill="#ffff00"></rect>
-      <rect x="9" y="4" width="1" height="1" fill="#000000"></rect>
-      <rect x="6" y="5" width="1" height="1" fill="#000000"></rect>
-      <rect x="7" y="5" width="2" height="1" fill="#ffff00"></rect>
-      <rect x="9" y="5" width="1" height="1" fill="#000000"></rect>
-      <rect x="5" y="6" width="1" height="1" fill="#000000"></rect>
-      <rect x="6" y="6" width="1" height="1" fill="#ffff00"></rect>
-      <rect x="7" y="6" width="2" height="1" fill="#000000"></rect>
-      <rect x="9" y="6" width="1" height="1" fill="#ffff00"></rect>
-      <rect x="10" y="6" width="1" height="1" fill="#000000"></rect>
-      <rect x="4" y="7" width="1" height="1" fill="#000000"></rect>
-      <rect x="5" y="7" width="2" height="1" fill="#ffff00"></rect>
-      <rect x="7" y="7" width="2" height="1" fill="#000000"></rect>
-      <rect x="9" y="7" width="1" height="1" fill="#ffff00"></rect>
-      <rect x="10" y="7" width="1" height="1" fill="#000000"></rect>
-      <rect x="4" y="8" width="1" height="1" fill="#000000"></rect>
-      <rect x="5" y="8" width="2" height="1" fill="#ffff00"></rect>
-      <rect x="7" y="8" width="2" height="1" fill="#000000"></rect>
-      <rect x="9" y="8" width="2" height="1" fill="#ffff00"></rect>
-      <rect x="11" y="8" width="1" height="1" fill="#000000"></rect>
-      <rect x="3" y="9" width="1" height="1" fill="#000000"></rect>
-      <rect x="4" y="9" width="3" height="1" fill="#ffff00"></rect>
-      <rect x="7" y="9" width="2" height="1" fill="#000000"></rect>
-      <rect x="9" y="9" width="3" height="1" fill="#ffff00"></rect>
-      <rect x="12" y="9" width="1" height="1" fill="#000000"></rect>
-      <rect x="3" y="10" width="1" height="1" fill="#000000"></rect>
-      <rect x="4" y="10" width="8" height="1" fill="#ffff00"></rect>
-      <rect x="12" y="10" width="1" height="1" fill="#000000"></rect>
-      <rect x="2" y="11" width="1" height="1" fill="#000000"></rect>
-      <rect x="3" y="11" width="4" height="1" fill="#ffff00"></rect>
-      <rect x="7" y="11" width="2" height="1" fill="#000000"></rect>
-      <rect x="9" y="11" width="4" height="1" fill="#ffff00"></rect>
-      <rect x="13" y="11" width="1" height="1" fill="#000000"></rect>
-      <rect x="2" y="12" width="1" height="1" fill="#000000"></rect>
-      <rect x="3" y="12" width="10" height="1" fill="#ffff00"></rect>
-      <rect x="13" y="12" width="1" height="1" fill="#000000"></rect>
-      <rect x="1" y="13" width="14" height="1" fill="#000000"></rect>
-    </symbol>
     <symbol id="icon-desk-mycomputer" viewBox="0 0 24 24">
       <rect x="3" y="1.5" width="18" height="13.5" rx="1.125"></rect>
       <rect x="5.25" y="3.75" width="13.5" height="9" rx="0.375"></rect>
@@ -576,7 +536,7 @@
           </div>
         </div>
 
-        <div class="desk-window" id="desk-window">
+        <div class="desk-window is-loading" id="desk-window">
           <div class="desk-titlebar" id="desk-titlebar">
             <svg class="desk-titlebar-icon" aria-hidden="true"><use href="#icon-desk-start"></use></svg>
             <span class="desk-titlebar-text" id="desk-titlebar-text">リンク集 - SWING Explorer</span>
@@ -610,46 +570,7 @@
           </div>
 
           <div class="desk-page" id="desk-page">
-            <div class="desk-page-inner">
-              <header class="desk-hero">
-                <p class="desk-hero-eyebrow">ゆれ子のホームページへようこそ！</p>
-                <h1 class="desk-hero-title">SWING<span>ミラー</span>リンク集</h1>
-                <p class="desk-hero-sub">Since 2026 ★ SWINGでフォロー中のサイト様を紹介する非公式リンク集です</p>
-              </header>
-
-              <div class="desk-rainbow-hr" role="separator" aria-hidden="true"></div>
-
-              <div class="desk-marquee" aria-hidden="true">
-                <div class="desk-marquee-track"><span id="desk-marquee-text">よみこみちゅう…</span></div>
-              </div>
-
-              <nav class="desk-sitemenu" aria-label="サイト内メニュー">
-                <ul class="desk-sitemenu-list">
-                  <li class="desk-sitemenu-item"><svg class="desk-sitemenu-icon" aria-hidden="true"><use href="#icon-desk-construction"></use></svg>[ トップ ]</li>
-                  <li class="desk-sitemenu-item"><svg class="desk-sitemenu-icon" aria-hidden="true"><use href="#icon-desk-construction"></use></svg>[ プロフィール ]</li>
-                  <li class="desk-sitemenu-item"><svg class="desk-sitemenu-icon" aria-hidden="true"><use href="#icon-desk-construction"></use></svg>[ 日記 ]</li>
-                  <li class="desk-sitemenu-item"><svg class="desk-sitemenu-icon" aria-hidden="true"><use href="#icon-desk-construction"></use></svg>[ 掲示板 ]</li>
-                  <li class="desk-sitemenu-item desk-sitemenu-current">[ リンク集 ]</li>
-                </ul>
-                <p class="desk-sitemenu-note">トップ・プロフィール・日記・掲示板は工事中です。もうしばらくお待ちください m(_ _)m</p>
-              </nav>
-
-              <section class="desk-panel" aria-labelledby="desk-links-heading">
-                <h2 id="desk-links-heading">更新履歴 ＆ リンク集</h2>
-                <p class="desk-panel-hint">ゆれ子が保存中のミラーサイトを、更新が新しい順にならべています。</p>
-                <div id="desk-page-status" class="desk-page-status" aria-live="polite"></div>
-                <ul id="desk-link-list" class="desk-link-list"></ul>
-              </section>
-
-              <div class="desk-rainbow-hr" role="separator" aria-hidden="true"></div>
-
-              <footer class="desk-footer">
-                <p class="desk-counter-row">あなたは <span class="desk-counter" id="desk-counter" aria-label="訪問者数">000000</span> 人目のお客様です</p>
-                <img class="desk-banner" src="/desktop-banner.png" width="88" height="31" alt="SWING ミラーリンク集のバナー（88×31、お持ち帰り自由）">
-                <p class="desk-linkfree">相互リンク歓迎！リンクフリーです。バナーはご自由にお持ち帰りください。</p>
-                <p class="desk-browser-note">このホームページは Internet Explorer 4.0 以上・画面解像度 800×600 での閲覧を推奨します。</p>
-              </footer>
-            </div>
+            <iframe class="desk-page-frame" id="desk-page-frame" src="/desktop-page.html" title="リンク集"></iframe>
           </div>
 
           <div class="desk-statusbar" aria-hidden="true">

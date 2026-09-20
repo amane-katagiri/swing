@@ -37,6 +37,7 @@ SIGINT・SIGTERM のどちらでも同じように終了する。シグナルの
 - `allowed_hosts`: Host ヘッダで追加で許可するホスト名（ポート抜き、大文字小文字を区別しない）。環境変数はカンマ区切りで、前後の空白を取り除く。
 - `gateway`: 保存済みサイトを開くリンクの IPFS Gateway のベース URL。空文字なら `gateway_url` を出さない。環境変数の空文字は未設定として扱うので、無効にするには TOML の `gateway = ""` を使う。
 - `custom_css`: `/custom.css` として配信する CSS ファイルのパス。未設定か読めなければ `/custom.css` は空の 200 を返す。
+- `desktop_page` / `desktop_page_css` / `desktop_banner`: Desktop 画面のリンク集ページ（`/desktop-page.html`）・その CSS（`/desktop-page.css`）・88×31 バナー（`/desktop-banner.png`）を差し替えるファイルのパス。未設定なら同梱のものを使う。`custom_css` と違い**起動時に 1 回だけ読んでメモリに載せる**ので、差し替えの反映には agent の再起動が要る。読めないパスを指定した場合は同梱版へのフォールバックはせず、agent の起動をエラーで止める。`desktop_banner` の Content-Type は拡張子から決める（`.png` `.gif` `.jpg` `.jpeg` `.webp` `.svg` のみ。それ以外は起動時エラー）。
 - `max_upload`: `POST /api/publish/upload` のリクエストボディ上限。`0` は設定エラー。
 
 ## ガード（`src/dashboard/guard.rs`）
@@ -45,7 +46,7 @@ SIGINT・SIGTERM のどちらでも同じように終了する。シグナルの
 
 1. Host 検証: `Host` ヘッダが無ければ 403。あれば `extract_host`（IPv6 の `[...]` を考慮してポートを外し小文字化）した値が `localhost` / `127.0.0.1` / `::1` か `allowed_hosts` のいずれかでなければ 403。`allowed_hosts` を広げてループバック以外からアクセスできるようにする構成はサポート対象外。
 2. 書き込み系（GET/HEAD 以外）はさらに: `X-Swing-Dashboard: 1` ヘッダが無ければ 403（CORS ヘッダは一切返さない）。`Origin` ヘッダがあれば、その authority（スキームを外し末尾の `/` を削っただけ）が `Host` ヘッダと大文字小文字を無視して一致しなければ 403。
-3. レスポンスヘッダ（成功・失敗どちらにも付く）: `X-Content-Type-Options: nosniff`、`Content-Security-Policy: default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; frame-ancestors 'none'`、`Referrer-Policy: no-referrer`、`X-Frame-Options: DENY`。`Cache-Control: no-store` は `/api/` 配下だけ middleware が付ける（`/custom.css` はハンドラ自身が付け、`/`・`/style.css`・ES module には付かない）。
+3. レスポンスヘッダ（成功・失敗どちらにも付く）: `X-Content-Type-Options: nosniff`、`Content-Security-Policy: default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; frame-ancestors 'self'`、`Referrer-Policy: no-referrer`、`X-Frame-Options: SAMEORIGIN`。Desktop 画面のリンク集ページを同一オリジンの iframe で入れ子にするため、自分自身からの埋め込みだけを許している（他オリジンからの埋め込みは従来どおり不可）。`Cache-Control: no-store` は `/api/` 配下だけ middleware が付ける（`/custom.css` はハンドラ自身が付け、`/`・`/style.css`・ES module には付かない）。
 4. 秘密鍵: `Config` に `Serialize` を実装しないことで、`/api/config` を含めどの DTO にも秘密鍵の値が現れない（詳しくは下記「秘密鍵を出さない仕組み」）。
 
 ## タイムアウト（`src/dashboard/mod.rs`）
@@ -60,12 +61,16 @@ SIGINT・SIGTERM のどちらでも同じように終了する。シグナルの
 
 `web/` 配下の全ファイルをビルド時に `include_str!` でバイナリに埋め込む（実行時にファイルを探しに行かない）。ファイルを 1 つ追加するときは `assets.rs` に定数+ハンドラを、`mod.rs` の router にルートを 1 対 1 で足す。
 
+例外は `/desktop-page.html`・`/desktop-page.css`・`/desktop-banner.png` の 3 つで、`[dashboard]` にパスが設定されていればそのファイルを起動時（`AppState::new` → `DesktopAssets::load`）に読んで `AppState.desktop` に持ち、以降はそこから配信する（設定が無ければ同梱のものを `Bytes::from_static` で持つ）。リクエストのたびにディスクを見るのは `/custom.css` だけ。
+
 | ルート | Content-Type |
 |---|---|
 | `GET /` | `text/html; charset=utf-8`（`index.html`） |
 | `GET /style.css` `/desktop.css` | `text/css; charset=utf-8` |
 | `GET /boot.js` `/app.js` `/graph.js` `/storage.js` `/i18n.js` `/util.js` `/ui.js` `/sites.js` `/webring.js` `/publish.js` `/settings.js` `/desktop.js` | `text/javascript; charset=utf-8` |
-| `GET /desktop-banner.png` | `image/png`。Desktop 画面フッタの 88×31 バナー画像（`include_bytes!`） |
+| `GET /desktop-page.html` `/desktop-page.css` | `text/html; charset=utf-8` / `text/css; charset=utf-8`。Desktop 画面の iframe に入るリンク集ページとその CSS |
+| `GET /desktop-frame.css` | `text/css; charset=utf-8`。同じ iframe に `desktop.js` が差し込む窓側の CSS（スクロールバー）。差し替え対象ではない |
+| `GET /desktop-banner.png` | 既定は `image/png`。リンク集ページの 88×31 バナー画像 |
 | `GET /fonts/pixelmplus12-regular.woff2` `/fonts/pixelmplus12-bold.woff2` | `font/woff2`。Desktop 画面の同梱フォント PixelMplus12（400/700、`include_bytes!`）。ライセンスは `web/fonts/LICENSE-PixelMplus.txt` |
 | `GET /custom.css` | `[dashboard].custom_css` の中身をリクエストのたびにディスクから読んで返す（`text/css; charset=utf-8`、`Cache-Control: no-store`）。未設定・読み込み失敗なら空文字 |
 

@@ -86,6 +86,9 @@ pub struct DashboardFile {
     pub allowed_hosts: Option<Vec<String>>,
     pub gateway: Option<String>,
     pub custom_css: Option<String>,
+    pub desktop_page: Option<String>,
+    pub desktop_page_css: Option<String>,
+    pub desktop_banner: Option<String>,
     pub max_upload: Option<String>,
 }
 
@@ -198,6 +201,9 @@ pub struct DashboardConfig {
     pub allowed_hosts: Vec<String>,
     pub gateway: Option<String>,
     pub custom_css: Option<PathBuf>,
+    pub desktop_page: Option<PathBuf>,
+    pub desktop_page_css: Option<PathBuf>,
+    pub desktop_banner: Option<PathBuf>,
     pub max_upload: u64,
 }
 
@@ -652,6 +658,21 @@ fn build_config(file: ConfigFile, get_env: impl Fn(&str) -> Option<String>) -> R
         None => file.dashboard.custom_css.map(PathBuf::from),
     };
 
+    let dashboard_desktop_page = match get_env("SWING_DASHBOARD_DESKTOP_PAGE") {
+        Some(v) => Some(PathBuf::from(v)),
+        None => file.dashboard.desktop_page.map(PathBuf::from),
+    };
+
+    let dashboard_desktop_page_css = match get_env("SWING_DASHBOARD_DESKTOP_PAGE_CSS") {
+        Some(v) => Some(PathBuf::from(v)),
+        None => file.dashboard.desktop_page_css.map(PathBuf::from),
+    };
+
+    let dashboard_desktop_banner = match get_env("SWING_DASHBOARD_DESKTOP_BANNER") {
+        Some(v) => Some(PathBuf::from(v)),
+        None => file.dashboard.desktop_banner.map(PathBuf::from),
+    };
+
     let dashboard_max_upload = resolve(
         &get_env,
         "SWING_DASHBOARD_MAX_UPLOAD",
@@ -707,6 +728,9 @@ fn build_config(file: ConfigFile, get_env: impl Fn(&str) -> Option<String>) -> R
             allowed_hosts: dashboard_allowed_hosts,
             gateway: dashboard_gateway,
             custom_css: dashboard_custom_css,
+            desktop_page: dashboard_desktop_page,
+            desktop_page_css: dashboard_desktop_page_css,
+            desktop_banner: dashboard_desktop_banner,
             max_upload: dashboard_max_upload,
         },
         config_path: None,
@@ -1077,6 +1101,9 @@ mod tests {
             Some("http://localhost:8080")
         );
         assert_eq!(cfg.dashboard.custom_css, None);
+        assert_eq!(cfg.dashboard.desktop_page, None);
+        assert_eq!(cfg.dashboard.desktop_page_css, None);
+        assert_eq!(cfg.dashboard.desktop_banner, None);
         assert_eq!(cfg.dashboard.max_upload, 2 * (1u64 << 30));
     }
 
@@ -1145,6 +1172,9 @@ mod tests {
                 allowed_hosts: Some(vec!["example.com".into()]),
                 gateway: Some("http://gateway.example".into()),
                 custom_css: Some("/etc/swing/custom.css".into()),
+                desktop_page: Some("/etc/swing/page.html".into()),
+                desktop_page_css: Some("/etc/swing/page.css".into()),
+                desktop_banner: Some("/etc/swing/banner.png".into()),
                 max_upload: Some("4GB".into()),
             },
             ..Default::default()
@@ -1154,6 +1184,9 @@ mod tests {
             "SWING_DASHBOARD_ALLOWED_HOSTS" => Some("a.example, b.example".into()),
             "SWING_DASHBOARD_GATEWAY" => Some("http://env-gateway.example".into()),
             "SWING_DASHBOARD_CUSTOM_CSS" => Some("/env/custom.css".into()),
+            "SWING_DASHBOARD_DESKTOP_PAGE" => Some("/env/page.html".into()),
+            "SWING_DASHBOARD_DESKTOP_PAGE_CSS" => Some("/env/page.css".into()),
+            "SWING_DASHBOARD_DESKTOP_BANNER" => Some("/env/banner.gif".into()),
             _ => None,
         })
         .unwrap();
@@ -1172,6 +1205,18 @@ mod tests {
         assert_eq!(
             cfg.dashboard.custom_css,
             Some(PathBuf::from("/env/custom.css"))
+        );
+        assert_eq!(
+            cfg.dashboard.desktop_page,
+            Some(PathBuf::from("/env/page.html"))
+        );
+        assert_eq!(
+            cfg.dashboard.desktop_page_css,
+            Some(PathBuf::from("/env/page.css"))
+        );
+        assert_eq!(
+            cfg.dashboard.desktop_banner,
+            Some(PathBuf::from("/env/banner.gif"))
         );
     }
 

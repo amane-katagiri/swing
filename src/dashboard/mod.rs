@@ -4,6 +4,7 @@ mod dto;
 pub mod guard;
 mod upload;
 
+pub use assets::DesktopAssets;
 pub use upload::cleanup_upload_dir;
 
 use std::sync::Arc;
@@ -35,6 +36,7 @@ pub struct AppState {
     pub started_at: u64,
     pub publish_lock: Mutex<()>,
     pub own_pubkey: PublicKey,
+    pub desktop: DesktopAssets,
 }
 
 impl AppState {
@@ -47,6 +49,7 @@ impl AppState {
         let own_pubkey = Keys::parse(config.nostr.secret_key.expose_secret())
             .context("parsing configured secret key")?
             .public_key();
+        let desktop = DesktopAssets::load(&config.dashboard)?;
         Ok(Self {
             relay,
             config,
@@ -55,6 +58,7 @@ impl AppState {
             started_at: Timestamp::now().as_secs(),
             publish_lock: Mutex::new(()),
             own_pubkey,
+            desktop,
         })
     }
 }
@@ -86,7 +90,10 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/publish.js", get(assets::publish_js))
         .route("/settings.js", get(assets::settings_js))
         .route("/desktop.js", get(assets::desktop_js))
-        .route("/desktop-banner.png", get(assets::desktop_banner_png))
+        .route("/desktop-page.html", get(assets::desktop_page))
+        .route("/desktop-page.css", get(assets::desktop_page_css))
+        .route("/desktop-frame.css", get(assets::desktop_frame_css))
+        .route("/desktop-banner.png", get(assets::desktop_banner))
         .route(
             "/fonts/pixelmplus12-regular.woff2",
             get(assets::font_pixelmplus12_regular),
@@ -196,6 +203,9 @@ mod tests {
                 allowed_hosts: Vec::new(),
                 gateway: Some("http://localhost:8080".to_string()),
                 custom_css: None,
+                desktop_page: None,
+                desktop_page_css: None,
+                desktop_banner: None,
                 max_upload: 2 * (1u64 << 30),
             },
             config_path: None,
@@ -235,7 +245,7 @@ mod tests {
             resp.headers().get("referrer-policy").unwrap(),
             "no-referrer"
         );
-        assert_eq!(resp.headers().get("x-frame-options").unwrap(), "DENY");
+        assert_eq!(resp.headers().get("x-frame-options").unwrap(), "SAMEORIGIN");
     }
 
     #[tokio::test]
@@ -255,6 +265,9 @@ mod tests {
             ("/publish.js", "text/javascript; charset=utf-8"),
             ("/settings.js", "text/javascript; charset=utf-8"),
             ("/desktop.js", "text/javascript; charset=utf-8"),
+            ("/desktop-page.html", "text/html; charset=utf-8"),
+            ("/desktop-page.css", "text/css; charset=utf-8"),
+            ("/desktop-frame.css", "text/css; charset=utf-8"),
             ("/desktop-banner.png", "image/png"),
             ("/fonts/pixelmplus12-regular.woff2", "font/woff2"),
             ("/fonts/pixelmplus12-bold.woff2", "font/woff2"),
@@ -274,6 +287,82 @@ mod tests {
                 "{path}"
             );
         }
+    }
+
+    #[tokio::test]
+    async fn desktop_page_assets_come_from_the_configured_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let page = dir.path().join("page.html");
+        let page_css = dir.path().join("page.css");
+        let banner = dir.path().join("banner.gif");
+        std::fs::write(&page, "<!doctype html><title>mine</title>").unwrap();
+        std::fs::write(&page_css, "body { color: red }").unwrap();
+        std::fs::write(&banner, b"GIF89a").unwrap();
+
+        let (mut config, _secret_hex) = test_config(DashboardListen::Off);
+        config.dashboard.desktop_page = Some(page);
+        config.dashboard.desktop_page_css = Some(page_css);
+        config.dashboard.desktop_banner = Some(banner);
+        let state =
+            Arc::new(AppState::new(None, Arc::new(config), Arc::new(Notify::new())).unwrap());
+
+        for (path, content_type, expected) in [
+            (
+                "/desktop-page.html",
+                "text/html; charset=utf-8",
+                &b"<!doctype html><title>mine</title>"[..],
+            ),
+            (
+                "/desktop-page.css",
+                "text/css; charset=utf-8",
+                b"body { color: red }",
+            ),
+            ("/desktop-banner.png", "image/gif", b"GIF89a"),
+        ] {
+            let app = router(Arc::clone(&state));
+            let req = Request::builder()
+                .uri(path)
+                .header("Host", "127.0.0.1:8082")
+                .body(Body::empty())
+                .unwrap();
+            let resp = call(app, req).await;
+            assert_eq!(resp.status(), StatusCode::OK, "{path}");
+            assert_eq!(
+                resp.headers().get("content-type").unwrap(),
+                content_type,
+                "{path}"
+            );
+            let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+                .await
+                .unwrap();
+            assert_eq!(body.as_ref(), expected, "{path}");
+        }
+    }
+
+    #[test]
+    fn an_unreadable_desktop_page_fails_at_startup() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut config, _secret_hex) = test_config(DashboardListen::Off);
+        config.dashboard.desktop_page = Some(dir.path().join("missing.html"));
+        let err = match AppState::new(None, Arc::new(config), Arc::new(Notify::new())) {
+            Ok(_) => panic!("expected a startup error"),
+            Err(err) => err,
+        };
+        assert!(err.to_string().contains("missing.html"));
+    }
+
+    #[test]
+    fn a_banner_with_an_unknown_extension_fails_at_startup() {
+        let dir = tempfile::tempdir().unwrap();
+        let banner = dir.path().join("banner.bmp");
+        std::fs::write(&banner, b"BM").unwrap();
+        let (mut config, _secret_hex) = test_config(DashboardListen::Off);
+        config.dashboard.desktop_banner = Some(banner);
+        let err = match AppState::new(None, Arc::new(config), Arc::new(Notify::new())) {
+            Ok(_) => panic!("expected a startup error"),
+            Err(err) => err,
+        };
+        assert!(err.to_string().contains("banner.bmp"));
     }
 
     #[tokio::test]

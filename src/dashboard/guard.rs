@@ -55,7 +55,7 @@ fn apply_security_headers(headers: &mut HeaderMap, is_api: bool) {
     headers.insert(
         HeaderName::from_static("content-security-policy"),
         HeaderValue::from_static(
-            "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; frame-ancestors 'none'",
+            "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; frame-ancestors 'self'",
         ),
     );
     headers.insert(
@@ -64,7 +64,7 @@ fn apply_security_headers(headers: &mut HeaderMap, is_api: bool) {
     );
     headers.insert(
         HeaderName::from_static("x-frame-options"),
-        HeaderValue::from_static("DENY"),
+        HeaderValue::from_static("SAMEORIGIN"),
     );
     if is_api {
         headers.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));

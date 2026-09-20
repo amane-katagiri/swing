@@ -829,6 +829,42 @@ pub fn config_dto(config: &config::Config) -> ConfigDto {
                 ),
             ),
             ConfigItemDto::new(
+                "desktop_page",
+                "SWING_DASHBOARD_DESKTOP_PAGE",
+                ConfigValue::Str(
+                    config
+                        .dashboard
+                        .desktop_page
+                        .as_ref()
+                        .map(|p| p.display().to_string())
+                        .unwrap_or_default(),
+                ),
+            ),
+            ConfigItemDto::new(
+                "desktop_page_css",
+                "SWING_DASHBOARD_DESKTOP_PAGE_CSS",
+                ConfigValue::Str(
+                    config
+                        .dashboard
+                        .desktop_page_css
+                        .as_ref()
+                        .map(|p| p.display().to_string())
+                        .unwrap_or_default(),
+                ),
+            ),
+            ConfigItemDto::new(
+                "desktop_banner",
+                "SWING_DASHBOARD_DESKTOP_BANNER",
+                ConfigValue::Str(
+                    config
+                        .dashboard
+                        .desktop_banner
+                        .as_ref()
+                        .map(|p| p.display().to_string())
+                        .unwrap_or_default(),
+                ),
+            ),
+            ConfigItemDto::new(
                 "max_upload",
                 "SWING_DASHBOARD_MAX_UPLOAD",
                 ConfigValue::Num(config.dashboard.max_upload),

@@ -1,10 +1,14 @@
+use std::path::Path;
 use std::sync::Arc;
 
+use anyhow::{Context, Result, bail};
+use axum::body::Bytes;
 use axum::extract::State;
 use axum::http::header;
 use axum::response::{IntoResponse, Response};
 
 use super::AppState;
+use crate::config::DashboardConfig;
 
 const INDEX_HTML: &str = include_str!("../../web/index.html");
 const STYLE_CSS: &str = include_str!("../../web/style.css");
@@ -21,6 +25,9 @@ const WEBRING_JS: &str = include_str!("../../web/webring.js");
 const PUBLISH_JS: &str = include_str!("../../web/publish.js");
 const SETTINGS_JS: &str = include_str!("../../web/settings.js");
 const DESKTOP_JS: &str = include_str!("../../web/desktop.js");
+const DESKTOP_PAGE_HTML: &str = include_str!("../../web/desktop-page.html");
+const DESKTOP_PAGE_CSS: &str = include_str!("../../web/desktop-page.css");
+const DESKTOP_FRAME_CSS: &str = include_str!("../../web/desktop-frame.css");
 const DESKTOP_BANNER_PNG: &[u8] = include_bytes!("../../web/desktop-banner.png");
 const FONT_PIXELMPLUS12_REGULAR: &[u8] =
     include_bytes!("../../web/fonts/pixelmplus12-regular.woff2");
@@ -28,6 +35,10 @@ const FONT_PIXELMPLUS12_BOLD: &[u8] = include_bytes!("../../web/fonts/pixelmplus
 
 fn asset(content_type: &'static str, body: &'static str) -> Response {
     ([(header::CONTENT_TYPE, content_type)], body).into_response()
+}
+
+fn bytes_asset(content_type: &str, body: Bytes) -> Response {
+    ([(header::CONTENT_TYPE, content_type.to_string())], body).into_response()
 }
 
 fn binary_asset(content_type: &'static str, body: &'static [u8]) -> Response {
@@ -94,8 +105,23 @@ pub async fn desktop_js() -> Response {
     asset("text/javascript; charset=utf-8", DESKTOP_JS)
 }
 
-pub async fn desktop_banner_png() -> Response {
-    binary_asset("image/png", DESKTOP_BANNER_PNG)
+pub async fn desktop_page(State(state): State<Arc<AppState>>) -> Response {
+    bytes_asset("text/html; charset=utf-8", state.desktop.page.clone())
+}
+
+pub async fn desktop_frame_css() -> Response {
+    asset("text/css; charset=utf-8", DESKTOP_FRAME_CSS)
+}
+
+pub async fn desktop_page_css(State(state): State<Arc<AppState>>) -> Response {
+    bytes_asset("text/css; charset=utf-8", state.desktop.page_css.clone())
+}
+
+pub async fn desktop_banner(State(state): State<Arc<AppState>>) -> Response {
+    bytes_asset(
+        state.desktop.banner_content_type,
+        state.desktop.banner.clone(),
+    )
 }
 
 pub async fn font_pixelmplus12_regular() -> Response {
@@ -119,4 +145,60 @@ pub async fn custom_css(State(state): State<Arc<AppState>>) -> Response {
         body,
     )
         .into_response()
+}
+
+/// The link page, its stylesheet and its banner, each either the bundled
+/// default or the file named in `[dashboard]`, read once at startup.
+pub struct DesktopAssets {
+    pub page: Bytes,
+    pub page_css: Bytes,
+    pub banner: Bytes,
+    pub banner_content_type: &'static str,
+}
+
+impl DesktopAssets {
+    pub fn load(config: &DashboardConfig) -> Result<Self> {
+        Ok(Self {
+            page: read_override(config.desktop_page.as_deref(), DESKTOP_PAGE_HTML.as_bytes())?,
+            page_css: read_override(
+                config.desktop_page_css.as_deref(),
+                DESKTOP_PAGE_CSS.as_bytes(),
+            )?,
+            banner: read_override(config.desktop_banner.as_deref(), DESKTOP_BANNER_PNG)?,
+            banner_content_type: match config.desktop_banner.as_deref() {
+                Some(path) => image_content_type(path)?,
+                None => "image/png",
+            },
+        })
+    }
+}
+
+fn read_override(path: Option<&Path>, bundled: &'static [u8]) -> Result<Bytes> {
+    match path {
+        Some(path) => {
+            let body = std::fs::read(path)
+                .with_context(|| format!("reading dashboard asset {}", path.display()))?;
+            Ok(Bytes::from(body))
+        }
+        None => Ok(Bytes::from_static(bundled)),
+    }
+}
+
+fn image_content_type(path: &Path) -> Result<&'static str> {
+    let ext = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    match ext.as_str() {
+        "png" => Ok("image/png"),
+        "gif" => Ok("image/gif"),
+        "jpg" | "jpeg" => Ok("image/jpeg"),
+        "webp" => Ok("image/webp"),
+        "svg" => Ok("image/svg+xml"),
+        _ => bail!(
+            "unsupported banner image {} (expected .png, .gif, .jpg, .jpeg, .webp, or .svg)",
+            path.display()
+        ),
+    }
 }

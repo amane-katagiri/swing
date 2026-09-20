@@ -1,0 +1,99 @@
+/*
+ * The window's own furniture, injected into the link page's document by
+ * desktop.js. The scrollbar belongs to the fake browser window rather than to
+ * the page inside it, so it stays out of the replaceable page stylesheet --
+ * and a parent document cannot reach a child frame's scrollbar through CSS.
+ * Injected as the first stylesheet, so a replaced page can still override it.
+ */
+
+:root {
+  --desk-sb-face: #c0c0c0;
+  --desk-sb-face-light: #dfdfdf;
+  --desk-sb-shadow: #808080;
+  --desk-sb-dark-shadow: #404040;
+  --desk-sb-highlight: #ffffff;
+}
+
+/* Standard scrollbar-color disables ::-webkit-scrollbar styling in Chromium, so it is limited to engines without the pseudo-elements. */
+@supports not selector(::-webkit-scrollbar) {
+  * {
+    scrollbar-color: var(--desk-sb-face) var(--desk-sb-face-light);
+    scrollbar-width: auto;
+  }
+}
+
+*::-webkit-scrollbar {
+  width: 16px;
+  height: 16px;
+}
+
+*::-webkit-scrollbar-track {
+  background-image:
+    linear-gradient(45deg, var(--desk-sb-highlight) 25%, transparent 25%),
+    linear-gradient(-45deg, var(--desk-sb-highlight) 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, var(--desk-sb-highlight) 75%),
+    linear-gradient(-45deg, transparent 75%, var(--desk-sb-highlight) 75%);
+  background-size: 2px 2px;
+  background-position: 0 0, 0 1px, 1px -1px, -1px 0;
+  background-color: var(--desk-sb-face);
+}
+
+*::-webkit-scrollbar-corner {
+  background: var(--desk-sb-face);
+}
+
+*::-webkit-scrollbar-thumb {
+  background-color: var(--desk-sb-face);
+  background-clip: padding-box;
+  border: 1px solid transparent;
+  box-shadow:
+    inset 1px 1px 0 var(--desk-sb-highlight),
+    inset -1px -1px 0 var(--desk-sb-dark-shadow),
+    inset 2px 2px 0 var(--desk-sb-face-light),
+    inset -2px -2px 0 var(--desk-sb-shadow);
+}
+
+*::-webkit-scrollbar-thumb:active {
+  box-shadow:
+    inset -1px -1px 0 var(--desk-sb-highlight),
+    inset 1px 1px 0 var(--desk-sb-dark-shadow);
+}
+
+*::-webkit-scrollbar-button {
+  display: block;
+  background-color: var(--desk-sb-face);
+  background-repeat: no-repeat;
+  background-position: center;
+  box-shadow: inset 1px 1px 0 var(--desk-sb-highlight), inset -1px -1px 0 var(--desk-sb-dark-shadow);
+}
+
+*::-webkit-scrollbar-button:active {
+  box-shadow: inset -1px -1px 0 var(--desk-sb-highlight), inset 1px 1px 0 var(--desk-sb-dark-shadow);
+}
+
+*::-webkit-scrollbar-button:vertical:start:decrement {
+  height: 16px;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='8' height='5'%3E%3Cpolygon points='4,0 8,5 0,5' fill='%23000000'/%3E%3C/svg%3E");
+}
+
+*::-webkit-scrollbar-button:vertical:end:increment {
+  height: 16px;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='8' height='5'%3E%3Cpolygon points='0,0 8,0 4,5' fill='%23000000'/%3E%3C/svg%3E");
+}
+
+*::-webkit-scrollbar-button:horizontal:start:decrement {
+  width: 16px;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='5' height='8'%3E%3Cpolygon points='5,0 5,8 0,4' fill='%23000000'/%3E%3C/svg%3E");
+}
+
+*::-webkit-scrollbar-button:horizontal:end:increment {
+  width: 16px;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='5' height='8'%3E%3Cpolygon points='0,0 0,8 5,4' fill='%23000000'/%3E%3C/svg%3E");
+}
+
+*::-webkit-scrollbar-button:vertical:start:increment,
+*::-webkit-scrollbar-button:vertical:end:decrement,
+*::-webkit-scrollbar-button:horizontal:start:increment,
+*::-webkit-scrollbar-button:horizontal:end:decrement {
+  display: none;
+}
