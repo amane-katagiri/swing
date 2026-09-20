@@ -21,3 +21,12 @@
 | 低 | private mode: WireGuard / Tailscale / private IPFS network を使う別モード | plan §17 |
 | 低 | サブパス公開サイト向けに NIP-05 の代替検証（例: `<url>/.well-known/swing.json`）を検討 | レビュー |
 | 低 | `compose.yaml` の `mirror.env_file: .env` が必須指定なので、`.env` が無いと `docker compose config` も失敗する（`--env-file` では代わりにならない） | 結合確認 |
+| 中 | `swing up`: Kubo を子プロセスとして起動・管理する supervisor。init、config 適用、`/api/v0/id` でのヘルス待ち、バックオフ再起動、終了時の子プロセス回収。compose の `depends_on: service_healthy` / `healthcheck` / `restart: unless-stopped` に相当する | [配布方式の設計](log/2026-09-21-配布方式の設計.md) |
+| 中 | `docker/kubo-init.d/001-swing-config.sh` 相当を Rust に移植する（`Datastore.StorageMax`、`Provide.Strategy`、`Gateway.NoFetch`、`Gateway.PublicGateways`） | [配布方式の設計](log/2026-09-21-配布方式の設計.md) |
+| 中 | gateway プロファイルの Caddy 相当（ホスト名での振り分けと Kubo gateway へのプロキシ）を axum に実装する。TLS が要るなら `rustls-acme` | [配布方式の設計](log/2026-09-21-配布方式の設計.md) |
+| 中 | `swing service install / uninstall / status`。systemd user unit（`loginctl enable-linger`、`--system` も）、launchd の LaunchAgent、Windows はタスクスケジューラ（`sc.exe` は UAC が出るので使わない） | [配布方式の設計](log/2026-09-21-配布方式の設計.md) |
+| 低 | インストーラとパッケージ。Homebrew tap（kubo は `depends_on "kubo"` で解決）、`install.sh`、winget（Inno の installer 型、`ipfs.exe` 同梱、ユーザー権限でのインストール、`InstallerType: inno`、インストール時にサービスを起動しない） | [配布方式の設計](log/2026-09-21-配布方式の設計.md) |
+| 低 | リリースワークフローに macOS の ad-hoc 署名（`rcodesign`）と GitHub の artifact attestation を入れる | [配布方式の設計](log/2026-09-21-配布方式の設計.md) |
+| 低 | compose 専用の環境変数（`SWING_KUBO_GATEWAY_BIND`、`SWING_DASHBOARD_BIND` など）を `swing.toml` へ寄せる。compose 側は外部の Kubo を使う設定にする | [配布方式の設計](log/2026-09-21-配布方式の設計.md) |
+| 低 | Kubo RPC を Unix socket か loopback の動的ポートに閉じる。単一プロセスで動かすなら 5001 を固定する必要が無い | [配布方式の設計](log/2026-09-21-配布方式の設計.md) |
+| 低 | 配布前に確かめること: upstream の kubo darwin-arm64 バイナリが署名されているか、Windows のファイアウォール（4001）の初回ダイアログの扱い、既存 compose 利用者が `ipfs-data` から移行する手順 | [配布方式の設計](log/2026-09-21-配布方式の設計.md) |
