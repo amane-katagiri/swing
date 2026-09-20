@@ -5,6 +5,12 @@
   </picture>
 </p>
 
+<p align="center">
+  <img src="docs/assets/dashboard-desktop.png" alt="ダッシュボードの Desktop 画面。Windows 風デスクトップの上のブラウザウィンドウに、保存中のサイトのリンク集が並んでいる" width="900">
+  <br>
+  <sub>Desktop 画面（<a href="docker/demo/README.md">デモ環境</a>のサンプルデータ）</sub>
+</p>
+
 # SWING
 
 SWING (Static-site Webring by IPFS and Nostr Generator) は、個人サイトの運営者同士が、互いのサイトを自発的に保存・配送し合うための相互ミラーツールです。
