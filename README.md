@@ -1,3 +1,10 @@
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/swing-lockup-dark.svg">
+    <img src="docs/assets/swing-lockup.svg" alt="SWING" width="460">
+  </picture>
+</p>
+
 # SWING
 
 SWING (Static-site Webring by IPFS and Nostr Generator) は、個人サイトの運営者同士が、互いのサイトを自発的に保存・配送し合うための相互ミラーツールです。

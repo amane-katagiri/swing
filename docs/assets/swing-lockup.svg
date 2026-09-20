@@ -1,0 +1,76 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 590 120" width="590" height="120" role="img" aria-label="SWING">
+  <g transform="translate(-29.081633 -12.857143) scale(0.30612245)">
+    <g fill="#000000">
+      <path d="M200 314 C142 274 140 186 246 154 C312 134 388 112 446 100 L449 113 C392 124 314 146 264 166 C186 190 168 262 200 314 Z"/>
+      <path transform="rotate(180 256 256)" d="M200 314 C144 274 144 190 246 158 C300 142 348 132 390 126 L391 135 C350 140 304 150 264 168 C186 192 168 262 200 314 Z"/>
+    </g>
+    <g fill="#0645ad">
+      <circle cx="256" cy="256" r="58"/>
+      <circle cx="456" cy="104" r="30"/>
+      <circle cx="114" cy="384" r="18"/>
+    </g>
+  </g>
+  <g transform="translate(175 0) scale(0.74074074)" shape-rendering="crispEdges">
+    <g fill="#000000">
+      <rect x="10" y="130.82" width="90" height="18"/>
+      <rect x="80" y="107.82" width="30" height="15"/>
+      <rect x="0" y="107.82" width="30" height="15"/>
+      <rect x="80" y="87.82" width="30" height="12"/>
+      <rect x="10" y="69.82" width="90" height="10"/>
+      <rect x="0" y="51.82" width="30" height="10"/>
+      <rect x="80" y="33.82" width="30" height="10"/>
+      <rect x="0" y="33.82" width="30" height="10"/>
+      <rect x="10" y="15.82" width="90" height="10"/>
+      <rect x="200" y="130.82" width="30" height="18"/>
+      <rect x="120" y="130.82" width="30" height="18"/>
+      <rect x="190" y="107.82" width="40" height="15"/>
+      <rect x="120" y="107.82" width="40" height="15"/>
+      <rect x="180" y="87.82" width="50" height="12"/>
+      <rect x="120" y="87.82" width="50" height="12"/>
+      <rect x="200" y="69.82" width="30" height="10"/>
+      <rect x="160" y="69.82" width="30" height="10"/>
+      <rect x="120" y="69.82" width="30" height="10"/>
+      <rect x="200" y="51.82" width="30" height="10"/>
+      <rect x="160" y="51.82" width="30" height="10"/>
+      <rect x="120" y="51.82" width="30" height="10"/>
+      <rect x="200" y="33.82" width="30" height="10"/>
+      <rect x="120" y="33.82" width="30" height="10"/>
+      <rect x="200" y="15.82" width="30" height="10"/>
+      <rect x="120" y="15.82" width="30" height="10"/>
+      <rect x="252.5" y="107.82" width="21.667" height="15"/>
+      <rect x="260.833" y="87.82" width="21.667" height="12"/>
+      <rect x="269.167" y="69.82" width="21.666" height="10"/>
+      <rect x="277.5" y="51.82" width="21.667" height="10"/>
+      <rect x="285.833" y="33.82" width="21.667" height="10"/>
+      <rect x="400" y="130.82" width="40" height="18"/>
+      <rect x="330" y="130.82" width="30" height="18"/>
+      <rect x="390" y="107.82" width="50" height="15"/>
+      <rect x="330" y="107.82" width="30" height="15"/>
+      <rect x="380" y="87.82" width="60" height="12"/>
+      <rect x="330" y="87.82" width="30" height="12"/>
+      <rect x="410" y="69.82" width="30" height="10"/>
+      <rect x="370" y="69.82" width="30" height="10"/>
+      <rect x="330" y="69.82" width="30" height="10"/>
+      <rect x="410" y="51.82" width="30" height="10"/>
+      <rect x="330" y="51.82" width="60" height="10"/>
+      <rect x="410" y="33.82" width="30" height="10"/>
+      <rect x="330" y="33.82" width="50" height="10"/>
+      <rect x="410" y="15.82" width="30" height="10"/>
+      <rect x="330" y="15.82" width="40" height="10"/>
+      <rect x="460" y="130.82" width="100" height="18"/>
+      <rect x="530" y="107.82" width="30" height="15"/>
+      <rect x="450" y="107.82" width="30" height="15"/>
+      <rect x="530" y="87.82" width="30" height="12"/>
+      <rect x="450" y="87.82" width="30" height="12"/>
+      <rect x="500" y="69.82" width="60" height="10"/>
+      <rect x="450" y="69.82" width="30" height="10"/>
+      <rect x="450" y="51.82" width="30" height="10"/>
+      <rect x="450" y="33.82" width="30" height="10"/>
+      <rect x="460" y="15.82" width="100" height="10"/>
+    </g>
+    <g fill="#0645ad">
+      <circle cx="255.494" cy="146.736" r="15.083"/>
+      <circle cx="305.001" cy="14.999" r="14.999"/>
+    </g>
+  </g>
+</svg>
