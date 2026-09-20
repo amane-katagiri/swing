@@ -255,15 +255,23 @@ p {
   fill: var(--swing-accent);
 }
 
-.swing-brand-name {
-  font-family: var(--swing-font-display);
-  font-weight: 600;
-  font-size: 1.1rem;
-  letter-spacing: 0.04em;
-  white-space: nowrap;
+.swing-logotype {
+  height: 26px;
+  width: auto;
+  flex: none;
 }
 
-.swing-brand-name,
+/* The stripes are under 2px at this size and antialiasing turns them to mush. */
+.swing-logotype-body {
+  fill: var(--swing-text);
+  shape-rendering: crispEdges;
+}
+
+.swing-logotype-node {
+  fill: var(--swing-accent);
+}
+
+.swing-logotype,
 .swing-nav-label,
 .swing-nav-footer {
   transition: opacity 0.18s ease;
@@ -379,7 +387,7 @@ body[data-nav="collapsed"] .swing-nav {
   flex-basis: var(--swing-nav-collapsed-width);
 }
 
-body[data-nav="collapsed"] .swing-brand-name,
+body[data-nav="collapsed"] .swing-logotype,
 body[data-nav="collapsed"] .swing-nav-label,
 body[data-nav="collapsed"] .swing-nav-footer {
   opacity: 0;
@@ -445,7 +453,7 @@ body[data-nav="collapsed"] .swing-nav-toggle .swing-nav-icon {
     width: auto;
     flex-basis: auto;
   }
-  body[data-nav="collapsed"] .swing-brand-name,
+  body[data-nav="collapsed"] .swing-logotype,
   body[data-nav="collapsed"] .swing-nav-label {
     opacity: 1;
   }
@@ -604,7 +612,7 @@ body[data-nav="collapsed"] .swing-nav-toggle .swing-nav-icon {
 
 @media (prefers-reduced-motion: reduce) {
   .swing-nav,
-  .swing-brand-name,
+  .swing-logotype,
   .swing-nav-label,
   .swing-nav-footer,
   .swing-nav-toggle .swing-nav-icon {
