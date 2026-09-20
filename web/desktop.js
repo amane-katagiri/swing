@@ -260,19 +260,21 @@ function clampGeometry(g, size) {
   return { x, y, w, h };
 }
 
+/* Snapped to whole pixels: a half-pixel edge blurs the bitmap font inside the window and in the page frame. */
 function applyWindowGeometry() {
   winEls.win.classList.toggle('is-maximized', winState.maximized);
   if (winState.maximized) {
+    const size = screenSize();
     winEls.win.style.left = '0px';
     winEls.win.style.top = '0px';
-    winEls.win.style.width = '100%';
-    winEls.win.style.height = '100%';
+    winEls.win.style.width = `${Math.floor(size.width)}px`;
+    winEls.win.style.height = `${Math.floor(size.height)}px`;
     return;
   }
-  winEls.win.style.left = `${winState.geom.x}px`;
-  winEls.win.style.top = `${winState.geom.y}px`;
-  winEls.win.style.width = `${winState.geom.w}px`;
-  winEls.win.style.height = `${winState.geom.h}px`;
+  winEls.win.style.left = `${Math.round(winState.geom.x)}px`;
+  winEls.win.style.top = `${Math.round(winState.geom.y)}px`;
+  winEls.win.style.width = `${Math.round(winState.geom.w)}px`;
+  winEls.win.style.height = `${Math.round(winState.geom.h)}px`;
 }
 
 function updateMaxGlyph() {

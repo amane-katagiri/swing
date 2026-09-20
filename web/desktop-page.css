@@ -50,12 +50,22 @@ body {
 }
 
 .desk-page-inner {
-  max-width: 720px;
+  --desk-col: min(720px, 100%);
+  width: var(--desk-col);
   margin: 0 auto;
   padding: 20px 16px 28px;
   background: #ffffff;
   border: 2px solid #000080;
   box-shadow: 3px 3px 0 rgb(0 0 0 / 45%);
+}
+
+/* Centring on a half pixel blurs the bitmap font, so the column is snapped to an even width at a whole-pixel offset. */
+@supports (width: round(down, 50%, 2px)) {
+  .desk-page-inner {
+    --desk-col: round(down, min(720px, 100%), 2px);
+    margin-left: round(down, calc((100% - var(--desk-col)) / 2), 1px);
+    margin-right: auto;
+  }
 }
 
 .desk-hero {
@@ -134,6 +144,30 @@ body {
 
   to {
     transform: translateX(-100%);
+  }
+}
+
+@property --desk-marquee-x {
+  syntax: "<length-percentage>";
+  inherits: false;
+  initial-value: 0%;
+}
+
+@keyframes desk-marquee-snapped {
+  from {
+    --desk-marquee-x: 0%;
+  }
+
+  to {
+    --desk-marquee-x: -100%;
+  }
+}
+
+/* An animated transform rides a composited layer at half-pixel offsets, which blurs the bitmap font, so the offset is interpolated as a custom property and rounded before it reaches the transform. */
+@supports (transform: translateX(round(-100%, 1px))) {
+  .desk-marquee-track {
+    animation-name: desk-marquee-snapped;
+    transform: translateX(round(var(--desk-marquee-x), 1px));
   }
 }
 
