@@ -152,6 +152,8 @@ body[data-view="desktop"] .swing-main {
   background: var(--desk-navy);
   color: #ffffff;
   text-shadow: none;
+  outline: 1px dotted #ffffff;
+  outline-offset: -1px;
 }
 
 .desk-icon-shortcut:focus-visible span {
