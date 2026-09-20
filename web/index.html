@@ -48,6 +48,24 @@
       <path d="M5 7h14M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2M7 7l1 13a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1l1-13"></path>
       <path d="M10 11v6M14 11v6"></path>
     </symbol>
+    <path id="swing-se-s" d="M22.93,8.86C20.98,6.54 17.9,5.52 14.96,6.22C12.01,6.91 9.71,9.21 9.02,12.16C8.32,15.1 9.34,18.18 11.66,20.13C17.82,25.3 23.06,17.17 29.23,22.34C32.12,24.77 33.4,28.63 32.53,32.31C31.66,35.99 28.79,38.86 25.11,39.73C21.43,40.6 17.57,39.32 15.14,36.43"></path>
+    <path id="swing-se-e" d="M37.8,28.5V61.5M37.8,32H58.8M37.8,45H53.8M37.8,58H58.8"></path>
+    <mask id="swing-se-gap" maskUnits="userSpaceOnUse" x="0" y="0" width="64" height="64">
+      <rect width="64" height="64" fill="#ffffff"></rect>
+      <use href="#swing-se-s" fill="none" stroke="#000000" stroke-width="10.5"></use>
+    </mask>
+    <linearGradient id="swing-se-gold" x1="0" y1="0" x2="0.8" y2="1">
+      <stop offset="0" stop-color="#ffe680"></stop><stop offset="1" stop-color="#f0a010"></stop>
+    </linearGradient>
+    <linearGradient id="swing-se-blue" x1="0" y1="0" x2="0.8" y2="1">
+      <stop offset="0" stop-color="#8fd4ff"></stop><stop offset="1" stop-color="#3a86f0"></stop>
+    </linearGradient>
+    <symbol id="icon-desk-swing-color" viewBox="5 2 54 60">
+      <g fill="none" stroke-width="7" stroke-linecap="butt">
+        <use href="#swing-se-e" stroke="url(#swing-se-blue)" mask="url(#swing-se-gap)"></use>
+        <use href="#swing-se-s" stroke="url(#swing-se-gold)"></use>
+      </g>
+    </symbol>
     <symbol id="icon-desk-start" viewBox="72 24 432 432">
       <circle cx="256" cy="256" r="62" fill="#ffcc33"></circle>
       <path d="M188 334 C108 290 106 172 244 134 C314 114 392 94 440 86 L444 112 C394 118 320 136 270 150 C176 176 150 262 188 334 Z" fill="#e0332f"></path>
@@ -57,13 +75,10 @@
         <circle cx="400" cy="112" r="28" fill="#2f8f3f"></circle>
       </g>
     </symbol>
-    <symbol id="icon-desk-swing" viewBox="72 24 432 432">
-      <circle cx="256" cy="256" r="62"></circle>
-      <path d="M188 334 C108 290 106 172 244 134 C314 114 392 94 440 86 L444 112 C394 118 320 136 270 150 C176 176 150 262 188 334 Z"></path>
-      <circle cx="452" cy="92" r="40"></circle>
-      <g transform="rotate(180 256 256)">
-        <path d="M188 334 C110 290 110 176 244 138 C300 122 346 110 386 104 L389 126 C350 132 318 142 270 152 C176 178 150 262 188 334 Z"></path>
-        <circle cx="400" cy="112" r="28"></circle>
+    <symbol id="icon-desk-swing" viewBox="5 2 54 60">
+      <g fill="none" stroke="currentColor" stroke-width="7" stroke-linecap="butt">
+        <use href="#swing-se-e" mask="url(#swing-se-gap)"></use>
+        <use href="#swing-se-s"></use>
       </g>
     </symbol>
     <symbol id="icon-desk-tray-volume" viewBox="0 0 16 16" shape-rendering="crispEdges">
@@ -538,7 +553,7 @@
 
         <div class="desk-window is-loading" id="desk-window">
           <div class="desk-titlebar" id="desk-titlebar">
-            <svg class="desk-titlebar-icon" aria-hidden="true"><use href="#icon-desk-start"></use></svg>
+            <svg class="desk-titlebar-icon" aria-hidden="true"><use href="#icon-desk-swing-color"></use></svg>
             <span class="desk-titlebar-text" id="desk-titlebar-text">リンク集 - SWING Explorer</span>
             <div class="desk-titlebar-btns">
               <button type="button" class="desk-tbtn desk-tbtn-min" id="desk-btn-min" aria-label="最小化" title="最小化"><span class="desk-glyph desk-glyph-min" aria-hidden="true"></span></button>
@@ -641,7 +656,7 @@
       <div class="desk-taskbar">
         <span class="desk-start" aria-hidden="true"><svg class="desk-start-icon" aria-hidden="true"><use href="#icon-desk-start"></use></svg>スタート</span>
         <button type="button" class="desk-taskbtn is-active" id="desk-taskbtn" aria-pressed="true">
-          <svg class="desk-taskbtn-icon" aria-hidden="true"><use href="#icon-desk-start"></use></svg>
+          <svg class="desk-taskbtn-icon" aria-hidden="true"><use href="#icon-desk-swing-color"></use></svg>
           <span id="desk-taskbtn-text">リンク集 - SWING Explorer</span>
         </button>
         <span class="desk-tray">

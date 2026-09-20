@@ -118,8 +118,9 @@ body[data-view="desktop"] .swing-main {
 }
 
 .desk-icon-glyph-solid {
-  fill: #ffffff;
+  fill: none;
   stroke: none;
+  color: #ffffff;
 }
 
 .desk-icon-shortcut {
@@ -131,8 +132,9 @@ body[data-view="desktop"] .swing-main {
 }
 
 .desk-icon.is-selected .desk-icon-glyph-solid {
-  fill: #a8c8ff;
+  fill: none;
   stroke: none;
+  color: #a8c8ff;
 }
 
 .desk-icon.is-selected span {
