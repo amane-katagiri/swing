@@ -10,7 +10,7 @@ use crate::nip05::Nip05Verify;
 use crate::nostr::{self, RelayClient, ReportRelay, SiteEvent};
 use crate::state::State;
 
-use super::Agent;
+use super::{Agent, now_secs};
 
 pub(super) async fn refresh_follow_set<C, N, R>(
     relay: &RelayClient,
@@ -36,7 +36,7 @@ pub(super) async fn refresh_follow_set<C, N, R>(
             .follow_set
             .clone()
             .filter(|ev| nostr::is_follow_set_of(ev, &own, &config.nostr.mirror_set));
-        let choice = nostr::choose_follow_set(fetched, fetch_succeeded, stored);
+        let choice = nostr::choose_follow_set(fetched, fetch_succeeded, stored, now_secs());
         if let Some(choice) = &choice
             && choice.save
         {
@@ -94,7 +94,9 @@ pub(super) async fn refresh_follow_set<C, N, R>(
                     },
                 )
                 .collect();
-            let latest = nostr::select_latest(&parsed).into_values().collect();
+            let latest = nostr::select_latest(&parsed, now_secs())
+                .into_values()
+                .collect();
             let selected = {
                 let state = agent.state.lock().await;
                 limit_sites_per_account(latest, &state, config.policy.max_sites_per_account)

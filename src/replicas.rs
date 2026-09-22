@@ -22,7 +22,7 @@ fn collect_reports(
     now: u64,
 ) -> HashMap<SiteAddress, Vec<ReplicaReport>> {
     let mut out: HashMap<SiteAddress, Vec<ReplicaReport>> = HashMap::new();
-    for event in nostr::newest_by_address(events) {
+    for event in nostr::newest_by_address(events, now) {
         let Ok(report) = nostr::parse_replica_report(&event, report_kind, site_event_kind) else {
             continue;
         };
@@ -117,7 +117,7 @@ pub async fn collect(
         .iter()
         .filter_map(|e| nostr::parse_site_event(e, config.nostr.site_event_kind).ok())
         .collect();
-    let latest = nostr::select_latest(&parsed);
+    let latest = nostr::select_latest(&parsed, Timestamp::now().as_secs());
     let sites: Vec<&SiteEvent> = latest.values().collect();
     let reports = fetch_for_sites(relay, config, &sites).await?;
 

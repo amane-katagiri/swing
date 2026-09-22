@@ -7,6 +7,14 @@ use nostr_sdk::prelude::*;
 
 pub const SITE_SUBSCRIPTION_ID: &str = "swing-sites";
 
+// `created_at` is self-declared by the author, so a small tolerance is all that
+// separates honest clock skew from a timestamp forged to defeat the rate limit.
+pub const MAX_FUTURE_SKEW: u64 = 900;
+
+pub fn plausible_at(created_at: u64, now: u64) -> bool {
+    created_at <= now.saturating_add(MAX_FUTURE_SKEW)
+}
+
 pub struct RelayClient {
     pub client: Client,
     pub keys: Keys,
@@ -52,10 +60,12 @@ impl RelayClient {
             .author(self.keys.public_key())
             .identifier(mirror_set);
         let events = self.fetch(filter, "fetching follow set").await?;
+        let now = Timestamp::now().as_secs();
         // Defense in depth against a relay that ignores the filter.
         Ok(events
             .into_iter()
             .filter(|e| is_follow_set_of(e, &self.keys.public_key(), mirror_set))
+            .filter(|e| plausible_at(e.created_at.as_secs(), now))
             .reduce(|a, b| if is_newer_replaceable(&b, &a) { b } else { a }))
     }
 
@@ -100,9 +110,12 @@ impl RelayClient {
             .authors(authors.iter().copied())
             .identifier(mirror_set);
         let events = self.fetch(filter, "fetching follow sets").await?;
+        let now = Timestamp::now().as_secs();
         let mut newest: HashMap<PublicKey, Event> = HashMap::new();
         for event in events {
-            if !is_follow_set_of(&event, &event.pubkey, mirror_set) {
+            if !is_follow_set_of(&event, &event.pubkey, mirror_set)
+                || !plausible_at(event.created_at.as_secs(), now)
+            {
                 continue;
             }
             match newest.get(&event.pubkey) {
@@ -291,7 +304,12 @@ pub fn choose_follow_set(
     fetched: Option<Event>,
     fetch_succeeded: bool,
     stored: Option<Event>,
+    now: u64,
 ) -> Option<FollowSetChoice> {
+    // A poisoned stored copy must be dropped too, not just an implausible
+    // fetch, or a legitimately timed fetch could never displace it.
+    let fetched = fetched.filter(|e| plausible_at(e.created_at.as_secs(), now));
+    let stored = stored.filter(|e| plausible_at(e.created_at.as_secs(), now));
     match (fetched, stored) {
         (None, None) => None,
         (Some(event), None) => Some(FollowSetChoice {
@@ -412,9 +430,12 @@ pub fn parse_site_event(event: &Event, expected_kind: u16) -> Result<SiteEvent> 
     })
 }
 
-pub fn select_latest(events: &[SiteEvent]) -> HashMap<(String, String), SiteEvent> {
+pub fn select_latest(events: &[SiteEvent], now: u64) -> HashMap<(String, String), SiteEvent> {
     let mut latest: HashMap<(String, String), SiteEvent> = HashMap::new();
     for ev in events {
+        if !plausible_at(ev.created_at, now) {
+            continue;
+        }
         let key = (ev.pubkey.to_hex(), ev.d.clone());
         match latest.get(&key) {
             Some(existing) if existing.created_at >= ev.created_at => {}
@@ -470,7 +491,7 @@ pub struct ReplicaReport {
 
 impl ReplicaReport {
     pub fn counts_at(&self, now: u64) -> bool {
-        self.created_at <= now.saturating_add(crate::policy::MAX_FUTURE_SKEW)
+        plausible_at(self.created_at, now)
             && now.saturating_sub(self.created_at) <= MAX_REPORT_AGE
             && self.expiration.is_none_or(|exp| exp > now)
     }
@@ -524,9 +545,12 @@ pub fn parse_replica_report(
     })
 }
 
-pub fn newest_by_address(events: impl IntoIterator<Item = Event>) -> Vec<Event> {
+pub fn newest_by_address(events: impl IntoIterator<Item = Event>, now: u64) -> Vec<Event> {
     let mut newest: HashMap<(PublicKey, Kind, Option<String>), Event> = HashMap::new();
     for event in events {
+        if !plausible_at(event.created_at.as_secs(), now) {
+            continue;
+        }
         let key = (event.pubkey, event.kind, event.tags.identifier());
         match newest.get(&key) {
             Some(current) if !is_newer_replaceable(&event, current) => {}
@@ -928,7 +952,7 @@ mod tests {
                 created_at: 999,
             },
         ];
-        let latest = select_latest(&events);
+        let latest = select_latest(&events, 1000);
         assert_eq!(latest.len(), 3);
         assert_eq!(
             latest[&(k1.public_key().to_hex(), "site-a".to_string())].cid,
@@ -941,6 +965,32 @@ mod tests {
         assert_eq!(
             latest[&(k2.public_key().to_hex(), "site-a".to_string())].cid,
             "bafy-k2"
+        );
+    }
+
+    #[test]
+    fn select_latest_ignores_an_implausible_future_created_at() {
+        let k = keys();
+        fn ev(pubkey: PublicKey, cid: &str, created_at: u64) -> SiteEvent {
+            SiteEvent {
+                pubkey,
+                d: "site-a".into(),
+                cid: cid.into(),
+                url: None,
+                size: None,
+                title: None,
+                message: None,
+                created_at,
+            }
+        }
+        let events = vec![
+            ev(k.public_key(), "bafy-plausible", 1000 + MAX_FUTURE_SKEW),
+            ev(k.public_key(), "bafy-forged", 1000 + MAX_FUTURE_SKEW + 1),
+        ];
+        let latest = select_latest(&events, 1000);
+        assert_eq!(
+            latest[&(k.public_key().to_hex(), "site-a".to_string())].cid,
+            "bafy-plausible"
         );
     }
 
@@ -993,25 +1043,63 @@ mod tests {
         let old = follow_set(&k, "swing", 100, "old");
         let new = follow_set(&k, "swing", 200, "new");
 
-        assert_eq!(choose_follow_set(None, true, None), None);
+        assert_eq!(choose_follow_set(None, true, None, 1000), None);
 
-        let c = choose_follow_set(Some(new.clone()), true, None).unwrap();
+        let c = choose_follow_set(Some(new.clone()), true, None, 1000).unwrap();
         assert_eq!((c.event.id, c.save, c.republish), (new.id, true, false));
 
-        let c = choose_follow_set(Some(new.clone()), true, Some(old.clone())).unwrap();
+        let c = choose_follow_set(Some(new.clone()), true, Some(old.clone()), 1000).unwrap();
         assert_eq!((c.event.id, c.save, c.republish), (new.id, true, false));
 
-        let c = choose_follow_set(Some(old.clone()), true, Some(new.clone())).unwrap();
+        let c = choose_follow_set(Some(old.clone()), true, Some(new.clone()), 1000).unwrap();
         assert_eq!((c.event.id, c.save, c.republish), (new.id, false, true));
 
-        let c = choose_follow_set(Some(new.clone()), true, Some(new.clone())).unwrap();
+        let c = choose_follow_set(Some(new.clone()), true, Some(new.clone()), 1000).unwrap();
         assert_eq!((c.event.id, c.save, c.republish), (new.id, false, false));
 
-        let c = choose_follow_set(None, true, Some(new.clone())).unwrap();
+        let c = choose_follow_set(None, true, Some(new.clone()), 1000).unwrap();
         assert_eq!((c.event.id, c.save, c.republish), (new.id, false, true));
 
-        let c = choose_follow_set(None, false, Some(new.clone())).unwrap();
+        let c = choose_follow_set(None, false, Some(new.clone()), 1000).unwrap();
         assert_eq!((c.event.id, c.save, c.republish), (new.id, false, false));
+    }
+
+    #[test]
+    fn choose_follow_set_drops_an_implausible_future_fetch_and_keeps_stored() {
+        let k = keys();
+        let stored = follow_set(&k, "swing", 100, "stored");
+        let poisoned_fetch = follow_set(&k, "swing", 1000 + MAX_FUTURE_SKEW + 1, "poisoned");
+
+        let c = choose_follow_set(
+            Some(poisoned_fetch.clone()),
+            true,
+            Some(stored.clone()),
+            1000,
+        )
+        .unwrap();
+        assert_eq!((c.event.id, c.save, c.republish), (stored.id, false, true));
+    }
+
+    #[test]
+    fn choose_follow_set_drops_a_poisoned_stored_copy_and_saves_the_fetched_one() {
+        let k = keys();
+        let poisoned_stored = follow_set(&k, "swing", 1000 + MAX_FUTURE_SKEW + 1, "poisoned");
+        let fetched = follow_set(&k, "swing", 100, "fetched");
+
+        let c =
+            choose_follow_set(Some(fetched.clone()), true, Some(poisoned_stored), 1000).unwrap();
+        assert_eq!((c.event.id, c.save, c.republish), (fetched.id, true, false));
+    }
+
+    #[test]
+    fn choose_follow_set_returns_none_when_only_a_poisoned_stored_copy_exists() {
+        let k = keys();
+        let poisoned_stored = follow_set(&k, "swing", 1000 + MAX_FUTURE_SKEW + 1, "poisoned");
+
+        assert_eq!(
+            choose_follow_set(None, true, Some(poisoned_stored), 1000),
+            None
+        );
     }
 
     const CID_A: &str = "bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi";
@@ -1192,10 +1280,10 @@ mod tests {
 
     #[test]
     fn counts_at_rejects_created_at_beyond_the_future_skew() {
-        let report = report_at(1000 + crate::policy::MAX_FUTURE_SKEW, None);
+        let report = report_at(1000 + MAX_FUTURE_SKEW, None);
         assert!(report.counts_at(1000));
 
-        let report = report_at(1000 + crate::policy::MAX_FUTURE_SKEW + 1, None);
+        let report = report_at(1000 + MAX_FUTURE_SKEW + 1, None);
         assert!(!report.counts_at(1000));
     }
 
@@ -1259,12 +1347,10 @@ mod tests {
         let other_site = report(&r1, &author, "other.example", &[CID_A], 50);
         let other_reporter = report(&r2, &author, "example.com", &[CID_A], 50);
 
-        let mut ids: Vec<EventId> = newest_by_address(vec![
-            new.clone(),
-            old,
-            other_site.clone(),
-            other_reporter.clone(),
-        ])
+        let mut ids: Vec<EventId> = newest_by_address(
+            vec![new.clone(), old, other_site.clone(), other_reporter.clone()],
+            1000,
+        )
         .into_iter()
         .map(|e| e.id)
         .collect();
@@ -1272,5 +1358,25 @@ mod tests {
         let mut expected = vec![new.id, other_site.id, other_reporter.id];
         expected.sort();
         assert_eq!(ids, expected);
+    }
+
+    #[test]
+    fn newest_by_address_ignores_an_implausible_future_created_at() {
+        let r = keys();
+        let author = keys().public_key();
+        let plausible = report(&r, &author, "example.com", &[CID_A], 1000 + MAX_FUTURE_SKEW);
+        let forged = report(
+            &r,
+            &author,
+            "example.com",
+            &[CID_B],
+            1000 + MAX_FUTURE_SKEW + 1,
+        );
+
+        let ids: Vec<EventId> = newest_by_address(vec![forged, plausible.clone()], 1000)
+            .into_iter()
+            .map(|e| e.id)
+            .collect();
+        assert_eq!(ids, vec![plausible.id]);
     }
 }

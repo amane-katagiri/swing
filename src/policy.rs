@@ -1,8 +1,5 @@
 use crate::config::PolicyConfig;
-
-// `created_at` is self-declared by the author, so a small tolerance is all that
-// separates honest clock skew from a timestamp forged to defeat the rate limit.
-pub const MAX_FUTURE_SKEW: u64 = 900;
+use crate::nostr;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VersionInfo {
@@ -101,7 +98,7 @@ pub fn decide(
     cfg: &PolicyConfig,
     now: u64,
 ) -> Decision {
-    if candidate.created_at > now.saturating_add(MAX_FUTURE_SKEW) {
+    if !nostr::plausible_at(candidate.created_at, now) {
         return Decision::skip("future_created_at");
     }
 
@@ -284,7 +281,7 @@ mod tests {
 
     #[test]
     fn created_at_within_the_skew_tolerance_is_accepted() {
-        let cand = c("bafy1", Some(10), 1000 + MAX_FUTURE_SKEW);
+        let cand = c("bafy1", Some(10), 1000 + nostr::MAX_FUTURE_SKEW);
         let d = decide(&[], Usage::default(), &cand, &cfg(), 1000);
         assert_eq!(d.store, Some("bafy1".to_string()));
     }

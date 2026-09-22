@@ -68,6 +68,16 @@ where
 {
     pub(super) fn submit(self: &Arc<Self>, ev: SiteEvent, tasks: &mut JoinSet<()>) {
         let pubkey_hex = ev.pubkey.to_hex();
+        if !crate::nostr::plausible_at(ev.created_at, now_secs()) {
+            warn!(
+                site = %ev.d,
+                pubkey = %pubkey_hex,
+                created_at = ev.created_at,
+                reason = "future_created_at",
+                "dropping site event before queueing"
+            );
+            return;
+        }
         if !self.is_target(&ev.pubkey) {
             warn!(
                 site = %ev.d,
@@ -515,6 +525,30 @@ mod tests {
         fetched.sort();
         assert_eq!(fetched, vec!["bafy-1", "bafy-3", "bafy-other"]);
         assert!(fx.kubo().stores("bafy-3"));
+        assert!(fx.agent.queue.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn submit_drops_a_future_event_without_displacing_a_pending_one() {
+        let fx = Fixture::new(default_policy(), sized(&[("bafy-1", 10), ("bafy-2", 10)]));
+        let gate = fx.agent.ipfs.gate.write().await;
+
+        let mut tasks = JoinSet::new();
+        fx.agent
+            .submit(fx.event(D, "bafy-1", None, 100), &mut tasks);
+        let forged_future = now_secs() + crate::nostr::MAX_FUTURE_SKEW + 1;
+        fx.agent
+            .submit(fx.event(D, "bafy-forged", None, forged_future), &mut tasks);
+        fx.agent
+            .submit(fx.event(D, "bafy-2", None, 200), &mut tasks);
+        assert_eq!(tasks.len(), 1);
+        drop(gate);
+        while let Some(joined) = tasks.join_next().await {
+            joined.unwrap();
+        }
+
+        assert_eq!(fx.kubo().fetched, vec!["bafy-1", "bafy-2"]);
+        assert!(fx.kubo().stores("bafy-2"));
         assert!(fx.agent.queue.lock().unwrap().is_empty());
     }
 

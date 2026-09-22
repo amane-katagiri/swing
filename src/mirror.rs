@@ -136,7 +136,12 @@ async fn load_state(config: &Config) -> Result<State> {
 fn newest_follow_set(
     fetched: Option<Event>,
     saved: Option<Event>,
+    now: u64,
 ) -> (Option<Event>, Option<&'static str>) {
+    // `fetch_follow_set` already drops an implausible fetch; filtering `saved`
+    // too closes the recovery path for a poisoned copy saved before this check.
+    let fetched = fetched.filter(|e| nostr::plausible_at(e.created_at.as_secs(), now));
+    let saved = saved.filter(|e| nostr::plausible_at(e.created_at.as_secs(), now));
     match (fetched, saved) {
         (Some(fetched), Some(saved)) if nostr::is_newer_replaceable(&saved, &fetched) => (
             Some(saved),
@@ -158,7 +163,11 @@ async fn current_follow_set(
     let saved = load_state(config).await?.follow_set.filter(|ev| {
         nostr::is_follow_set_of(ev, &relay.keys.public_key(), &config.nostr.mirror_set)
     });
-    Ok(newest_follow_set(fetched, saved))
+    Ok(newest_follow_set(
+        fetched,
+        saved,
+        Timestamp::now().as_secs(),
+    ))
 }
 
 #[derive(Debug, Clone)]
@@ -495,7 +504,7 @@ pub async fn collect_sites(relay: &RelayClient, config: &Config) -> Result<Sites
             .iter()
             .filter_map(|e| nostr::parse_site_event(e, config.nostr.site_event_kind).ok())
             .collect();
-        nostr::select_latest(&parsed)
+        nostr::select_latest(&parsed, Timestamp::now().as_secs())
     };
     let latest_sites: Vec<&nostr::SiteEvent> = latest.values().collect();
     let (reports, replicas_error) =
@@ -866,22 +875,39 @@ mod tests {
         let old = signed_follow_set(&k, 100);
         let new = signed_follow_set(&k, 200);
 
-        let (ev, note) = newest_follow_set(Some(old.clone()), Some(new.clone()));
+        let (ev, note) = newest_follow_set(Some(old.clone()), Some(new.clone()), 1000);
         assert_eq!(ev.unwrap().id, new.id);
         assert!(note.is_some());
 
-        let (ev, note) = newest_follow_set(Some(new.clone()), Some(old.clone()));
+        let (ev, note) = newest_follow_set(Some(new.clone()), Some(old.clone()), 1000);
         assert_eq!(ev.unwrap().id, new.id);
         assert!(note.is_none());
 
-        let (ev, note) = newest_follow_set(None, Some(old.clone()));
+        let (ev, note) = newest_follow_set(None, Some(old.clone()), 1000);
         assert_eq!(ev.unwrap().id, old.id);
         assert!(note.is_some());
 
-        let (ev, note) = newest_follow_set(Some(old.clone()), None);
+        let (ev, note) = newest_follow_set(Some(old.clone()), None, 1000);
         assert_eq!(ev.unwrap().id, old.id);
         assert!(note.is_none());
 
-        assert_eq!(newest_follow_set(None, None), (None, None));
+        assert_eq!(newest_follow_set(None, None, 1000), (None, None));
+    }
+
+    #[test]
+    fn newest_follow_set_drops_a_poisoned_saved_copy() {
+        let k = keys();
+        let poisoned_saved = signed_follow_set(&k, 1000 + nostr::MAX_FUTURE_SKEW + 1);
+        let fetched = signed_follow_set(&k, 100);
+
+        let (ev, note) = newest_follow_set(Some(fetched.clone()), Some(poisoned_saved), 1000);
+        assert_eq!(ev.unwrap().id, fetched.id);
+        assert!(note.is_none());
+
+        let poisoned_saved_only = signed_follow_set(&k, 1000 + nostr::MAX_FUTURE_SKEW + 1);
+        assert_eq!(
+            newest_follow_set(None, Some(poisoned_saved_only), 1000),
+            (None, None)
+        );
     }
 }

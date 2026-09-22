@@ -392,7 +392,7 @@ pub async fn publish_sites(
         .iter()
         .filter_map(|e| crate::nostr::parse_site_event(e, state.config.nostr.site_event_kind).ok())
         .collect();
-    let latest = crate::nostr::select_latest(&parsed);
+    let latest = crate::nostr::select_latest(&parsed, Timestamp::now().as_secs());
     let mut sites: Vec<&crate::nostr::SiteEvent> = latest.values().collect();
     sites.sort_by(|a, b| a.d.cmp(&b.d));
     Ok(Json(dto::publish_sites_dto(

@@ -5,7 +5,7 @@
 共通:
 
 - `<key>` は npub / hex / nprofile を受け付ける。
-- 「Follow Set」は kind 30000、`d = mirror_set` のうち、作者ごとに NIP-01 の置き換え規則で最新のもの。
+- 「Follow Set」は kind 30000、`d = mirror_set` のうち、作者ごとに NIP-01 の置き換え規則で最新のもの。`created_at` が現在時刻より 900 秒（`nostr::MAX_FUTURE_SKEW`）を超えて先のものは、それが relay から取れた最新であっても無いものとして扱う（`RelayClient::fetch_follow_set` / `fetch_follow_sets`）。「サイトごとの最新のサイトイベント」（sites・replicas・webring で使う `nostr::select_latest`）も同じ基準で、先すぎる `created_at` のイベントは選ばない。
 - `agent` と `publish` 以外は読み取り専用で、`state.json` も MFS も変えない（`mirror add` / `remove` は Follow Set を relay に送る）。
 
 ## agent

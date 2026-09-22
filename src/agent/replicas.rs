@@ -129,7 +129,7 @@ impl<C: KuboStore, N: Nip05Verify, R: ReportRelay> Agent<C, N, R> {
             }
         };
         let own = events.into_iter().filter(|e| e.pubkey == self.own);
-        for event in nostr::newest_by_address(own) {
+        for event in nostr::newest_by_address(own, now_secs()) {
             let report = match nostr::parse_replica_report(
                 &event,
                 kind,

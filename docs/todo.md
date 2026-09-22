@@ -31,7 +31,6 @@
 | 低 | compose 専用の環境変数（`SWING_KUBO_GATEWAY_BIND`、`SWING_DASHBOARD_BIND` など）を `swing.toml` へ寄せる。compose 側は外部の Kubo を使う設定にする | [配布方式の設計](log/2026-09-21-distribution-design.md) |
 | 低 | Kubo RPC を Unix socket か loopback の動的ポートに閉じる。単一プロセスで動かすなら 5001 を固定する必要が無い | [配布方式の設計](log/2026-09-21-distribution-design.md) |
 | 低 | 配布前に確かめること: upstream の kubo darwin-arm64 バイナリが署名されているか、Windows のファイアウォール（4001）の初回ダイアログの扱い、既存 compose 利用者が `ipfs-data` から移行する手順 | [配布方式の設計](log/2026-09-21-distribution-design.md) |
-| 中 | `select_latest`（`src/nostr.rs`）と Follow Set の選択（`is_newer_replaceable` / `choose_follow_set`）に `MAX_FUTURE_SKEW` を適用する。`policy::decide` は未来の `created_at` を拒否するが、現行版の選択は最大の `created_at` を取るだけなので、遠未来の `created_at` を持つサイトイベントが 1 件出ると `swing mirror sites` / `replicas` / `webring` とダッシュボードはその CID を現行版として表示し、レプリカ数もそれに対して数える。Follow Set は自分の署名が要るが、遠未来の kind 30000 が一度 state に保存されるとまともな時刻の更新が二度と勝てず、ミラー対象が凍結する | 監査（自己申告の信用） |
 | 中 | `url` タグの制御文字を拒否する。`valid_http_url` は長さとスキームしか見ず、`Url::parse` は制御文字を含む文字列でも成功する。`mirror.rs` の `format_site_line` は `url` を無加工で出すので `swing status` で端末エスケープが刺さる（`title` と `content` は `sanitize_display_text` を通る） | 監査（自己申告の信用） |
 | 中 | レプリカ報告者の数に上限を付ける。`replicas::collect` は報告者を全部集めて報告者ごとに Follow Set も引き、`web/webring.js` は報告者数ぶん `<li>` を作る。報告者は捨て鍵で量産できる | 監査（自己申告の信用） |
 | 中 | サイト一覧（`web/sites.js` のカードと表）の容量は自己申告の `size` タグをそのまま表示している。実測値は Storage check にしか出ない。申告値であることを示すか、実測値を並べる | 監査（自己申告の信用） |

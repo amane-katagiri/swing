@@ -127,7 +127,7 @@ async fn replica_reports_are_found_by_site_and_replaced_by_withdrawals() {
         .fetch_replica_reports(35981, &[coordinate])
         .await
         .unwrap();
-    let mut reports: Vec<nostr::ReplicaReport> = nostr::newest_by_address(events)
+    let mut reports: Vec<nostr::ReplicaReport> = nostr::newest_by_address(events, now)
         .iter()
         .map(|e| nostr::parse_replica_report(e, 35981, 35980).unwrap())
         .collect();

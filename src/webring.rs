@@ -395,7 +395,9 @@ pub async fn collect(
         .iter()
         .filter_map(|e| nostr::parse_site_event(e, config.nostr.site_event_kind).ok())
         .collect();
-    let latest: Vec<SiteEvent> = nostr::select_latest(&parsed).into_values().collect();
+    let latest: Vec<SiteEvent> = nostr::select_latest(&parsed, Timestamp::now().as_secs())
+        .into_values()
+        .collect();
     let name_lists = site_name_lists(&graph.nodes, &latest);
     let names = name_lists
         .iter()
