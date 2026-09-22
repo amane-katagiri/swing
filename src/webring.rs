@@ -57,6 +57,7 @@ impl FollowSetSource for RelaySource<'_> {
 pub struct Crawl {
     pub depths: BTreeMap<PublicKey, usize>,
     pub follows: HashMap<PublicKey, Vec<PublicKey>>,
+    pub over_budget: usize,
 }
 
 pub async fn crawl<S: FollowSetSource>(
@@ -66,6 +67,13 @@ pub async fn crawl<S: FollowSetSource>(
 ) -> Result<Crawl> {
     let mut out = Crawl::default();
     for root in roots {
+        if out.depths.contains_key(root) {
+            continue;
+        }
+        if out.depths.len() >= nostr::budget::MAX_CRAWL_NODES {
+            out.over_budget += 1;
+            continue;
+        }
         out.depths.insert(*root, 0);
     }
     let mut frontier: Vec<PublicKey> = out.depths.keys().copied().collect();
@@ -77,7 +85,7 @@ pub async fn crawl<S: FollowSetSource>(
             break;
         }
         let referencing = source.referencing(&frontier).await?;
-        let next: BTreeSet<PublicKey> = sets
+        let candidates: BTreeSet<PublicKey> = sets
             .values()
             .flatten()
             .chain(referencing.iter())
@@ -86,10 +94,16 @@ pub async fn crawl<S: FollowSetSource>(
             .collect();
         out.follows.extend(sets);
         depth += 1;
-        for pk in &next {
-            out.depths.insert(*pk, depth);
+        let mut next = Vec::new();
+        for pk in candidates {
+            if out.depths.len() >= nostr::budget::MAX_CRAWL_NODES {
+                out.over_budget += 1;
+                continue;
+            }
+            out.depths.insert(pk, depth);
+            next.push(pk);
         }
-        frontier = next.into_iter().collect();
+        frontier = next;
     }
     Ok(out)
 }
@@ -100,6 +114,7 @@ pub struct Graph {
     pub without_follow_set: BTreeSet<PublicKey>,
     pub edges: BTreeSet<(PublicKey, PublicKey)>,
     pub beyond: usize,
+    pub over_budget: usize,
 }
 
 pub fn build_graph(crawl: &Crawl) -> Graph {
@@ -155,6 +170,7 @@ pub fn build_graph(crawl: &Crawl) -> Graph {
             .collect(),
         nodes,
         beyond,
+        over_budget: crawl.over_budget,
     }
 }
 
@@ -299,6 +315,13 @@ pub fn render_text(
             graph.beyond
         ));
     }
+    if graph.over_budget > 0 {
+        out.push_str(&format!(
+            "\n(crawl stopped at the {}-account budget; not reached: {})\n",
+            nostr::budget::MAX_CRAWL_NODES,
+            graph.over_budget
+        ));
+    }
     out
 }
 
@@ -395,9 +418,14 @@ pub async fn collect(
         .iter()
         .filter_map(|e| nostr::parse_site_event(e, config.nostr.site_event_kind).ok())
         .collect();
-    let latest: Vec<SiteEvent> = nostr::select_latest(&parsed, Timestamp::now().as_secs())
-        .into_values()
-        .collect();
+    let latest_map = nostr::select_latest(&parsed, Timestamp::now().as_secs());
+    let latest: Vec<SiteEvent> = nostr::cap_sites_per_author(
+        latest_map.values(),
+        nostr::budget::MAX_SITES_PER_AUTHOR_LISTED,
+    )
+    .into_iter()
+    .cloned()
+    .collect();
     let name_lists = site_name_lists(&graph.nodes, &latest);
     let names = name_lists
         .iter()
@@ -530,6 +558,20 @@ mod tests {
         assert_eq!(source.calls.lock().unwrap().len(), 1);
     }
 
+    #[tokio::test]
+    async fn crawl_stops_at_the_node_budget_and_counts_the_excess() {
+        let root = Keys::generate().public_key();
+        let fanout: Vec<PublicKey> = (0..nostr::budget::MAX_CRAWL_NODES + 50)
+            .map(|_| Keys::generate().public_key())
+            .collect();
+        let source = FakeSource::new(&[(root, fanout.as_slice())]);
+
+        let result = crawl(&source, &[root], 1).await.unwrap();
+
+        assert_eq!(result.depths.len(), nostr::budget::MAX_CRAWL_NODES);
+        assert_eq!(result.depths.len() + result.over_budget, fanout.len() + 1);
+    }
+
     #[test]
     fn build_graph_drops_self_links_outside_targets_and_disconnected_accounts() {
         let k = keys(5);
@@ -541,6 +583,7 @@ mod tests {
                 (bob, vec![me]),
                 (stale, vec![carol]),
             ]),
+            over_budget: 0,
         };
 
         let graph = build_graph(&crawl);
@@ -557,6 +600,7 @@ mod tests {
         let crawl = Crawl {
             depths: BTreeMap::from([(k[0], 0), (k[1], 0)]),
             follows: HashMap::new(),
+            over_budget: 0,
         };
         let graph = build_graph(&crawl);
         assert_eq!(graph.nodes.len(), 2);
@@ -572,6 +616,7 @@ mod tests {
             without_follow_set: BTreeSet::from([dave]),
             edges: BTreeSet::from([(me, bob), (bob, me), (carol, me), (bob, dave)]),
             beyond: 2,
+            over_budget: 0,
         };
         let names = site_names(
             &graph.nodes,
@@ -604,6 +649,17 @@ mod tests {
             "  \"x\" <y> #z → blog.me.example, me.example\n  bob.example → {dave}\n"
         )));
         assert!(text.ends_with("\n(accounts beyond depth 2, not shown: 2)\n"));
+    }
+
+    #[test]
+    fn text_reports_accounts_dropped_by_the_crawl_budget() {
+        let (_, mut graph, names) = sample();
+        graph.over_budget = 3;
+        let text = render_text(&graph, &names, "swing", 2);
+        assert!(text.ends_with(&format!(
+            "\n(crawl stopped at the {}-account budget; not reached: 3)\n",
+            nostr::budget::MAX_CRAWL_NODES
+        )));
     }
 
     #[test]

@@ -15,12 +15,18 @@ pub struct Replica {
     pub latest: bool,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct SiteReportSet {
+    pub reports: Vec<ReplicaReport>,
+    pub dropped: usize,
+}
+
 fn collect_reports(
     events: Vec<Event>,
     report_kind: u16,
     site_event_kind: u16,
     now: u64,
-) -> HashMap<SiteAddress, Vec<ReplicaReport>> {
+) -> HashMap<SiteAddress, SiteReportSet> {
     let mut out: HashMap<SiteAddress, Vec<ReplicaReport>> = HashMap::new();
     for event in nostr::newest_by_address(events, now) {
         let Ok(report) = nostr::parse_replica_report(&event, report_kind, site_event_kind) else {
@@ -33,7 +39,20 @@ fn collect_reports(
             .or_default()
             .push(report);
     }
-    out
+    out.into_iter()
+        .map(|(key, mut reports)| {
+            reports.sort_by(|a, b| {
+                b.created_at
+                    .cmp(&a.created_at)
+                    .then_with(|| a.reporter.to_hex().cmp(&b.reporter.to_hex()))
+            });
+            let dropped = reports
+                .len()
+                .saturating_sub(nostr::budget::MAX_REPORTS_PER_SITE);
+            reports.truncate(nostr::budget::MAX_REPORTS_PER_SITE);
+            (key, SiteReportSet { reports, dropped })
+        })
+        .collect()
 }
 
 pub fn replicas_of(reports: &[ReplicaReport], latest_cid: &str) -> Vec<Replica> {
@@ -56,7 +75,7 @@ pub async fn fetch_for_sites(
     relay: &RelayClient,
     config: &Config,
     sites: &[&SiteEvent],
-) -> Result<HashMap<SiteAddress, Vec<ReplicaReport>>> {
+) -> Result<HashMap<SiteAddress, SiteReportSet>> {
     let coordinates: Vec<Coordinate> = sites
         .iter()
         .map(|ev| nostr::site_coordinate(config.nostr.site_event_kind, &ev.pubkey, &ev.d))
@@ -96,6 +115,7 @@ pub struct SiteReplicas {
     pub cid: String,
     pub replicas: usize,
     pub reports: usize,
+    pub dropped: usize,
     pub reporters: Vec<Reporter>,
 }
 
@@ -118,12 +138,13 @@ pub async fn collect(
         .filter_map(|e| nostr::parse_site_event(e, config.nostr.site_event_kind).ok())
         .collect();
     let latest = nostr::select_latest(&parsed, Timestamp::now().as_secs());
-    let sites: Vec<&SiteEvent> = latest.values().collect();
+    let sites =
+        nostr::cap_sites_per_author(latest.values(), nostr::budget::MAX_SITES_PER_AUTHOR_LISTED);
     let reports = fetch_for_sites(relay, config, &sites).await?;
 
     let reporters: Vec<PublicKey> = reports
         .values()
-        .flatten()
+        .flat_map(|r| r.reports.iter())
         .map(|r| r.reporter)
         .collect::<HashSet<_>>()
         .into_iter()
@@ -150,9 +171,9 @@ pub async fn collect(
         let sites = evs
             .into_iter()
             .map(|ev| {
-                let replicas = reports
-                    .get(&(ev.pubkey, ev.d.clone()))
-                    .map(|r| replicas_of(r, &ev.cid))
+                let report_set = reports.get(&(ev.pubkey, ev.d.clone()));
+                let replicas = report_set
+                    .map(|r| replicas_of(&r.reports, &ev.cid))
                     .unwrap_or_default();
                 let reporters = replicas
                     .iter()
@@ -168,6 +189,7 @@ pub async fn collect(
                     cid: ev.cid.clone(),
                     replicas: latest_count(&replicas),
                     reports: replicas.len(),
+                    dropped: report_set.map_or(0, |r| r.dropped),
                     reporters,
                 }
             })
@@ -203,6 +225,9 @@ fn print_replicas(authors: &[AuthorReplicas]) {
                     mirror::npub(&r.pubkey),
                     follow_mark(r.is_author, r.following)
                 );
+            }
+            if site.dropped > 0 {
+                println!("    … and {} more report(s) not shown", site.dropped);
             }
         }
     }
@@ -275,14 +300,45 @@ mod tests {
 
         assert_eq!(collected.len(), 2);
         let site = &collected[&(author, "example.com".to_string())];
-        assert_eq!(site.len(), 1);
-        assert_eq!(site[0].reporter, r1.public_key());
+        assert_eq!(site.reports.len(), 1);
+        assert_eq!(site.dropped, 0);
+        assert_eq!(site.reports[0].reporter, r1.public_key());
         assert_eq!(
-            site[0].cids,
+            site.reports[0].cids,
             BTreeSet::from([nostr::canonical_cid(CID_B).unwrap()])
         );
         let other = &collected[&(author, "other.example".to_string())];
-        assert_eq!(other[0].reporter, r4.public_key());
+        assert_eq!(other.reports[0].reporter, r4.public_key());
+    }
+
+    #[test]
+    fn collect_reports_keeps_the_newest_and_flags_truncation_past_the_budget() {
+        let author = Keys::generate().public_key();
+        let reporters: Vec<Keys> = (0..nostr::budget::MAX_REPORTS_PER_SITE + 1)
+            .map(|_| Keys::generate())
+            .collect();
+        let events: Vec<Event> = reporters
+            .iter()
+            .enumerate()
+            .map(|(i, r)| {
+                report(
+                    r,
+                    &author,
+                    "example.com",
+                    &[CID_A],
+                    100 + i as u64,
+                    1_000_000,
+                )
+            })
+            .collect();
+        let newest = reporters.last().unwrap();
+
+        let collected = collect_reports(events, 35981, 35980, 200_000);
+        let site = &collected[&(author, "example.com".to_string())];
+
+        assert_eq!(site.reports.len(), nostr::budget::MAX_REPORTS_PER_SITE);
+        assert_eq!(site.dropped, 1);
+        assert_eq!(site.reports[0].reporter, newest.public_key());
     }
 
     #[test]
@@ -302,7 +358,10 @@ mod tests {
             report(&reporters[2], &author, "example.com", &[CID_A], 1, 1000),
         ];
         let collected = collect_reports(events, 35981, 35980, 0);
-        let replicas = replicas_of(&collected[&(author, "example.com".to_string())], CID_A);
+        let replicas = replicas_of(
+            &collected[&(author, "example.com".to_string())].reports,
+            CID_A,
+        );
 
         assert_eq!(latest_count(&replicas), 2);
         assert_eq!(replicas.len(), 3);

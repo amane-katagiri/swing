@@ -167,6 +167,7 @@ NIP-05 の検証結果はバッジで `OK`（`verified`）/ `NG`（`mismatch`）
 - root/depth のクエリは `swing:webring:query` に保存し、次に開いたときに復元する。
 - 再取得中、既存の表示は消さず `aria-busy="true"` で薄く表示する。初回だけ「Loading webring…」になる。
 - ノード詳細パネルのミラー操作は選んだノードが自分自身かどうかで変える（自分自身: ボタン無し／ミラー済み: 削除ボタン／未ミラー: 追加ボタン）。判定はキャッシュ済みの `/api/sites` か `/api/mirror` の pubkey 集合。
+- `beyond`（深さの上限外で表示していないアカウント数）と `over_budget`（クロールの上限に達して到達できなかったアカウント数）は、どちらも 0 より大きければ画面下部にヒント文を 1 行ずつ出す。ノード詳細パネルの報告者一覧は `site.dropped` が 0 より大きければ末尾に「…and N more」相当のヒント文を出す（[取得と表示の上限](../../architecture.md#取得と表示の上限nostrbudget)）。
 
 ### グラフ（`web/graph.js`）
 

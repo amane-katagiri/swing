@@ -393,8 +393,10 @@ pub async fn publish_sites(
         .filter_map(|e| crate::nostr::parse_site_event(e, state.config.nostr.site_event_kind).ok())
         .collect();
     let latest = crate::nostr::select_latest(&parsed, Timestamp::now().as_secs());
-    let mut sites: Vec<&crate::nostr::SiteEvent> = latest.values().collect();
-    sites.sort_by(|a, b| a.d.cmp(&b.d));
+    let sites = crate::nostr::cap_sites_per_author(
+        latest.values(),
+        crate::nostr::budget::MAX_SITES_PER_AUTHOR_LISTED,
+    );
     Ok(Json(dto::publish_sites_dto(
         &sites,
         state.config.dashboard.gateway.as_deref(),

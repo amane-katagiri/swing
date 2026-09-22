@@ -62,6 +62,8 @@ relay から取得した版と `state.follow_set` の版を比べて使う方を
 
 再送は署名済みのイベントをそのまま全 relay に送り、どこにも受理されなければ warn を出す。NIP-09 で Follow Set を削除しても再送は続くので、ミラーをやめるときは `swing mirror remove` を使う。
 
+決まった Follow Set から対象 pubkey を取り出すのは `nostr::follow_set_pubkeys_capped`（`extract_follow_set_pubkeys` はこれの薄いラッパ）で、`p` タグの重複を除いた先頭 `nostr::budget::MAX_FOLLOW_SET_ENTRIES`（500）件だけを対象にする。500 件を超える Follow Set（自分のものを含む）は、超えた分が対象から静かに外れるのではなく、`refresh_follow_set` が `warn!` を 1 回出してから続行する（[取得と表示の上限](../architecture.md#取得と表示の上限nostrbudget)）。
+
 ## unfollow
 
 Follow Set が決まった tick で行う（決まらない tick では何もしない）。Follow Set の更新はこれより先に反映する。

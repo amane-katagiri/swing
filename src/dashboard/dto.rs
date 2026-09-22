@@ -352,6 +352,7 @@ pub struct WebringDto {
     pub nodes: Vec<WebringNodeDto>,
     pub edges: Vec<WebringEdgeDto>,
     pub beyond: usize,
+    pub over_budget: usize,
     pub text: String,
     pub dot: String,
     pub mermaid: String,
@@ -396,6 +397,7 @@ pub fn webring_dto(view: &webring::WebringView) -> WebringDto {
         nodes: node_dtos,
         edges,
         beyond: view.graph.beyond,
+        over_budget: view.graph.over_budget,
         text: webring::render_text(&view.graph, &view.names, &view.mirror_set, view.depth),
         dot: webring::render_dot(&view.graph, &view.names),
         mermaid: webring::render_mermaid(&view.graph, &view.names),
@@ -417,6 +419,7 @@ pub struct SiteReplicasDto {
     pub cid: String,
     pub replicas: usize,
     pub reports: usize,
+    pub dropped: usize,
     pub reporters: Vec<ReporterDto>,
 }
 
@@ -447,6 +450,7 @@ pub fn replicas_dto(authors: &[replicas::AuthorReplicas]) -> ReplicasDto {
                         cid: s.cid.clone(),
                         replicas: s.replicas,
                         reports: s.reports,
+                        dropped: s.dropped,
                         reporters: s
                             .reporters
                             .iter()

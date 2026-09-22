@@ -175,6 +175,27 @@ TOML キーの無い環境変数:
 - relay からの取得（`fetch_events`）は 30 秒でタイムアウトする。
 - `created_at` の未来ずれ許容（`nostr::MAX_FUTURE_SKEW`、900 秒）と、それを超えるかどうかを判定する `nostr::plausible_at(created_at, now)` は `nostr.rs` にある（`policy.rs` はここから読む）。保存の可否（`policy::decide`）だけでなく、「現在の版」やその時点で有効な Follow Set をどれとして選ぶかにも同じ基準を使う: `select_latest`（サイトイベント）、`choose_follow_set` と `RelayClient::fetch_follow_set` / `fetch_follow_sets`（Follow Set）、`newest_by_address`（Follow Set 以外にも使う住所ごとの最新選び）。`choose_follow_set` と `mirror.rs` の `newest_follow_set` は、relay から取得した版だけでなく保存済みの版も同じ基準でふるいにかける（先の時刻で一度保存された Follow Set が永久に勝ち続けるのを防ぐため）。詳細は [`agent.md`](architecture/agent.md#follow-set-の選び方) と [`cli.md`](architecture/cli.md)。
 
+### 取得と表示の上限（`nostr::budget`）
+
+kind 35980・35981・30000 は誰でも捨て鍵で出せるので、relay から読んで表示する読み取り専用の経路（`swing sites` / `replicas` / `webring`、ダッシュボードの `/api/sites` / `/api/replicas` / `/api/webring`）はすべて `nostr::budget` の定数で件数を打ち切る。
+
+| 定数 | 値 | 適用箇所 |
+|---|---|---|
+| `MAX_FOLLOW_SET_ENTRIES` | 500 | `nostr::follow_set_pubkeys_capped`（`extract_follow_set_pubkeys` はこれの非切り詰め情報を捨てた薄いラッパ）。tag 順で最初の 500 件の重複しない `p` を残す。自分の Follow Set も例外ではなく、`agent::follow::refresh_follow_set` と `mirror::collect_sites` は切り詰められたら `warn!` を 1 回出す。`swing mirror add`（`mirror::apply_add`）はこの上限を超えて追加しようとするとエラーで終了し、黙って切り詰めない |
+| `MAX_SITES_PER_AUTHOR_LISTED` | 50 | `nostr::cap_sites_per_author`（`select_latest` の直後に呼ぶ）。作者ごとに `d` の昇順で先頭 50 件だけを残す。`mirror::collect_sites`・`replicas::collect`・`webring::collect`・`/api/publish/sites`（`dashboard::api::publish_sites`）で使う。agent の取り込み側の件数制限（`agent::follow::limit_sites_per_account`、ポリシー値 `max_sites_per_account`）とは別物で、そちらはそのまま |
+| `MAX_REPORTS_PER_SITE` | 200 | `replicas::collect_reports`。`newest_by_address` と `ReplicaReport::counts_at` でふるった後、サイトごとに `created_at` の新しい順で先頭 200 件を残す。`SiteReplicas.reports` は残した件数、`SiteReplicas.dropped` は切り捨てた件数（CLI の `swing replicas` と `/api/replicas` の `dropped`、ダッシュボードの reporter 一覧はここを見て「…and N more」を出す） |
+| `MAX_CRAWL_NODES` | 1000 | `webring::crawl`。`Crawl.depths` がこれを超えて増えないように新規ノードの追加を止め、弾いた件数を `Crawl.over_budget`（→ `Graph.over_budget`）に積む。frontier に含まれないノードは `follow_sets` / `referencing` の relay 呼び出しにも現れないので、1 レベルあたりの件数も自然に抑えられる。テキスト出力・`/api/webring` の `over_budget` に表れる（`beyond`—深さの上限外で表示していないアカウント数—とは別のカウンタ） |
+| `MAX_RELAY_FETCH_LIMIT` | 20,000 | `nostr::capped_limit` の上限値。個々の `limit()` 計算がどれだけ大きくなっても、relay 1 台への 1 回の REQ に付ける `limit` はこれを超えない |
+
+relay への `Filter::limit`（`nostr::capped_limit(count, per)` = `min(count * per, MAX_RELAY_FETCH_LIMIT)`）:
+
+- `fetch_site_events`: `authors.len() * MAX_SITES_PER_AUTHOR_LISTED`
+- `fetch_replica_reports`: `sites.len() * MAX_REPORTS_PER_SITE`
+- `fetch_follow_sets`: `authors.len() * 2`（1 作者につき有効な Follow Set は置き換え規則で 1 件のはずだが、relay が古い版を返す場合に備えて 2 倍）
+- `fetch_follow_set_authors_referencing`: `targets.len() * 100`
+
+`limit` は relay ごとの REQ に付くヒントであり、nostr-sdk は接続中の relay それぞれに同じフィルタを送るので、複数 relay を使う構成では合計の取得件数が `limit` の relay 数倍になり得る。また `fetch_replica_reports` の `limit` は複数サイトの座標をまとめて 1 つのフィルタに入れているため、1 サイトがレプリカ報告で埋め尽くされていると、relay 側の `limit` 適用で同じ問い合わせに混ざる他のサイトの報告が押し出されることがある。座標の数（≒ 問い合わせに含める作者数 × `MAX_SITES_PER_AUTHOR_LISTED`）を絞ることでしか被害の範囲は抑えられない（ダッシュボードは `key`/`root` を 1 リクエストあたり 100 件までに絞っている）。
+
 ## テスト
 
 - ユニットテスト: `cargo test`。agent のテストは MFS をメモリ上で真似る `FakeKubo` と `FakeNip05` を使う。ダッシュボードのテストは axum の `Router` に `oneshot` でリクエストを投げ、TCP で listen しない。

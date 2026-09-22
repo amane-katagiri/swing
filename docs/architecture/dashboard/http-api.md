@@ -38,6 +38,7 @@
 - `size` はイベントの自己申告の `size` タグ。`stored_size` は `cid` と一致する `state.json` の `VersionRecord.size`（保存時に `dag/stat` で測った値。この呼び出しのために改めて Kubo は呼ばない）で、一致する版が無ければ `null`。フロントは `stored_size` があればそれを実測値として出し、無ければ `size` を未確認の申告として括弧書きで出す（[`web.md`](web.md#sites-画面)）。版ごとの重複排除込みの実測合計は `/api/status` の `sites[].actual` にしかない。
 - `replicas`: レプリカ報告の取得に失敗すると全サイトで `null` になり、`replicas_error` に理由が入る。
 - `gateway_url`: `stored` が true かつ gateway 設定がある版だけに付く。
+- `accounts[].sites` は 1 アカウントあたり `d` の昇順で先頭 50 件（`nostr::budget::MAX_SITES_PER_AUTHOR_LISTED`）まで（[取得と表示の上限](../../architecture.md#取得と表示の上限nostrbudget)）。`follow_set` の `p` も先頭 500 件まで。
 
 ## GET /api/status
 
@@ -83,11 +84,11 @@ Follow Set が無ければ `title: null`、`members: []`。
 ```json
 { "depth": 2,
   "nodes": [ { "pubkey": "…", "npub": "…", "short_npub": "npub1abc…uvwxyz", "names": ["example.com"], "label": "example.com", "depth": 0, "root": true, "has_follow_set": true } ],
-  "edges": [ { "from": "<hex>", "to": "<hex>", "mutual": true } ], "beyond": 0,
+  "edges": [ { "from": "<hex>", "to": "<hex>", "mutual": true } ], "beyond": 0, "over_budget": 0,
   "text": "…swing webring と同じ text 出力…", "dot": "…同じ dot 出力…", "mermaid": "…同じ mermaid 出力…" }
 ```
 
-`root: true` は `depth == 0` のノード。双方向の組は `mutual: true` の辺 1 本、片方向は `mutual: false` の辺（`webring::split_links` を流用）。ノードの並びは（深さ、ラベル）順。
+`root: true` は `depth == 0` のノード。双方向の組は `mutual: true` の辺 1 本、片方向は `mutual: false` の辺（`webring::split_links` を流用）。ノードの並びは（深さ、ラベル）順。`beyond` は深さの上限の外にいて表示していないアカウント数。`over_budget` はクロールの上限（`nostr::budget::MAX_CRAWL_NODES`、1000）を超えたために crawl に加えなかったアカウント数（[取得と表示の上限](../../architecture.md#取得と表示の上限nostrbudget)）。`names` も 1 アカウントあたり先頭 50 件まで。
 
 ## GET /api/replicas?key=\<key\>
 
@@ -95,11 +96,11 @@ Follow Set が無ければ `title: null`、`members: []`。
 
 ```json
 { "authors": [ { "pubkey": "…", "npub": "…", "sites": [
-  { "d": "example.com", "cid": "bafy…", "replicas": 2, "reports": 3, "reporters": [ { "pubkey": "…", "npub": "…", "latest": true, "is_author": false, "following": true } ] }
+  { "d": "example.com", "cid": "bafy…", "replicas": 2, "reports": 3, "dropped": 0, "reporters": [ { "pubkey": "…", "npub": "…", "latest": true, "is_author": false, "following": true } ] }
 ] } ] }
 ```
 
-`following: false` が CLI の `[not following]` に相当する。
+`following: false` が CLI の `[not following]` に相当する。`reports`（＝ `reporters.length`）はサイトごとに `created_at` の新しい順で先頭 200 件（`nostr::budget::MAX_REPORTS_PER_SITE`）までに切り詰めた後の件数、`dropped` は切り詰めで落ちた件数（[取得と表示の上限](../../architecture.md#取得と表示の上限nostrbudget)）。`sites` も 1 作者あたり先頭 50 件まで。
 
 ## POST /api/publish/upload
 
@@ -139,7 +140,7 @@ Follow Set が無ければ `title: null`、`members: []`。
 { "sites": [ { "d": "example.com", "url": "https://example.com/", "cid": "bafy…", "size": 123, "created_at": 1790000000, "title": null, "message": null, "gateway_url": "http://localhost:8080/ipfs/bafy…/" } ] }
 ```
 
-`gateway_url` は gateway 設定があれば付ける（`stored` 判定はしない）。relay の取得に失敗したら 502。state.json は見ないので、`/api/sites` の `stored_size` に相当するフィールドは無く、`size` は常に自己申告の値。
+`gateway_url` は gateway 設定があれば付ける（`stored` 判定はしない）。relay の取得に失敗したら 502。state.json は見ないので、`/api/sites` の `stored_size` に相当するフィールドは無く、`size` は常に自己申告の値。`sites` も `d` の昇順で先頭 50 件（`nostr::budget::MAX_SITES_PER_AUTHOR_LISTED`）まで。
 
 ## GET /api/config
 

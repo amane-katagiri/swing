@@ -38,6 +38,7 @@ Follow Set の対象者のサイトを MFS に保存・削除し続ける常駐�
 - `add` / `remove` は `p` 以外のタグの値と `content`（NIP-51 の暗号化 private 部分）を保持して再署名する。タグは `d` → その他 → `p` の順に並べ直す。
 - Follow Set が無い状態の `add` は `["title", "SWING mirror list"]` 付きで新規作成する。
 - 追加済みの `add`、未登録の `remove` は no-op と報告し、変更が無ければ publish しない。
+- `add` は結果の `p` タグ数が `nostr::budget::MAX_FOLLOW_SET_ENTRIES`（500）を超えるならエラーで終了し、publish しない（黙って切り詰めない）。
 - `list` は npub と hex を併記する。
 - relay の Follow Set と `state.json` の `follow_set` を比べて新しい方を使う（検証条件は [agent の Follow Set の選び方](agent.md#follow-set-の選び方) と同じ）。保存済みの方を使ったときは `(relays returned an older follow set; ...)` か `(follow set not found on relays; ...)` を表示する。state.json は読むだけ。`sites` も同じ。
 
@@ -46,6 +47,7 @@ Follow Set の対象者のサイトを MFS に保存・削除し続ける常駐�
 - Follow Set の対象者ごとに、サイトごとの最新のサイトイベントを 1 行（`d`、`cid`、`url`、`size`、`created_at`、NIP-05 検証結果、`replicas`、`[stored]` / `[not stored]`）表示する。`title` タグが有効なら次の行に `    title: ` として、`content` が空でなければ続けて `    message: ` として、それぞれ制御文字を空白に置き換え、前後の空白を削り、200 文字を超える分を `…` に置き換えて表示する。検証結果と保存状況は `state.json` から読む。`replicas` は [replicas](#replicas) と同じ集計の最新版のレプリカ数。レプリカ報告の取得に失敗したら `(fetching replica reports failed: ...)` を表示して `-` にする。
   - `size` 列: そのイベントの `cid` と一致する `VersionRecord`（保存時に `dag/stat` で測って `state.json` に記録した値。改めて Kubo は呼ばない）があればその値をそのまま数値で出す。無ければイベントの自己申告の `size` タグを括弧書き（例 `(12345)`）で出す。どちらも無ければ `-`。括弧書きは `[not stored]` と対で「申告のみで未確認」を表す（ラベルは付けない）。
 - 続けて、state に版があるのに Follow Set にいない pubkey を `Unfollowed but still stored` 見出しの下に `[unfollowed]` 付きで、サイトごとに state の最新版を 1 行（`url` は `-`）表示する。見出しには `remove_on_unfollow` に応じて、次の poll で消えるか残しているかを添える。Follow Set が見つからなくても表示する。
+- 表示する対象は [取得と表示の上限](../architecture.md#取得と表示の上限nostrbudget) の対象になる: Follow Set の `p` は先頭 500 件まで（超えたら warn を出す）、1 作者あたりの `d` は `d` の昇順で先頭 50 件まで。
 
 ## replicas
 
@@ -55,6 +57,7 @@ state は読まない。
 - 作者ごとに、サイトごとの最新のサイトイベントについて `d`、`cid`、`replicas=<最新版を持つ報告者数> (reports=<有効な報告の数>)` を表示し、続けて報告者ごとに npub と `[latest]` / `[older version]` を 1 行ずつ表示する。最新版を持つ報告者を先に、同じ中では hex の順に並べる。
 - 報告者が作者なら `[author]`、報告者の Follow Set に作者がいなければ `[not following]` を添える。
 - 集計（`replicas::collect_reports`）: サイトイベントの座標（`35980:<作者>:<d>`）を `#a` に入れて `replica_event_kind` の報告を取得し、報告者・`d` ごとに最新の 1 件だけを残す。パースに失敗したもの（検証は下の [Nostr イベントの検証](../architecture.md#nostr-イベントの検証nostrrs)）、`cid` タグが無いものは数えない。残りは `ReplicaReport::counts_at(now)` が true のものだけを数える: `created_at` が `now + 900` 秒以内、`now - created_at` が 7 日（`nostr::MAX_REPORT_AGE`）以内、かつ `expiration` が無いか `now` より先。
+- サイトごとの報告は `created_at` の新しい順で先頭 200 件（`nostr::budget::MAX_REPORTS_PER_SITE`）までに切り詰める。`replicas=`・`reports=` は切り詰め後の件数で、切り詰めがあれば報告者一覧の後に `… and N more report(s) not shown` を出す（[取得と表示の上限](../architecture.md#取得と表示の上限nostrbudget)）。作者ごとに表示する `d` も先頭 50 件までに切り詰める。
 - サイトイベント・報告・Follow Set のどれかの取得に失敗したらエラーで終了する。
 
 ## status
@@ -80,6 +83,7 @@ state は読まない。
 - `dot`: Graphviz の `digraph`。ノード ID は hex、ラベルは名前と縮めた npub。起点は `penwidth=2`、双方向の組は `dir=both` の 1 本にする。
 - `mermaid`: `graph LR`。ノード ID は `n<番号>`（hex 順）、ラベルは名前と縮めた npub で、`#` `&` `"` `<` `>` はエンティティにする。起点は `root` クラス、双方向の組は `<-->` にする。
 - Follow Set・サイトイベントのどれかの取得に失敗したらエラーで終了する。
+- たどるアカウントの総数は `nostr::budget::MAX_CRAWL_NODES`（1000）を超えない。超えて見つかったアカウントは crawl に加えず件数だけ数え、`text` の末尾に `(crawl stopped at the 1000-account budget; not reached: N)` として出す（深さの上限外で表示していない `beyond` とは別のカウンタ）。アカウントの名前に使う `d` も 1 アカウントあたり先頭 50 件までに切り詰める。
 
 ## key generate
 

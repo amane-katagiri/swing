@@ -219,6 +219,9 @@ function renderNodeDetail(node, pubkey, replicasResp, memberSet) {
         );
       }
       block.append(reporters);
+      if (site.dropped > 0) {
+        block.append(el('p', { class: 'swing-hint' }, t('reportsMoreHint', { dropped: site.dropped })));
+      }
       webringEls.detail.append(block);
     }
   }
@@ -345,6 +348,9 @@ export const WebringView = {
 
     if (data.beyond > 0) {
       webringEls.content.append(el('p', { class: 'swing-hint' }, t('beyondHint', { beyond: data.beyond, depth: data.depth })));
+    }
+    if (data.over_budget > 0) {
+      webringEls.content.append(el('p', { class: 'swing-hint' }, t('overBudgetHint', { overBudget: data.over_budget })));
     }
   },
 };

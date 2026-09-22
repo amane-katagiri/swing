@@ -61,9 +61,15 @@ pub(super) async fn refresh_follow_set<C, N, R>(
     }
     let follow_event = choice.event;
 
-    let new_targets: HashSet<PublicKey> = nostr::extract_follow_set_pubkeys(&follow_event)
-        .into_iter()
-        .collect();
+    let (targets, truncated) = nostr::follow_set_pubkeys_capped(&follow_event);
+    if truncated {
+        warn!(
+            event_id = %follow_event.id,
+            cap = nostr::budget::MAX_FOLLOW_SET_ENTRIES,
+            "follow set has more p tags than the cap; the rest are ignored"
+        );
+    }
+    let new_targets: HashSet<PublicKey> = targets.into_iter().collect();
     agent.replace_targets(new_targets.clone());
     if config.policy.remove_on_unfollow {
         agent.remove_unfollowed().await;

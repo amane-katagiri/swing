@@ -2,6 +2,7 @@ use std::collections::{BTreeMap, BTreeSet, HashSet};
 
 use anyhow::{Context, Result};
 use nostr_sdk::prelude::*;
+use tracing::warn;
 
 use crate::config::Config;
 use crate::nostr::{self, RelayClient};
@@ -230,9 +231,20 @@ async fn publish_if_changed(
     Ok((true, nostr::relay_send_results(relay.relays(), &output)))
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum MirrorOp {
     Add,
     Remove,
+}
+
+fn ensure_within_follow_set_cap(total: usize) -> Result<()> {
+    if total > nostr::budget::MAX_FOLLOW_SET_ENTRIES {
+        anyhow::bail!(
+            "would grow the follow set to {total} entries, over the {}-entry limit; remove some first",
+            nostr::budget::MAX_FOLLOW_SET_ENTRIES
+        );
+    }
+    Ok(())
 }
 
 async fn apply_change(
@@ -270,6 +282,9 @@ async fn apply_change(
             (changed, unchanged)
         }
     };
+    if op == MirrorOp::Add {
+        ensure_within_follow_set_cap(set.pubkeys().len())?;
+    }
     let (published, relay_results) = publish_if_changed(relay, config, &set, &changed).await?;
     Ok(MirrorChange {
         note,
@@ -497,10 +512,20 @@ pub struct SitesView {
 pub async fn collect_sites(relay: &RelayClient, config: &Config) -> Result<SitesView> {
     let (follow_event, follow_note) = current_follow_set(relay, config).await?;
     let follow_set_found = follow_event.is_some();
-    let targets: Vec<PublicKey> = follow_event
-        .as_ref()
-        .map(nostr::extract_follow_set_pubkeys)
-        .unwrap_or_default();
+    let targets: Vec<PublicKey> = match follow_event.as_ref() {
+        Some(ev) => {
+            let (targets, truncated) = nostr::follow_set_pubkeys_capped(ev);
+            if truncated {
+                warn!(
+                    event_id = %ev.id,
+                    cap = nostr::budget::MAX_FOLLOW_SET_ENTRIES,
+                    "follow set has more p tags than the cap; the rest are ignored"
+                );
+            }
+            targets
+        }
+        None => Vec::new(),
+    };
 
     let latest = if targets.is_empty() {
         Default::default()
@@ -514,7 +539,8 @@ pub async fn collect_sites(relay: &RelayClient, config: &Config) -> Result<Sites
             .collect();
         nostr::select_latest(&parsed, Timestamp::now().as_secs())
     };
-    let latest_sites: Vec<&nostr::SiteEvent> = latest.values().collect();
+    let latest_sites =
+        nostr::cap_sites_per_author(latest.values(), nostr::budget::MAX_SITES_PER_AUTHOR_LISTED);
     let (reports, replicas_error) =
         match replicas::fetch_for_sites(relay, config, &latest_sites).await {
             Ok(reports) => (Some(reports), None),
@@ -527,7 +553,7 @@ pub async fn collect_sites(relay: &RelayClient, config: &Config) -> Result<Sites
     for pk in &targets {
         by_pubkey.entry(pk.to_hex()).or_default();
     }
-    for ev in latest.values() {
+    for ev in latest_sites.iter().copied() {
         by_pubkey.entry(ev.pubkey.to_hex()).or_default().push(ev);
     }
 
@@ -604,12 +630,12 @@ pub async fn collect_sites(relay: &RelayClient, config: &Config) -> Result<Sites
 }
 
 fn replica_count(
-    reports: &Option<std::collections::HashMap<SiteAddress, Vec<nostr::ReplicaReport>>>,
+    reports: &Option<std::collections::HashMap<SiteAddress, replicas::SiteReportSet>>,
     ev: &nostr::SiteEvent,
 ) -> Option<usize> {
     reports.as_ref().map(|reports| {
         reports.get(&(ev.pubkey, ev.d.clone())).map_or(0, |r| {
-            replicas::latest_count(&replicas::replicas_of(r, &ev.cid))
+            replicas::latest_count(&replicas::replicas_of(&r.reports, &ev.cid))
         })
     })
 }
@@ -678,6 +704,18 @@ mod tests {
 
     fn keys() -> Keys {
         Keys::generate()
+    }
+
+    #[test]
+    fn ensure_within_follow_set_cap_allows_exactly_the_budget() {
+        assert!(ensure_within_follow_set_cap(nostr::budget::MAX_FOLLOW_SET_ENTRIES).is_ok());
+    }
+
+    #[test]
+    fn ensure_within_follow_set_cap_rejects_growing_past_the_budget() {
+        let err =
+            ensure_within_follow_set_cap(nostr::budget::MAX_FOLLOW_SET_ENTRIES + 1).unwrap_err();
+        assert!(err.to_string().contains("over the"));
     }
 
     #[test]

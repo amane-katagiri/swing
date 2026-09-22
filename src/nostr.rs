@@ -1,4 +1,4 @@
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::future::Future;
 use std::time::Duration;
 
@@ -13,6 +13,19 @@ pub const MAX_FUTURE_SKEW: u64 = 900;
 
 pub fn plausible_at(created_at: u64, now: u64) -> bool {
     created_at <= now.saturating_add(MAX_FUTURE_SKEW)
+}
+
+// Relay events come from anyone under throwaway keys, so the read-only views get hard ceilings.
+pub mod budget {
+    pub const MAX_FOLLOW_SET_ENTRIES: usize = 500;
+    pub const MAX_SITES_PER_AUTHOR_LISTED: usize = 50;
+    pub const MAX_REPORTS_PER_SITE: usize = 200;
+    pub const MAX_CRAWL_NODES: usize = 1000;
+    pub const MAX_RELAY_FETCH_LIMIT: usize = 20_000;
+}
+
+fn capped_limit(count: usize, per: usize) -> usize {
+    count.saturating_mul(per).min(budget::MAX_RELAY_FETCH_LIMIT)
 }
 
 pub struct RelayClient {
@@ -79,7 +92,11 @@ impl RelayClient {
         }
         let filter = Filter::new()
             .kind(Kind::Custom(site_event_kind))
-            .authors(authors.iter().copied());
+            .authors(authors.iter().copied())
+            .limit(capped_limit(
+                authors.len(),
+                budget::MAX_SITES_PER_AUTHOR_LISTED,
+            ));
         self.fetch(filter, "fetching site events").await
     }
 
@@ -93,7 +110,8 @@ impl RelayClient {
         }
         let filter = Filter::new()
             .kind(Kind::Custom(report_kind))
-            .coordinates(sites);
+            .coordinates(sites)
+            .limit(capped_limit(sites.len(), budget::MAX_REPORTS_PER_SITE));
         self.fetch(filter, "fetching replica reports").await
     }
 
@@ -105,10 +123,12 @@ impl RelayClient {
         if authors.is_empty() {
             return Ok(HashMap::new());
         }
+        // 2x: a relay may hand back a stale duplicate of a replaceable event.
         let filter = Filter::new()
             .kind(Kind::Custom(30000))
             .authors(authors.iter().copied())
-            .identifier(mirror_set);
+            .identifier(mirror_set)
+            .limit(capped_limit(authors.len(), 2));
         let events = self.fetch(filter, "fetching follow sets").await?;
         let now = Timestamp::now().as_secs();
         let mut newest: HashMap<PublicKey, Event> = HashMap::new();
@@ -139,7 +159,8 @@ impl RelayClient {
         let filter = Filter::new()
             .kind(Kind::Custom(30000))
             .identifier(mirror_set)
-            .pubkeys(targets.iter().copied());
+            .pubkeys(targets.iter().copied())
+            .limit(capped_limit(targets.len(), 100));
         let events = self
             .fetch(filter, "fetching follow sets that reference accounts")
             .await?;
@@ -343,7 +364,22 @@ pub fn choose_follow_set(
 }
 
 pub fn extract_follow_set_pubkeys(event: &Event) -> Vec<PublicKey> {
-    event.tags.public_keys().collect()
+    follow_set_pubkeys_capped(event).0
+}
+
+pub fn follow_set_pubkeys_capped(event: &Event) -> (Vec<PublicKey>, bool) {
+    let mut seen = HashSet::new();
+    let mut out = Vec::new();
+    for pk in event.tags.public_keys() {
+        if !seen.insert(pk) {
+            continue;
+        }
+        if out.len() == budget::MAX_FOLLOW_SET_ENTRIES {
+            return (out, true);
+        }
+        out.push(pk);
+    }
+    (out, false)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -458,6 +494,22 @@ pub fn select_latest(events: &[SiteEvent], now: u64) -> HashMap<(String, String)
         }
     }
     latest
+}
+
+pub fn cap_sites_per_author<'a>(
+    sites: impl IntoIterator<Item = &'a SiteEvent>,
+    max: usize,
+) -> Vec<&'a SiteEvent> {
+    let mut by_author: BTreeMap<PublicKey, Vec<&'a SiteEvent>> = BTreeMap::new();
+    for ev in sites {
+        by_author.entry(ev.pubkey).or_default().push(ev);
+    }
+    let mut out = Vec::new();
+    for evs in by_author.values_mut() {
+        evs.sort_by(|a, b| a.d.cmp(&b.d));
+        out.extend(evs.iter().take(max).copied());
+    }
+    out
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -974,6 +1026,84 @@ mod tests {
         assert_eq!(pubkeys.len(), 2);
         assert!(pubkeys.contains(&target1));
         assert!(pubkeys.contains(&target2));
+    }
+
+    #[test]
+    fn follow_set_pubkeys_capped_dedups_repeated_p_tags() {
+        let author = keys();
+        let target = keys().public_key();
+        let ev = EventBuilder::new(Kind::Custom(30000), "")
+            .tag(Tag::identifier("site-mirror"))
+            .tag(Tag::public_key(target))
+            .tag(Tag::public_key(target))
+            .finalize(&author)
+            .unwrap();
+
+        let (pubkeys, truncated) = follow_set_pubkeys_capped(&ev);
+
+        assert_eq!(pubkeys, vec![target]);
+        assert!(!truncated);
+    }
+
+    #[test]
+    fn follow_set_pubkeys_capped_stops_at_the_budget() {
+        let author = keys();
+        let first = keys().public_key();
+        let mut builder = EventBuilder::new(Kind::Custom(30000), "")
+            .tag(Tag::identifier("site-mirror"))
+            .tag(Tag::public_key(first));
+        let extra: Vec<PublicKey> = (0..budget::MAX_FOLLOW_SET_ENTRIES)
+            .map(|_| Keys::generate().public_key())
+            .collect();
+        for pk in &extra {
+            builder = builder.tag(Tag::public_key(*pk));
+        }
+        let ev = builder.finalize(&author).unwrap();
+
+        let (pubkeys, truncated) = follow_set_pubkeys_capped(&ev);
+
+        assert!(truncated);
+        assert_eq!(pubkeys.len(), budget::MAX_FOLLOW_SET_ENTRIES);
+        assert_eq!(pubkeys[0], first);
+        assert_eq!(
+            extract_follow_set_pubkeys(&ev).len(),
+            budget::MAX_FOLLOW_SET_ENTRIES
+        );
+    }
+
+    fn site_event(pk: PublicKey, d: &str, created_at: u64) -> SiteEvent {
+        SiteEvent {
+            pubkey: pk,
+            d: d.to_string(),
+            cid: "bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi".to_string(),
+            url: None,
+            size: None,
+            title: None,
+            message: None,
+            created_at,
+        }
+    }
+
+    #[test]
+    fn cap_sites_per_author_keeps_the_first_n_by_d() {
+        let a = keys().public_key();
+        let b = keys().public_key();
+        let sites = vec![
+            site_event(a, "c.example", 1),
+            site_event(a, "a.example", 1),
+            site_event(a, "b.example", 1),
+            site_event(b, "only.example", 1),
+        ];
+
+        let capped = cap_sites_per_author(&sites, 2);
+
+        let a_ds: Vec<&str> = capped
+            .iter()
+            .filter(|s| s.pubkey == a)
+            .map(|s| s.d.as_str())
+            .collect();
+        assert_eq!(a_ds, vec!["a.example", "b.example"]);
+        assert_eq!(capped.iter().filter(|s| s.pubkey == b).count(), 1);
     }
 
     #[test]
