@@ -28,13 +28,14 @@
 
 ```json
 { "follow_set": { "found": true, "note": null },
-  "accounts": [ { "pubkey": "…", "npub": "…", "sites": [ { "d": "example.com", "cid": "bafy…", "url": "…", "size": 12345, "created_at": 1790000000, "title": "…", "message": "…", "nip05": "verified", "replicas": 3, "stored": true, "gateway_url": "…" } ] } ],
+  "accounts": [ { "pubkey": "…", "npub": "…", "sites": [ { "d": "example.com", "cid": "bafy…", "url": "…", "size": 12345, "stored_size": 12300, "created_at": 1790000000, "title": "…", "message": "…", "nip05": "verified", "replicas": 3, "stored": true, "gateway_url": "…" } ] } ],
   "replicas_error": null,
-  "unfollowed": { "remove_on_unfollow": true, "accounts": [ { "...": "同じ形。ただし url・title・message・replicas は常に null、stored は常に true" } ] } }
+  "unfollowed": { "remove_on_unfollow": true, "accounts": [ { "...": "同じ形。ただし url・title・message・replicas は常に null、stored は常に true、stored_size は size と同じ値" } ] } }
 ```
 
 - `follow_set.note`: CLI が括弧付きで出す注記から括弧を外した文字列。無ければ `null`。
 - `nip05`・`title`・`message`・`size` は値が無ければ `null`。`title` は作者の自己申告で受信側は信頼しない（`docs/protocol.md` 第 4 節）。`message` は生の `content`（サニタイズ・切り詰めはフロントの責務）。`title` も同様にサニタイズはフロントの責務。
+- `size` はイベントの自己申告の `size` タグ。`stored_size` は `cid` と一致する `state.json` の `VersionRecord.size`（保存時に `dag/stat` で測った値。この呼び出しのために改めて Kubo は呼ばない）で、一致する版が無ければ `null`。フロントは `stored_size` があればそれを実測値として出し、無ければ `size` を未確認の申告として括弧書きで出す（[`web.md`](web.md#sites-画面)）。版ごとの重複排除込みの実測合計は `/api/status` の `sites[].actual` にしかない。
 - `replicas`: レプリカ報告の取得に失敗すると全サイトで `null` になり、`replicas_error` に理由が入る。
 - `gateway_url`: `stored` が true かつ gateway 設定がある版だけに付く。
 
@@ -138,7 +139,7 @@ Follow Set が無ければ `title: null`、`members: []`。
 { "sites": [ { "d": "example.com", "url": "https://example.com/", "cid": "bafy…", "size": 123, "created_at": 1790000000, "title": null, "message": null, "gateway_url": "http://localhost:8080/ipfs/bafy…/" } ] }
 ```
 
-`gateway_url` は gateway 設定があれば付ける（`stored` 判定はしない）。relay の取得に失敗したら 502。state.json は見ない。
+`gateway_url` は gateway 設定があれば付ける（`stored` 判定はしない）。relay の取得に失敗したら 502。state.json は見ないので、`/api/sites` の `stored_size` に相当するフィールドは無く、`size` は常に自己申告の値。
 
 ## GET /api/config
 

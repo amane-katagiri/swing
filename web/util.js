@@ -75,6 +75,12 @@ export function formatBytes(n) {
   return `${i === 0 ? v : v.toFixed(1)} ${units[i]}`;
 }
 
+export function formatSiteSize(site) {
+  if (site.stored_size != null) return formatBytes(site.stored_size);
+  if (site.size != null) return `(${formatBytes(site.size)})`;
+  return '–';
+}
+
 export function formatTime(sec) {
   if (sec == null) return '–';
   const lang = currentLang();

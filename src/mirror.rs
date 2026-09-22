@@ -390,6 +390,7 @@ pub struct SiteRow {
     pub cid: String,
     pub url: Option<String>,
     pub size: Option<u64>,
+    pub stored_size: Option<u64>,
     pub created_at: u64,
     pub title: Option<String>,
     pub message: Option<String>,
@@ -398,15 +399,22 @@ pub struct SiteRow {
     pub stored: bool,
 }
 
+// The declared `size` is only a claim, so it is parenthesized rather than shown bare.
+fn format_size_column(row: &SiteRow) -> String {
+    match (row.stored_size, row.size) {
+        (Some(s), _) => s.to_string(),
+        (None, Some(s)) => format!("({s})"),
+        (None, None) => "-".to_string(),
+    }
+}
+
 fn format_site_line(row: &SiteRow, status: &str) -> String {
     format!(
         "  d={:<24} cid={:<62} url={:<32} size={:<12} created_at={:<25} nip05={:<14} replicas={:<4} [{}]",
         row.d,
         row.cid,
         row.url.clone().unwrap_or_else(|| "-".to_string()),
-        row.size
-            .map(|s| s.to_string())
-            .unwrap_or_else(|| "-".to_string()),
+        format_size_column(row),
         format_unix_timestamp(row.created_at),
         row.nip05.as_deref().unwrap_or("-"),
         row.replicas
@@ -531,11 +539,12 @@ pub async fn collect_sites(relay: &RelayClient, config: &Config) -> Result<Sites
             .into_iter()
             .map(|ev| {
                 let key = state::site_key(&pubkey_hex, &ev.d);
-                let stored = state
+                let stored_version = state
                     .sites
                     .get(&key)
-                    .map(|versions| versions.iter().any(|v| v.cid == ev.cid))
-                    .unwrap_or(false);
+                    .and_then(|versions| versions.iter().find(|v| v.cid == ev.cid));
+                let stored = stored_version.is_some();
+                let stored_size = stored_version.map(|v| v.size);
                 let nip05 = state.verifications.get(&key).map(|v| v.status.clone());
                 let replicas = replica_count(&reports, ev);
                 SiteRow {
@@ -543,6 +552,7 @@ pub async fn collect_sites(relay: &RelayClient, config: &Config) -> Result<Sites
                     cid: ev.cid.clone(),
                     url: ev.url.clone(),
                     size: ev.size,
+                    stored_size,
                     created_at: ev.created_at,
                     title: ev.title.clone(),
                     message: ev.message.clone(),
@@ -570,6 +580,7 @@ pub async fn collect_sites(relay: &RelayClient, config: &Config) -> Result<Sites
                     cid: version.cid,
                     url: None,
                     size: Some(version.size),
+                    stored_size: Some(version.size),
                     created_at: version.created_at,
                     title: None,
                     message: None,
@@ -692,6 +703,37 @@ mod tests {
             format_unix_timestamp(1_700_000_000),
             "2023-11-14 22:13:20 UTC"
         );
+    }
+
+    fn site_row(size: Option<u64>, stored_size: Option<u64>) -> SiteRow {
+        SiteRow {
+            d: "x.example".to_string(),
+            cid: "bafy".to_string(),
+            url: None,
+            size,
+            stored_size,
+            created_at: 0,
+            title: None,
+            message: None,
+            nip05: None,
+            replicas: None,
+            stored: stored_size.is_some(),
+        }
+    }
+
+    #[test]
+    fn format_size_column_prefers_measured_over_declared() {
+        assert_eq!(format_size_column(&site_row(Some(999), Some(123))), "123");
+    }
+
+    #[test]
+    fn format_size_column_parenthesizes_declared_when_not_stored() {
+        assert_eq!(format_size_column(&site_row(Some(456), None)), "(456)");
+    }
+
+    #[test]
+    fn format_size_column_is_dash_when_neither_is_known() {
+        assert_eq!(format_size_column(&site_row(None, None)), "-");
     }
 
     #[test]

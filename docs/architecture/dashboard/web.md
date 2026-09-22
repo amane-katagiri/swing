@@ -152,6 +152,8 @@ Start ボタンの `icon-desk-start` は中心円（黄）・大きい方の腕+
 
 NIP-05 の検証結果はバッジで `OK`（`verified`）/ `NG`（`mismatch`）/ `ERR`（`error`）/ `N/A`（`not_applicable`）と短く表示し、意味は `title` 属性（マウスオーバー）に表示言語で出す。カードはサイト名の下の行に保存状態・NIP-05・レプリカ数のバッジ（`.swing-site-badges`）をまとめ、NIP-05 には `nip05: ` を前に付け、テーブルでは NIP-05 列にラベルだけを出す。
 
+サイズの表示（`util.js` の `formatSiteSize`、カードのメタ行・テーブルの Size 列の両方で使う）: `stored_size`（`state.json` に記録済みの実測値。保存時の `dag/stat` の結果で、この表示のために Kubo を呼び直すことはしない）があればそれをそのまま `formatBytes` で出す。無ければ `size`（イベントの自己申告）を `(12.3 MB)` のように括弧書きで出す。ラベルは付けない。「未確認の自己申告である」ことは同じ行の保存状態バッジ（`[not stored]`）がすでに示しているため。どちらも無ければ `–`。版どうしで共有するブロックを差し引いた重複排除済みの合計はここには出ず、Storage check（`/api/status` の `sites[].actual`）だけが持つ。
+
 `Unfollowed but still stored` セクションも同じ並び順ロジックを共有する。「Stored only」チェックボックスの状態は `localStorage["swing:sites:stored-only"]`。
 
 ## Publish 画面

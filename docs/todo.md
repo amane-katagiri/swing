@@ -32,7 +32,6 @@
 | 低 | Kubo RPC を Unix socket か loopback の動的ポートに閉じる。単一プロセスで動かすなら 5001 を固定する必要が無い | [配布方式の設計](log/2026-09-21-distribution-design.md) |
 | 低 | 配布前に確かめること: upstream の kubo darwin-arm64 バイナリが署名されているか、Windows のファイアウォール（4001）の初回ダイアログの扱い、既存 compose 利用者が `ipfs-data` から移行する手順 | [配布方式の設計](log/2026-09-21-distribution-design.md) |
 | 中 | レプリカ報告者の数に上限を付ける。`replicas::collect` は報告者を全部集めて報告者ごとに Follow Set も引き、`web/webring.js` は報告者数ぶん `<li>` を作る。報告者は捨て鍵で量産できる | 監査（自己申告の信用） |
-| 中 | サイト一覧（`web/sites.js` のカードと表）の容量は自己申告の `size` タグをそのまま表示している。実測値は Storage check にしか出ない。申告値であることを示すか、実測値を並べる | 監査（自己申告の信用） |
 | 低 | `duplicate_cid` の比較を CID の正規形で行う。今は文字列比較なので base32 と base58btc で書いた同じ CID が別の版になる | 監査（自己申告の信用） |
 | 低 | `content` の長さ上限。サーバ側では切らず `/api/sites` に全文を返している（表示はクライアントで 200 文字に切る） | 監査（自己申告の信用） |
 | 低 | `cid` がディレクトリの root であることの確認。今は構文検証だけで、ファイル単体や raw block も保存される | 監査（自己申告の信用） |

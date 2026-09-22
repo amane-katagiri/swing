@@ -44,6 +44,7 @@ Follow Set の対象者のサイトを MFS に保存・削除し続ける常駐�
 ## sites
 
 - Follow Set の対象者ごとに、サイトごとの最新のサイトイベントを 1 行（`d`、`cid`、`url`、`size`、`created_at`、NIP-05 検証結果、`replicas`、`[stored]` / `[not stored]`）表示する。`title` タグが有効なら次の行に `    title: ` として、`content` が空でなければ続けて `    message: ` として、それぞれ制御文字を空白に置き換え、前後の空白を削り、200 文字を超える分を `…` に置き換えて表示する。検証結果と保存状況は `state.json` から読む。`replicas` は [replicas](#replicas) と同じ集計の最新版のレプリカ数。レプリカ報告の取得に失敗したら `(fetching replica reports failed: ...)` を表示して `-` にする。
+  - `size` 列: そのイベントの `cid` と一致する `VersionRecord`（保存時に `dag/stat` で測って `state.json` に記録した値。改めて Kubo は呼ばない）があればその値をそのまま数値で出す。無ければイベントの自己申告の `size` タグを括弧書き（例 `(12345)`）で出す。どちらも無ければ `-`。括弧書きは `[not stored]` と対で「申告のみで未確認」を表す（ラベルは付けない）。
 - 続けて、state に版があるのに Follow Set にいない pubkey を `Unfollowed but still stored` 見出しの下に `[unfollowed]` 付きで、サイトごとに state の最新版を 1 行（`url` は `-`）表示する。見出しには `remove_on_unfollow` に応じて、次の poll で消えるか残しているかを添える。Follow Set が見つからなくても表示する。
 
 ## replicas

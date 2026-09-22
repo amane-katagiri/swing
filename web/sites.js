@@ -8,6 +8,7 @@ import {
   clearStatus,
   describeError,
   formatBytes,
+  formatSiteSize,
   formatTime,
   shortenMiddle,
   stripControlChars,
@@ -23,7 +24,7 @@ import { copyButton, storedBadge, appendLinksAndMessage, renderMirrorOpResult, r
 
 const MAX_MIRROR_KEYS = 100;
 
-const SITE_FIELD_DEFAULTS = { url: null, title: null, message: null, nip05: null, replicas: null, stored: null, gateway_url: null };
+const SITE_FIELD_DEFAULTS = { url: null, title: null, message: null, nip05: null, replicas: null, stored: null, stored_size: null, gateway_url: null };
 
 function normalizeSite(site, contextDefaults) {
   return Object.assign({}, SITE_FIELD_DEFAULTS, contextDefaults || {}, site);
@@ -87,7 +88,7 @@ function buildSiteEntry(site) {
         copyButton(site.cid),
       ]),
     ]),
-    el('div', { class: 'swing-site-meta-info' }, `${formatBytes(site.size)} · ${formatTime(site.created_at)}`),
+    el('div', { class: 'swing-site-meta-info' }, `${formatSiteSize(site)} · ${formatTime(site.created_at)}`),
   ]);
   wrap.append(meta);
 
@@ -113,7 +114,7 @@ function buildSiteTable(sites) {
         copyButton(site.cid),
       ]),
     );
-    tr.append(el('td', {}, formatBytes(site.size)));
+    tr.append(el('td', {}, formatSiteSize(site)));
     tr.append(el('td', {}, formatTime(site.created_at)));
     const linksTd = el('td', {});
     if (site.url) linksTd.append(maybeLink(site.url, t('openSite')));
