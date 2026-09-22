@@ -129,6 +129,8 @@ state のロックの中で行う。
 - 全 relay に送り、どこかに受理されたら記録を更新する。受理されなければ warn を出し、次の同期で送り直す。
 - 取り下げた記録は `cid` 無しで残り、出し直さない。
 
+受信側で報告を数える規則（`replicas::collect_reports` / `ReplicaReport::counts_at`）は agent 自身の動作ではなく [`cli.md`](cli.md#replicas) を参照。`report_ttl` の既定 `3d` に対し、数えるのをやめる期間（`nostr::MAX_REPORT_AGE`、7 日）はそれより長い。TTL を伸ばした他クライアントの報告も、期限切れ前に数えられなくなることがないようにするため。
+
 ## ポリシー判定（policy.rs）
 
 `policy::decide` は純粋関数。入力は同サイトの既存版、使用量（他サイトの合計容量、同じ pubkey の他サイトの合計容量とサイト数）、候補（cid, size, created_at）、ポリシー設定、現在時刻。出力は `Decision { store: Option<String>, evict: Vec<String>, reason: String }`。

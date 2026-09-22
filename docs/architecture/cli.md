@@ -53,7 +53,7 @@ state は読まない。
 - `<key>` を作者として扱う。省略時は自分の pubkey。
 - 作者ごとに、サイトごとの最新のサイトイベントについて `d`、`cid`、`replicas=<最新版を持つ報告者数> (reports=<有効な報告の数>)` を表示し、続けて報告者ごとに npub と `[latest]` / `[older version]` を 1 行ずつ表示する。最新版を持つ報告者を先に、同じ中では hex の順に並べる。
 - 報告者が作者なら `[author]`、報告者の Follow Set に作者がいなければ `[not following]` を添える。
-- 集計（`replicas::collect_reports`）: サイトイベントの座標（`35980:<作者>:<d>`）を `#a` に入れて `replica_event_kind` の報告を取得し、報告者・`d` ごとに最新の 1 件だけを残す。パースに失敗したもの（検証は下の [Nostr イベントの検証](../architecture.md#nostr-イベントの検証nostrrs)）、`cid` タグが無いもの、`expiration` を過ぎたものは数えない。
+- 集計（`replicas::collect_reports`）: サイトイベントの座標（`35980:<作者>:<d>`）を `#a` に入れて `replica_event_kind` の報告を取得し、報告者・`d` ごとに最新の 1 件だけを残す。パースに失敗したもの（検証は下の [Nostr イベントの検証](../architecture.md#nostr-イベントの検証nostrrs)）、`cid` タグが無いものは数えない。残りは `ReplicaReport::counts_at(now)` が true のものだけを数える: `created_at` が `now + 900` 秒以内、`now - created_at` が 7 日（`nostr::MAX_REPORT_AGE`）以内、かつ `expiration` が無いか `now` より先。
 - サイトイベント・報告・Follow Set のどれかの取得に失敗したらエラーで終了する。
 
 ## status

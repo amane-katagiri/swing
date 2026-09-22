@@ -26,7 +26,7 @@ fn collect_reports(
         let Ok(report) = nostr::parse_replica_report(&event, report_kind, site_event_kind) else {
             continue;
         };
-        if report.cids.is_empty() || report.is_expired_at(now) {
+        if report.cids.is_empty() || !report.counts_at(now) {
             continue;
         }
         out.entry((report.author, report.d.clone()))
@@ -312,5 +312,58 @@ mod tests {
         assert_eq!(follow_mark(true, false), "  [author]");
         assert_eq!(follow_mark(false, true), "");
         assert_eq!(follow_mark(false, false), "  [not following]");
+    }
+
+    fn report_with_bad_expiration(
+        reporter: &Keys,
+        author: &PublicKey,
+        d: &str,
+        cid: &str,
+    ) -> Event {
+        let author_hex = author.to_hex();
+        EventBuilder::new(Kind::Custom(35981), "")
+            .tag(Tag::identifier(format!("{author_hex}:{d}")))
+            .tag(Tag::custom(
+                "a",
+                [nostr::site_coordinate(35980, author, d).to_string()],
+            ))
+            .tag(Tag::custom("cid", [cid.to_string()]))
+            .tag(Tag::custom("expiration", ["not-a-number"]))
+            .finalize(reporter)
+            .unwrap()
+    }
+
+    #[test]
+    fn collect_reports_drops_a_report_with_a_garbage_expiration() {
+        let author = Keys::generate().public_key();
+        let reporter = Keys::generate();
+        let events = vec![report_with_bad_expiration(
+            &reporter,
+            &author,
+            "example.com",
+            CID_A,
+        )];
+
+        let collected = collect_reports(events, 35981, 35980, 500);
+        assert!(collected.is_empty());
+    }
+
+    #[test]
+    fn collect_reports_drops_a_report_older_than_the_max_report_age() {
+        let author = Keys::generate().public_key();
+        let reporter = Keys::generate();
+        let created_at = 1_000_000;
+        let events = vec![report(
+            &reporter,
+            &author,
+            "example.com",
+            &[CID_A],
+            created_at,
+            created_at + nostr::MAX_REPORT_AGE * 10,
+        )];
+
+        let now = created_at + nostr::MAX_REPORT_AGE + 1;
+        let collected = collect_reports(events, 35981, 35980, now);
+        assert!(collected.is_empty());
     }
 }

@@ -2,7 +2,7 @@ use crate::config::PolicyConfig;
 
 // `created_at` is self-declared by the author, so a small tolerance is all that
 // separates honest clock skew from a timestamp forged to defeat the rate limit.
-const MAX_FUTURE_SKEW: u64 = 900;
+pub const MAX_FUTURE_SKEW: u64 = 900;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VersionInfo {

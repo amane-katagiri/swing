@@ -7,7 +7,7 @@
 | 高 | NIP-46 remote signer 対応。秘密鍵を `.env` に置かずに済む構成にする | plan §12 |
 | 中 | NIP-05 の実 HTTP 経路の統合テスト（ローカル TLS エンドポイント相手、`#[ignore]`） | レビュー |
 | 中 | 取得に失敗した CID を覚えて指数バックオフで再試行する。今は poll ごとに同じ CID の取得を試み、そのたびに最大 `SWING_FETCH_IDLE_TIMEOUT` の間、並行枠を 1 つ使う | レビュー（DoS） |
-| 低 | relay から取得するサイトイベント・レプリカ報告・Follow Set の件数上限。`fetch_events` は件数無制限で、30 秒のタイムアウトだけで抑えている。レプリカ報告や、`#p` で見つかる Follow Set は誰でも出せるので、`swing replicas` / `sites` / `webring` で特に効く。`webring` はたどるアカウント数の上限も要る。ダッシュボードの `/api/replicas`・`/api/webring`・`/api/sites` も同じ `collect_*` 関数を呼ぶため、認証の無いブラウザからも同じ負荷をかけられる。ダッシュボード側は `keys`/`root`/`key` を 100 件に制限したが、これはリクエスト 1 回あたりの入力サイズを抑えるだけで、relay を引く GET 自体にはサーバ側のキャッシュも同時実行数の制限も無く、何度リクエストしても毎回 relay に取得しに行く | レビュー（DoS） |
+| 低 | relay から取得するサイトイベント・レプリカ報告・Follow Set の件数上限。`fetch_events` は件数無制限で、30 秒のタイムアウトだけで抑えている。レプリカ報告や、`#p` で見つかる Follow Set は誰でも出せるので、`swing replicas` / `sites` / `webring` で特に効く。`webring` はたどるアカウント数の上限も要る。 1 作者が持つ `d` の数（`replicas::collect` / `webring::collect` は作者の全サイトを引く）、Follow Set 1 件の `p` タグ数、`webring::crawl` の 1 レベルあたりの pubkey 数と総ノード数、レプリカ報告 1 件の `cid` タグ数にも上限が無い。ダッシュボードの `/api/replicas`・`/api/webring`・`/api/sites` も同じ `collect_*` 関数を呼ぶため、認証の無いブラウザからも同じ負荷をかけられる。ダッシュボード側は `keys`/`root`/`key` を 100 件に制限したが、これはリクエスト 1 回あたりの入力サイズを抑えるだけで、relay を引く GET 自体にはサーバ側のキャッシュも同時実行数の制限も無く、何度リクエストしても毎回 relay に取得しに行く | レビュー（DoS） |
 | 中 | ダッシュボードの認証トークン。今は Host 検証・書き込み系の CSRF 対策（`X-Swing-Dashboard` ヘッダ・Origin 検証）だけで、閲覧そのものへの認証は無い。既定の bind 先（`127.0.0.1`）から出さない前提で見送った | レビュー |
 | 低 | `/api/status` が重い。サイト単位で DAG をたどるため保存量に比例して時間がかかるが、進捗表示もタイムアウトも無い（フロントはボタンを押したときだけ呼ぶ運用でしのいでいる） | レビュー |
 | 低 | 容量の上限判定を実容量（版どうしの共有を数えない値）で行う。今は版ごとの `dag/stat` の和で判定していて、差分更新のサイトを実際より大きく見積もる。evict の途中経過ごとに測り直す必要があるので、`policy::decide` に suffix union の表を渡すなど、純粋関数のまま保てる形にする | [実容量の表示](log/2026-09-22-実容量の表示.md) |
@@ -31,3 +31,11 @@
 | 低 | compose 専用の環境変数（`SWING_KUBO_GATEWAY_BIND`、`SWING_DASHBOARD_BIND` など）を `swing.toml` へ寄せる。compose 側は外部の Kubo を使う設定にする | [配布方式の設計](log/2026-09-21-配布方式の設計.md) |
 | 低 | Kubo RPC を Unix socket か loopback の動的ポートに閉じる。単一プロセスで動かすなら 5001 を固定する必要が無い | [配布方式の設計](log/2026-09-21-配布方式の設計.md) |
 | 低 | 配布前に確かめること: upstream の kubo darwin-arm64 バイナリが署名されているか、Windows のファイアウォール（4001）の初回ダイアログの扱い、既存 compose 利用者が `ipfs-data` から移行する手順 | [配布方式の設計](log/2026-09-21-配布方式の設計.md) |
+| 中 | `select_latest`（`src/nostr.rs`）と Follow Set の選択（`is_newer_replaceable` / `choose_follow_set`）に `MAX_FUTURE_SKEW` を適用する。`policy::decide` は未来の `created_at` を拒否するが、現行版の選択は最大の `created_at` を取るだけなので、遠未来の `created_at` を持つサイトイベントが 1 件出ると `swing mirror sites` / `replicas` / `webring` とダッシュボードはその CID を現行版として表示し、レプリカ数もそれに対して数える。Follow Set は自分の署名が要るが、遠未来の kind 30000 が一度 state に保存されるとまともな時刻の更新が二度と勝てず、ミラー対象が凍結する | 監査（自己申告の信用） |
+| 中 | `url` タグの制御文字を拒否する。`valid_http_url` は長さとスキームしか見ず、`Url::parse` は制御文字を含む文字列でも成功する。`mirror.rs` の `format_site_line` は `url` を無加工で出すので `swing status` で端末エスケープが刺さる（`title` と `content` は `sanitize_display_text` を通る） | 監査（自己申告の信用） |
+| 中 | レプリカ報告者の数に上限を付ける。`replicas::collect` は報告者を全部集めて報告者ごとに Follow Set も引き、`web/webring.js` は報告者数ぶん `<li>` を作る。報告者は捨て鍵で量産できる | 監査（自己申告の信用） |
+| 中 | サイト一覧（`web/sites.js` のカードと表）の容量は自己申告の `size` タグをそのまま表示している。実測値は Storage check にしか出ない。申告値であることを示すか、実測値を並べる | 監査（自己申告の信用） |
+| 低 | `duplicate_cid` の比較を CID の正規形で行う。今は文字列比較なので base32 と base58btc で書いた同じ CID が別の版になる | 監査（自己申告の信用） |
+| 低 | `content` の長さ上限。サーバ側では切らず `/api/sites` に全文を返している（表示はクライアントで 200 文字に切る） | 監査（自己申告の信用） |
+| 低 | `cid` がディレクトリの root であることの確認。今は構文検証だけで、ファイル単体や raw block も保存される | 監査（自己申告の信用） |
+| 低 | Desktop 画面のアイコンが NIP-05 の「対象外」と「検証済み」を区別しない（Sites 画面には N/A バッジがある） | 監査（自己申告の信用） |

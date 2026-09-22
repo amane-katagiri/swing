@@ -454,6 +454,10 @@ pub fn build_site_event_builder(
     ))
 }
 
+// `expiration` is self-declared like `created_at`, so a report that never
+// re-signs must still age out; only re-signing proves the reporter is alive.
+pub const MAX_REPORT_AGE: u64 = 7 * 86_400;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReplicaReport {
     pub reporter: PublicKey,
@@ -465,8 +469,10 @@ pub struct ReplicaReport {
 }
 
 impl ReplicaReport {
-    pub fn is_expired_at(&self, now: u64) -> bool {
-        self.expiration.is_some_and(|exp| exp <= now)
+    pub fn counts_at(&self, now: u64) -> bool {
+        self.created_at <= now.saturating_add(crate::policy::MAX_FUTURE_SKEW)
+            && now.saturating_sub(self.created_at) <= MAX_REPORT_AGE
+            && self.expiration.is_none_or(|exp| exp > now)
     }
 }
 
@@ -505,13 +511,16 @@ pub fn parse_replica_report(
             Ok(value.to_string())
         })
         .collect::<Result<BTreeSet<String>>>()?;
+    let expiration = tag_value(event, "expiration")
+        .map(|s| s.parse::<u64>().context("invalid expiration tag"))
+        .transpose()?;
     Ok(ReplicaReport {
         reporter: event.pubkey,
         author,
         d: d.to_string(),
         cids,
         created_at: event.created_at.as_secs(),
-        expiration: event.tags.expiration().map(|t| t.as_secs()),
+        expiration,
     })
 }
 
@@ -1067,8 +1076,8 @@ mod tests {
         );
         assert_eq!(parsed.created_at, 1000);
         assert_eq!(parsed.expiration, Some(1100));
-        assert!(!parsed.is_expired_at(1099));
-        assert!(parsed.is_expired_at(1100));
+        assert!(parsed.counts_at(1099));
+        assert!(!parsed.counts_at(1100));
     }
 
     #[test]
@@ -1117,6 +1126,84 @@ mod tests {
 
         let ev = report_with_tags(&reporter, &d, &a, "not-a-cid");
         assert!(parse_replica_report(&ev, 35981, 35980).is_err());
+    }
+
+    fn report_with_expiration(reporter: &Keys, d: &str, a: &str, expiration: &str) -> Event {
+        EventBuilder::new(Kind::Custom(35981), "")
+            .tag(Tag::identifier(d))
+            .tag(Tag::custom("a", [a.to_string()]))
+            .tag(Tag::custom("expiration", [expiration.to_string()]))
+            .finalize(reporter)
+            .unwrap()
+    }
+
+    #[test]
+    fn replica_report_rejects_a_malformed_expiration_tag() {
+        let reporter = keys();
+        let author = keys().public_key();
+        let hex = author.to_hex();
+        let d = format!("{hex}:example.com");
+        let a = format!("35980:{hex}:example.com");
+
+        for bad in ["not-a-number", "", "12.5", "-1"] {
+            let ev = report_with_expiration(&reporter, &d, &a, bad);
+            assert!(parse_replica_report(&ev, 35981, 35980).is_err(), "{bad}");
+        }
+    }
+
+    #[test]
+    fn replica_report_without_an_expiration_tag_parses_as_none() {
+        let reporter = keys();
+        let author = keys().public_key();
+        let hex = author.to_hex();
+        let d = format!("{hex}:example.com");
+        let a = format!("35980:{hex}:example.com");
+
+        let ev = report_with_tags(&reporter, &d, &a, CID_A);
+        let parsed = parse_replica_report(&ev, 35981, 35980).unwrap();
+        assert_eq!(parsed.expiration, None);
+    }
+
+    fn report_at(created_at: u64, expiration: Option<u64>) -> ReplicaReport {
+        ReplicaReport {
+            reporter: keys().public_key(),
+            author: keys().public_key(),
+            d: "example.com".to_string(),
+            cids: BTreeSet::from([CID_A.to_string()]),
+            created_at,
+            expiration,
+        }
+    }
+
+    #[test]
+    fn counts_at_accepts_a_fresh_report_with_no_expiration() {
+        assert!(report_at(1000, None).counts_at(1000));
+    }
+
+    #[test]
+    fn counts_at_rejects_a_report_older_than_max_report_age() {
+        let report = report_at(1000, None);
+        assert!(report.counts_at(1000 + MAX_REPORT_AGE));
+        assert!(!report.counts_at(1000 + MAX_REPORT_AGE + 1));
+
+        let far_future_expiration = report_at(1000, Some(u64::MAX));
+        assert!(!far_future_expiration.counts_at(1000 + MAX_REPORT_AGE + 1));
+    }
+
+    #[test]
+    fn counts_at_rejects_created_at_beyond_the_future_skew() {
+        let report = report_at(1000 + crate::policy::MAX_FUTURE_SKEW, None);
+        assert!(report.counts_at(1000));
+
+        let report = report_at(1000 + crate::policy::MAX_FUTURE_SKEW + 1, None);
+        assert!(!report.counts_at(1000));
+    }
+
+    #[test]
+    fn counts_at_rejects_expiration_exactly_at_now() {
+        let report = report_at(1000, Some(2000));
+        assert!(report.counts_at(1999));
+        assert!(!report.counts_at(2000));
     }
 
     #[test]
