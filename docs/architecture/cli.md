@@ -44,7 +44,7 @@ Follow Set の対象者のサイトを MFS に保存・削除し続ける常駐�
 
 ## sites
 
-- Follow Set の対象者ごとに、サイトごとの最新のサイトイベントを 1 行（`d`、`cid`、`url`、`size`、`created_at`、NIP-05 検証結果、`replicas`、`[stored]` / `[not stored]`）表示する。`title` タグが有効なら次の行に `    title: ` として、`content` が空でなければ続けて `    message: ` として、それぞれ制御文字を空白に置き換え、前後の空白を削り、200 文字を超える分を `…` に置き換えて表示する。検証結果と保存状況は `state.json` から読む。`replicas` は [replicas](#replicas) と同じ集計の最新版のレプリカ数。レプリカ報告の取得に失敗したら `(fetching replica reports failed: ...)` を表示して `-` にする。
+- Follow Set の対象者ごとに、サイトごとの最新のサイトイベントを 1 行（`d`、`cid`、`url`、`size`、`created_at`、NIP-05 検証結果、`replicas`、`[stored]` / `[not stored]`）表示する。`title` タグが有効なら次の行に `    title: ` として、`content` が空でなければ続けて `    message: ` として、それぞれ制御文字を空白に置き換え、前後の空白を削り、200 文字を超える分を `…` に置き換えて表示する。検証結果と保存状況は `state.json` から読む。`replicas` は [replicas](#replicas) と同じ集計の最新版のレプリカ数で、`replicas::format_replica_counts` により `3` または `3 (+12 unverified)`（未検証の報告者がいるとき）の形になる（[「レプリカ報告の信頼度」](../architecture.md#レプリカ報告の信頼度replicastier)）。信頼度の判定には Follow Set の対象全員分をまとめて 1 回だけ取得する。レプリカ報告の取得に失敗したら `(fetching replica reports failed: ...)` を表示して `-` にする。
   - `size` 列: そのイベントの `cid` と一致する `VersionRecord`（保存時に `dag/stat` で測って `state.json` に記録した値。改めて Kubo は呼ばない）があればその値をそのまま数値で出す。無ければイベントの自己申告の `size` タグを括弧書き（例 `(12345)`）で出す。どちらも無ければ `-`。括弧書きは `[not stored]` と対で「申告のみで未確認」を表す（ラベルは付けない）。
 - 続けて、state に版があるのに Follow Set にいない pubkey を `Unfollowed but still stored` 見出しの下に `[unfollowed]` 付きで、サイトごとに state の最新版を 1 行（`url` は `-`）表示する。見出しには `remove_on_unfollow` に応じて、次の poll で消えるか残しているかを添える。Follow Set が見つからなくても表示する。
 - 表示する対象は [取得と表示の上限](../architecture.md#取得と表示の上限nostrbudget) の対象になる: Follow Set の `p` は先頭 500 件まで（超えたら warn を出す）、1 作者あたりの `d` は `d` の昇順で先頭 50 件まで。
@@ -54,10 +54,10 @@ Follow Set の対象者のサイトを MFS に保存・削除し続ける常駐�
 state は読まない。
 
 - `<key>` を作者として扱う。省略時は自分の pubkey。
-- 作者ごとに、サイトごとの最新のサイトイベントについて `d`、`cid`、`replicas=<最新版を持つ報告者数> (reports=<有効な報告の数>)` を表示し、続けて報告者ごとに npub と `[latest]` / `[older version]` を 1 行ずつ表示する。最新版を持つ報告者を先に、同じ中では hex の順に並べる。
-- 報告者が作者なら `[author]`、報告者の Follow Set に作者がいなければ `[not following]` を添える。
+- 作者ごとに、サイトごとの最新のサイトイベントについて `d`、`cid`、`replicas=<trusted な報告者数>（`format_replica_counts` により未検証がいれば ` (+N unverified)` を添える） (reports=<有効な報告の数>)` を表示し、続けて報告者ごとに npub と `[latest]` / `[older version]` を 1 行ずつ表示する。並びは（信頼度の tier、最新版を持つか、hex）の順。
+- 報告者ごとに信頼度の tier を `[author]`（報告者が作者自身） / `[chosen]`（報告者が作者の Follow Set かこちらの Follow Set のいずれかに入っている） / `[unverified]`（それ以外。自称にすぎない）のいずれかで添える（[「レプリカ報告の信頼度」](../architecture.md#レプリカ報告の信頼度replicastier)）。
 - 集計（`replicas::collect_reports`）: サイトイベントの座標（`35980:<作者>:<d>`）を `#a` に入れて `replica_event_kind` の報告を取得し、報告者・`d` ごとに最新の 1 件だけを残す。パースに失敗したもの（検証は下の [Nostr イベントの検証](../architecture.md#nostr-イベントの検証nostrrs)）、`cid` タグが無いものは数えない。残りは `ReplicaReport::counts_at(now)` が true のものだけを数える: `created_at` が `now + 900` 秒以内、`now - created_at` が 7 日（`nostr::MAX_REPORT_AGE`）以内、かつ `expiration` が無いか `now` より先。
-- サイトごとの報告は `created_at` の新しい順で先頭 200 件（`nostr::budget::MAX_REPORTS_PER_SITE`）までに切り詰める。`replicas=`・`reports=` は切り詰め後の件数で、切り詰めがあれば報告者一覧の後に `… and N more report(s) not shown` を出す（[取得と表示の上限](../architecture.md#取得と表示の上限nostrbudget)）。作者ごとに表示する `d` も先頭 50 件までに切り詰める。
+- サイトごとの報告は（信頼度の tier、`created_at` の新しい順）で先頭 200 件（`nostr::budget::MAX_REPORTS_PER_SITE`）までに切り詰める。`reports=` は切り詰め後の件数で、切り詰めがあれば報告者一覧の後に `… and N more report(s) not shown` を出す（[取得と表示の上限](../architecture.md#取得と表示の上限nostrbudget)）。作者ごとに表示する `d` も先頭 50 件までに切り詰める。
 - サイトイベント・報告・Follow Set のどれかの取得に失敗したらエラーで終了する。
 
 ## status
@@ -76,12 +76,12 @@ relay には接続せず、`state.json` と Kubo だけを見る。
 state は読まない。
 
 - `<key>` を起点にする。省略時は自分の pubkey。`--depth` の既定は 2、`--format` の既定は `text`。
-- たどり方（`webring::crawl`）: 起点を深さ 0 とし、深さ `d` のアカウントについて Follow Set を取得する。`d < depth` なら、その `p` のアカウントと、`#p` にそのアカウントを含む Follow Set の作者を、まだ見ていなければ深さ `d + 1` にする。`#p` での取得は作者を見つけるためだけに使い、辺は作者で取得した Follow Set からだけ作る。深さ `depth` のアカウントも Follow Set は取得するが、先へは広げない。
-- グラフ（`webring::build_graph`）: 取得した Follow Set の `p` のうち、見つけたアカウントを指すものを辺（A → B は A の Follow Set に B がいる）にする。自分自身への辺は捨てる。辺を向きを無視してたどり、起点につながらないアカウント（`#p` で見つけたが、最新の Follow Set ではもう指していない作者など）は除く。
+- たどり方（`webring::crawl`）: 起点を深さ 0 とし、深さ `d` のアカウントについて Follow Set を取得する。`d < depth` なら、その `p` のアカウント（アカウント自身が実際にフォローしている相手）を、まだ見ていなければ深さ `d + 1` にする。深さ `depth` のアカウントも Follow Set は取得するが、先へは広げない。`#p`（自分を名指ししているだけの相手。フォローし返しているとは限らない自称）は深さ 0（起点）についてだけ 1 回取得し、クロールを広げるのには使わない（[「レプリカ報告の信頼度」](../architecture.md#レプリカ報告の信頼度replicastier)）。
+- グラフ（`webring::build_graph`）: 取得した Follow Set の `p` のうち、見つけたアカウント（`#p` で見つかっただけの、フォロー先ではない相手を除く）を指すものを辺（A → B は A の Follow Set に B がいる）にする。自分自身への辺は捨てる。辺を向きを無視してたどり、起点につながらないアカウントは除く。
 - 残ったアカウントのサイトイベントを取得し、サイトごとの最新版の `d` をアカウントの名前にする。
-- `text`: 見出しに件数、`Accounts` にアカウントごとの名前（`d` を `, ` でつないだもの。無ければ縮めた npub。同じ名前が複数あれば縮めた npub を添える）・npub・深さ・`[root]` / `[no follow set]`、`Mutual` に双方向の組、`One-way` に片方向の辺を出す。並びは（深さ、名前）の順。深さの上限の外にいて表示しなかった、残ったアカウントの Follow Set に載っているアカウントがあれば、その数を最後に出す。
-- `dot`: Graphviz の `digraph`。ノード ID は hex、ラベルは名前と縮めた npub。起点は `penwidth=2`、双方向の組は `dir=both` の 1 本にする。
-- `mermaid`: `graph LR`。ノード ID は `n<番号>`（hex 順）、ラベルは名前と縮めた npub で、`#` `&` `"` `<` `>` はエンティティにする。起点は `root` クラス、双方向の組は `<-->` にする。
+- `text`: 見出しに件数、`Accounts` にアカウントごとの名前（`d` を `, ` でつないだもの。無ければ縮めた npub。同じ名前が複数あれば縮めた npub を添える）・npub・深さ・`[root]` / `[no follow set]`、`Mutual` に双方向の組、`One-way` に片方向の辺を出す。並びは（深さ、名前）の順。続けて `Referencing the root (unverified)` に、起点を名指ししているだけでクロールには加えなかったアカウント（`#p` で見つかったもの）を npub で先頭 50 件（`nostr::budget::MAX_REFERENCING_LISTED`）まで、超えた分は `… and N more` として出す（1 件も無ければ `(none)`）。深さの上限の外にいて表示しなかった、残ったアカウントの Follow Set に載っているアカウントがあれば、その数を最後に出す。
+- `dot`: Graphviz の `digraph`。ノード ID は hex、ラベルは名前と縮めた npub。起点は `penwidth=2`、双方向の組は `dir=both` の 1 本にする。`referencing` は含めない（グラフだけを描く）。
+- `mermaid`: `graph LR`。ノード ID は `n<番号>`（hex 順）、ラベルは名前と縮めた npub で、`#` `&` `"` `<` `>` はエンティティにする。起点は `root` クラス、双方向の組は `<-->` にする。`referencing` は含めない。
 - Follow Set・サイトイベントのどれかの取得に失敗したらエラーで終了する。
 - たどるアカウントの総数は `nostr::budget::MAX_CRAWL_NODES`（1000）を超えない。超えて見つかったアカウントは crawl に加えず件数だけ数え、`text` の末尾に `(crawl stopped at the 1000-account budget; not reached: N)` として出す（深さの上限外で表示していない `beyond` とは別のカウンタ）。アカウントの名前に使う `d` も 1 アカウントあたり先頭 50 件までに切り詰める。
 

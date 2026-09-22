@@ -58,8 +58,11 @@ pub struct Crawl {
     pub depths: BTreeMap<PublicKey, usize>,
     pub follows: HashMap<PublicKey, Vec<PublicKey>>,
     pub over_budget: usize,
+    pub referencing: Vec<PublicKey>,
+    pub referencing_dropped: usize,
 }
 
+// `referencing` only proves someone named a root, not that the root reciprocated, so it never admits nodes.
 pub async fn crawl<S: FollowSetSource>(
     source: &S,
     roots: &[PublicKey],
@@ -78,17 +81,19 @@ pub async fn crawl<S: FollowSetSource>(
     }
     let mut frontier: Vec<PublicKey> = out.depths.keys().copied().collect();
     let mut depth = 0;
+    let mut referencing: BTreeSet<PublicKey> = BTreeSet::new();
     while !frontier.is_empty() {
         let sets = source.follow_sets(&frontier).await?;
+        if depth == 0 {
+            referencing = source.referencing(&frontier).await?.into_iter().collect();
+        }
         if depth == max_depth {
             out.follows.extend(sets);
             break;
         }
-        let referencing = source.referencing(&frontier).await?;
         let candidates: BTreeSet<PublicKey> = sets
             .values()
             .flatten()
-            .chain(referencing.iter())
             .filter(|pk| !out.depths.contains_key(pk))
             .copied()
             .collect();
@@ -105,6 +110,15 @@ pub async fn crawl<S: FollowSetSource>(
         }
         frontier = next;
     }
+    let mut referencing: Vec<PublicKey> = referencing
+        .into_iter()
+        .filter(|pk| !out.depths.contains_key(pk))
+        .collect();
+    out.referencing_dropped = referencing
+        .len()
+        .saturating_sub(nostr::budget::MAX_REFERENCING_LISTED);
+    referencing.truncate(nostr::budget::MAX_REFERENCING_LISTED);
+    out.referencing = referencing;
     Ok(out)
 }
 
@@ -259,6 +273,8 @@ pub fn render_text(
     names: &HashMap<PublicKey, String>,
     mirror_set: &str,
     max_depth: usize,
+    referencing: &[PublicKey],
+    referencing_dropped: usize,
 ) -> String {
     let labels = text_labels(&graph.nodes, names);
     let key = |pk: &PublicKey| (graph.nodes[pk], labels[pk].clone());
@@ -308,6 +324,16 @@ pub fn render_text(
     }
     for (a, b) in &links.one_way {
         out.push_str(&format!("  {} → {}\n", labels[a], labels[b]));
+    }
+    out.push_str("\nReferencing the root (unverified)\n");
+    if referencing.is_empty() {
+        out.push_str("  (none)\n");
+    }
+    for pk in referencing {
+        out.push_str(&format!("  {}\n", mirror::npub(pk)));
+    }
+    if referencing_dropped > 0 {
+        out.push_str(&format!("  … and {referencing_dropped} more\n"));
     }
     if graph.beyond > 0 {
         out.push_str(&format!(
@@ -398,6 +424,8 @@ pub struct WebringView {
     pub names: HashMap<PublicKey, String>,
     pub mirror_set: String,
     pub depth: usize,
+    pub referencing: Vec<PublicKey>,
+    pub referencing_dropped: usize,
 }
 
 pub async fn collect(
@@ -410,7 +438,8 @@ pub async fn collect(
         relay,
         mirror_set: &config.nostr.mirror_set,
     };
-    let graph = build_graph(&crawl(&source, roots, depth).await?);
+    let crawled = crawl(&source, roots, depth).await?;
+    let graph = build_graph(&crawled);
     let accounts: Vec<PublicKey> = graph.nodes.keys().copied().collect();
     let parsed: Vec<SiteEvent> = relay
         .fetch_site_events(config.nostr.site_event_kind, &accounts)
@@ -437,6 +466,8 @@ pub async fn collect(
         names,
         mirror_set: config.nostr.mirror_set.clone(),
         depth,
+        referencing: crawled.referencing,
+        referencing_dropped: crawled.referencing_dropped,
     })
 }
 
@@ -452,7 +483,14 @@ pub async fn show(config: &Config, inputs: &[String], depth: usize, format: Form
     relay.client.shutdown().await;
     let view = result?;
     let rendered = match format {
-        Format::Text => render_text(&view.graph, &view.names, &view.mirror_set, view.depth),
+        Format::Text => render_text(
+            &view.graph,
+            &view.names,
+            &view.mirror_set,
+            view.depth,
+            &view.referencing,
+            view.referencing_dropped,
+        ),
         Format::Dot => render_dot(&view.graph, &view.names),
         Format::Mermaid => render_mermaid(&view.graph, &view.names),
     };
@@ -526,7 +564,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn crawl_follows_outgoing_and_incoming_links_up_to_the_depth() {
+    async fn crawl_expands_only_along_outbound_edges_past_the_roots() {
         let k = keys(5);
         let (me, bob, carol, dave, erin) = (k[0], k[1], k[2], k[3], k[4]);
         let source = FakeSource::new(&[
@@ -538,24 +576,27 @@ mod tests {
 
         let result = crawl(&source, &[me], 1).await.unwrap();
 
-        assert_eq!(
-            result.depths,
-            BTreeMap::from([(me, 0), (bob, 1), (carol, 1)])
-        );
-        assert_eq!(result.follows.len(), 3);
+        assert_eq!(result.depths, BTreeMap::from([(me, 0), (bob, 1)]));
+        assert_eq!(result.referencing, vec![carol]);
+        assert_eq!(result.follows.len(), 2);
         let calls = source.calls.lock().unwrap();
         assert_eq!(calls.len(), 3);
+        assert_eq!(calls[0].0, "sets");
+        assert_eq!(calls[1].0, "referencing");
         assert_eq!(calls[2].0, "sets");
-        assert_eq!(calls[2].1.len(), 2);
+        assert_eq!(calls[2].1, vec![bob]);
     }
 
     #[tokio::test]
-    async fn crawl_at_depth_zero_only_reads_the_roots() {
+    async fn crawl_at_depth_zero_still_queries_referencing_for_the_roots() {
         let k = keys(2);
         let source = FakeSource::new(&[(k[0], &[k[1]])]);
         let result = crawl(&source, &[k[0]], 0).await.unwrap();
         assert_eq!(result.depths, BTreeMap::from([(k[0], 0)]));
-        assert_eq!(source.calls.lock().unwrap().len(), 1);
+        assert!(result.referencing.is_empty());
+        let calls = source.calls.lock().unwrap();
+        assert_eq!(calls.len(), 2);
+        assert_eq!(calls[1].0, "referencing");
     }
 
     #[tokio::test]
@@ -572,6 +613,28 @@ mod tests {
         assert_eq!(result.depths.len() + result.over_budget, fanout.len() + 1);
     }
 
+    #[tokio::test]
+    async fn crawl_caps_referencing_accounts_and_counts_the_rest() {
+        let root = Keys::generate().public_key();
+        let referencers: Vec<PublicKey> = (0..nostr::budget::MAX_REFERENCING_LISTED + 5)
+            .map(|_| Keys::generate().public_key())
+            .collect();
+        let root_slice = [root];
+        let edges: Vec<(PublicKey, &[PublicKey])> = referencers
+            .iter()
+            .map(|pk| (*pk, root_slice.as_slice()))
+            .collect();
+        let source = FakeSource::new(&edges);
+
+        let result = crawl(&source, &[root], 1).await.unwrap();
+
+        assert_eq!(
+            result.referencing.len(),
+            nostr::budget::MAX_REFERENCING_LISTED
+        );
+        assert_eq!(result.referencing_dropped, 5);
+    }
+
     #[test]
     fn build_graph_drops_self_links_outside_targets_and_disconnected_accounts() {
         let k = keys(5);
@@ -584,6 +647,8 @@ mod tests {
                 (stale, vec![carol]),
             ]),
             over_budget: 0,
+            referencing: Vec::new(),
+            referencing_dropped: 0,
         };
 
         let graph = build_graph(&crawl);
@@ -601,6 +666,8 @@ mod tests {
             depths: BTreeMap::from([(k[0], 0), (k[1], 0)]),
             follows: HashMap::new(),
             over_budget: 0,
+            referencing: Vec::new(),
+            referencing_dropped: 0,
         };
         let graph = build_graph(&crawl);
         assert_eq!(graph.nodes.len(), 2);
@@ -633,7 +700,7 @@ mod tests {
     #[test]
     fn text_lists_accounts_and_links_by_depth() {
         let (k, graph, names) = sample();
-        let text = render_text(&graph, &names, "swing", 2);
+        let text = render_text(&graph, &names, "swing", 2, &[], 0);
         let dave = short_npub(&k[3]);
 
         assert!(text.starts_with(
@@ -648,14 +715,26 @@ mod tests {
         assert!(text.contains(&format!(
             "  \"x\" <y> #z → blog.me.example, me.example\n  bob.example → {dave}\n"
         )));
+        assert!(text.contains("Referencing the root (unverified)\n  (none)\n"));
         assert!(text.ends_with("\n(accounts beyond depth 2, not shown: 2)\n"));
+    }
+
+    #[test]
+    fn text_lists_referencing_accounts_and_the_remainder() {
+        let (_, graph, names) = sample();
+        let extra = Keys::generate().public_key();
+        let text = render_text(&graph, &names, "swing", 2, &[extra], 4);
+        assert!(text.contains(&format!(
+            "Referencing the root (unverified)\n  {}\n  … and 4 more\n",
+            mirror::npub(&extra)
+        )));
     }
 
     #[test]
     fn text_reports_accounts_dropped_by_the_crawl_budget() {
         let (_, mut graph, names) = sample();
         graph.over_budget = 3;
-        let text = render_text(&graph, &names, "swing", 2);
+        let text = render_text(&graph, &names, "swing", 2, &[], 0);
         assert!(text.ends_with(&format!(
             "\n(crawl stopped at the {}-account budget; not reached: 3)\n",
             nostr::budget::MAX_CRAWL_NODES

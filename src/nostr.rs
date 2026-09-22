@@ -21,6 +21,7 @@ pub mod budget {
     pub const MAX_SITES_PER_AUTHOR_LISTED: usize = 50;
     pub const MAX_REPORTS_PER_SITE: usize = 200;
     pub const MAX_CRAWL_NODES: usize = 1000;
+    pub const MAX_REFERENCING_LISTED: usize = 50;
     pub const MAX_RELAY_FETCH_LIMIT: usize = 20_000;
 }
 

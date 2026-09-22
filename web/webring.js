@@ -71,6 +71,12 @@ function labelOf(map, pk) {
   return n ? n.label : shortenMiddle(pk, 8, 4);
 }
 
+function tierTag(tier) {
+  if (tier === 'author') return t('tagAuthor');
+  if (tier === 'chosen') return t('tagChosen');
+  return t('tagUnverified');
+}
+
 function graphLabels() {
   return {
     root: t('legendRoot'),
@@ -121,6 +127,13 @@ function renderListStyle(data) {
   if (oneway.length === 0) onewayGroup.append(el('p', { class: 'swing-hint' }, t('none')));
   for (const e of oneway) onewayGroup.append(el('div', { class: 'swing-webring-account-row' }, `${labelOf(nodeByKey, e.from)} → ${labelOf(nodeByKey, e.to)}`));
   wrap.append(onewayGroup);
+
+  const referencing = data.referencing || { accounts: [], more: 0 };
+  const referencingGroup = el('div', { class: 'swing-webring-group' }, el('h3', {}, t('referencingHeading', { n: referencing.accounts.length })));
+  if (referencing.accounts.length === 0) referencingGroup.append(el('p', { class: 'swing-hint' }, t('none')));
+  for (const acct of referencing.accounts) referencingGroup.append(el('div', { class: 'swing-webring-account-row' }, acct.npub));
+  if (referencing.more > 0) referencingGroup.append(el('p', { class: 'swing-hint' }, t('referencingMoreHint', { more: referencing.more })));
+  wrap.append(referencingGroup);
 
   webringEls.content.append(wrap);
 }
@@ -206,16 +219,19 @@ function renderNodeDetail(node, pubkey, replicasResp, memberSet) {
   } else {
     for (const site of author.sites) {
       const block = el('div', { class: 'swing-site' });
+      const countText = site.unverified > 0
+        ? t('replicaCountWithUnverified', { replicas: site.replicas, unverified: site.unverified })
+        : t('replicaCountBadge', { replicas: site.replicas });
       block.append(
         el('div', { class: 'swing-site-row' }, [
           el('span', { class: 'swing-site-name' }, site.d),
-          el('span', { class: 'swing-badge' }, t('replicasReportsBadge', { replicas: site.replicas, reports: site.reports })),
+          el('span', { class: 'swing-badge' }, countText),
         ]),
       );
       const reporters = el('ul', { class: 'swing-plain-list' });
       for (const r of site.reporters) {
         reporters.append(
-          el('li', {}, `${r.npub} ${r.latest ? t('tagLatest') : t('tagOlderVersion')}${r.is_author ? t('tagAuthor') : ''}${!r.following ? t('tagNotFollowing') : ''}`),
+          el('li', {}, `${r.npub} ${r.latest ? t('tagLatest') : t('tagOlderVersion')}${tierTag(r.tier)}`),
         );
       }
       block.append(reporters);

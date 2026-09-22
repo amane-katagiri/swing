@@ -28,15 +28,15 @@
 
 ```json
 { "follow_set": { "found": true, "note": null },
-  "accounts": [ { "pubkey": "…", "npub": "…", "sites": [ { "d": "example.com", "cid": "bafy…", "url": "…", "size": 12345, "stored_size": 12300, "created_at": 1790000000, "title": "…", "message": "…", "nip05": "verified", "replicas": 3, "stored": true, "gateway_url": "…" } ] } ],
+  "accounts": [ { "pubkey": "…", "npub": "…", "sites": [ { "d": "example.com", "cid": "bafy…", "url": "…", "size": 12345, "stored_size": 12300, "created_at": 1790000000, "title": "…", "message": "…", "nip05": "verified", "replicas": 3, "unverified_replicas": 0, "stored": true, "gateway_url": "…" } ] } ],
   "replicas_error": null,
-  "unfollowed": { "remove_on_unfollow": true, "accounts": [ { "...": "同じ形。ただし url・title・message・replicas は常に null、stored は常に true、stored_size は size と同じ値" } ] } }
+  "unfollowed": { "remove_on_unfollow": true, "accounts": [ { "...": "同じ形。ただし url・title・message・replicas・unverified_replicas は常に null、stored は常に true、stored_size は size と同じ値" } ] } }
 ```
 
 - `follow_set.note`: CLI が括弧付きで出す注記から括弧を外した文字列。無ければ `null`。
 - `nip05`・`title`・`message`・`size` は値が無ければ `null`。`title` は作者の自己申告で受信側は信頼しない（`docs/protocol.md` 第 4 節）。`message` は生の `content`（サニタイズ・切り詰めはフロントの責務）。`title` も同様にサニタイズはフロントの責務。
 - `size` はイベントの自己申告の `size` タグ。`stored_size` は `cid` と一致する `state.json` の `VersionRecord.size`（保存時に `dag/stat` で測った値。この呼び出しのために改めて Kubo は呼ばない）で、一致する版が無ければ `null`。フロントは `stored_size` があればそれを実測値として出し、無ければ `size` を未確認の申告として括弧書きで出す（[`web.md`](web.md#sites-画面)）。版ごとの重複排除込みの実測合計は `/api/status` の `sites[].actual` にしかない。
-- `replicas`: レプリカ報告の取得に失敗すると全サイトで `null` になり、`replicas_error` に理由が入る。
+- `replicas`・`unverified_replicas`: レプリカ報告の取得に失敗すると全サイトで両方 `null` になり、`replicas_error` に理由が入る。`replicas` は報告者が作者自身か、作者かこちらの Follow Set に入っている報告者（信頼できる tier）の数、`unverified_replicas` はそれ以外（自称にすぎない tier）の数（[「レプリカ報告の信頼度」](../../architecture.md#レプリカ報告の信頼度replicastier)）。
 - `gateway_url`: `stored` が true かつ gateway 設定がある版だけに付く。
 - `accounts[].sites` は 1 アカウントあたり `d` の昇順で先頭 50 件（`nostr::budget::MAX_SITES_PER_AUTHOR_LISTED`）まで（[取得と表示の上限](../../architecture.md#取得と表示の上限nostrbudget)）。`follow_set` の `p` も先頭 500 件まで。
 
@@ -85,10 +85,12 @@ Follow Set が無ければ `title: null`、`members: []`。
 { "depth": 2,
   "nodes": [ { "pubkey": "…", "npub": "…", "short_npub": "npub1abc…uvwxyz", "names": ["example.com"], "label": "example.com", "depth": 0, "root": true, "has_follow_set": true } ],
   "edges": [ { "from": "<hex>", "to": "<hex>", "mutual": true } ], "beyond": 0, "over_budget": 0,
+  "referencing": { "accounts": [ { "pubkey": "…", "npub": "…" } ], "more": 0 },
   "text": "…swing webring と同じ text 出力…", "dot": "…同じ dot 出力…", "mermaid": "…同じ mermaid 出力…" }
 ```
 
 `root: true` は `depth == 0` のノード。双方向の組は `mutual: true` の辺 1 本、片方向は `mutual: false` の辺（`webring::split_links` を流用）。ノードの並びは（深さ、ラベル）順。`beyond` は深さの上限の外にいて表示していないアカウント数。`over_budget` はクロールの上限（`nostr::budget::MAX_CRAWL_NODES`、1000）を超えたために crawl に加えなかったアカウント数（[取得と表示の上限](../../architecture.md#取得と表示の上限nostrbudget)）。`names` も 1 アカウントあたり先頭 50 件まで。
+- `referencing`: `#p` で見つかった、起点を名指ししているだけでクロールには加えていないアカウント（[「レプリカ報告の信頼度」](../../architecture.md#レプリカ報告の信頼度replicastier)）。`accounts` は先頭 50 件（`nostr::budget::MAX_REFERENCING_LISTED`）まで、`more` は切り詰めで落ちた件数。`nodes`・`edges`・`dot`・`mermaid` には含まれない（グラフはフォロー先の辺だけで描く）。
 
 ## GET /api/replicas?key=\<key\>
 
@@ -96,11 +98,11 @@ Follow Set が無ければ `title: null`、`members: []`。
 
 ```json
 { "authors": [ { "pubkey": "…", "npub": "…", "sites": [
-  { "d": "example.com", "cid": "bafy…", "replicas": 2, "reports": 3, "dropped": 0, "reporters": [ { "pubkey": "…", "npub": "…", "latest": true, "is_author": false, "following": true } ] }
+  { "d": "example.com", "cid": "bafy…", "replicas": 2, "unverified": 1, "reports": 3, "dropped": 0, "reporters": [ { "pubkey": "…", "npub": "…", "latest": true, "tier": "chosen" } ] }
 ] } ] }
 ```
 
-`following: false` が CLI の `[not following]` に相当する。`reports`（＝ `reporters.length`）はサイトごとに `created_at` の新しい順で先頭 200 件（`nostr::budget::MAX_REPORTS_PER_SITE`）までに切り詰めた後の件数、`dropped` は切り詰めで落ちた件数（[取得と表示の上限](../../architecture.md#取得と表示の上限nostrbudget)）。`sites` も 1 作者あたり先頭 50 件まで。
+`tier` は `"author"` / `"chosen"` / `"other"` のいずれか（`"other"` が CLI の `[unverified]` に相当する）。`replicas` は最新版を持つ報告者のうち tier が `author`・`chosen` の数、`unverified` は tier が `other` の数（[「レプリカ報告の信頼度」](../../architecture.md#レプリカ報告の信頼度replicastier)）。`reports`（＝ `reporters.length`）はサイトごとに（tier、`created_at` の新しい順）で先頭 200 件（`nostr::budget::MAX_REPORTS_PER_SITE`）までに切り詰めた後の件数、`dropped` は切り詰めで落ちた件数（[取得と表示の上限](../../architecture.md#取得と表示の上限nostrbudget)）。`reporters` の並びも（tier、`latest`、npub）順。`sites` も 1 作者あたり先頭 50 件まで。
 
 ## POST /api/publish/upload
 

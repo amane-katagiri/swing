@@ -24,7 +24,12 @@ import { copyButton, storedBadge, appendLinksAndMessage, renderMirrorOpResult, r
 
 const MAX_MIRROR_KEYS = 100;
 
-const SITE_FIELD_DEFAULTS = { url: null, title: null, message: null, nip05: null, replicas: null, stored: null, stored_size: null, gateway_url: null };
+const SITE_FIELD_DEFAULTS = { url: null, title: null, message: null, nip05: null, replicas: null, unverified_replicas: null, stored: null, stored_size: null, gateway_url: null };
+
+function replicaCountText(site) {
+  if (site.replicas == null) return '–';
+  return site.unverified_replicas ? `${site.replicas} (+${site.unverified_replicas})` : String(site.replicas);
+}
 
 function normalizeSite(site, contextDefaults) {
   return Object.assign({}, SITE_FIELD_DEFAULTS, contextDefaults || {}, site);
@@ -77,7 +82,7 @@ function buildSiteEntry(site) {
   const badges = el('div', { class: 'swing-site-badges' }, [
     storedBadge(site),
     site.nip05 ? nip05Badge(site.nip05, 'nip05Badge') : null,
-    el('span', { class: 'swing-badge' }, t('replicasBadge', { n: site.replicas == null ? '–' : site.replicas })),
+    el('span', { class: 'swing-badge' }, t('replicasBadge', { n: replicaCountText(site) })),
   ]);
   wrap.append(row, badges);
 
@@ -107,7 +112,7 @@ function buildSiteTable(sites) {
     tr.append(el('td', {}, site.d));
     tr.append(el('td', {}, storedBadge(site)));
     tr.append(el('td', {}, site.nip05 ? nip05Badge(site.nip05) : '–'));
-    tr.append(el('td', {}, site.replicas == null ? '–' : String(site.replicas)));
+    tr.append(el('td', {}, replicaCountText(site)));
     tr.append(
       el('td', { class: 'swing-mono' }, [
         document.createTextNode(`${shortenMiddle(site.cid, 8, 6)} `),

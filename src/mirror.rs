@@ -410,7 +410,7 @@ pub struct SiteRow {
     pub title: Option<String>,
     pub message: Option<String>,
     pub nip05: Option<String>,
-    pub replicas: Option<usize>,
+    pub replicas: Option<replicas::ReplicaCounts>,
     pub stored: bool,
 }
 
@@ -433,7 +433,7 @@ fn format_site_line(row: &SiteRow, status: &str) -> String {
         format_unix_timestamp(row.created_at),
         row.nip05.as_deref().unwrap_or("-"),
         row.replicas
-            .map_or_else(|| "-".to_string(), |n| n.to_string()),
+            .map_or_else(|| "-".to_string(), replicas::format_replica_counts),
         status
     )
 }
@@ -541,9 +541,10 @@ pub async fn collect_sites(relay: &RelayClient, config: &Config) -> Result<Sites
     };
     let latest_sites =
         nostr::cap_sites_per_author(latest.values(), nostr::budget::MAX_SITES_PER_AUTHOR_LISTED);
-    let (reports, replicas_error) =
-        match replicas::fetch_for_sites(relay, config, &latest_sites).await {
-            Ok(reports) => (Some(reports), None),
+    let own_chosen: HashSet<PublicKey> = targets.iter().copied().collect();
+    let (replica_data, replicas_error) =
+        match fetch_tiered_reports(relay, config, &targets, own_chosen, &latest_sites).await {
+            Ok(data) => (Some(data), None),
             Err(e) => (None, Some(format!("{e:#}"))),
         };
 
@@ -572,7 +573,7 @@ pub async fn collect_sites(relay: &RelayClient, config: &Config) -> Result<Sites
                 let stored = stored_version.is_some();
                 let stored_size = stored_version.map(|v| v.size);
                 let nip05 = state.verifications.get(&key).map(|v| v.status.clone());
-                let replicas = replica_count(&reports, ev);
+                let replicas = replica_counts(&replica_data, ev);
                 SiteRow {
                     d: ev.d.clone(),
                     cid: ev.cid.clone(),
@@ -629,15 +630,36 @@ pub async fn collect_sites(relay: &RelayClient, config: &Config) -> Result<Sites
     })
 }
 
-fn replica_count(
-    reports: &Option<std::collections::HashMap<SiteAddress, replicas::SiteReportSet>>,
+type TieredReports = (
+    std::collections::HashMap<SiteAddress, replicas::SiteReportSet>,
+    replicas::Chosen,
+);
+
+async fn fetch_tiered_reports(
+    relay: &RelayClient,
+    config: &Config,
+    targets: &[PublicKey],
+    own_chosen: HashSet<PublicKey>,
+    latest_sites: &[&nostr::SiteEvent],
+) -> Result<TieredReports> {
+    let chosen = replicas::fetch_chosen_with_own(relay, config, targets, own_chosen).await?;
+    let reports = replicas::fetch_for_sites(relay, config, latest_sites, &chosen).await?;
+    Ok((reports, chosen))
+}
+
+fn replica_counts(
+    replica_data: &Option<TieredReports>,
     ev: &nostr::SiteEvent,
-) -> Option<usize> {
-    reports.as_ref().map(|reports| {
-        reports.get(&(ev.pubkey, ev.d.clone())).map_or(0, |r| {
-            replicas::latest_count(&replicas::replicas_of(&r.reports, &ev.cid))
-        })
-    })
+) -> Option<replicas::ReplicaCounts> {
+    let (reports, chosen) = replica_data.as_ref()?;
+    Some(reports.get(&(ev.pubkey, ev.d.clone())).map_or_else(
+        replicas::ReplicaCounts::default,
+        |r| {
+            replicas::count_replicas(&replicas::replicas_of(
+                &r.reports, &ev.cid, &ev.pubkey, chosen,
+            ))
+        },
+    ))
 }
 
 fn print_sites(view: &SitesView) -> Result<()> {

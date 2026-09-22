@@ -92,6 +92,7 @@ pub struct SiteDto {
     pub message: Option<String>,
     pub nip05: Option<String>,
     pub replicas: Option<usize>,
+    pub unverified_replicas: Option<usize>,
     pub stored: bool,
     pub gateway_url: Option<String>,
 }
@@ -114,7 +115,8 @@ fn site_dto(site: &mirror::SiteRow, gateway: Option<&str>) -> SiteDto {
         title: site.title.clone(),
         message: site.message.clone(),
         nip05: site.nip05.clone(),
-        replicas: site.replicas,
+        replicas: site.replicas.map(|c| c.trusted),
+        unverified_replicas: site.replicas.map(|c| c.unverified),
         stored: site.stored,
         gateway_url: gateway_url(gateway, &site.cid, site.stored),
     }
@@ -347,12 +349,19 @@ pub struct WebringEdgeDto {
 }
 
 #[derive(Debug, Serialize)]
+pub struct ReferencingDto {
+    pub accounts: Vec<PubkeyDto>,
+    pub more: usize,
+}
+
+#[derive(Debug, Serialize)]
 pub struct WebringDto {
     pub depth: usize,
     pub nodes: Vec<WebringNodeDto>,
     pub edges: Vec<WebringEdgeDto>,
     pub beyond: usize,
     pub over_budget: usize,
+    pub referencing: ReferencingDto,
     pub text: String,
     pub dot: String,
     pub mermaid: String,
@@ -398,7 +407,18 @@ pub fn webring_dto(view: &webring::WebringView) -> WebringDto {
         edges,
         beyond: view.graph.beyond,
         over_budget: view.graph.over_budget,
-        text: webring::render_text(&view.graph, &view.names, &view.mirror_set, view.depth),
+        referencing: ReferencingDto {
+            accounts: view.referencing.iter().map(PubkeyDto::new).collect(),
+            more: view.referencing_dropped,
+        },
+        text: webring::render_text(
+            &view.graph,
+            &view.names,
+            &view.mirror_set,
+            view.depth,
+            &view.referencing,
+            view.referencing_dropped,
+        ),
         dot: webring::render_dot(&view.graph, &view.names),
         mermaid: webring::render_mermaid(&view.graph, &view.names),
     }
@@ -409,8 +429,7 @@ pub struct ReporterDto {
     pub pubkey: String,
     pub npub: String,
     pub latest: bool,
-    pub is_author: bool,
-    pub following: bool,
+    pub tier: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -418,6 +437,7 @@ pub struct SiteReplicasDto {
     pub d: String,
     pub cid: String,
     pub replicas: usize,
+    pub unverified: usize,
     pub reports: usize,
     pub dropped: usize,
     pub reporters: Vec<ReporterDto>,
@@ -449,6 +469,7 @@ pub fn replicas_dto(authors: &[replicas::AuthorReplicas]) -> ReplicasDto {
                         d: s.d.clone(),
                         cid: s.cid.clone(),
                         replicas: s.replicas,
+                        unverified: s.unverified,
                         reports: s.reports,
                         dropped: s.dropped,
                         reporters: s
@@ -458,8 +479,7 @@ pub fn replicas_dto(authors: &[replicas::AuthorReplicas]) -> ReplicasDto {
                                 pubkey: r.pubkey.to_hex(),
                                 npub: mirror::npub(&r.pubkey),
                                 latest: r.latest,
-                                is_author: r.is_author,
-                                following: r.following,
+                                tier: r.tier.as_str().to_string(),
                             })
                             .collect(),
                     })

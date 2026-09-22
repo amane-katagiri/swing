@@ -216,16 +216,16 @@ docker compose exec mirror swing replicas
 ```text
 npub1me... (<pubkey>)
   d=example.jp cid=bafy... replicas=2 (reports=3)
-    npub1alice...  [latest]
+    npub1alice...  [latest]  [chosen]
     npub1me...     [latest]  [author]
-    npub1bob...    [older version]  [not following]
+    npub1bob...    [older version]  [unverified]
 ```
 
-`replicas` は最新版を持っていると報告した参加者の数です。`[older version]` は古い版だけを持っている参加者、`[not following]` はミラー対象リストにあなたを入れていないのに報告している参加者です。報告は自己申告なので、実際に配送できるかまでは保証しません。npub などを渡すと、他の人のサイトについても表示します。
+`replicas` は、最新版を持っていると報告した参加者のうち、作者本人（`[author]`）か、作者またはあなたのミラー対象リストに載っている人（`[chosen]`）の数です。それ以外の報告者（`[unverified]`。誰でも自称できるため信頼度が低い扱い）が最新版を持っていれば、`replicas=2 (+3 unverified)` のように別枠で添えます（0 件なら省略）。`[older version]` は古い版だけを持っている参加者です。報告は自己申告なので、実際に配送できるかまでは保証しません。npub などを渡すと、他の人のサイトについても表示します。
 
 ### 相互ミラーの関係（Webring）を見る
 
-`swing webring` は、自分を起点にミラー対象リストをたどり、誰が誰を保存しているかをグラフとして表示します。自分が保存している相手に加えて、自分をミラー対象に入れている相手もたどります。
+`swing webring` は、自分を起点にミラー対象リストをたどり、誰が誰を保存しているかをグラフとして表示します。たどるのは自分が実際に保存対象へ入れている相手（`p` タグ）だけで、自分をミラー対象に入れているだけの相手（`#p` で見つかる、フォローし返されていない相手）はグラフには加えず、「Referencing the root」に自称にすぎない一覧として別枠で出します。
 
 ```bash
 docker compose exec mirror swing webring
@@ -246,6 +246,9 @@ Mutual
 One-way (A → B: A mirrors B)
   alice.example → carol.example
   npub1bob12…xyz789 → example.jp
+
+Referencing the root (unverified)
+  npub1dave...
 ```
 
 各アカウントは公開しているサイトの `d` で表示し、サイトが無ければ npub を縮めて表示します。`--depth <N>`（既定 2）でたどる距離を、npub などを渡すと起点を変えられます。`--format dot` で Graphviz、`--format mermaid` で Mermaid の図として出力します。
