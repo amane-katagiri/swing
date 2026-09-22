@@ -175,7 +175,8 @@ pub async fn add_and_measure(
     dir: &Path,
 ) -> Result<IpfsStage> {
     let path = layout.publish_version(pubkey_hex, d, created_at);
-    let cid = ipfs.add_dir(dir, &path).await?;
+    let cid = nostr::canonical_cid(&ipfs.add_dir(dir, &path).await?)
+        .context("Kubo returned an invalid cid")?;
     // add with pin=false does not hold Kubo's GC lock, so a GC during the add
     // could drop blocks before they were linked into MFS.
     let size = ipfs

@@ -399,16 +399,20 @@ pub fn valid_title(title: &str) -> bool {
         && !title.chars().any(|c| c.is_control())
 }
 
+// One spelling per content, so the string comparisons downstream see one version.
+pub fn canonical_cid(s: &str) -> Result<String> {
+    let cid = cid::Cid::try_from(s).context("invalid cid tag")?;
+    let cid = cid.into_v1().context("invalid cid tag")?;
+    Ok(cid.to_string())
+}
+
 pub fn parse_site_event(event: &Event, expected_kind: u16) -> Result<SiteEvent> {
     if event.kind != Kind::Custom(expected_kind) {
         anyhow::bail!("unexpected kind {}", event.kind);
     }
     let d = event.tags.identifier().context("missing d tag")?;
     validate_d_tag(&d)?;
-    let cid = tag_value(event, "cid")
-        .context("missing cid tag")?
-        .to_string();
-    cid::Cid::try_from(cid.as_str()).context("invalid cid tag")?;
+    let cid = canonical_cid(tag_value(event, "cid").context("missing cid tag")?)?;
     // A malformed url tag is untrusted input from another party's event, not a
     // reason to drop an otherwise-valid site update; only the url is discarded.
     let url = tag_value(event, "url")
@@ -526,11 +530,7 @@ pub fn parse_replica_report(
         .tags
         .iter()
         .filter(|t| t.kind() == "cid")
-        .map(|t| {
-            let value = t.content().context("empty cid tag")?;
-            cid::Cid::try_from(value).context("invalid cid tag")?;
-            Ok(value.to_string())
-        })
+        .map(|t| canonical_cid(t.content().context("empty cid tag")?))
         .collect::<Result<BTreeSet<String>>>()?;
     let expiration = tag_value(event, "expiration")
         .map(|s| s.parse::<u64>().context("invalid expiration tag"))
@@ -656,7 +656,7 @@ mod tests {
     }
 
     #[test]
-    fn accepts_cidv0() {
+    fn accepts_cidv0_and_canonicalizes_it() {
         let k = keys();
         let ev = make_site_event(
             &k,
@@ -666,7 +666,27 @@ mod tests {
             1000,
         );
         let parsed = parse_site_event(&ev, 35980).unwrap();
-        assert_eq!(parsed.cid, "QmYwAPJzv5CZsnA9LqYKXfRSZryVXxNn7ZP1FyEBgvJvHR");
+        assert_eq!(
+            parsed.cid,
+            "bafybeie5nqv6kd3qnfjuphmab6atx72bbz674e35siysg2di3q5jltctqq"
+        );
+    }
+
+    #[test]
+    fn canonical_cid_normalizes_every_spelling_to_cidv1_base32() {
+        assert_eq!(
+            canonical_cid("QmYwAPJzv5CZsnA9LqYKXfRSZryVXxNn7ZP1FyEBgvJvHR").unwrap(),
+            "bafybeie5nqv6kd3qnfjuphmab6atx72bbz674e35siysg2di3q5jltctqq"
+        );
+        assert_eq!(
+            canonical_cid("zdj7Wic6KcJAfWz1c9o4M6kq9Lwd5BfbxkVafnrojaaGiSFxM").unwrap(),
+            "bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi"
+        );
+        assert_eq!(
+            canonical_cid("bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi").unwrap(),
+            "bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi"
+        );
+        assert!(canonical_cid("not-a-cid").is_err());
     }
 
     #[test]
@@ -1178,7 +1198,7 @@ mod tests {
         assert_eq!(parsed.d, "a:b.example");
         assert_eq!(
             parsed.cids,
-            BTreeSet::from([CID_A.to_string(), CID_B.to_string()])
+            BTreeSet::from([CID_A.to_string(), canonical_cid(CID_B).unwrap()])
         );
         assert_eq!(parsed.created_at, 1000);
         assert_eq!(parsed.expiration, Some(1100));
@@ -1193,6 +1213,21 @@ mod tests {
         let ev = report(&reporter, &author, "example.com", &[], 1000);
         let parsed = parse_replica_report(&ev, 35981, 35980).unwrap();
         assert!(parsed.cids.is_empty());
+    }
+
+    #[test]
+    fn replica_report_collapses_the_same_cid_written_in_two_spellings() {
+        let reporter = keys();
+        let author = keys().public_key();
+        let ev = report(
+            &reporter,
+            &author,
+            "example.com",
+            &[CID_A, "zdj7Wic6KcJAfWz1c9o4M6kq9Lwd5BfbxkVafnrojaaGiSFxM"],
+            1000,
+        );
+        let parsed = parse_replica_report(&ev, 35981, 35980).unwrap();
+        assert_eq!(parsed.cids, BTreeSet::from([CID_A.to_string()]));
     }
 
     #[test]

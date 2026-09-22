@@ -165,7 +165,7 @@ TOML キーの無い環境変数:
 形式と MUST/SHOULD は [`protocol.md`](protocol.md)、kind と `d` の予約は [`extensions.md`](extensions.md)。この実装の判定:
 
 - `d`: 空、253 バイト超、制御文字を含む場合はイベント全体を拒否する。
-- `cid`: `cid` クレートでパースできなければイベント全体を拒否する。
+- `cid`: `cid` クレートでパースできなければイベント全体を拒否する。パースできれば `nostr::canonical_cid` で CIDv1・base32 の正規形に変換し、以後（`SiteEvent::cid`・`ReplicaReport::cids`・`policy::decide`・`replicas_of`・`state.json`・MFS パス）はこの文字列だけを扱う。`swing publish` が Kubo から受け取った CID も `add_and_measure` で同じ関数に通す（Kubo は既定で base32 v1 を返すのでほぼ無変換）。
 - `url`: 2048 バイト超、制御文字を含む、または http(s) としてパースできなければ `url` だけを無視する。`swing publish --url` も同じ判定で拒否する。
 - `title`: 空、256 バイト超、制御文字を含む場合は `title` だけを無視する。検証せず、保存の判断にも使わない。
 - `content`: 空でなければ `SiteEvent::message` に入れる。検証せず、保存の判断にも使わない。

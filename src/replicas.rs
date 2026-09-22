@@ -277,7 +277,10 @@ mod tests {
         let site = &collected[&(author, "example.com".to_string())];
         assert_eq!(site.len(), 1);
         assert_eq!(site[0].reporter, r1.public_key());
-        assert_eq!(site[0].cids, BTreeSet::from([CID_B.to_string()]));
+        assert_eq!(
+            site[0].cids,
+            BTreeSet::from([nostr::canonical_cid(CID_B).unwrap()])
+        );
         let other = &collected[&(author, "other.example".to_string())];
         assert_eq!(other[0].reporter, r4.public_key());
     }
