@@ -384,7 +384,7 @@ pub fn validate_d_tag(d: &str) -> Result<()> {
 }
 
 pub fn valid_http_url(url: &str) -> bool {
-    if url.len() > MAX_URL_TAG_BYTES {
+    if url.len() > MAX_URL_TAG_BYTES || url.chars().any(|c| c.is_control()) {
         return false;
     }
     match reqwest::Url::parse(url) {
@@ -767,6 +767,24 @@ mod tests {
                 ["bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi".to_string()],
             ))
             .tag(Tag::custom("url", ["not a url".to_string()]))
+            .finalize(&k)
+            .unwrap();
+        let parsed = parse_site_event(&ev, 35980).unwrap();
+        assert_eq!(parsed.url, None);
+    }
+
+    #[test]
+    fn drops_url_with_control_characters() {
+        let k = keys();
+        let url = "https://example.com/\x1b]0;pwned\x07";
+        assert!(reqwest::Url::parse(url).is_ok());
+        let ev = EventBuilder::new(Kind::Custom(35980), "")
+            .tag(Tag::identifier("example.com"))
+            .tag(Tag::custom(
+                "cid",
+                ["bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi".to_string()],
+            ))
+            .tag(Tag::custom("url", [url.to_string()]))
             .finalize(&k)
             .unwrap();
         let parsed = parse_site_event(&ev, 35980).unwrap();
