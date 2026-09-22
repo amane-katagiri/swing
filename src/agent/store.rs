@@ -244,6 +244,17 @@ impl<C: KuboStore, N: Nip05Verify, R: ReportRelay> Agent<C, N, R> {
                 return false;
             }
         }
+        match self.ipfs.is_directory(&ev.cid).await {
+            Ok(true) => {}
+            Ok(false) => {
+                warn!(cid = %ev.cid, site = %ev.d, reason = "not_a_directory", "cid is not a UnixFS directory; not storing");
+                return false;
+            }
+            Err(e) => {
+                warn!(cid = %ev.cid, site = %ev.d, error = %e, "checking whether cid is a directory failed; will retry on next poll");
+                return false;
+            }
+        }
 
         let mut state = self.state.lock().await;
         if !self.is_target(&ev.pubkey) {
@@ -325,6 +336,21 @@ mod tests {
 
         assert_eq!(fx.cids(D).await, vec!["bafy-old"]);
         assert_eq!(fx.kubo().paths(), vec![fx.path(D, 100)]);
+        assert!(!fx.state_path.exists());
+    }
+
+    #[tokio::test]
+    async fn a_cid_that_is_a_file_is_fetched_but_not_stored() {
+        let kubo = FakeKubo::with(|s| {
+            s.files.insert("bafy-file".into());
+        });
+        let fx = Fixture::new(default_policy(), kubo);
+
+        fx.apply(fx.event(D, "bafy-file", Some(20), 200)).await;
+
+        assert_eq!(fx.kubo().fetched, vec!["bafy-file".to_string()]);
+        assert!(fx.kubo().paths().is_empty());
+        assert!(fx.cids(D).await.is_empty());
         assert!(!fx.state_path.exists());
     }
 

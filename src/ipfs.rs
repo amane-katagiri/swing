@@ -41,6 +41,7 @@ pub trait KuboStore {
     fn mfs_remove(&self, path: &str) -> impl Future<Output = Result<()>> + Send;
     fn mfs_list(&self, path: &str) -> impl Future<Output = Result<Vec<MfsEntry>>> + Send;
     fn mfs_stat_cid(&self, path: &str) -> impl Future<Output = Result<Option<String>>> + Send;
+    fn is_directory(&self, cid: &str) -> impl Future<Output = Result<bool>> + Send;
 }
 
 pub struct IpfsClient {
@@ -71,6 +72,10 @@ impl KuboStore for IpfsClient {
 
     async fn mfs_stat_cid(&self, path: &str) -> Result<Option<String>> {
         IpfsClient::mfs_stat_cid(self, path).await
+    }
+
+    async fn is_directory(&self, cid: &str) -> Result<bool> {
+        IpfsClient::is_directory(self, cid).await
     }
 }
 
@@ -166,6 +171,8 @@ struct DagStatResponse {
 struct FilesStatResponse {
     #[serde(rename = "Hash")]
     hash: String,
+    #[serde(rename = "Type")]
+    kind: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -434,6 +441,19 @@ impl IpfsClient {
         let parsed: FilesStatResponse =
             serde_json::from_str(&text).context("parsing files/stat response")?;
         Ok(Some(parsed.hash))
+    }
+
+    pub async fn is_directory(&self, cid: &str) -> Result<bool> {
+        let text = self
+            .call(
+                "files/stat",
+                &format!("arg=/ipfs/{}", urlencoding_cid(cid)),
+                Duration::from_secs(60),
+            )
+            .await?;
+        let parsed: FilesStatResponse =
+            serde_json::from_str(&text).context("parsing files/stat response")?;
+        Ok(parsed.kind == "directory")
     }
 }
 

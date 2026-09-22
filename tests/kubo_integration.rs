@@ -279,3 +279,25 @@ async fn add_dir_matches_ipfs_cli_cid_for_known_fixture() {
         assert_eq!(cid, expected);
     }
 }
+
+#[tokio::test]
+#[ignore]
+async fn is_directory_distinguishes_a_directory_root_from_a_file_root() {
+    let client = IpfsClient::new(kubo_api());
+    let root = unique_root("isdir");
+    let path = format!("{root}/site");
+
+    let dir_cid = client.add_dir(site_fixture().path(), &path).await.unwrap();
+    let file_cid = client
+        .mfs_list(&path)
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|e| e.name == "index.html")
+        .expect("index.html entry")
+        .cid;
+
+    assert!(client.is_directory(&dir_cid).await.unwrap());
+    assert!(!client.is_directory(&file_cid).await.unwrap());
+    client.mfs_remove(&root).await.unwrap();
+}

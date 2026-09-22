@@ -31,6 +31,7 @@ MFS から消したコンテンツや打ち切った取得のブロックは、K
 | 削除 | `files/rm?arg={path}&recursive=true&force=true` | 60 秒 |
 | 一覧 | `files/ls?arg={path}&long=true` → `Entries`（`Type` 1 がディレクトリ） | 60 秒 |
 | CID の確認 | `files/stat?arg={path}&hash=true` → `Hash` | 60 秒 |
+| ディレクトリ判定 | `files/stat?arg=/ipfs/{cid}` → `Type`（`directory` か `file`） | 60 秒 |
 | add（publish） | `add?recursive=true&cid-version=1&pin=false&quieter=true&wrap-with-directory=false&to-files={path}` | 300 秒 |
 
 - `dag/stat` に CID を複数渡すと、`TotalSize` はそれらをまとめた重複排除後のサイズ（同じブロックを 1 回だけ数えた合計）になる。1 つでもブロックが欠けていれば呼び出し全体が失敗する。CID を 1 つも渡さないときは呼ばずに 0 を返す。
@@ -38,6 +39,7 @@ MFS から消したコンテンツや打ち切った取得のブロックは、K
 - 配置は親ディレクトリを作り、同名の項目を消してから行う（同名があると `files/cp` が失敗する）。`offline=true` なのでルートのブロックがローカルに無ければ即エラー。
 - `files/rm` は失敗しても 200 でボディにメッセージを返すので、ボディが空でなければ失敗とする。存在しないパスは成功。
 - `files/ls` と `files/stat` の `file does not exist` は、それぞれ空の一覧、「無い」として扱う。
+- ディレクトリ判定は `/ipfs/{cid}` を `files/stat` に渡す（MFS のパスではなく取得したばかりの CID そのもの）。ブロックは `dag/export` 直後でローカルにあるので、ルートブロックだけ読む軽い呼び出しになる。`agent/store.rs::apply_site_event` が取得の直後・`mfs_put` の前に呼び、`directory` でなければ MFS には置かずに終わる（「保存の順序」は [`agent.md`](agent.md#保存の順序) 参照）。
 
 `add` の multipart:
 
@@ -53,7 +55,7 @@ compose の Kubo は検証済みの `v0.43.1` に固定している。次の挙�
 
 - `file does not exist` の文面での判定（変わると、突き合わせが MFS から消えた版を取り直さず警告を出し続ける）
 - `files/rm` が失敗時も 200 を返すこと
-- 各 RPC の JSON の形（`TotalSize`、`Hash`、`Entries[].Type` など）と、`add` の multipart・`to-files`
+- 各 RPC の JSON の形（`TotalSize`、`Hash`、`Type`（`files/stat` は文字列、`Entries[].Type` は数値）など）と、`add` の multipart・`to-files`
 - MFS の保護・GC・`offline=true` の挙動
 
 上げるときは、新しいイメージで統合テスト（`kubo_integration` と `agent_stores_and_removes_through_real_kubo`）を通してから、`compose.yaml` と [テスト手順](../architecture.md#テスト) のタグを同時に上げる。既存の `ipfs-data` は `--migrate=true` で移行され、古いバージョンに戻せないことがある。

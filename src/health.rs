@@ -461,6 +461,10 @@ mod tests {
             }
             Ok(self.mfs.get(path).cloned())
         }
+
+        async fn is_directory(&self, _cid: &str) -> Result<bool> {
+            unreachable!()
+        }
     }
 
     const PK: &str = "ab";

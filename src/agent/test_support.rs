@@ -25,6 +25,7 @@ pub(super) struct FakeKuboState {
     pub(super) fail_put: HashSet<String>,
     pub(super) fail_remove: HashSet<String>,
     pub(super) sizes: HashMap<String, u64>,
+    pub(super) files: HashSet<String>,
 }
 
 impl FakeKuboState {
@@ -125,6 +126,10 @@ impl KuboStore for FakeKubo {
 
     async fn mfs_stat_cid(&self, path: &str) -> anyhow::Result<Option<String>> {
         Ok(self.s.lock().unwrap().mfs.get(path).cloned())
+    }
+
+    async fn is_directory(&self, cid: &str) -> anyhow::Result<bool> {
+        Ok(!self.s.lock().unwrap().files.contains(cid))
     }
 }
 

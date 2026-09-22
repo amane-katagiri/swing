@@ -399,9 +399,18 @@ pub fn valid_title(title: &str) -> bool {
         && !title.chars().any(|c| c.is_control())
 }
 
+// A UnixFS directory root is always dag-pb, so any other codec is rejected before a wasted fetch.
+const DAG_PB_CODEC: u64 = 0x70;
+
 // One spelling per content, so the string comparisons downstream see one version.
 pub fn canonical_cid(s: &str) -> Result<String> {
     let cid = cid::Cid::try_from(s).context("invalid cid tag")?;
+    if cid.codec() != DAG_PB_CODEC {
+        anyhow::bail!(
+            "invalid cid tag: codec {:#x} is not dag-pb, cannot be a UnixFS directory",
+            cid.codec()
+        );
+    }
     let cid = cid.into_v1().context("invalid cid tag")?;
     Ok(cid.to_string())
 }
@@ -687,6 +696,29 @@ mod tests {
             "bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi"
         );
         assert!(canonical_cid("not-a-cid").is_err());
+    }
+
+    #[test]
+    fn canonical_cid_rejects_non_dag_pb_codecs() {
+        assert!(
+            canonical_cid("bafkreigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi").is_err()
+        );
+        assert!(
+            canonical_cid("bafyreigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi").is_err()
+        );
+    }
+
+    #[test]
+    fn rejects_a_site_event_whose_cid_codec_is_not_dag_pb() {
+        let k = keys();
+        let ev = make_site_event(
+            &k,
+            35980,
+            "example.com",
+            "bafkreigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
+            1000,
+        );
+        assert!(parse_site_event(&ev, 35980).is_err());
     }
 
     #[test]
@@ -1228,6 +1260,20 @@ mod tests {
         );
         let parsed = parse_replica_report(&ev, 35981, 35980).unwrap();
         assert_eq!(parsed.cids, BTreeSet::from([CID_A.to_string()]));
+    }
+
+    #[test]
+    fn replica_report_rejects_a_cid_tag_whose_codec_is_not_dag_pb() {
+        let reporter = keys();
+        let author = keys().public_key();
+        let ev = report(
+            &reporter,
+            &author,
+            "example.com",
+            &["bafyreigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi"],
+            1000,
+        );
+        assert!(parse_replica_report(&ev, 35981, 35980).is_err());
     }
 
     #[test]

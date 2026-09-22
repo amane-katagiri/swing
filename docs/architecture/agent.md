@@ -74,11 +74,12 @@ Follow Set が決まった tick で行う（決まらない tick では何もし
 1. 事前判定: `size` タグ（無ければ不明）で `policy::decide` する。skip なら終わる。
 2. NIP-05 検証（`[policy].nip05` が `off` 以外）。`require` で `Verified` でなければ終わる。
 3. 取得: `dag/export` の CAR を読み捨てながらバイト数を数え、`policy::fetch_limit`（`max_update_size`・`max_per_site`・`max_per_account` の最小値）を超えたら打ち切る。`SWING_FETCH_IDLE_TIMEOUT` か `SWING_FETCH_TIMEOUT` を超えたら失敗。いずれも state と MFS は変えない。
-4. 以降は state のロックの中で行う。作者が Follow Set から外れていれば終わる。
-5. 版のパスに CID を置く（既存の項目は先に消す）。失敗したら終わる。
-6. `dag/stat`（`offline=true`）の `TotalSize` を実サイズとする。ブロックが欠けていればエラーになるので、5 のパスを消して終わる。`size` タグより大きければ warn を出す。
-7. 実サイズで `policy::decide` する。skip なら 5 のパスを消して終わる。
-8. 新版を記録し、evict した版を `sites` から消して state を保存してから、evict した版のパスを消す。
+4. ディレクトリ確認: `files/stat /ipfs/<cid>` の `Type` を見る。`directory` でなければ `reason = "not_a_directory"` で warn を出して終わる（MFS にはまだ何も置いていないので消すものは無く、取得したブロックは Kubo の GC に任せる）。`files/stat` 自体が失敗したら取得の失敗と同じ扱いで終わる（次の poll で取り直す）。
+5. 以降は state のロックの中で行う。作者が Follow Set から外れていれば終わる。
+6. 版のパスに CID を置く（既存の項目は先に消す）。失敗したら終わる。
+7. `dag/stat`（`offline=true`）の `TotalSize` を実サイズとする。ブロックが欠けていればエラーになるので、6 のパスを消して終わる。`size` タグより大きければ warn を出す。
+8. 実サイズで `policy::decide` する。skip なら 6 のパスを消して終わる。
+9. 新版を記録し、evict した版を `sites` から消して state を保存してから、evict した版のパスを消す。
 
 パスの削除に失敗しても state はそのままにし、sweep に任せる。
 
@@ -99,11 +100,11 @@ state のロックの中で行う。
 
 ## 並行処理
 
-- `submit`（購読通知・過去分の取得の両方から呼ばれる入口）は、対象判定（Follow Set にいるか）より前に `nostr::plausible_at` で `created_at` を確かめ、900 秒（`nostr::MAX_FUTURE_SKEW`）を超えて先なら `future_created_at` を理由に warn を出してその場で捨てる。キューにある実行中・待機中のイベントを置き換えることはない。続けて対象判定を行い、対象外の pubkey のイベントもその場で捨てる。relay がフィルタを無視して対象外のイベントを大量に送っても、キューやタスクは増えない。「保存の順序」4 の判定は、`submit` から実行までの間に対象から外れた場合に効く。
+- `submit`（購読通知・過去分の取得の両方から呼ばれる入口）は、対象判定（Follow Set にいるか）より前に `nostr::plausible_at` で `created_at` を確かめ、900 秒（`nostr::MAX_FUTURE_SKEW`）を超えて先なら `future_created_at` を理由に warn を出してその場で捨てる。キューにある実行中・待機中のイベントを置き換えることはない。続けて対象判定を行い、対象外の pubkey のイベントもその場で捨てる。relay がフィルタを無視して対象外のイベントを大量に送っても、キューやタスクは増えない。「保存の順序」5 の判定は、`submit` から実行までの間に対象から外れた場合に効く。
 - 「保存の順序」を同時に実行するタスクは最大 `concurrency` 個。
 - 同じ pubkey のタスクは同時に `max_sites_per_account` 個まで。超えたイベントは捨て、次の poll で拾い直す。
 - 同じサイト（`pubkey:d`）のタスクは同時に 1 つ。実行中に来たイベントは、実行中・待機中のものより `created_at` が新しいときだけ待機に置き（1 件、上書き）、実行後に同じタスクで続けて処理する。
-- 保存の順序の 4〜8、sweep、unfollow、突き合わせは state のロックの中で直列に行う。レプリカ報告の同期どうしは報告用のロックで直列になる（取る順は報告用 → state）。取得中の一時的なディスク使用量は最大で `concurrency` × `fetch_limit`。
+- 保存の順序の 5〜9、sweep、unfollow、突き合わせは state のロックの中で直列に行う。レプリカ報告の同期どうしは報告用のロックで直列になる（取る順は報告用 → state）。取得中の一時的なディスク使用量は最大で `concurrency` × `fetch_limit`。
 
 ## レプリカ報告
 
