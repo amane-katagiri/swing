@@ -40,14 +40,18 @@
 
 ## GET /api/status
 
-`health::collect_status` の結果（CLI の `swing status` と同じ集計。[`architecture/cli.md#status`](../cli.md#status)）。relay には接続しない。全版の DAG をたどるので重く、フロントも自動では呼ばない。
+`health::collect_status` の結果（CLI の `swing status` と同じ集計。[`architecture/cli.md#status`](../cli.md#status)）。relay には接続しない。サイト単位で DAG をたどるので重く、フロントも自動では呼ばない。
 
 ```json
 { "versions": [
     { "pubkey": "…", "npub": "…", "d": "example.com", "path": "/swing/…", "cid": "bafy…", "size": 123, "created_at": 1, "health": "ok", "detail": null },
     { "pubkey": null, "npub": null, "d": null, "path": null, "cid": "bafy…", "size": null, "created_at": null, "health": "invalid_key", "detail": "<state.json の生のキー>" } ],
+  "sites": [ { "pubkey": "…", "npub": "…", "d": "example.com", "path": "/swing/…", "actual": 123 } ],
+  "actual_bytes": 123,
   "garbage": [ { "path": "/swing/…", "list_failed": false } ], "problems": 0 }
 ```
+
+`sites` はサイトごとの実容量。`actual` はそのサイトの全版をまとめた `dag/stat` の `TotalSize` で、版どうしで共有しているブロックは 1 回だけ数える。測れなかったサイトは `null`。`actual_bytes` は `actual` の合計で、`null` のサイトが 1 つでもあれば `null`。
 
 `health` は `ok`/`missing`/`cid_mismatch`/`incomplete`/`check_failed`/`invalid_key`（CLI の判定を snake_case で返す）。`ok` 以外は `detail` に理由が入る。`invalid_key` は `state.json` のキーが `<pubkey hex>:<d>` の形式として不正だった場合で、`pubkey`・`npub`・`d`・`path`・`size`・`created_at` は `null`、`cid` だけ分かれば入り、`detail` に元のキー文字列が入る。問題があっても HTTP は常に 200（`problems` の件数で分かる）。
 

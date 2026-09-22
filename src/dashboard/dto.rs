@@ -225,8 +225,19 @@ pub struct GarbageDto {
 }
 
 #[derive(Debug, Serialize)]
+pub struct SiteSizeDto {
+    pub pubkey: String,
+    pub npub: String,
+    pub d: String,
+    pub path: String,
+    pub actual: Option<u64>,
+}
+
+#[derive(Debug, Serialize)]
 pub struct StatusDto {
     pub versions: Vec<VersionStatusDto>,
+    pub sites: Vec<SiteSizeDto>,
+    pub actual_bytes: Option<u64>,
     pub garbage: Vec<GarbageDto>,
     pub problems: usize,
 }
@@ -253,8 +264,21 @@ pub fn status_dto(report: &health::StatusReport) -> StatusDto {
             health::StatusLine::InvalidKey { key, cid } => invalid_key_status_dto(key, cid),
         })
         .collect();
+    let sites = report
+        .sites
+        .iter()
+        .map(|s| SiteSizeDto {
+            pubkey: s.pubkey.to_hex(),
+            npub: mirror::npub(&s.pubkey),
+            d: s.d.clone(),
+            path: s.path.clone(),
+            actual: s.actual,
+        })
+        .collect();
     StatusDto {
         versions,
+        sites,
+        actual_bytes: report.actual_bytes(),
         garbage,
         problems: report.problems,
     }
@@ -945,6 +969,12 @@ mod tests {
                     cid: "bafy-bad".to_string(),
                 },
             ],
+            sites: vec![health::SiteSize {
+                pubkey: pk,
+                d: "example.com".to_string(),
+                path: "/swing/agent/ab/example.com".to_string(),
+                actual: Some(7),
+            }],
             garbage: Garbage::default(),
             problems: 1,
         };
@@ -952,6 +982,8 @@ mod tests {
         let dto = status_dto(&report);
 
         assert_eq!(dto.versions.len(), 2);
+        assert_eq!(dto.actual_bytes, Some(7));
+        assert_eq!(dto.sites[0].actual, Some(7));
         let invalid = &dto.versions[1];
         assert_eq!(invalid.health, "invalid_key");
         assert_eq!(invalid.detail.as_deref(), Some("not-a-valid-key"));

@@ -50,16 +50,76 @@ impl fmt::Display for VersionHealth {
     }
 }
 
-pub async fn check_version<C: KuboStore>(ipfs: &C, path: &str, cid: &str) -> VersionHealth {
+async fn check_placement<C: KuboStore>(ipfs: &C, path: &str, cid: &str) -> Option<VersionHealth> {
     match ipfs.mfs_stat_cid(path).await {
-        Ok(Some(found)) if found == cid => match ipfs.dag_size_local(cid).await {
-            Ok(_) => VersionHealth::Ok,
-            Err(e) => VersionHealth::Incomplete(format!("{e:#}")),
-        },
-        Ok(Some(found)) => VersionHealth::Mismatch(found),
-        Ok(None) => VersionHealth::Missing,
-        Err(e) => VersionHealth::CheckFailed(format!("{e:#}")),
+        Ok(Some(found)) if found == cid => None,
+        Ok(Some(found)) => Some(VersionHealth::Mismatch(found)),
+        Ok(None) => Some(VersionHealth::Missing),
+        Err(e) => Some(VersionHealth::CheckFailed(format!("{e:#}"))),
     }
+}
+
+async fn check_blocks<C: KuboStore>(ipfs: &C, cid: &str) -> VersionHealth {
+    match ipfs.dag_size_local(&[cid]).await {
+        Ok(_) => VersionHealth::Ok,
+        Err(e) => VersionHealth::Incomplete(format!("{e:#}")),
+    }
+}
+
+pub async fn check_version<C: KuboStore>(ipfs: &C, path: &str, cid: &str) -> VersionHealth {
+    match check_placement(ipfs, path, cid).await {
+        Some(problem) => problem,
+        None => check_blocks(ipfs, cid).await,
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SiteHealth {
+    pub versions: Vec<VersionHealth>,
+    pub actual_size: Option<u64>,
+}
+
+// One dag/stat over every version of a site walks blocks the versions share
+// only once, and fails if any block is missing, so the per-version walk is
+// only needed to tell which version is broken.
+pub async fn check_site<C: KuboStore>(ipfs: &C, versions: &[(&str, &str)]) -> SiteHealth {
+    let mut health = Vec::with_capacity(versions.len());
+    for (path, cid) in versions {
+        health.push(
+            check_placement(ipfs, path, cid)
+                .await
+                .unwrap_or(VersionHealth::Ok),
+        );
+    }
+
+    let placed = complete_cids(versions, &health);
+    if let Ok(size) = ipfs.dag_size_local(&placed).await {
+        return SiteHealth {
+            versions: health,
+            actual_size: Some(size),
+        };
+    }
+
+    for (i, h) in health.iter_mut().enumerate() {
+        if *h == VersionHealth::Ok {
+            *h = check_blocks(ipfs, versions[i].1).await;
+        }
+    }
+    let complete = complete_cids(versions, &health);
+    let actual_size = ipfs.dag_size_local(&complete).await.ok();
+    SiteHealth {
+        versions: health,
+        actual_size,
+    }
+}
+
+fn complete_cids<'a>(versions: &[(&str, &'a str)], health: &[VersionHealth]) -> Vec<&'a str> {
+    versions
+        .iter()
+        .zip(health)
+        .filter(|(_, h)| **h == VersionHealth::Ok)
+        .map(|((_, cid), _)| *cid)
+        .collect()
 }
 
 pub fn version_path(layout: &MfsLayout, key: &str, created_at: u64) -> Option<String> {
@@ -162,10 +222,19 @@ pub enum StatusLine {
     InvalidKey { key: String, cid: String },
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SiteSize {
+    pub pubkey: PublicKey,
+    pub d: String,
+    pub path: String,
+    pub actual: Option<u64>,
+}
+
 #[derive(Debug, Clone)]
 pub struct StatusReport {
     pub state_path: PathBuf,
     pub lines: Vec<StatusLine>,
+    pub sites: Vec<SiteSize>,
     pub garbage: Garbage,
     pub problems: usize,
 }
@@ -177,6 +246,10 @@ impl StatusReport {
             StatusLine::InvalidKey { .. } => None,
         })
     }
+
+    pub fn actual_bytes(&self) -> Option<u64> {
+        self.sites.iter().map(|s| s.actual).sum()
+    }
 }
 
 pub async fn collect_status<C: KuboStore>(ipfs: &C, config: &Config) -> Result<StatusReport> {
@@ -186,39 +259,53 @@ pub async fn collect_status<C: KuboStore>(ipfs: &C, config: &Config) -> Result<S
 
     let mut problems = 0usize;
     let mut lines = Vec::new();
+    let mut sites = Vec::new();
     for (key, versions) in &state.sites {
-        for v in versions {
-            let (path, pubkey, d) = match version_path(&layout, key, v.created_at)
-                .zip(state::split_site_key(key))
-                .and_then(|(path, (pubkey_hex, d))| {
-                    PublicKey::from_hex(pubkey_hex)
-                        .ok()
-                        .map(|pubkey| (path, pubkey, d.to_string()))
-                }) {
-                Some(parsed) => parsed,
-                None => {
-                    lines.push(StatusLine::InvalidKey {
-                        key: key.clone(),
-                        cid: v.cid.clone(),
-                    });
-                    problems += 1;
-                    continue;
-                }
-            };
-            let health = check_version(ipfs, &path, &v.cid).await;
+        let parsed = state::split_site_key(key).and_then(|(pubkey_hex, d)| {
+            PublicKey::from_hex(pubkey_hex)
+                .ok()
+                .map(|pubkey| (pubkey_hex, pubkey, d))
+        });
+        let Some((pubkey_hex, pubkey, d)) = parsed else {
+            for v in versions {
+                lines.push(StatusLine::InvalidKey {
+                    key: key.clone(),
+                    cid: v.cid.clone(),
+                });
+                problems += 1;
+            }
+            continue;
+        };
+        let paths: Vec<String> = versions
+            .iter()
+            .map(|v| layout.agent_version(pubkey_hex, d, v.created_at))
+            .collect();
+        let entries: Vec<(&str, &str)> = paths
+            .iter()
+            .zip(versions)
+            .map(|(path, v)| (path.as_str(), v.cid.as_str()))
+            .collect();
+        let site = check_site(ipfs, &entries).await;
+        for ((v, path), health) in versions.iter().zip(&paths).zip(site.versions) {
             if health != VersionHealth::Ok {
                 problems += 1;
             }
             lines.push(StatusLine::Version(VersionStatus {
                 pubkey,
-                d,
-                path,
+                d: d.to_string(),
+                path: path.clone(),
                 cid: v.cid.clone(),
                 size: v.size,
                 created_at: v.created_at,
                 health,
             }));
         }
+        sites.push(SiteSize {
+            pubkey,
+            d: d.to_string(),
+            path: layout.agent_site(pubkey_hex, d),
+            actual: site.actual_size,
+        });
     }
 
     let garbage = find_garbage(ipfs, &layout, &state).await;
@@ -227,9 +314,14 @@ pub async fn collect_status<C: KuboStore>(ipfs: &C, config: &Config) -> Result<S
     Ok(StatusReport {
         state_path,
         lines,
+        sites,
         garbage,
         problems,
     })
+}
+
+fn bytes_or_unknown(size: Option<u64>) -> String {
+    size.map_or_else(|| "unknown".to_string(), |n| n.to_string())
 }
 
 fn print_status(report: &StatusReport) {
@@ -259,6 +351,18 @@ fn print_status(report: &StatusReport) {
     }
 
     println!();
+    println!("Actual size (blocks the versions share are counted once):");
+    if report.sites.is_empty() {
+        println!("  (none)");
+    }
+    for site in &report.sites {
+        println!("  {} {}", site.path, bytes_or_unknown(site.actual));
+    }
+    if !report.sites.is_empty() {
+        println!("  total {}", bytes_or_unknown(report.actual_bytes()));
+    }
+
+    println!();
     println!("Not in state (the agent removes them on its next sweep):");
     if report.garbage.paths.is_empty() && report.garbage.unlisted.is_empty() {
         println!("  (none)");
@@ -284,6 +388,7 @@ pub async fn status(config: &Config) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
+    use std::sync::Mutex;
 
     use crate::ipfs::{FetchLimits, Fetched};
     use crate::state::VersionRecord;
@@ -296,6 +401,8 @@ mod tests {
         incomplete: HashSet<String>,
         fail_list: HashSet<String>,
         fail_stat: HashSet<String>,
+        unions: BTreeMap<String, u64>,
+        dag_stats: Mutex<Vec<String>>,
     }
 
     impl KuboStore for FakeKubo {
@@ -303,11 +410,15 @@ mod tests {
             unreachable!()
         }
 
-        async fn dag_size_local(&self, cid: &str) -> Result<u64> {
-            if self.incomplete.contains(cid) {
-                bail!("block not found");
+        async fn dag_size_local(&self, cids: &[&str]) -> Result<u64> {
+            let key = cids.join(",");
+            self.dag_stats.lock().unwrap().push(key.clone());
+            for cid in cids {
+                if self.incomplete.contains(*cid) {
+                    bail!("block not found");
+                }
             }
-            Ok(1)
+            Ok(self.unions.get(&key).copied().unwrap_or(cids.len() as u64))
         }
 
         async fn mfs_put(&self, _cid: &str, _path: &str) -> Result<()> {
@@ -403,6 +514,67 @@ mod tests {
         let flaky = check_version(&kubo, &path("flaky"), "bafy-flaky").await;
         assert!(matches!(flaky, VersionHealth::CheckFailed(_)));
         assert!(!flaky.is_broken());
+    }
+
+    #[tokio::test]
+    async fn check_site_measures_every_version_in_one_dag_stat() {
+        let l = layout();
+        let mut kubo = FakeKubo::default();
+        for created_at in [1u64, 2] {
+            kubo.mfs.insert(
+                l.agent_version(PK, "a.example", created_at),
+                format!("bafy-{created_at}"),
+            );
+        }
+        kubo.unions.insert("bafy-1,bafy-2".into(), 150);
+        let paths: Vec<String> = [1u64, 2]
+            .iter()
+            .map(|c| l.agent_version(PK, "a.example", *c))
+            .collect();
+        let entries = vec![(paths[0].as_str(), "bafy-1"), (paths[1].as_str(), "bafy-2")];
+
+        let site = check_site(&kubo, &entries).await;
+
+        assert_eq!(site.versions, vec![VersionHealth::Ok, VersionHealth::Ok]);
+        assert_eq!(site.actual_size, Some(150));
+        assert_eq!(*kubo.dag_stats.lock().unwrap(), vec!["bafy-1,bafy-2"]);
+    }
+
+    #[tokio::test]
+    async fn check_site_finds_the_broken_version_and_sizes_the_rest() {
+        let l = layout();
+        let mut kubo = FakeKubo::default();
+        for created_at in [1u64, 2, 3] {
+            kubo.mfs.insert(
+                l.agent_version(PK, "a.example", created_at),
+                format!("bafy-{created_at}"),
+            );
+        }
+        kubo.mfs
+            .remove(&l.agent_version(PK, "a.example", 3))
+            .unwrap();
+        kubo.incomplete.insert("bafy-2".into());
+        kubo.unions.insert("bafy-1".into(), 40);
+        let paths: Vec<String> = [1u64, 2, 3]
+            .iter()
+            .map(|c| l.agent_version(PK, "a.example", *c))
+            .collect();
+        let entries = vec![
+            (paths[0].as_str(), "bafy-1"),
+            (paths[1].as_str(), "bafy-2"),
+            (paths[2].as_str(), "bafy-3"),
+        ];
+
+        let site = check_site(&kubo, &entries).await;
+
+        assert_eq!(site.versions[0], VersionHealth::Ok);
+        assert!(matches!(site.versions[1], VersionHealth::Incomplete(_)));
+        assert_eq!(site.versions[2], VersionHealth::Missing);
+        assert_eq!(site.actual_size, Some(40));
+        assert_eq!(
+            *kubo.dag_stats.lock().unwrap(),
+            vec!["bafy-1,bafy-2", "bafy-1", "bafy-2", "bafy-1"]
+        );
     }
 
     #[tokio::test]

@@ -28,7 +28,7 @@ CSS は `style.css`（全画面共通）に加え、Desktop 画面のウィン�
 | 画面 | 内容 | 表示スタイル（`data-style`、localStorage キー `swing:style:<view>`） |
 |---|---|---|
 | Desktop | [`/api/sites`](http-api.md#get-apisites) から `stored: true` のサイトだけを集め、レトロ調（Win95/98 風デスクトップ＋ブラウザ風ウィンドウ内の「リンク集」ページ）に描画する。詳細は下記「Desktop 画面」 | スタイル切替なし |
-| Sites | [`/api/sites`](http-api.md#get-apisites) の一覧、mirror への追加・削除、`Unfollowed but still stored`、[`/api/status`](http-api.md#get-apistatus) を呼ぶ Storage check | `cards`（既定）/ `table` |
+| Sites | [`/api/sites`](http-api.md#get-apisites) の一覧、mirror への追加・削除、`Unfollowed but still stored`、[`/api/status`](http-api.md#get-apistatus) を呼ぶ Storage check（版ごとの判定の表と、サイトごとの実容量・合計の表） | `cards`（既定）/ `table` |
 | Webring | [`/api/webring`](http-api.md#get-apiwebringrootkeydepthn) を root・depth 指定で取得。ノード選択で [`/api/replicas?key=`](http-api.md#get-apireplicaskeykey) を引き、詳細パネルからミラー操作もできる | `graph`（既定）/ `list` / `ascii` / `source`（dot・mermaid） |
 | Publish | [`/api/overview`](http-api.md#get-apioverview)・[`/api/publish/sites`](http-api.md#get-apipublishsites)（My sites）、publish フォーム（常にフォルダアップロード） | スタイル切替なし |
 | Settings | [`/api/config`](http-api.md#get-apiconfig) を読み取り専用表示。テーマ・言語・カスタム CSS の設定 | スタイル切替なし |

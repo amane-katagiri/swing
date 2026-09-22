@@ -67,12 +67,16 @@ impl KuboStore for FakeKubo {
         Ok(Fetched::Complete)
     }
 
-    async fn dag_size_local(&self, cid: &str) -> anyhow::Result<u64> {
+    async fn dag_size_local(&self, cids: &[&str]) -> anyhow::Result<u64> {
         let s = self.s.lock().unwrap();
-        if s.fail_stat.contains(cid) {
-            anyhow::bail!("simulated dag/stat failure");
+        let mut total = 0;
+        for cid in cids {
+            if s.fail_stat.contains(*cid) {
+                anyhow::bail!("simulated dag/stat failure");
+            }
+            total += s.sizes.get(*cid).copied().unwrap_or(0);
         }
-        Ok(s.sizes.get(cid).copied().unwrap_or(0))
+        Ok(total)
     }
 
     async fn mfs_put(&self, cid: &str, path: &str) -> anyhow::Result<()> {

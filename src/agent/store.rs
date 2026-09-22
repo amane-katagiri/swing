@@ -244,7 +244,7 @@ impl<C: KuboStore, N: Nip05Verify, R: ReportRelay> Agent<C, N, R> {
             error!(cid = %ev.cid, path = %path, error = %e, "storing into MFS failed");
             return false;
         }
-        let size = match self.ipfs.dag_size_local(&ev.cid).await {
+        let size = match self.ipfs.dag_size_local(&[ev.cid.as_str()]).await {
             Ok(size) => size,
             Err(e) => {
                 warn!(cid = %ev.cid, error = %e, "content is incomplete after fetch; will retry on next poll");

@@ -168,6 +168,26 @@ export function renderStatusCheck(status) {
     table.append(tbody);
     sitesEls.statusCheckResult.append(table);
   }
+  if (status.sites.length) {
+    sitesEls.statusCheckResult.append(el('h3', {}, t('actualSize')));
+    sitesEls.statusCheckResult.append(el('p', { class: 'swing-hint' }, t('actualSizeHint')));
+    const table = el('table', { class: 'swing-table' });
+    const headers = [t('tableAccount'), t('tableSite'), t('tableSize')];
+    table.append(el('thead', {}, el('tr', {}, headers.map((h) => el('th', {}, h)))));
+    const tbody = el('tbody');
+    for (const site of status.sites) {
+      const tr = el('tr');
+      tr.append(el('td', {}, shortenMiddle(site.npub, 10, 4)));
+      tr.append(el('td', {}, site.d));
+      tr.append(el('td', {}, site.actual == null ? '–' : formatBytes(site.actual)));
+      tbody.append(tr);
+    }
+    table.append(tbody);
+    sitesEls.statusCheckResult.append(table);
+    sitesEls.statusCheckResult.append(
+      el('p', {}, t('actualSizeTotal', { size: status.actual_bytes == null ? '–' : formatBytes(status.actual_bytes) })),
+    );
+  }
   if (status.garbage.length) {
     sitesEls.statusCheckResult.append(el('h3', {}, t('notInState')));
     const list = el('ul', { class: 'swing-plain-list' });

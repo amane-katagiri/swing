@@ -60,11 +60,12 @@ state は読まない。
 
 relay には接続せず、`state.json` と Kubo だけを見る。
 
-- `state.json` の版ごとに、版のパス・`cid`・`size` と判定を 1 行表示する。判定は [起動時の突き合わせ](agent.md#起動時の突き合わせ) と同じ検査で、`[ok]` / `[missing]`（パスが無い）/ `[cid mismatch]` / `[incomplete]`（ブロックが欠けている）/ `[check failed]`（`files/stat` 自体が失敗）のいずれか。`ok` 以外は理由を添える。
+- `state.json` の版ごとに、版のパス・`cid`・`size`（state に記録された版ごとのサイズ）と判定を 1 行表示する。判定は [起動時の突き合わせ](agent.md#起動時の突き合わせ) と同じ検査で、`[ok]` / `[missing]`（パスが無い）/ `[cid mismatch]` / `[incomplete]`（ブロックが欠けている）/ `[check failed]`（`files/stat` 自体が失敗）のいずれか。`ok` 以外は理由を添える。
+- 続けて `Actual size` 見出しの下に、サイトごとの実容量（そのサイトの全版をまとめた `dag/stat` の `TotalSize`。版どうしで共有しているブロックは 1 回だけ数える）と合計を表示する。測れなかったサイトは `unknown` にし、合計も `unknown` にする。
 - 続けて `Not in state` 見出しの下に、[sweep](agent.md#sweep) が消す MFS のパスを表示する。ディレクトリごと消えるものはそのディレクトリだけを出す。一覧に失敗したディレクトリは `[list failed]` 付きで出す。
 - `ok` 以外の版と `Not in state` の項目が 1 つでもあれば、件数を表示して 0 以外で終了する。
 - agent の実行中は、保存途中の版（MFS に置いた後、state を保存する前）が `Not in state` に出ることがある。
-- 全版の DAG をたどるので、保存量に比例して時間がかかる。
+- サイト単位で DAG をたどるので、保存量に比例して時間がかかる。
 
 ## webring
 

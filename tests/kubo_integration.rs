@@ -35,6 +35,12 @@ fn blob_fixture(seed: u32) -> tempfile::TempDir {
     dir
 }
 
+fn version_fixture(seed: u32, page: &[u8]) -> tempfile::TempDir {
+    let dir = blob_fixture(seed);
+    std::fs::write(dir.path().join("index.html"), page).unwrap();
+    dir
+}
+
 fn limits(max_bytes: u64) -> ipfs::FetchLimits {
     ipfs::FetchLimits {
         max_bytes,
@@ -71,7 +77,7 @@ async fn add_dir_into_mfs_round_trip() {
     let cid = client.add_dir(dir.path(), &path).await.expect("add_dir");
     assert!(cid.starts_with("bafy"), "expected CIDv1, got {cid}");
     assert_eq!(client.mfs_stat_cid(&path).await.unwrap(), Some(cid.clone()));
-    assert!(client.dag_size_local(&cid).await.unwrap() > 0);
+    assert!(client.dag_size_local(&[cid.as_str()]).await.unwrap() > 0);
 
     let entries = client
         .mfs_list(&layout.publish_site("pk", "a/b %c"))
@@ -136,11 +142,11 @@ async fn mfs_entries_protect_content_from_gc_until_the_last_one_is_removed() {
 
     client.mfs_remove(&first).await.unwrap();
     run_gc().await;
-    assert!(client.dag_size_local(&cid).await.is_ok());
+    assert!(client.dag_size_local(&[cid.as_str()]).await.is_ok());
 
     client.mfs_remove(&second).await.unwrap();
     run_gc().await;
-    assert!(client.dag_size_local(&cid).await.is_err());
+    assert!(client.dag_size_local(&[cid.as_str()]).await.is_err());
     client.mfs_remove(&root).await.unwrap();
 }
 
@@ -154,7 +160,10 @@ async fn fetch_dag_counts_bytes_and_stops_at_limit() {
         .await
         .unwrap();
 
-    let size = client.dag_size_local(&cid).await.expect("dag_size_local");
+    let size = client
+        .dag_size_local(&[cid.as_str()])
+        .await
+        .expect("dag_size_local");
     assert!(size >= 300_000, "unexpected dag size {size}");
 
     assert_eq!(
@@ -209,8 +218,48 @@ async fn dag_size_local_fails_fast_on_an_incomplete_dag() {
     assert!(removed.status().is_success());
 
     let started = std::time::Instant::now();
-    assert!(client.dag_size_local(&cid).await.is_err());
+    assert!(client.dag_size_local(&[cid.as_str()]).await.is_err());
     assert!(started.elapsed() < Duration::from_secs(5));
+
+    // check_site takes a whole site as complete when one dag/stat over all of
+    // its versions succeeds, so one incomplete version has to fail the call.
+    let complete = client
+        .add_dir(site_fixture().path(), &format!("{root}/ok"))
+        .await
+        .unwrap();
+    assert!(
+        client
+            .dag_size_local(&[complete.as_str(), cid.as_str()])
+            .await
+            .is_err()
+    );
+    client.mfs_remove(&root).await.unwrap();
+}
+
+#[tokio::test]
+#[ignore]
+async fn dag_size_local_counts_blocks_shared_by_versions_once() {
+    let client = IpfsClient::new(kubo_api());
+    let root = unique_root("shared");
+    let old = client
+        .add_dir(version_fixture(17, b"one\n").path(), &format!("{root}/1"))
+        .await
+        .unwrap();
+    let new = client
+        .add_dir(version_fixture(17, b"two\n").path(), &format!("{root}/2"))
+        .await
+        .unwrap();
+
+    let old_size = client.dag_size_local(&[old.as_str()]).await.unwrap();
+    let new_size = client.dag_size_local(&[new.as_str()]).await.unwrap();
+    let both = client
+        .dag_size_local(&[old.as_str(), new.as_str()])
+        .await
+        .unwrap();
+
+    assert!(both > old_size.max(new_size), "{both} <= one version");
+    assert!(both < old_size + new_size, "{both} counts the blob twice");
+    client.mfs_remove(&root).await.unwrap();
 }
 
 #[tokio::test]

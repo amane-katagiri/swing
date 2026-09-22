@@ -162,11 +162,20 @@ impl<C: KuboStore, N: Nip05Verify, R: ReportRelay> Agent<C, N, R> {
         let mut state = self.state.lock().await;
         let mut missing = Vec::new();
         for (key, versions) in &state.sites {
-            for v in versions {
-                let Some(path) = self.version_path(key, v.created_at) else {
-                    continue;
-                };
-                let problem = health::check_version(&self.ipfs, &path, &v.cid).await;
+            let paths: Vec<String> = versions
+                .iter()
+                .filter_map(|v| self.version_path(key, v.created_at))
+                .collect();
+            if paths.len() != versions.len() {
+                continue;
+            }
+            let entries: Vec<(&str, &str)> = paths
+                .iter()
+                .zip(versions)
+                .map(|(path, v)| (path.as_str(), v.cid.as_str()))
+                .collect();
+            let site = health::check_site(&self.ipfs, &entries).await;
+            for ((v, path), problem) in versions.iter().zip(&paths).zip(site.versions) {
                 if problem.is_broken() {
                     warn!(site_key = %key, cid = %v.cid, problem = %problem, "forgetting the version so it is fetched again");
                     missing.push((key.clone(), v.cid.clone()));

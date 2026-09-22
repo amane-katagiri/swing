@@ -179,7 +179,7 @@ pub async fn add_and_measure(
     // add with pin=false does not hold Kubo's GC lock, so a GC during the add
     // could drop blocks before they were linked into MFS.
     let size = ipfs
-        .dag_size_local(&cid)
+        .dag_size_local(&[cid.as_str()])
         .await
         .context("added content is not complete in Kubo")?;
     Ok(IpfsStage { cid, size, path })

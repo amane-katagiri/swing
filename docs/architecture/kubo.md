@@ -25,7 +25,7 @@ MFS から消したコンテンツや打ち切った取得のブロックは、K
 | 操作 | リクエスト | タイムアウト |
 |---|---|---|
 | 取得 | `dag/export?arg={cid}&progress=false` | 全体 `SWING_FETCH_TIMEOUT`、無通信 `SWING_FETCH_IDLE_TIMEOUT` |
-| 実サイズ・完全性 | `dag/stat?arg={cid}&progress=false&offline=true` → `TotalSize` | 300 秒 |
+| 実サイズ・完全性 | `dag/stat?arg={cid}[&arg={cid}...]&progress=false&offline=true` → `TotalSize` | 300 秒 |
 | ディレクトリ作成 | `files/mkdir?arg={path}&parents=true` | 60 秒 |
 | 配置 | `files/cp?arg=/ipfs/{cid}&arg={path}&offline=true` | 60 秒 |
 | 削除 | `files/rm?arg={path}&recursive=true&force=true` | 60 秒 |
@@ -33,6 +33,7 @@ MFS から消したコンテンツや打ち切った取得のブロックは、K
 | CID の確認 | `files/stat?arg={path}&hash=true` → `Hash` | 60 秒 |
 | add（publish） | `add?recursive=true&cid-version=1&pin=false&quieter=true&wrap-with-directory=false&to-files={path}` | 300 秒 |
 
+- `dag/stat` に CID を複数渡すと、`TotalSize` はそれらをまとめた重複排除後のサイズ（同じブロックを 1 回だけ数えた合計）になる。1 つでもブロックが欠けていれば呼び出し全体が失敗する。CID を 1 つも渡さないときは呼ばずに 0 を返す。
 - `dag/export` は最初のブロックが取れるまでヘッダーを返さないので、無通信タイムアウトはヘッダー受信までにも適用する。
 - 配置は親ディレクトリを作り、同名の項目を消してから行う（同名があると `files/cp` が失敗する）。`offline=true` なのでルートのブロックがローカルに無ければ即エラー。
 - `files/rm` は失敗しても 200 でボディにメッセージを返すので、ボディが空でなければ失敗とする。存在しないパスは成功。

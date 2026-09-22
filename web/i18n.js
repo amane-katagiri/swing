@@ -86,6 +86,9 @@ const MESSAGES = {
     problemsFound: '{n} problem(s) found.',
     notInState: 'Not in state',
     listFailedSuffix: ' [list failed]',
+    actualSize: 'Actual size',
+    actualSizeHint: 'Blocks the versions of a site share are counted once.',
+    actualSizeTotal: 'Total: {size}',
 
     rootLabel: 'Root',
     rootPlaceholder: 'self',
@@ -267,8 +270,11 @@ const MESSAGES = {
     tableHealth: '状態',
     noProblemsFound: '問題は見つかりませんでした。',
     problemsFound: '{n}件の問題が見つかりました。',
-    notInState: 'stateに存在しない',
+    notInState: 'stateに存在しないパス',
     listFailedSuffix: ' [一覧取得失敗]',
+    actualSize: '実容量',
+    actualSizeHint: '同じサイトの版どうしで共有しているブロックは1回だけ数えます。',
+    actualSizeTotal: '合計: {size}',
 
     rootLabel: 'ルート',
     rootPlaceholder: '自分',

@@ -36,7 +36,7 @@ pub trait KuboStore {
         cid: &str,
         limits: FetchLimits,
     ) -> impl Future<Output = Result<Fetched>> + Send;
-    fn dag_size_local(&self, cid: &str) -> impl Future<Output = Result<u64>> + Send;
+    fn dag_size_local(&self, cids: &[&str]) -> impl Future<Output = Result<u64>> + Send;
     fn mfs_put(&self, cid: &str, path: &str) -> impl Future<Output = Result<()>> + Send;
     fn mfs_remove(&self, path: &str) -> impl Future<Output = Result<()>> + Send;
     fn mfs_list(&self, path: &str) -> impl Future<Output = Result<Vec<MfsEntry>>> + Send;
@@ -53,8 +53,8 @@ impl KuboStore for IpfsClient {
         IpfsClient::fetch_dag(self, cid, limits).await
     }
 
-    async fn dag_size_local(&self, cid: &str) -> Result<u64> {
-        IpfsClient::dag_size_local(self, cid).await
+    async fn dag_size_local(&self, cids: &[&str]) -> Result<u64> {
+        IpfsClient::dag_size_local(self, cids).await
     }
 
     async fn mfs_put(&self, cid: &str, path: &str) -> Result<()> {
@@ -320,10 +320,16 @@ impl IpfsClient {
             .context("dag/export timed out")?
     }
 
-    pub async fn dag_size_local(&self, cid: &str) -> Result<u64> {
+    pub async fn dag_size_local(&self, cids: &[&str]) -> Result<u64> {
+        if cids.is_empty() {
+            return Ok(0);
+        }
+        let args: String = cids
+            .iter()
+            .map(|cid| format!("arg={}&", urlencoding_cid(cid)))
+            .collect();
         let url = self.url(&format!(
-            "/api/v0/dag/stat?arg={}&progress=false&offline=true",
-            urlencoding_cid(cid)
+            "/api/v0/dag/stat?{args}progress=false&offline=true"
         ));
         let resp = self
             .http
