@@ -284,7 +284,7 @@ docker compose --profile gateway up -d
 | `max_update_size` | `2GB` | 1 回の更新（1 バージョン）あたりのサイズ上限。超えると保存されない |
 | `keep_versions` | `5` | サイトごとに保持する旧バージョンの数。超えた分は古い順に削除される |
 | `keep_days` | `365` | バージョンを保持する日数。最新版を除き、これより古い版は削除される |
-| `min_update_interval` | `10m` | 同じサイトの更新を受け付ける最短間隔。これより短い間隔で来た更新は保存されない |
+| `min_update_interval` | `1h` | 同じサイトを取り込む最短間隔（実時間）。前回保存してからこれが経つまでは新しい版を受け付けない。見送った版も、経過後の poll で最新版が改めて評価されるので、最新の内容には追いつく |
 | `remove_on_unfollow` | `true` | 相手をミラー対象から外したときに、自動でそのサイトの保存をやめるかどうか。`false` なら最後に保存した版を残し続ける |
 | `nip05` | `warn` | 保存前に行う NIP-05 検証のモード（`off` / `warn` / `require`） |
 | `nip05_cache_ttl` | `1d` | NIP-05 の検証結果を再利用する期間 |
@@ -320,7 +320,7 @@ TOML の設定ファイル（`swing.toml`）を使う場合と、環境変数だ
 | `SWING_MAX_UPDATE_SIZE` | `policy.max_update_size` | 1 更新あたりのサイズ上限 |
 | `SWING_KEEP_VERSIONS` | `policy.keep_versions` | 保持する旧バージョン数 |
 | `SWING_KEEP_DAYS` | `policy.keep_days` | バージョン保持日数 |
-| `SWING_MIN_UPDATE_INTERVAL` | `policy.min_update_interval` | 更新受理の最短間隔 |
+| `SWING_MIN_UPDATE_INTERVAL` | `policy.min_update_interval` | 取り込みの最短間隔 |
 | `SWING_REMOVE_ON_UNFOLLOW` | `policy.remove_on_unfollow` | unfollow 時にそのサイトを自動で消すか |
 | `SWING_NIP05` | `policy.nip05` | mirror-agent の NIP-05 検証モード（既定 `warn`） |
 | `SWING_NIP05_CACHE_TTL` | `policy.nip05_cache_ttl` | NIP-05 検証結果のキャッシュ期間（既定 `1d`。`0` で無効） |

@@ -133,18 +133,21 @@ state のロックの中で行う。
 
 `policy::decide` は純粋関数。入力は同サイトの既存版、使用量（他サイトの合計容量、同じ pubkey の他サイトの合計容量とサイト数）、候補（cid, size, created_at）、ポリシー設定、現在時刻。出力は `Decision { store: Option<String>, evict: Vec<String>, reason: String }`。
 
-1. 同じ CID が同サイトに記録済みなら skip（`duplicate_cid`）。
-2. 新しいサイトで、同じ pubkey の記録済みのサイトが `max_sites_per_account` 個以上あれば skip（`max_sites_per_account`）。
-3. `created_at` が同サイトの最新版以下なら skip（`stale`）。
-4. `created_at` が最新版から `min_update_interval` 未満なら skip。
-5. `size` が `max_update_size` を超えるなら skip。
-6. 同サイト合計が `max_per_site` を超えるなら古い版から evict する。新版単体で超えるなら skip。
-7. `keep_versions`（最低 1 に丸める）を超える古い版を evict する。
-8. `keep_days` より古い版を evict する。最新版は残す。
-9. evict 後、同じ pubkey の全サイト合計が `max_per_account` を超えるなら skip（`max_per_account`）。他のサイトは削らない。
-10. evict 後の全サイト合計が `max_total_storage` を超えるなら skip。他のサイトは削らない。
+1. `created_at` が現在時刻より先で、ずれが 15 分（`MAX_FUTURE_SKEW`）を超えるなら skip（`future_created_at`）。
+2. 同じ CID が同サイトに記録済みなら skip（`duplicate_cid`）。
+3. 新しいサイトで、同じ pubkey の記録済みのサイトが `max_sites_per_account` 個以上あれば skip（`max_sites_per_account`）。
+4. `created_at` が同サイトの最新版以下なら skip（`stale`）。
+5. 現在時刻が同サイトの最大の `stored_at` から `min_update_interval` 未満なら skip（`min_update_interval`）。
+6. `size` が `max_update_size` を超えるなら skip。
+7. 同サイト合計が `max_per_site` を超えるなら古い版から evict する。新版単体で超えるなら skip。
+8. `keep_versions`（最低 1 に丸める）を超える古い版を evict する。
+9. `keep_days` より古い版を evict する。最新版は残す。
+10. evict 後、同じ pubkey の全サイト合計が `max_per_account` を超えるなら skip（`max_per_account`）。他のサイトは削らない。
+11. evict 後の全サイト合計が `max_total_storage` を超えるなら skip。他のサイトは削らない。
 
-`size` 不明の事前判定では 5 を飛ばし、新版を 0 バイトとして 6〜10 を評価する。
+`size` 不明の事前判定では 6 を飛ばし、新版を 0 バイトとして 7〜11 を評価する。
+
+`created_at` は作者の自己申告なので、間隔の判定（5）だけは自分が保存した実時刻（`stored_at`）で測る。1 と合わせて、`created_at` を先に振っても取り込みの頻度は上げられない。5 で見送った版は、`min_update_interval` が経ったあとの poll（全体の流れ 4.4）で同じイベントが改めて評価されて受理される。relay には `pubkey + kind + d` ごとに最新の 1 件しか残らないので、見送っている間の中間の版は取れないが、最新の内容には必ず追いつく。
 
 ## state.json（state.rs）
 

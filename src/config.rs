@@ -504,7 +504,7 @@ fn build_config(file: ConfigFile, get_env: impl Fn(&str) -> Option<String>) -> R
         parse_duration_secs,
         "invalid SWING_MIN_UPDATE_INTERVAL",
         "invalid [policy].min_update_interval",
-        600,
+        3600,
     )?;
 
     let remove_on_unfollow = resolve_typed(
@@ -955,7 +955,7 @@ mod tests {
         assert_eq!(cfg.policy.max_update_size, 2 * (1u64 << 30));
         assert_eq!(cfg.policy.keep_versions, 5);
         assert_eq!(cfg.policy.keep_days, 365);
-        assert_eq!(cfg.policy.min_update_interval, 600);
+        assert_eq!(cfg.policy.min_update_interval, 3600);
         assert!(cfg.policy.remove_on_unfollow);
         assert_eq!(cfg.policy.nip05, Nip05Mode::Warn);
         assert_eq!(cfg.policy.nip05_cache_ttl, 86_400);

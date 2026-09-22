@@ -1,10 +1,15 @@
 use crate::config::PolicyConfig;
 
+// `created_at` is self-declared by the author, so a small tolerance is all that
+// separates honest clock skew from a timestamp forged to defeat the rate limit.
+const MAX_FUTURE_SKEW: u64 = 900;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VersionInfo {
     pub cid: String,
     pub size: u64,
     pub created_at: u64,
+    pub stored_at: u64,
 }
 
 #[derive(Debug, Clone)]
@@ -96,6 +101,10 @@ pub fn decide(
     cfg: &PolicyConfig,
     now: u64,
 ) -> Decision {
+    if candidate.created_at > now.saturating_add(MAX_FUTURE_SKEW) {
+        return Decision::skip("future_created_at");
+    }
+
     if existing_versions.iter().any(|v| v.cid == candidate.cid) {
         return Decision::skip("duplicate_cid");
     }
@@ -114,8 +123,8 @@ pub fn decide(
         return Decision::skip("stale");
     }
 
-    if let Some(last) = last_created_at
-        && candidate.created_at.saturating_sub(last) < cfg.min_update_interval
+    if let Some(last) = existing_versions.iter().map(|v| v.stored_at).max()
+        && now.saturating_sub(last) < cfg.min_update_interval
     {
         return Decision::skip("min_update_interval");
     }
@@ -132,6 +141,7 @@ pub fn decide(
         cid: candidate.cid.clone(),
         size: new_size,
         created_at: candidate.created_at,
+        stored_at: now,
     });
     versions_after.sort_by_key(|v| v.created_at);
 
@@ -183,10 +193,15 @@ mod tests {
     }
 
     fn v(cid: &str, size: u64, created_at: u64) -> VersionInfo {
+        v_at(cid, size, created_at, created_at)
+    }
+
+    fn v_at(cid: &str, size: u64, created_at: u64, stored_at: u64) -> VersionInfo {
         VersionInfo {
             cid: cid.to_string(),
             size,
             created_at,
+            stored_at,
         }
     }
 
@@ -211,8 +226,8 @@ mod tests {
     #[test]
     fn min_update_interval_skips_too_soon_update() {
         let existing = vec![v("bafy1", 100, 1000)];
-        let cand = c("bafy2", Some(100), 1000 + 599);
-        let d = decide(&existing, Usage::default(), &cand, &cfg(), 2000);
+        let cand = c("bafy2", Some(100), 1500);
+        let d = decide(&existing, Usage::default(), &cand, &cfg(), 1000 + 599);
         assert_eq!(d.store, None);
         assert_eq!(d.reason, "min_update_interval");
     }
@@ -220,9 +235,58 @@ mod tests {
     #[test]
     fn min_update_interval_allows_update_at_exact_boundary() {
         let existing = vec![v("bafy1", 100, 1000)];
-        let cand = c("bafy2", Some(100), 1000 + 600);
-        let d = decide(&existing, Usage::default(), &cand, &cfg(), 2000);
+        let cand = c("bafy2", Some(100), 1500);
+        let d = decide(&existing, Usage::default(), &cand, &cfg(), 1000 + 600);
         assert_eq!(d.store, Some("bafy2".to_string()));
+    }
+
+    #[test]
+    fn min_update_interval_counts_from_stored_at_not_created_at() {
+        let existing = vec![v_at("bafy1", 100, 1000, 5000)];
+        let cand = c("bafy2", Some(100), 4000);
+        let d = decide(&existing, Usage::default(), &cand, &cfg(), 5100);
+        assert_eq!(d.store, None);
+        assert_eq!(d.reason, "min_update_interval");
+    }
+
+    #[test]
+    fn min_update_interval_accepts_the_same_event_once_the_wait_has_passed() {
+        let existing = vec![v("bafy1", 100, 1000)];
+        let cand = c("bafy2", Some(100), 1010);
+        let d = decide(&existing, Usage::default(), &cand, &cfg(), 1500);
+        assert_eq!(d.reason, "min_update_interval");
+
+        let d = decide(&existing, Usage::default(), &cand, &cfg(), 1600);
+        assert_eq!(d.store, Some("bafy2".to_string()));
+    }
+
+    #[test]
+    fn a_forged_created_at_does_not_shorten_the_wait() {
+        let existing = vec![v("bafy1", 100, 1000)];
+        let cand = c("bafy2", Some(100), 1000 + 10 * 600);
+        let d = decide(&existing, Usage::default(), &cand, &cfg(), 1100);
+        assert_eq!(d.store, None);
+        assert_eq!(d.reason, "future_created_at");
+    }
+
+    #[test]
+    fn far_future_created_at_is_rejected_on_a_fresh_site() {
+        let d = decide(
+            &[],
+            Usage::default(),
+            &c("bafy1", Some(10), 2000),
+            &cfg(),
+            1000,
+        );
+        assert_eq!(d.store, None);
+        assert_eq!(d.reason, "future_created_at");
+    }
+
+    #[test]
+    fn created_at_within_the_skew_tolerance_is_accepted() {
+        let cand = c("bafy1", Some(10), 1000 + MAX_FUTURE_SKEW);
+        let d = decide(&[], Usage::default(), &cand, &cfg(), 1000);
+        assert_eq!(d.store, Some("bafy1".to_string()));
     }
 
     #[test]
