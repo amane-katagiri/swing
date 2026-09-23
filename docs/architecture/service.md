@@ -88,20 +88,20 @@ plist の主なキー（`launchd_plist`）: `ProgramArguments` = `[<exe>, "up", 
 | タスク名 | `swing` |
 | ログ | `<workdir>/swing.log`（`up --log-file <path>` で渡す。下記） |
 
-`--system` は非対応。`sc.exe` のサービス登録は管理者権限と UAC が要るため使わず、タスクスケジューラの「ログオン時トリガー + 失敗時再実行」で代替する（[配布方式の設計](../log/2026-09-21-distribution-design.md)）。
+`--system` は非対応。`sc.exe` のサービス登録は管理者権限と UAC が要るため使わず、タスクスケジューラの「ログオン時トリガー」で代替する（[配布方式の設計](../log/2026-09-21-distribution-design.md)）。systemd の `Restart=on-failure` や launchd の `KeepAlive` に当たる、落ちたプロセスの自動再起動は無い。タスクスケジューラの `RestartOnFailure` はタスクの起動に失敗したときだけ働き、起動後にプロセスが非 0 で終わっても再起動しないうえ、`conhost.exe --headless` は子の exit code を返さず常に 0 で終わるため（どちらも実機で確認。[Windows 実機での初回起動確認](../log/2026-09-23-windows-first-run.md)）。Kubo や agent が落ちた場合は `swing up` の中で起動し直す（[`up.md`](up.md)）ので、再起動されないのは swing のプロセス自体が終わったときだけで、その場合は次のログオンで起動する。
 
 タスク XML（`schtasks_xml`。UTF-16 宣言だが本文は ASCII 範囲で問題ない）の主な設定:
 
 - `<Triggers><LogonTrigger>`: 現在ユーザー（`USERDOMAIN\USERNAME`、ドメインが空ならユーザー名のみ）でログオン時に起動。
-- `<Principal><LogonType>S4U</LogonType><RunLevel>LeastPrivilege</RunLevel>`: パスワード無しでログオンする S4U を使う。`InteractiveToken` にするとログオン時にコンソールウィンドウが出てしまうため、コンソールを出さずに常駐させる目的で S4U を選んでいる（実機でのサービス起動・ネットワーク到達性は未確認。[`../log/2026-09-23-distribution-implementation.md`](../log/2026-09-23-distribution-implementation.md) の「未確認」を参照）。
-- `<Settings>`: `MultipleInstancesPolicy = IgnoreNew`、`StartWhenAvailable = true`、`ExecutionTimeLimit = PT0S`（無制限）、`RestartOnFailure`（`Interval = PT1M`、`Count = 999`）、`DisallowStartIfOnBatteries = false`、`StopIfGoingOnBatteries = false`、`Hidden = true`。
-- `<Actions><Exec>`: `Command` = `<exe>`、`Arguments` = `up --config "<config>" --log-file "<log>"`、`WorkingDirectory` = `<workdir>`。
+- `<Principal><LogonType>InteractiveToken</LogonType><RunLevel>LeastPrivilege</RunLevel>`: ログオン中のユーザーのセッションで動かす。`S4U` は登録に管理者への昇格が要る（非昇格の `schtasks /Create` が「アクセスが拒否されました」で失敗する）ため使わない。ユーザーのセッションで動くので、Kubo の 4001 inbound に対する Windows ファイアウォールのダイアログもユーザーに出る。ログオフすると止まる。
+- `<Settings>`: `MultipleInstancesPolicy = IgnoreNew`、`StartWhenAvailable = true`、`ExecutionTimeLimit = PT0S`（無制限）、`DisallowStartIfOnBatteries = false`、`StopIfGoingOnBatteries = false`、`Hidden = true`。
+- `<Actions><Exec>`: `Command` = `%SystemRoot%\System32\conhost.exe`、`Arguments` = `--headless "<exe>" up --config "<config>" --log-file "<log>"`、`WorkingDirectory` = `<workdir>`。`swing.exe` はコンソールサブシステムなので、`InteractiveToken` でそのまま起動するとコンソールウィンドウが開く。`conhost.exe --headless` 経由にしてウィンドウを出さない（`--headless` は Windows 10 1903 以降の conhost の非公開オプション）。
 
 タスクの XML には環境変数を書けないため、ログ出力先は `up` のコマンドライン引数 `--log-file` で渡す（下記）。
 
-- `install`: XML を一時ファイルに書き、`schtasks /Create /TN swing /XML <tmpfile> /F` で登録してから一時ファイルを削除する。`--no-start` でなければ `schtasks /Run /TN swing` で即時起動する。
+- `install`: XML を一時ファイルに書き、`schtasks /Create /TN swing /XML <tmpfile> /F` で登録してから一時ファイルを削除する。`schtasks` の出力は OEM コードページ（日本語環境では CP932）なので、失敗時の標準エラーと `status` の標準出力は UTF-8 として読めなければ OEM コードページとして変換して表示する。`--no-start` でなければ `schtasks /Run /TN swing` で即時起動する。
 - `uninstall`: まず `stop`（下記）と同じグレースフルな停止を試みる（失敗しても無視して続ける）。続けて `schtasks /End /TN swing`（失敗は無視、既にグレースフルに止まっていれば no-op）→ `schtasks /Delete /TN swing /F`。
-- `stop`: `swing stop`（[`up.md`](up.md#終了要求と-exit-codeshutdownexitrequest-shutdownexit)）と同じロジック（`stop::run`、上記「`swing stop`」）を、設定ファイルを `service.rs` の既存のパス解決（`resolve_service_paths`。`--config` は取らず、`install` と同じ規則で探す）で見つけて 60 秒のタイムアウトで呼ぶ（ダッシュボード API 経由）。失敗したら warn を出して `schtasks /End /TN swing`（強制終了）にフォールバックする。タスクの登録自体は残る。`swing stop --restart` はプロセスを終了させずに同じ PID のまま再起動する（[`up.md#終了要求と-exit-codeshutdownexitrequest-shutdownexit`](up.md#終了要求と-exit-codeshutdownexitrequest-shutdownexit)）ので `RestartOnFailure` は関与しない。素の `stop` は exit code 0 で正常終了するのでこれも `RestartOnFailure` の対象外（`/End` によるフォールバックは強制終了なので exit code の区別が無く、次のログオン時トリガーまで再起動しない）。
+- `stop`: `swing stop`（[`up.md`](up.md#終了要求と-exit-codeshutdownexitrequest-shutdownexit)）と同じロジック（`stop::run`、上記「`swing stop`」）を、設定ファイルを `service.rs` の既存のパス解決（`resolve_service_paths`。`--config` は取らず、`install` と同じ規則で探す）で見つけて 60 秒のタイムアウトで呼ぶ（ダッシュボード API 経由）。失敗したら warn を出して `schtasks /End /TN swing`（強制終了）にフォールバックする。タスクの登録自体は残る。`swing stop --restart` はプロセスを終了させずに同じ PID のまま再起動する（[`up.md#終了要求と-exit-codeshutdownexitrequest-shutdownexit`](up.md#終了要求と-exit-codeshutdownexitrequest-shutdownexit)）。素の `stop` も `/End` によるフォールバックも、次のログオン時トリガーまで再起動しない。
 - `status`: `schtasks /Query /TN swing /FO LIST /V` を実行し、標準出力をそのまま表示する。失敗（未登録など）なら `not installed` と出す。
 
 ## `swing up --log-file <path>`

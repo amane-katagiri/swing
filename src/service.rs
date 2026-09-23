@@ -125,11 +125,12 @@ fn quote_schtasks_arg(arg: &str) -> String {
 }
 
 pub fn schtasks_xml(exe: &Path, config: &Path, workdir: &Path, log: &Path, user: &str) -> String {
-    let exe_str = xml_escape(&exe.to_string_lossy());
     let workdir_str = xml_escape(&workdir.to_string_lossy());
     let user_str = xml_escape(user);
+    // S4U needs elevation to register; InteractiveToken would open a console window without conhost --headless.
     let arguments = format!(
-        "up --config {} --log-file {}",
+        "--headless {} up --config {} --log-file {}",
+        quote_schtasks_arg(&exe.to_string_lossy()),
         quote_schtasks_arg(&config.to_string_lossy()),
         quote_schtasks_arg(&log.to_string_lossy()),
     );
@@ -148,7 +149,7 @@ pub fn schtasks_xml(exe: &Path, config: &Path, workdir: &Path, log: &Path, user:
   <Principals>
     <Principal id="Author">
       <UserId>{user_str}</UserId>
-      <LogonType>S4U</LogonType>
+      <LogonType>InteractiveToken</LogonType>
       <RunLevel>LeastPrivilege</RunLevel>
     </Principal>
   </Principals>
@@ -159,15 +160,11 @@ pub fn schtasks_xml(exe: &Path, config: &Path, workdir: &Path, log: &Path, user:
     <StartWhenAvailable>true</StartWhenAvailable>
     <ExecutionTimeLimit>PT0S</ExecutionTimeLimit>
     <Hidden>true</Hidden>
-    <RestartOnFailure>
-      <Interval>PT1M</Interval>
-      <Count>999</Count>
-    </RestartOnFailure>
     <Enabled>true</Enabled>
   </Settings>
   <Actions Context="Author">
     <Exec>
-      <Command>{exe_str}</Command>
+      <Command>%SystemRoot%\System32\conhost.exe</Command>
       <Arguments>{arguments}</Arguments>
       <WorkingDirectory>{workdir_str}</WorkingDirectory>
     </Exec>
@@ -175,6 +172,34 @@ pub fn schtasks_xml(exe: &Path, config: &Path, workdir: &Path, log: &Path, user:
 </Task>
 "#
     )
+}
+
+#[cfg(not(windows))]
+fn decode_output(bytes: &[u8]) -> String {
+    String::from_utf8_lossy(bytes).into_owned()
+}
+
+// schtasks writes in the OEM code page (CP932 on Japanese Windows), not UTF-8.
+#[cfg(windows)]
+fn decode_output(bytes: &[u8]) -> String {
+    use windows_sys::Win32::Globalization::{GetOEMCP, MultiByteToWideChar};
+
+    if let Ok(s) = std::str::from_utf8(bytes) {
+        return s.to_owned();
+    }
+    let Ok(len) = i32::try_from(bytes.len()) else {
+        return String::from_utf8_lossy(bytes).into_owned();
+    };
+    unsafe {
+        let cp = GetOEMCP();
+        let n = MultiByteToWideChar(cp, 0, bytes.as_ptr(), len, std::ptr::null_mut(), 0);
+        if n <= 0 {
+            return String::from_utf8_lossy(bytes).into_owned();
+        }
+        let mut wide = vec![0u16; n as usize];
+        MultiByteToWideChar(cp, 0, bytes.as_ptr(), len, wide.as_mut_ptr(), n);
+        String::from_utf16_lossy(&wide)
+    }
 }
 
 fn run_command(mut cmd: std::process::Command) -> Result<std::process::Output> {
@@ -185,7 +210,7 @@ fn run_command(mut cmd: std::process::Command) -> Result<std::process::Output> {
     if !output.status.success() {
         bail!(
             "command failed: {display}\nstderr: {}",
-            String::from_utf8_lossy(&output.stderr)
+            decode_output(&output.stderr)
         );
     }
     Ok(output)
@@ -562,7 +587,7 @@ mod windows {
             .output();
         match output {
             Ok(out) if out.status.success() => {
-                print!("{}", String::from_utf8_lossy(&out.stdout));
+                print!("{}", decode_output(&out.stdout));
                 Ok(())
             }
             _ => {
@@ -771,7 +796,7 @@ mod tests {
         assert!(xml.contains("<Description>SWING mirror agent</Description>"));
         assert!(xml.contains("<LogonTrigger>"));
         assert!(xml.contains("<UserId>DOMAIN\\user</UserId>"));
-        assert!(xml.contains("<LogonType>S4U</LogonType>"));
+        assert!(xml.contains("<LogonType>InteractiveToken</LogonType>"));
         assert!(xml.contains("<RunLevel>LeastPrivilege</RunLevel>"));
         assert!(xml.contains("<MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>"));
         assert!(xml.contains("<DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>"));
@@ -779,10 +804,11 @@ mod tests {
         assert!(xml.contains("<StartWhenAvailable>true</StartWhenAvailable>"));
         assert!(xml.contains("<ExecutionTimeLimit>PT0S</ExecutionTimeLimit>"));
         assert!(xml.contains("<Hidden>true</Hidden>"));
-        assert!(xml.contains("<RestartOnFailure>"));
-        assert!(xml.contains("<Interval>PT1M</Interval>"));
-        assert!(xml.contains("<Count>999</Count>"));
-        assert!(xml.contains("<Command>C:\\Program Files\\swing\\swing.exe</Command>"));
+        assert!(!xml.contains("<RestartOnFailure>"));
+        assert!(xml.contains("<Command>%SystemRoot%\\System32\\conhost.exe</Command>"));
+        assert!(xml.contains(
+            "<Arguments>--headless &quot;C:\\Program Files\\swing\\swing.exe&quot; up --config"
+        ));
         assert!(xml.contains("<WorkingDirectory>C:\\Users\\u</WorkingDirectory>"));
         assert!(xml.contains("&quot;C:\\Users\\u\\swing.toml&quot;"));
         assert!(xml.contains("&quot;C:\\Users\\u\\swing.log&quot;"));

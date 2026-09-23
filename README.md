@@ -369,7 +369,7 @@ Nostr の秘密鍵は、Docker Compose で動かす場合は `.env` に、バイ
 - 決済
 - 独自の Nostr Relay
 - 配布用のインストーラー・パッケージ（Homebrew tap、install.sh、winget など）。今のところ `cargo build --release` で自分でビルドしてください（詳しくは [`docs/todo.md`](docs/todo.md)）
-- Windows と macOS での動作確認。ビルドは通りますが、サービス登録（タスクスケジューラ・launchd）を含めて実機ではまだ確かめていません。確認済みの範囲は [`docs/todo.md`](docs/todo.md) を参照してください
+- Windows と macOS での動作確認。Windows は端末から直接 `swing up` して、Kubo の起動・ダッシュボード・relay への接続・Ctrl+C での停止までは実機で確かめました。サービス登録（タスクスケジューラ・launchd）と macOS の実機はまだ確かめていません。確認済みの範囲は [`docs/todo.md`](docs/todo.md) を参照してください
 
 今後の拡張として、private mode（IP アドレスを隠したい参加者向けの別モード）などを検討しています。NIP-46 remote signer への対応も予定にあります。残タスクの一覧は [`docs/todo.md`](docs/todo.md)、新しい kind や `d` タグの命名規約は [`docs/extensions.md`](docs/extensions.md) を参照してください。
 

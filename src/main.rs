@@ -3,7 +3,7 @@ use std::time::Duration;
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
-use swing::shutdown::Exit;
+use swing::shutdown::{self, Exit};
 use swing::{config, health, key, mirror, publish, replicas, service, settings, stop, up, webring};
 use tracing::info;
 use tracing_subscriber::EnvFilter;
@@ -259,23 +259,30 @@ fn main() -> Result<()> {
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()?;
+    let logs_to_file = log_file.is_some();
     let result = runtime.block_on(run(cli));
     runtime.shutdown_timeout(RUNTIME_SHUTDOWN_TIMEOUT);
+    if logs_to_file && let Err(e) = &result {
+        tracing::error!("{e:#}");
+    }
     result
 }
 
 async fn run(cli: Cli) -> Result<()> {
     match cli.command {
-        Command::Up { config, .. } => loop {
-            let cfg = config::Config::load(config.as_deref())?;
-            match up::run(cfg).await? {
-                Exit::Stop => return Ok(()),
-                Exit::Restart => {
-                    info!("restarting: reloading configuration");
-                    continue;
+        Command::Up { config, .. } => {
+            let signal = shutdown::cancel_on_signal()?;
+            loop {
+                let cfg = config::Config::load(config.as_deref())?;
+                match up::run(cfg, signal.child_token()).await? {
+                    Exit::Stop => return Ok(()),
+                    Exit::Restart => {
+                        info!("restarting: reloading configuration");
+                        continue;
+                    }
                 }
             }
-        },
+        }
         other => run_other(other).await,
     }
 }

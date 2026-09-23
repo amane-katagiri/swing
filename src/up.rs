@@ -12,7 +12,6 @@ use crate::config::{Config, IpfsApi};
 use crate::dashboard;
 use crate::kubo;
 use crate::lock;
-use crate::shutdown;
 use crate::shutdown::{Exit, ExitRequest};
 
 const UNMANAGED_HEALTH_TIMEOUT: Duration = Duration::from_secs(30);
@@ -59,9 +58,8 @@ async fn stop_daemon(daemon: kubo::Daemon, config: &Config, grace: Duration) -> 
     result
 }
 
-pub async fn run(config: Config) -> Result<Exit> {
+pub async fn run(config: Config, token: CancellationToken) -> Result<Exit> {
     let _lock = lock::acquire(&config.agent.state_dir)?;
-    let token = shutdown::cancel_on_signal()?;
     let exit = ExitRequest::new(token.clone());
     let notify = Arc::new(Notify::new());
 
