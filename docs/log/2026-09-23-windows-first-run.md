@@ -35,6 +35,10 @@ WSL から `cargo xwin build --release --target x86_64-pc-windows-msvc` で作�
 
 ## まだ確かめていないこと
 
-- `swing service stop`・`schtasks /End` で swing と Kubo が落ちるか。
+- `schtasks /End` で swing と Kubo が落ちるか。
 - `Stop-Process -Force` などで swing を強制終了したときに、Kubo が Job Object で道連れになるか。
 - Follow Set があるときにミラーの pin が最後まで終わること。
+
+## 追記
+
+- タスク経由で起動した swing を `swing service stop` で止め、swing と Kubo の両方が終了することを実機で確認した。
