@@ -74,6 +74,8 @@ HTTP サーバー（axum 0.8）で、ダッシュボードのブラウザ向け�
 | ルート | Content-Type |
 |---|---|
 | `GET /` | `text/html; charset=utf-8`（`index.html`） |
+| `GET /favicon.svg` | `image/svg+xml`。Desktop 画面の Start ボタンと同じ SWING の 3 色マーク（`icon-desk-start` と同じ図形） |
+| `GET /favicon-32.png` `/apple-touch-icon.png` | `image/png`（`include_bytes!`）。`favicon.svg` から書き出した 32×32（透過、SVG 非対応ブラウザ向け）と 180×180（白背景、iOS のホーム画面向け） |
 | `GET /style.css` `/desktop.css` | `text/css; charset=utf-8` |
 | `GET /boot.js` `/app.js` `/graph.js` `/storage.js` `/i18n.js` `/util.js` `/ui.js` `/sites.js` `/webring.js` `/publish.js` `/settings.js` `/desktop.js` | `text/javascript; charset=utf-8` |
 | `GET /desktop-page.html` `/desktop-page.css` | `text/html; charset=utf-8` / `text/css; charset=utf-8`。Desktop 画面の iframe に入るリンク集ページとその CSS |

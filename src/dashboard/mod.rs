@@ -86,6 +86,9 @@ impl AppState {
 fn ui_router() -> Router<Arc<AppState>> {
     Router::new()
         .route("/", get(assets::index))
+        .route("/favicon.svg", get(assets::favicon))
+        .route("/favicon-32.png", get(assets::favicon_32))
+        .route("/apple-touch-icon.png", get(assets::apple_touch_icon))
         .route("/style.css", get(assets::style))
         .route("/desktop.css", get(assets::desktop_css))
         .route("/boot.js", get(assets::boot_js))
@@ -303,6 +306,9 @@ mod tests {
     #[tokio::test]
     async fn style_and_scripts_have_expected_content_types() {
         for (path, expected) in [
+            ("/favicon.svg", "image/svg+xml"),
+            ("/favicon-32.png", "image/png"),
+            ("/apple-touch-icon.png", "image/png"),
             ("/style.css", "text/css; charset=utf-8"),
             ("/desktop.css", "text/css; charset=utf-8"),
             ("/boot.js", "text/javascript; charset=utf-8"),

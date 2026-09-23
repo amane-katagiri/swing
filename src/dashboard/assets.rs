@@ -28,6 +28,9 @@ const DESKTOP_JS: &str = include_str!("../../web/desktop.js");
 const DESKTOP_PAGE_HTML: &str = include_str!("../../web/desktop-page.html");
 const DESKTOP_PAGE_CSS: &str = include_str!("../../web/desktop-page.css");
 const DESKTOP_FRAME_CSS: &str = include_str!("../../web/desktop-frame.css");
+const FAVICON_SVG: &str = include_str!("../../web/favicon.svg");
+const FAVICON_32_PNG: &[u8] = include_bytes!("../../web/favicon-32.png");
+const APPLE_TOUCH_ICON_PNG: &[u8] = include_bytes!("../../web/apple-touch-icon.png");
 const DESKTOP_BANNER_GIF: &[u8] = include_bytes!("../../web/desktop-banner.gif");
 const FONT_PIXELMPLUS12_REGULAR: &[u8] =
     include_bytes!("../../web/fonts/pixelmplus12-regular.woff2");
@@ -47,6 +50,18 @@ fn binary_asset(content_type: &'static str, body: &'static [u8]) -> Response {
 
 pub async fn index() -> Response {
     asset("text/html; charset=utf-8", INDEX_HTML)
+}
+
+pub async fn favicon() -> Response {
+    asset("image/svg+xml", FAVICON_SVG)
+}
+
+pub async fn favicon_32() -> Response {
+    binary_asset("image/png", FAVICON_32_PNG)
+}
+
+pub async fn apple_touch_icon() -> Response {
+    binary_asset("image/png", APPLE_TOUCH_ICON_PNG)
 }
 
 pub async fn style() -> Response {
