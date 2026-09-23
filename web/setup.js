@@ -1,4 +1,4 @@
-import { t } from './i18n.js';
+import { t, currentLang } from './i18n.js';
 import { cache, el, apiFetch, setStatus, clearStatus, describeError, setBusy, setFormDisabled, createLoadGuard } from './util.js';
 import { loadOverview } from './publish.js';
 
@@ -14,10 +14,25 @@ const setupEls = {
 const MAX_POLL_ATTEMPTS = 120;
 
 const CONFIG_FIELDS = [
-  { name: 'relays', path: 'nostr.relays', lockHintId: 'setup-relays-lock-hint' },
-  { name: 'maxTotalStorage', path: 'policy.max_total_storage', lockHintId: 'setup-max-total-storage-lock-hint' },
-  { name: 'maxPerSite', path: 'policy.max_per_site', lockHintId: 'setup-max-per-site-lock-hint' },
-  { name: 'maxPerAccount', path: 'policy.max_per_account', lockHintId: 'setup-max-per-account-lock-hint' },
+  { name: 'relays', path: 'nostr.relays', lockHintId: 'setup-relays-lock-hint', descHintId: 'setup-relays-desc-hint' },
+  {
+    name: 'maxTotalStorage',
+    path: 'policy.max_total_storage',
+    lockHintId: 'setup-max-total-storage-lock-hint',
+    descHintId: 'setup-max-total-storage-desc-hint',
+  },
+  {
+    name: 'maxPerSite',
+    path: 'policy.max_per_site',
+    lockHintId: 'setup-max-per-site-lock-hint',
+    descHintId: 'setup-max-per-site-desc-hint',
+  },
+  {
+    name: 'maxPerAccount',
+    path: 'policy.max_per_account',
+    lockHintId: 'setup-max-per-account-lock-hint',
+    descHintId: 'setup-max-per-account-desc-hint',
+  },
 ];
 
 let lastConfig = null;
@@ -49,6 +64,18 @@ function formatFieldValue(raw) {
   return raw != null ? String(raw) : '';
 }
 
+function renderFieldDescriptions() {
+  if (!lastConfig) return;
+  const lang = currentLang();
+  for (const field of CONFIG_FIELDS) {
+    const descEl = document.getElementById(field.descHintId);
+    if (!descEl) continue;
+    const item = configItem(lastConfig, field.path);
+    const description = item && item.description ? item.description[lang] || item.description.en : '';
+    descEl.textContent = description || '';
+  }
+}
+
 function prefillForm(config) {
   const form = setupEls.form;
   lockedFields.clear();
@@ -65,6 +92,7 @@ function prefillForm(config) {
     }
     if (locked) lockedFields.add(field.name);
   }
+  renderFieldDescriptions();
 }
 
 function reapplyFieldLocks() {
@@ -200,6 +228,7 @@ export const SetupView = {
   },
   render() {
     renderIntro();
+    renderFieldDescriptions();
     if (lastResult) renderSuccess(lastResult);
   },
 };

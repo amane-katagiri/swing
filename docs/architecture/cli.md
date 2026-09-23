@@ -102,3 +102,12 @@ state は読まない。
 ## key generate
 
 新しい鍵ペアの nsec / npub / hex（秘密鍵・公開鍵）を表示する。設定を読まない。
+
+## config example / config env-example
+
+設定ファイルを読まない（`--config` を取らない）。`src/settings.rs::SETTINGS` の設定カタログから、リポジトリ直下の `swing.example.toml`／`.env.example` と同じ内容を標準出力に印字する（[`../architecture.md#設定と環境変数`](../architecture.md#設定と環境変数)）。両ファイルはこの出力と一致することを `cargo test` が確認する（一致しなければどちらのコマンドで再生成すべきかをテストの失敗メッセージが示す）。設定キーを追加・変更したら、このコマンドの出力をそのファイルに書き直してコミットする:
+
+```bash
+swing config example     > swing.example.toml
+swing config env-example > .env.example
+```

@@ -154,13 +154,13 @@ Follow Set が無ければ `title: null`、`members: []`。
 ```json
 { "config_path": "/path/to/swing.toml", "config_exists": true, "writable": true, "restart_required": false, "sections": [
   { "name": "nostr", "items": [
-    { "key": "secret_key", "env": "SWING_NOSTR_SECRET_KEY", "value": "(set, hidden)", "source": "file", "editable": false },
-    { "key": "relays", "env": "SWING_NOSTR_RELAYS", "value": ["wss://relay.damus.io"], "source": "default", "editable": true, "kind": "list", "raw": ["wss://relay.damus.io", "wss://nos.lol", "wss://relay.primal.net", "wss://yabu.me", "wss://relay-jp.nostr.wirednet.jp"] },
-    { "key": "max_total_storage", "env": "SWING_MAX_TOTAL_STORAGE", "value": 107374182400, "display": "100 GB", "source": "env", "editable": false, "kind": "size", "raw": "100 GB" } ] } ] }
+    { "key": "secret_key", "env": "SWING_NOSTR_SECRET_KEY", "value": "(set, hidden)", "source": "file", "editable": false, "kind": "secret", "description": { "en": "Signing secret key (nsec or hex)...", "ja": "署名用の秘密鍵（nsec または hex）..." } },
+    { "key": "relays", "env": "SWING_NOSTR_RELAYS", "value": ["wss://relay.damus.io"], "source": "default", "editable": true, "kind": "list", "raw": ["wss://relay.damus.io", "wss://nos.lol", "wss://relay.primal.net", "wss://yabu.me", "wss://relay-jp.nostr.wirednet.jp"], "description": { "en": "Nostr relays to connect to...", "ja": "接続する Nostr relay（カンマ区切り）" } },
+    { "key": "max_total_storage", "env": "SWING_MAX_TOTAL_STORAGE", "value": 107374182400, "display": "100 GB", "source": "env", "editable": false, "kind": "size", "raw": "100 GB", "description": { "en": "Total storage cap...", "ja": "保存する全サイト合計の容量上限" } } ] } ] }
 ```
 
-- `sections` は `nostr`/`ipfs`/`policy`/`agent`/`publish`/`dashboard`/`kubo`/`gateway` の順で、[`architecture.md`](../../architecture.md#設定と環境変数) の設定表と同じキーを同じ順で列挙する（そちらが正本）。TOML キーの無い `SWING_FETCH_TIMEOUT`/`SWING_FETCH_IDLE_TIMEOUT` は `agent` セクションに `key: null` で入る。
-- `secret_key` は常に `"(set, hidden)"` か `"(not set)"`（[`dashboard.md`](../dashboard.md#秘密鍵を出さない仕組み) を参照）。`secret_key` は下記のホワイトリストに含まれないので `editable` は常に `false`（値そのものはダッシュボードからは変更できず、セットアップ時にしか書けない。下記 `POST /api/setup`）。
+- `sections` は `nostr`/`ipfs`/`policy`/`agent`/`publish`/`dashboard`/`kubo`/`gateway` の順で、`settings::SETTINGS`（[`architecture.md`](../../architecture.md#設定と環境変数)）の宣言順そのままを列挙する（そちらが正本）。カタログの設定はすべて TOML フィールドを持つので、`key` が無い項目は無い（`SWING_FETCH_TIMEOUT`/`SWING_FETCH_IDLE_TIMEOUT` も `agent.fetch_timeout`/`agent.fetch_idle_timeout` という通常のキーとして入る）。
+- `secret_key` の値は常に `"(set, hidden)"` か `"(not set)"`（[`dashboard.md`](../dashboard.md#秘密鍵を出さない仕組み) を参照）。`secret_key` はカタログ上 `editable: false` なので `editable` は常に `false`（値そのものはダッシュボードからは変更できず、セットアップ時にしか書けない。下記 `POST /api/setup`）。
 - `ipfs.api` は `[kubo].managed = true` のとき固定文字列 `"managed"` になる（動的なポートを含む実際の URL ではなく、`swing up` が `<repo>/api` から解決した値であることを示す。[`up.md`](../up.md#動的な-api-ポートとrepoapi)）。`managed = false` なら実際の URL（`[ipfs].api` の値）。
 - `kubo.binary`/`kubo.repo` はパスを文字列で返す（`binary` が未設定なら空文字）。`kubo.swarm_port` は未設定なら文字列 `"-"`（他のセクションと違い、数値でなく文字列で返る）。
 - `value` は文字列・真偽・数値・文字列配列のいずれか（常に生の値）。容量・時間の項目は読みやすい文字列を `display` に添える: 容量は 1024 基数の最大単位に割り切れれば整数（`"100 GB"`）、割り切れなければ小数第 1 位まで、KB 未満はバイト表記。時間は日/時/分のどれかで割り切れれば大きい単位優先（`"5m"`）、割り切れなければ秒。個数系（`keep_versions` など）には `display` が付かず、無い項目はフィールドごと出ない。
@@ -170,10 +170,11 @@ Follow Set が無ければ `title: null`、`members: []`。
 - `dashboard` セクションに `ui`（真偽値、`SWING_DASHBOARD_UI`）が入る。`listen` は常に `SocketAddr` の文字列。
 - 各 `items[]` は追加で次のフィールドを持つ:
   - `source`: `"env"` / `"file"` / `"default"`（`config::Config::sources`、キーは `"<section>.<フィールド名>"`。`ConfigDto` はこれをそのまま `Source::Env`→`"env"` のように文字列化する）。
-  - `editable`: そのキーが `settings::EDITABLE_KEYS`（下記）に載っていて、かつ `source` が `"env"` ではないときだけ `true`。
-  - `kind`: `settings::EDITABLE_KEYS` に載っているキーだけに付く（`source` に関わらず。env 由来で今は編集できなくても `kind` 自体は付く）。`"size"` / `"duration"` / `"bool"` / `"integer"` / `"string"` / `"list"` / `"nip05"` のいずれか。
-  - `raw`: `kind` が付くキーだけに付く、現在の値を `PUT /api/config`／`POST /api/setup` の `items` にそのまま送り返せる形にしたもの（`size`/`duration` は `parse_size`/`parse_duration_secs` が受け付ける文字列、`list` は文字列配列、それ以外は文字列）。
+  - `editable`: カタログ上そのキーが `editable: true` で、かつ `source` が `"env"` ではないときだけ `true`。
+  - `kind`: カタログの全キーに付く（`source` や `editable` に関わらず）。`"size"` / `"duration"` / `"bool"` / `"integer"` / `"string"` / `"list"` / `"nip05"` / `"path"` / `"socket_addr"` / `"port"` / `"url"` / `"secret"` / `"listen"` のいずれか。編集フォームが分岐するのは前者 7 種のみ（下記「設定の読み込みと編集」に同じ）。
+  - `raw`: 編集可能な 20 キーだけに付く、現在の値を `PUT /api/config`／`POST /api/setup` の `items` にそのまま送り返せる形にしたもの（`size`/`duration` は `parse_size`/`parse_duration_secs` が受け付ける文字列、`list` は文字列配列、それ以外は文字列）。
   - `options`: `kind: "nip05"` のときだけ付く。取りうる値の一覧 `["off", "warn", "require"]`（`config::NIP05_MODE_NAMES`）。
+  - `description`: `{ "en": ..., "ja": ... }`。カタログの `Setting.description`（`settings::SETTINGS`）をそのまま返す、1 文の英語・日本語の説明。環境変数名は含まない（`env` フィールドと別出し）。
 
 ## PUT /api/config
 
@@ -183,7 +184,7 @@ Follow Set が無ければ `title: null`、`members: []`。
 { "items": { "policy.max_total_storage": "20GB", "nostr.relays": ["wss://relay.damus.io", "wss://nos.lol"] } }
 ```
 
-- キーは `"<section>.<フィールド名>"`（`GET /api/config` の `raw` が付くキーと同じ）で、`settings::EDITABLE_KEYS` に無いキー、または現在 `source: "env"` のキーが 1 つでも含まれていれば、ファイルには一切触れずに 400 で拒否する（`settings::check_not_env_sourced`。部分適用はしない）。値の形式は `raw` と同じ（`nostr.relays` は空配列だと 400）。
+- キーは `"<section>.<フィールド名>"`（`GET /api/config` の `raw` が付くキーと同じ）で、カタログ上 `editable: true` ではないキー、または現在 `source: "env"` のキーが 1 つでも含まれていれば、ファイルには一切触れずに 400 で拒否する（`settings::check_not_env_sourced`。部分適用はしない）。値の形式は `raw` と同じ（`nostr.relays` は空配列だと 400）。
 - 適用順（`settings::update`）: 既存のファイルを `toml_edit::DocumentMut` として読む（無ければ空文書）→ 渡された `items` だけをその場で書き換える（`toml_edit` なのでコメントや他のキーはそのまま残る）→ `config::build_config_from_str` で妥当性を確認する（ここで失敗したらファイルには書かない。他の設定項目との整合や `parse_size`/`parse_duration_secs` などのバリデーションを全部通す）→ tmp ファイルに書いて `rename`（atomic）。ファイルが元から存在していればその権限を引き継ぎ、新規作成なら unix で `0600`。
 - 成功したら `AppState.restart_required` を `true` にし、`AppState.display_config`（[`dashboard.md`](../dashboard.md#概要)）を書き換え後の設定に差し替えてから、`GET /api/config` と同じ形の `ConfigDto`（`restart_required: true`）を返す。実際に動いている relay・Kubo・agent はまだ古い設定のままで、値が反映されるのは次の再起動から（`display_config` はあくまで「再起動したらこうなる」を見せるための、表示専用のコピー）。
 - 失敗（400）した場合はファイルもプロセスの状態も変わらない。

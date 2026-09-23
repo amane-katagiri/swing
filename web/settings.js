@@ -1,5 +1,5 @@
 import { storage } from './storage.js';
-import { t } from './i18n.js';
+import { t, currentLang } from './i18n.js';
 import { cache, el, apiFetch, setStatus, clearStatus, describeError, createLoadGuard, setBusy } from './util.js';
 
 const settingsEls = {
@@ -25,13 +25,25 @@ function formatRawConfigValue(v) {
   return String(v);
 }
 
+function descriptionText(item) {
+  if (!item.description) return '';
+  const lang = currentLang();
+  return item.description[lang] || item.description.en || '';
+}
+
+function appendDescriptionHint(td, item) {
+  const text = descriptionText(item);
+  if (text) td.append(el('div', { class: 'swing-hint' }, text));
+}
+
 function appendReadOnlyValue(td, item) {
   if (item.display != null) {
     td.append(document.createTextNode(`${item.display} `), el('span', { class: 'swing-hint swing-mono' }, formatRawConfigValue(item.value)));
   } else {
     td.append(document.createTextNode(formatRawConfigValue(item.value)));
   }
-  if (item.source === 'env' && item.kind) {
+  // raw, not kind, marks the whitelist: kind is now on every catalog entry
+  if (item.source === 'env' && item.raw != null) {
     td.append(el('span', { class: 'swing-hint' }, ` — ${t('configLockedByEnv')}`));
   }
 }
@@ -143,6 +155,7 @@ function buildSection(section, canEdit) {
     } else {
       appendReadOnlyValue(valueTd, item);
     }
+    if (item.raw != null) appendDescriptionHint(valueTd, item);
     tr.append(valueTd);
     tr.append(el('td', { class: 'swing-mono' }, item.env || '–'));
     tbody.append(tr);

@@ -58,7 +58,7 @@ swing/
     lock.rs          多重起動防止のインスタンスロック（swing.lock）。詳細は architecture/up.md
     gateway.rs       内蔵 gateway（axum）。Host 名での振り分けと Kubo gateway へのプロキシ。詳細は architecture/gateway.md
     service.rs       `swing service install/uninstall/status/stop`（systemd / launchd / タスクスケジューラ）。詳細は architecture/service.md
-    settings.rs      ダッシュボードから編集できる設定キーのホワイトリスト（EDITABLE_KEYS）、`PUT /api/config`（update）・`POST /api/setup`（setup）の読み書き（toml_edit）。詳細は architecture/dashboard.md
+    settings.rs      全設定キーのカタログ（SETTINGS。キー・TOML フィールド・環境変数・種類・例・編集可否・英日の説明）、`swing.example.toml`/`.env.example` の生成（config example / env-example）、ダッシュボードから編集できる設定キーのホワイトリスト（カタログの editable）、`PUT /api/config`（update）・`POST /api/setup`（setup）の読み書き（toml_edit）。詳細は architecture/dashboard.md
     stop.rs          `swing stop`（動いている `swing up` のダッシュボード API 経由。API に到達できなければ「動いていない」として終了する）。詳細は architecture/up.md, architecture/service.md
     shutdown.rs      `cancel_on_signal`（SIGINT/SIGTERM → CancellationToken、force-exit watchdog）、`ExitRequest`/`Exit`（ダッシュボードからの停止・再起動要求と exit code）。up/agent 共通
     dashboard/       `swing up` 常駐の Web ダッシュボード兼制御 API（mod.rs, guard.rs, api.rs, dto.rs, assets.rs）。詳細は architecture/dashboard.md
@@ -94,6 +94,8 @@ swing replicas [<key>...]              [--config <path>]
 swing status                           [--config <path>]
 swing webring [<key>...] [--depth <N>] [--format <text|dot|mermaid>] [--config <path>]
 swing key generate
+swing config example
+swing config env-example
 ```
 
 `swing up` は Kubo（`[kubo].managed = true` なら）と mirror-agent の中身を 1 プロセスの supervisor として動かす（[`architecture/up.md`](architecture/up.md)）。`managed = false` なら既に動いている Kubo（外部のもの）を待ってから同じことをする。mirror-agent を単体で起動するサブコマンドは無く、常に `swing up` を経由する。`swing service` は `swing up` を OS の常駐に登録する（[`architecture/service.md`](architecture/service.md)）。`swing stop`／`swing service stop` は動いている `swing up` にグレースフルな停止・再起動を要求する（[`architecture/up.md#終了要求と-exit-codeshutdownexitrequest-shutdownexit`](architecture/up.md#終了要求と-exit-codeshutdownexitrequest-shutdownexit)）。`--restart` による再起動はプロセスを終了させず、同じプロセス内で設定を読み直して動き直す（exit code でサービスマネージャに再起動させる古い経路は無くなった）。
@@ -110,79 +112,23 @@ swing key generate
 
 ## 設定と環境変数
 
-環境変数は TOML の値を上書きする。
+すべての設定キー（TOML フィールド、環境変数、種類、既定値、編集可否、説明）は `src/settings.rs` の `SETTINGS`（`Setting` の配列）1 箇所にカタログとして持つ。環境変数は TOML の値を上書きする。`config::build_config` は各キーの env 名をこのカタログから `settings::env_of("<section>.<field>")` で引き、環境変数名の文字列リテラルはカタログにしか存在しない。
 
-```toml
-[nostr]
-#secret_key = "nsec1..."            # SWING_NOSTR_SECRET_KEY（nsec または hex。省略可。無いと swing up はセットアップモードで起動する）
-relays = ["wss://relay.damus.io", "wss://nos.lol", "wss://relay.primal.net", "wss://yabu.me", "wss://relay-jp.nostr.wirednet.jp"]
-                                    # SWING_NOSTR_RELAYS（カンマ区切り）
-mirror_set = "swing"                # SWING_MIRROR_SET（kind 30000 の d タグ）
-site_event_kind = 35980             # SWING_SITE_EVENT_KIND
-replica_event_kind = 35981          # SWING_REPLICA_EVENT_KIND
+- `swing config example` — カタログから `swing.example.toml`（このリポジトリ直下の同名ファイル）と同じ内容を標準出力に印字する。セクション順・キー順はカタログの宣言順（`nostr` → `ipfs` → `policy` → `agent` → `publish` → `dashboard` → `kubo` → `gateway`）。
+- `swing config env-example` — カタログから `.env.example` と同じ内容を印字する。秘密鍵の行だけ特別扱い（空・非コメント）で、他のキーはすべてコメントアウトした `#SWING_X=既定値` の形で載せる（`.env` に書いて始めて `Source::Env` になり、ダッシュボードでの編集がロックされるため、既定はすべて無効化した状態にしている）。Docker Compose 専用のホストバインド変数（`SWING_KUBO_GATEWAY_BIND`・`SWING_GATEWAY_BIND`・`SWING_DASHBOARD_BIND`）はカタログの外の値で、`config::env_var` は読まない（`compose.yaml` の変数展開専用）。
 
-[ipfs]
-#api = "http://127.0.0.1:5001"      # SWING_IPFS_API（[kubo].managed = false のときだけ使う。既定 http://127.0.0.1:5001。managed = true で指定するとエラー）
-mfs_root = "/swing"                 # SWING_MFS_ROOT
+`cargo test` は次の 2 点でカタログと生成物の乖離を防ぐ（`src/settings.rs` のテスト）:
 
-[policy]
-max_total_storage = "100GB"         # SWING_MAX_TOTAL_STORAGE
-max_per_site = "10GB"               # SWING_MAX_PER_SITE
-max_per_account = "20GB"            # SWING_MAX_PER_ACCOUNT
-max_sites_per_account = 10          # SWING_MAX_SITES_PER_ACCOUNT
-max_update_size = "2GB"             # SWING_MAX_UPDATE_SIZE
-keep_versions = 5                   # SWING_KEEP_VERSIONS
-keep_days = 365                     # SWING_KEEP_DAYS
-min_update_interval = "1h"          # SWING_MIN_UPDATE_INTERVAL
-remove_on_unfollow = true           # SWING_REMOVE_ON_UNFOLLOW
-nip05 = "warn"                      # SWING_NIP05（off / warn / require）
-nip05_cache_ttl = "1d"              # SWING_NIP05_CACHE_TTL
+- `swing.example.toml`・`.env.example` の内容が、それぞれ `render_toml_example()`・`render_env_example()` の出力と一致すること（ずれていれば `swing config example > swing.example.toml` / `swing config env-example > .env.example` を実行してコミットし直すよう促すメッセージで失敗する）。
+- 生成した `swing.example.toml` を `build_config_from_str` でパースした結果が、空文字列から作った既定値と一致すること（例の値がコードの既定値から drift しない）。
+- カタログのキー集合が `Config.sources`（`build_config` が実際に解決するキー）の集合と完全に一致すること。
+- `render_env_example` が「compose では効果が無い」と注記する `ENV_NO_EFFECT_IN_COMPOSE` の集合が、`compose.yaml` の `mirror` サービスの `environment:` に実際に固定値（`${VAR:-default}` 展開を使わない `KEY: value` / `KEY=value`）で書かれている `SWING_*` の集合と一致すること（`compose.yaml` を `include_str!` して行単位で走査する）。
 
-[agent]
-state_dir = "./data"                # SWING_STATE_DIR
-poll_interval = "5m"                # SWING_POLL_INTERVAL
-concurrency = 4                     # SWING_CONCURRENCY
-report_ttl = "3d"                   # SWING_REPORT_TTL
-
-[publish]
-nip05 = "warn"                      # SWING_PUBLISH_NIP05（--nip05 が優先）
-keep_versions = 5                   # SWING_PUBLISH_KEEP_VERSIONS
-
-[dashboard]
-listen = "127.0.0.1:8082"           # SWING_DASHBOARD_LISTEN（`swing up` が動いている間ずっと待ち受ける）
-ui = true                           # SWING_DASHBOARD_UI（false で静的な Web UI を配信せず、/api/* の制御 API だけ残す）
-allowed_hosts = []                  # SWING_DASHBOARD_ALLOWED_HOSTS（カンマ区切り、ポート抜き）
-gateway = "http://localhost:8080"   # SWING_DASHBOARD_GATEWAY（空文字でリンクを出さない）
-#custom_css = "/path/to/custom.css" # SWING_DASHBOARD_CUSTOM_CSS
-#desktop_page = "/path/to/links.html"     # SWING_DASHBOARD_DESKTOP_PAGE（Desktop 画面のリンク集ページ）
-#desktop_page_css = "/path/to/links.css"  # SWING_DASHBOARD_DESKTOP_PAGE_CSS（そのページ専用の CSS）
-#desktop_banner = "/path/to/banner.gif"   # SWING_DASHBOARD_DESKTOP_BANNER（88×31 バナー。png/gif/jpeg/webp/svg）
-max_upload = "2GB"                  # SWING_DASHBOARD_MAX_UPLOAD（POST /api/publish/upload のボディ上限。0 はエラー）
-
-[kubo]
-managed = true                      # SWING_KUBO_MANAGED（true: swing up が Kubo を子プロセスとして動かす。false: 外部の Kubo（[ipfs].api）を使う）
-#binary = "/usr/local/bin/ipfs"     # SWING_KUBO_BINARY（既定: swing 実行ファイルと同じディレクトリの ipfs(.exe)、無ければ PATH の ipfs）
-#repo = "./data/kubo"               # SWING_KUBO_REPO（IPFS_PATH。既定: [agent].state_dir/kubo）
-#storage_max = "100GB"              # SWING_KUBO_STORAGE_MAX（Datastore.StorageMax。既定: [policy].max_total_storage と同じ値）
-provide_strategy = "pinned+mfs"     # SWING_KUBO_PROVIDE_STRATEGY（Provide.Strategy）
-gateway_listen = "127.0.0.1:8080"   # SWING_KUBO_GATEWAY_LISTEN（Addresses.Gateway）
-#swarm_port = 4001                  # SWING_KUBO_SWARM_PORT（Addresses.Swarm のポート。未設定なら Kubo の既定のまま触らない）
-
-[gateway]
-listen = "off"                      # SWING_GATEWAY_LISTEN（例 "127.0.0.1:8081"。"off" で無効）
-hosts = []                          # SWING_GATEWAY_HOSTS（カンマ区切り。DNSLink で配信するホスト名。managed なら Kubo の Gateway.PublicGateways にも入れる）
-#upstream = "http://127.0.0.1:8080" # SWING_GATEWAY_UPSTREAM（プロキシ先の Kubo gateway。既定: managed なら http://<[kubo].gateway_listen>、そうでなければ http://127.0.0.1:8080）
-```
+設定例は [`swing.example.toml`](../swing.example.toml) を参照。`swing.example.toml` の `#field = value` はコメントアウトされた任意設定（省略時は既定値、または他の設定から導かれる値）、`field = value` は有効な行。
 
 Kubo の起動・設定は [`architecture/up.md`](architecture/up.md#適用する-kubo-設定kuboapply_config)、内蔵 gateway の動作は [`architecture/gateway.md`](architecture/gateway.md) を参照。`Config::ipfs_api_url()` は `[ipfs].api` が `Url` ならそのまま返し、`Managed` なら `<[kubo].repo>/api` から動的なポートを読んで返す（Kubo が動いていなければエラー）。
 
-TOML キーの無い環境変数:
-
-| 環境変数 | 意味 | 既定 |
-|---|---|---|
-| `SWING_CONFIG` | 設定ファイルのパス | `./swing.toml` |
-| `SWING_FETCH_TIMEOUT` | 1 サイト分の取得（`dag/export`）全体のタイムアウト | `15m` |
-| `SWING_FETCH_IDLE_TIMEOUT` | `dag/export` で次のデータ（最初のブロックを含む）を待つ上限 | `2m` |
+TOML キーの無い環境変数は `SWING_CONFIG`（設定ファイルのパス、既定 `./swing.toml`）だけ。`Config` を経由しない CLI 引数の一種で、カタログには含まれない。
 
 空文字の環境変数は未設定として扱う。`[dashboard]` の各キーの意味と制約は [`architecture/dashboard.md`](architecture/dashboard.md#設定dashboard) を参照。
 

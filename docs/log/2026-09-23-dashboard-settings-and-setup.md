@@ -76,3 +76,33 @@
 ## 追記: env ロック注記の対象
 
 - Settings 画面の `Locked: set by environment` 注記は、当初 env 由来の全項目に出していたが、もともと画面から変えられないホワイトリスト外の項目（`state_dir`・`dashboard.listen`・`kubo.managed` など）に「ロック」と出るのは誤解を招くため、ホワイトリスト入り（`kind` あり）かつ env 由来の項目だけに絞った。
+
+## 追記: 設定カタログ
+
+`settings::EDITABLE_KEYS`（20 キーのホワイトリストだけ）と、`config.rs`・`dashboard/dto.rs` に手書きで散らばっていた同じ 45 キーの情報（TOML フィールド名・env 名・既定値・説明文）を、`src/settings.rs::SETTINGS`（`Setting` の配列）1 箇所に統合した。`GET /api/config` の見た目・編集可否は変えていない（既存のホワイトリストがそのまま `editable` フィールドになっただけ）が、内部の表現とドキュメント・生成物の作り方を変えた回。
+
+### 決めたこと
+
+- 45 個ある設定キー（`build_config` が `Config.sources` に記録するキーと 1 対 1）をすべて `Setting { key, section, field, env, kind, example, editable, description }` としてカタログ化した。`editable` は既存の 20 キーのまま増減しない。`kind` はダッシュボードの編集フォーム分岐に使う 7 種（size/duration/bool/integer/string/list/nip05）に加え、非編集項目を説明するための 6 種（path/socket_addr/port/url/secret/listen）を足した（`#[serde(rename_all = "snake_case")]` に変更。既存の 7 種の JSON 表記は変わらない）。
+- `config::build_config` は env 変数名の文字列リテラルを自前で持つのをやめ、`settings::env_of("<section>.<field>")` でカタログから引くようにした。env 名の文字列は `SETTINGS` にしか存在しない（`build_config` の呼び出し側 45 箇所を置き換えた）。
+- `dashboard::dto::config_dto` は 8 セクション分を手書きで `vec![ConfigItemDto::new(...), ...]` していたのをやめ、`settings::SECTION_ORDER` と `settings::SETTINGS` を順に辿って組み立てる形にした。値そのものの取り出し（`config::Config` のどのフィールドを読むか、`display` をどう作るか）は 1 つの `config_value(config, desc)` 関数の match に集約した。設定を 1 つ増やすときは、カタログに 1 エントリ足し、`config_value` に 1 アーム足すだけで済む。
+- `GET /api/config` の各項目に `description: { en, ja }` を追加した。カタログの `Setting.description` をそのまま返す。あわせて、`agent.fetch_timeout`/`agent.fetch_idle_timeout` 専用だった `ConfigItemDto::env_only`（`key: null` で返す特殊経路）を削除した。理由は次の項目。
+- **挙動追加**: `agent.fetch_timeout`（`SWING_FETCH_TIMEOUT`、既定 15m）と `agent.fetch_idle_timeout`（`SWING_FETCH_IDLE_TIMEOUT`、既定 2m）に TOML フィールドを追加した（`AgentFile.fetch_timeout`/`fetch_idle_timeout`、`[agent]` の下）。今までこの 2 つは環境変数でしか設定できなかった（`resolve_typed` に `None` を渡していた）。カタログを「`build_config` が解決する全キーが TOML フィールドを持つ」という一様な形にするための変更で、動作（既定値・検証・優先順位)自体は変えていない。バイナリ利用者は今後 `swing.toml` の `[agent]` にも書けるようになる。
+- `swing config example` / `swing config env-example` の 2 サブコマンドを追加した（`--config` を取らない、設定ファイルを読まない）。カタログから `swing.example.toml`・`.env.example` と同じ内容を標準出力に印字するだけの、副作用の無いコマンド。
+- ドリフト防止のテストを `src/settings.rs` に 3 本足した: カタログのキー集合と `Config.sources` のキー集合が一致すること、`swing.example.toml`/`.env.example` の内容が生成結果と一致すること（ずれれば再生成コマンドを示すメッセージで落ちる）、生成した `swing.example.toml` を実際にパースした結果がコードの既定値と一致すること（例の値がコードの既定値から drift できない）。
+- README の「どれくらい保存されるか」の policy キー表と、「設定一覧」の環境変数対応表（2 つとも per-key の手書き表）を削除し、`swing.example.toml`／`.env.example` を指す短い説明に置き換えた。`docs/architecture.md` に埋め込んでいた `swing.example.toml` のコピー（TOML キーの無い環境変数の表も含む）も同様に、カタログ・生成コマンド・ドリフトテストの説明に置き換えた（実装の詳細を書くページなので、生成物のコピーを持たせる意味が無くなったため）。
+- `.env.example` は元々 Docker Compose 向けの厳選サブセット（20 個弱の env のみ、しかも `SWING_NOSTR_RELAYS`／`SWING_MIRROR_SET`／`SWING_MAX_TOTAL_STORAGE` の 3 つだけ非コメントで有効化されていた）だったが、カタログの全 44 個（秘密鍵を除く）を載せるように広げ、**秘密鍵の行以外はすべてコメントアウト**する方針にした。理由: `.env` に書いた値は `Source::Env` になり、ダッシュボード（Setup 画面を含む）からの編集を恒久的にロックする。今回 Setup 画面ができて relays・保存上限をブラウザから設定できるようになったのに、`.env.example` をそのままコピーしただけでその 3 つが最初からロックされてしまうのは、機能追加の意図と噛み合っていなかった。コメントアウトなら、コピーしただけの状態では何も上書きされず、必要な項目だけ運用者が意図的にコメントを外せる。`compose.yaml` が `mirror` サービスの `environment:` で固定で渡していて `.env` に書いても効果が無い 4 つ（`SWING_IPFS_API`・`SWING_STATE_DIR`・`SWING_KUBO_MANAGED`・`SWING_GATEWAY_UPSTREAM`）は、カタログ自体はこの compose 特有の知識を持たないので、`render_env_example`（`src/settings.rs`）内のハードコードした短いリストで注記を追加した。Docker Compose 専用のホストバインド変数（`SWING_KUBO_GATEWAY_BIND`・`SWING_GATEWAY_BIND`・`SWING_DASHBOARD_BIND`）はカタログに無い値（`config::env_var` は読まない）なので、生成関数末尾に固定テキストとして追記している。
+
+### 生成前後で見つかった `swing.example.toml` / `.env.example` のギャップ
+
+- `swing.example.toml`: `agent.fetch_timeout`/`agent.fetch_idle_timeout` がそもそも TOML キーとして存在せず、ファイルにも載っていなかった（上記の挙動追加で解消）。
+- `swing.example.toml`: `site_event_kind`/`replica_event_kind` などの行は env 名だけのコメントで、説明が無かった。生成後はカタログの説明文が全行に付く。
+- `.env.example`: カタログの env 変数 45 個中 26 個（`SWING_SITE_EVENT_KIND`・`SWING_REPLICA_EVENT_KIND`・`SWING_IPFS_API`・`SWING_MFS_ROOT`・`SWING_MAX_PER_SITE`・`SWING_MAX_PER_ACCOUNT`・`SWING_MAX_SITES_PER_ACCOUNT`・`SWING_MAX_UPDATE_SIZE`・`SWING_KEEP_VERSIONS`・`SWING_KEEP_DAYS`・`SWING_MIN_UPDATE_INTERVAL`・`SWING_REMOVE_ON_UNFOLLOW`・`SWING_NIP05`・`SWING_NIP05_CACHE_TTL`・`SWING_STATE_DIR`・`SWING_POLL_INTERVAL`・`SWING_FETCH_TIMEOUT`・`SWING_FETCH_IDLE_TIMEOUT`・`SWING_CONCURRENCY`・`SWING_REPORT_TTL`・`SWING_PUBLISH_NIP05`・`SWING_PUBLISH_KEEP_VERSIONS`・`SWING_KUBO_BINARY`・`SWING_KUBO_REPO`・`SWING_KUBO_GATEWAY_LISTEN`・`SWING_KUBO_SWARM_PORT`）が全く載っていなかった。
+- `.env.example`: `SWING_MAX_TOTAL_STORAGE` の例値が `20GB` で、コードの実際の既定値（`100GB`）と食い違っていた（意図した「控えめな推奨値」なのか単なる古い値なのか、コメントからは分からなかった）。生成後は実際の既定値で統一される。
+- `.env.example`: `SWING_NOSTR_RELAYS`・`SWING_MIRROR_SET`・`SWING_MAX_TOTAL_STORAGE` の 3 行だけが非コメントで、コピーしただけでこの 3 つがダッシュボード編集不可（`Source::Env`）になっていた。上記の方針転換で全行コメントアウトに統一。
+- `.env.example`: `SWING_IPFS_API`・`SWING_STATE_DIR`・`SWING_KUBO_MANAGED`・`SWING_GATEWAY_UPSTREAM` が compose では無効という事情はコメントに書かれておらず（`SWING_KUBO_MANAGED` だけ compose 側の事情の説明があったが、他の 3 つには無かった）、生成後は該当行すべてに同じ注記が付く。
+
+## 追記: 説明文の表示範囲と文面の整合
+
+- Settings 画面の説明文は当初カタログ全項目に出していたが、依頼の趣旨（ダッシュボードからいじれる項目の説明）に合わせてホワイトリストの項目だけに絞った。`GET /api/config` は全項目に `description` を返すので、全項目に出したくなったら `settings.js` の条件を外すだけでよい。
+- 日英で書いてある事実が食い違っていた `gateway.hosts`（listen が off でないなら必須／managed なら PublicGateways にも入れる）を両言語に揃え、`gateway.listen` の例と `policy.max_per_site` の「新版だけで超える更新は保存されない」を補った。`kubo.gateway_listen` の英語にあった `Address.Gateway` の誤記を直した。example toml のコメントは `# SWING_X: 説明` の形にした。

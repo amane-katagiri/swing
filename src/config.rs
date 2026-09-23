@@ -7,6 +7,8 @@ use std::time::Duration;
 use anyhow::{Context, Result, bail};
 use serde::Deserialize;
 
+use crate::settings;
+
 pub const DEFAULT_RELAYS: [&str; 5] = [
     "wss://relay.damus.io",
     "wss://nos.lol",
@@ -71,6 +73,8 @@ pub fn parse_nip05_mode(input: &str) -> Result<Nip05Mode> {
 pub struct AgentFile {
     pub state_dir: Option<String>,
     pub poll_interval: Option<String>,
+    pub fetch_timeout: Option<String>,
+    pub fetch_idle_timeout: Option<String>,
     pub concurrency: Option<usize>,
     pub report_ttl: Option<String>,
 }
@@ -482,7 +486,7 @@ pub fn parse_bool(input: &str) -> Result<bool> {
 fn build_config(file: ConfigFile, get_env: impl Fn(&str) -> Option<String>) -> Result<Config> {
     let mut sources: BTreeMap<String, Source> = BTreeMap::new();
 
-    let secret_key_env = get_env("SWING_NOSTR_SECRET_KEY");
+    let secret_key_env = get_env(settings::env_of("nostr.secret_key"));
     let secret_key_source = if secret_key_env.is_some() {
         Source::Env
     } else if file.nostr.secret_key.is_some() {
@@ -493,7 +497,7 @@ fn build_config(file: ConfigFile, get_env: impl Fn(&str) -> Option<String>) -> R
     sources.insert("nostr.secret_key".to_string(), secret_key_source);
     let secret_key = secret_key_env.or(file.nostr.secret_key);
 
-    let relays_env = get_env("SWING_NOSTR_RELAYS");
+    let relays_env = get_env(settings::env_of("nostr.relays"));
     let (relays, relays_source) = match relays_env {
         Some(v) => {
             let parsed: Vec<String> = v
@@ -528,7 +532,7 @@ fn build_config(file: ConfigFile, get_env: impl Fn(&str) -> Option<String>) -> R
         &mut sources,
         "nostr.mirror_set",
         &get_env,
-        "SWING_MIRROR_SET",
+        settings::env_of("nostr.mirror_set"),
         file.nostr.mirror_set,
         |s| Ok(s.to_string()),
         "invalid SWING_MIRROR_SET",
@@ -540,7 +544,7 @@ fn build_config(file: ConfigFile, get_env: impl Fn(&str) -> Option<String>) -> R
         &mut sources,
         "nostr.site_event_kind",
         &get_env,
-        "SWING_SITE_EVENT_KIND",
+        settings::env_of("nostr.site_event_kind"),
         file.nostr.site_event_kind,
         |v| v.parse().context("expected u16"),
         "invalid SWING_SITE_EVENT_KIND: expected u16",
@@ -551,7 +555,7 @@ fn build_config(file: ConfigFile, get_env: impl Fn(&str) -> Option<String>) -> R
         &mut sources,
         "nostr.replica_event_kind",
         &get_env,
-        "SWING_REPLICA_EVENT_KIND",
+        settings::env_of("nostr.replica_event_kind"),
         file.nostr.replica_event_kind,
         |v| v.parse().context("expected u16"),
         "invalid SWING_REPLICA_EVENT_KIND: expected u16",
@@ -562,14 +566,14 @@ fn build_config(file: ConfigFile, get_env: impl Fn(&str) -> Option<String>) -> R
         &mut sources,
         "kubo.managed",
         &get_env,
-        "SWING_KUBO_MANAGED",
+        settings::env_of("kubo.managed"),
         file.kubo.managed,
         parse_bool,
         "invalid SWING_KUBO_MANAGED",
         true,
     )?;
 
-    let ipfs_api_env = get_env("SWING_IPFS_API");
+    let ipfs_api_env = get_env(settings::env_of("ipfs.api"));
     let ipfs_api_explicit_source = if ipfs_api_env.is_some() {
         Some(Source::Env)
     } else if file.ipfs.api.is_some() {
@@ -599,7 +603,7 @@ fn build_config(file: ConfigFile, get_env: impl Fn(&str) -> Option<String>) -> R
         &mut sources,
         "ipfs.mfs_root",
         &get_env,
-        "SWING_MFS_ROOT",
+        settings::env_of("ipfs.mfs_root"),
         file.ipfs.mfs_root,
         parse_mfs_root,
         "invalid SWING_MFS_ROOT",
@@ -611,7 +615,7 @@ fn build_config(file: ConfigFile, get_env: impl Fn(&str) -> Option<String>) -> R
         &mut sources,
         "policy.max_total_storage",
         &get_env,
-        "SWING_MAX_TOTAL_STORAGE",
+        settings::env_of("policy.max_total_storage"),
         file.policy.max_total_storage,
         parse_size,
         "invalid SWING_MAX_TOTAL_STORAGE",
@@ -623,7 +627,7 @@ fn build_config(file: ConfigFile, get_env: impl Fn(&str) -> Option<String>) -> R
         &mut sources,
         "policy.max_per_site",
         &get_env,
-        "SWING_MAX_PER_SITE",
+        settings::env_of("policy.max_per_site"),
         file.policy.max_per_site,
         parse_size,
         "invalid SWING_MAX_PER_SITE",
@@ -635,7 +639,7 @@ fn build_config(file: ConfigFile, get_env: impl Fn(&str) -> Option<String>) -> R
         &mut sources,
         "policy.max_per_account",
         &get_env,
-        "SWING_MAX_PER_ACCOUNT",
+        settings::env_of("policy.max_per_account"),
         file.policy.max_per_account,
         parse_size,
         "invalid SWING_MAX_PER_ACCOUNT",
@@ -647,7 +651,7 @@ fn build_config(file: ConfigFile, get_env: impl Fn(&str) -> Option<String>) -> R
         &mut sources,
         "policy.max_sites_per_account",
         &get_env,
-        "SWING_MAX_SITES_PER_ACCOUNT",
+        settings::env_of("policy.max_sites_per_account"),
         file.policy.max_sites_per_account,
         |v| v.parse().context("expected integer"),
         "invalid SWING_MAX_SITES_PER_ACCOUNT: expected integer",
@@ -661,7 +665,7 @@ fn build_config(file: ConfigFile, get_env: impl Fn(&str) -> Option<String>) -> R
         &mut sources,
         "policy.max_update_size",
         &get_env,
-        "SWING_MAX_UPDATE_SIZE",
+        settings::env_of("policy.max_update_size"),
         file.policy.max_update_size,
         parse_size,
         "invalid SWING_MAX_UPDATE_SIZE",
@@ -673,7 +677,7 @@ fn build_config(file: ConfigFile, get_env: impl Fn(&str) -> Option<String>) -> R
         &mut sources,
         "policy.keep_versions",
         &get_env,
-        "SWING_KEEP_VERSIONS",
+        settings::env_of("policy.keep_versions"),
         file.policy.keep_versions,
         |v| v.parse().context("expected integer"),
         "invalid SWING_KEEP_VERSIONS: expected integer",
@@ -684,7 +688,7 @@ fn build_config(file: ConfigFile, get_env: impl Fn(&str) -> Option<String>) -> R
         &mut sources,
         "policy.keep_days",
         &get_env,
-        "SWING_KEEP_DAYS",
+        settings::env_of("policy.keep_days"),
         file.policy.keep_days,
         |v| v.parse().context("expected integer"),
         "invalid SWING_KEEP_DAYS: expected integer",
@@ -695,7 +699,7 @@ fn build_config(file: ConfigFile, get_env: impl Fn(&str) -> Option<String>) -> R
         &mut sources,
         "policy.min_update_interval",
         &get_env,
-        "SWING_MIN_UPDATE_INTERVAL",
+        settings::env_of("policy.min_update_interval"),
         file.policy.min_update_interval,
         parse_duration_secs,
         "invalid SWING_MIN_UPDATE_INTERVAL",
@@ -707,7 +711,7 @@ fn build_config(file: ConfigFile, get_env: impl Fn(&str) -> Option<String>) -> R
         &mut sources,
         "policy.remove_on_unfollow",
         &get_env,
-        "SWING_REMOVE_ON_UNFOLLOW",
+        settings::env_of("policy.remove_on_unfollow"),
         file.policy.remove_on_unfollow,
         parse_bool,
         "invalid SWING_REMOVE_ON_UNFOLLOW",
@@ -718,7 +722,7 @@ fn build_config(file: ConfigFile, get_env: impl Fn(&str) -> Option<String>) -> R
         &mut sources,
         "policy.nip05",
         &get_env,
-        "SWING_NIP05",
+        settings::env_of("policy.nip05"),
         file.policy.nip05,
         parse_nip05_mode,
         "invalid SWING_NIP05",
@@ -730,7 +734,7 @@ fn build_config(file: ConfigFile, get_env: impl Fn(&str) -> Option<String>) -> R
         &mut sources,
         "policy.nip05_cache_ttl",
         &get_env,
-        "SWING_NIP05_CACHE_TTL",
+        settings::env_of("policy.nip05_cache_ttl"),
         file.policy.nip05_cache_ttl,
         parse_duration_secs,
         "invalid SWING_NIP05_CACHE_TTL",
@@ -738,7 +742,7 @@ fn build_config(file: ConfigFile, get_env: impl Fn(&str) -> Option<String>) -> R
         86_400,
     )?;
 
-    let state_dir_env = get_env("SWING_STATE_DIR");
+    let state_dir_env = get_env(settings::env_of("agent.state_dir"));
     let state_dir_source = if state_dir_env.is_some() {
         Source::Env
     } else if file.agent.state_dir.is_some() {
@@ -755,7 +759,7 @@ fn build_config(file: ConfigFile, get_env: impl Fn(&str) -> Option<String>) -> R
         &mut sources,
         "agent.poll_interval",
         &get_env,
-        "SWING_POLL_INTERVAL",
+        settings::env_of("agent.poll_interval"),
         file.agent.poll_interval,
         parse_duration_secs,
         "invalid SWING_POLL_INTERVAL",
@@ -766,28 +770,30 @@ fn build_config(file: ConfigFile, get_env: impl Fn(&str) -> Option<String>) -> R
         bail!("poll_interval must be greater than 0");
     }
 
-    let fetch_timeout = resolve_typed(
+    let fetch_timeout = resolve(
         &mut sources,
         "agent.fetch_timeout",
         &get_env,
-        "SWING_FETCH_TIMEOUT",
-        None,
+        settings::env_of("agent.fetch_timeout"),
+        file.agent.fetch_timeout,
         parse_duration_secs,
         "invalid SWING_FETCH_TIMEOUT",
+        "invalid [agent].fetch_timeout",
         900,
     )?;
     if fetch_timeout == 0 {
         bail!("SWING_FETCH_TIMEOUT must be greater than 0");
     }
 
-    let fetch_idle_timeout = resolve_typed(
+    let fetch_idle_timeout = resolve(
         &mut sources,
         "agent.fetch_idle_timeout",
         &get_env,
-        "SWING_FETCH_IDLE_TIMEOUT",
-        None,
+        settings::env_of("agent.fetch_idle_timeout"),
+        file.agent.fetch_idle_timeout,
         parse_duration_secs,
         "invalid SWING_FETCH_IDLE_TIMEOUT",
+        "invalid [agent].fetch_idle_timeout",
         120,
     )?;
     if fetch_idle_timeout == 0 {
@@ -798,7 +804,7 @@ fn build_config(file: ConfigFile, get_env: impl Fn(&str) -> Option<String>) -> R
         &mut sources,
         "agent.concurrency",
         &get_env,
-        "SWING_CONCURRENCY",
+        settings::env_of("agent.concurrency"),
         file.agent.concurrency,
         |v| v.parse().context("expected integer"),
         "invalid SWING_CONCURRENCY: expected integer",
@@ -812,7 +818,7 @@ fn build_config(file: ConfigFile, get_env: impl Fn(&str) -> Option<String>) -> R
         &mut sources,
         "agent.report_ttl",
         &get_env,
-        "SWING_REPORT_TTL",
+        settings::env_of("agent.report_ttl"),
         file.agent.report_ttl,
         parse_duration_secs,
         "invalid SWING_REPORT_TTL",
@@ -827,7 +833,7 @@ fn build_config(file: ConfigFile, get_env: impl Fn(&str) -> Option<String>) -> R
         &mut sources,
         "publish.nip05",
         &get_env,
-        "SWING_PUBLISH_NIP05",
+        settings::env_of("publish.nip05"),
         file.publish.nip05,
         parse_nip05_mode,
         "invalid SWING_PUBLISH_NIP05",
@@ -839,7 +845,7 @@ fn build_config(file: ConfigFile, get_env: impl Fn(&str) -> Option<String>) -> R
         &mut sources,
         "publish.keep_versions",
         &get_env,
-        "SWING_PUBLISH_KEEP_VERSIONS",
+        settings::env_of("publish.keep_versions"),
         file.publish.keep_versions,
         |v| v.parse().context("expected integer"),
         "invalid SWING_PUBLISH_KEEP_VERSIONS: expected integer",
@@ -853,7 +859,7 @@ fn build_config(file: ConfigFile, get_env: impl Fn(&str) -> Option<String>) -> R
         &mut sources,
         "dashboard.listen",
         &get_env,
-        "SWING_DASHBOARD_LISTEN",
+        settings::env_of("dashboard.listen"),
         file.dashboard.listen,
         parse_dashboard_listen,
         "invalid SWING_DASHBOARD_LISTEN",
@@ -865,14 +871,14 @@ fn build_config(file: ConfigFile, get_env: impl Fn(&str) -> Option<String>) -> R
         &mut sources,
         "dashboard.ui",
         &get_env,
-        "SWING_DASHBOARD_UI",
+        settings::env_of("dashboard.ui"),
         file.dashboard.ui,
         parse_bool,
         "invalid SWING_DASHBOARD_UI",
         true,
     )?;
 
-    let dashboard_allowed_hosts_env = get_env("SWING_DASHBOARD_ALLOWED_HOSTS");
+    let dashboard_allowed_hosts_env = get_env(settings::env_of("dashboard.allowed_hosts"));
     let dashboard_allowed_hosts_source = if dashboard_allowed_hosts_env.is_some() {
         Source::Env
     } else if file.dashboard.allowed_hosts.is_some() {
@@ -893,7 +899,7 @@ fn build_config(file: ConfigFile, get_env: impl Fn(&str) -> Option<String>) -> R
         None => file.dashboard.allowed_hosts.unwrap_or_default(),
     };
 
-    let dashboard_gateway_env = get_env("SWING_DASHBOARD_GATEWAY");
+    let dashboard_gateway_env = get_env(settings::env_of("dashboard.gateway"));
     let dashboard_gateway_source = if dashboard_gateway_env.is_some() {
         Source::Env
     } else if file.dashboard.gateway.is_some() {
@@ -912,7 +918,7 @@ fn build_config(file: ConfigFile, get_env: impl Fn(&str) -> Option<String>) -> R
     }
     .filter(|s| !s.is_empty());
 
-    let dashboard_custom_css_env = get_env("SWING_DASHBOARD_CUSTOM_CSS");
+    let dashboard_custom_css_env = get_env(settings::env_of("dashboard.custom_css"));
     sources.insert(
         "dashboard.custom_css".to_string(),
         if dashboard_custom_css_env.is_some() {
@@ -928,7 +934,7 @@ fn build_config(file: ConfigFile, get_env: impl Fn(&str) -> Option<String>) -> R
         None => file.dashboard.custom_css.map(PathBuf::from),
     };
 
-    let dashboard_desktop_page_env = get_env("SWING_DASHBOARD_DESKTOP_PAGE");
+    let dashboard_desktop_page_env = get_env(settings::env_of("dashboard.desktop_page"));
     sources.insert(
         "dashboard.desktop_page".to_string(),
         if dashboard_desktop_page_env.is_some() {
@@ -944,7 +950,7 @@ fn build_config(file: ConfigFile, get_env: impl Fn(&str) -> Option<String>) -> R
         None => file.dashboard.desktop_page.map(PathBuf::from),
     };
 
-    let dashboard_desktop_page_css_env = get_env("SWING_DASHBOARD_DESKTOP_PAGE_CSS");
+    let dashboard_desktop_page_css_env = get_env(settings::env_of("dashboard.desktop_page_css"));
     sources.insert(
         "dashboard.desktop_page_css".to_string(),
         if dashboard_desktop_page_css_env.is_some() {
@@ -960,7 +966,7 @@ fn build_config(file: ConfigFile, get_env: impl Fn(&str) -> Option<String>) -> R
         None => file.dashboard.desktop_page_css.map(PathBuf::from),
     };
 
-    let dashboard_desktop_banner_env = get_env("SWING_DASHBOARD_DESKTOP_BANNER");
+    let dashboard_desktop_banner_env = get_env(settings::env_of("dashboard.desktop_banner"));
     sources.insert(
         "dashboard.desktop_banner".to_string(),
         if dashboard_desktop_banner_env.is_some() {
@@ -980,7 +986,7 @@ fn build_config(file: ConfigFile, get_env: impl Fn(&str) -> Option<String>) -> R
         &mut sources,
         "dashboard.max_upload",
         &get_env,
-        "SWING_DASHBOARD_MAX_UPLOAD",
+        settings::env_of("dashboard.max_upload"),
         file.dashboard.max_upload,
         parse_size,
         "invalid SWING_DASHBOARD_MAX_UPLOAD",
@@ -996,7 +1002,7 @@ fn build_config(file: ConfigFile, get_env: impl Fn(&str) -> Option<String>) -> R
         &mut sources,
         "kubo.repo",
         &get_env,
-        "SWING_KUBO_REPO",
+        settings::env_of("kubo.repo"),
         file.kubo.repo,
         |v| Ok(PathBuf::from(v.trim())),
         "invalid SWING_KUBO_REPO",
@@ -1004,7 +1010,7 @@ fn build_config(file: ConfigFile, get_env: impl Fn(&str) -> Option<String>) -> R
         kubo_repo_default,
     )?;
 
-    let kubo_binary_env = get_env("SWING_KUBO_BINARY");
+    let kubo_binary_env = get_env(settings::env_of("kubo.binary"));
     sources.insert(
         "kubo.binary".to_string(),
         if kubo_binary_env.is_some() {
@@ -1024,7 +1030,7 @@ fn build_config(file: ConfigFile, get_env: impl Fn(&str) -> Option<String>) -> R
         &mut sources,
         "kubo.storage_max",
         &get_env,
-        "SWING_KUBO_STORAGE_MAX",
+        settings::env_of("kubo.storage_max"),
         file.kubo.storage_max,
         parse_size,
         "invalid SWING_KUBO_STORAGE_MAX",
@@ -1032,7 +1038,7 @@ fn build_config(file: ConfigFile, get_env: impl Fn(&str) -> Option<String>) -> R
         max_total_storage,
     )?;
 
-    let kubo_provide_strategy_env = get_env("SWING_KUBO_PROVIDE_STRATEGY");
+    let kubo_provide_strategy_env = get_env(settings::env_of("kubo.provide_strategy"));
     sources.insert(
         "kubo.provide_strategy".to_string(),
         if kubo_provide_strategy_env.is_some() {
@@ -1054,7 +1060,7 @@ fn build_config(file: ConfigFile, get_env: impl Fn(&str) -> Option<String>) -> R
         &mut sources,
         "kubo.gateway_listen",
         &get_env,
-        "SWING_KUBO_GATEWAY_LISTEN",
+        settings::env_of("kubo.gateway_listen"),
         file.kubo.gateway_listen,
         |v| {
             v.trim()
@@ -1066,7 +1072,7 @@ fn build_config(file: ConfigFile, get_env: impl Fn(&str) -> Option<String>) -> R
         SocketAddr::from(([127, 0, 0, 1], 8080)),
     )?;
 
-    let kubo_swarm_port_env = get_env("SWING_KUBO_SWARM_PORT");
+    let kubo_swarm_port_env = get_env(settings::env_of("kubo.swarm_port"));
     sources.insert(
         "kubo.swarm_port".to_string(),
         if kubo_swarm_port_env.is_some() {
@@ -1093,7 +1099,7 @@ fn build_config(file: ConfigFile, get_env: impl Fn(&str) -> Option<String>) -> R
         &mut sources,
         "gateway.listen",
         &get_env,
-        "SWING_GATEWAY_LISTEN",
+        settings::env_of("gateway.listen"),
         file.gateway.listen,
         parse_listen,
         "invalid SWING_GATEWAY_LISTEN",
@@ -1101,7 +1107,7 @@ fn build_config(file: ConfigFile, get_env: impl Fn(&str) -> Option<String>) -> R
         Listen::Off,
     )?;
 
-    let gateway_hosts_env = get_env("SWING_GATEWAY_HOSTS");
+    let gateway_hosts_env = get_env(settings::env_of("gateway.hosts"));
     sources.insert(
         "gateway.hosts".to_string(),
         if gateway_hosts_env.is_some() {
@@ -1136,7 +1142,7 @@ fn build_config(file: ConfigFile, get_env: impl Fn(&str) -> Option<String>) -> R
         bail!("[gateway].hosts must not be empty when [gateway].listen is enabled");
     }
 
-    let gateway_upstream_env = get_env("SWING_GATEWAY_UPSTREAM");
+    let gateway_upstream_env = get_env(settings::env_of("gateway.upstream"));
     sources.insert(
         "gateway.upstream".to_string(),
         if gateway_upstream_env.is_some() {

@@ -1402,6 +1402,12 @@ pre.swing-pre {
 
 .swing-config-section {
   margin-bottom: var(--swing-space-4);
+  overflow-x: auto;
+}
+
+.swing-config-section td:first-child,
+.swing-config-section td:last-child {
+  white-space: nowrap;
 }
 
 .swing-config-section h3 {

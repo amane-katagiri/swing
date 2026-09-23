@@ -47,7 +47,7 @@ HTTP サーバー（axum 0.8）で、ダッシュボードのブラウザ向け�
 
 ## 設定（`[dashboard]`）
 
-キー・環境変数・既定値は [`architecture.md`](../architecture.md#設定と環境変数) の設定サンプルを参照。
+キー・環境変数・既定値は [`architecture.md`](../architecture.md#設定と環境変数) の設定カタログ・[`swing.example.toml`](../../swing.example.toml) を参照。
 
 - `listen`: 待ち受けアドレス。`SocketAddr` としてパースする（`config::parse_dashboard_listen`）。Web UI だけを止めたい場合は `ui = false` を使う。
 - `ui`: `true`（既定）なら静的な Web UI（`/`・`/style.css`・`/*.js`・`/desktop-*`・`/fonts/*`・`/custom.css`）を配信する。`false` なら配信せず（ルート自体を登録しない）、`/api/*` の制御 API だけを残す。
@@ -97,7 +97,9 @@ HTTP サーバー（axum 0.8）で、ダッシュボードのブラウザ向け�
 
 ## 設定の読み込みと編集（`src/settings.rs`）
 
-ダッシュボードに認証が無いこと（上の「ガード」）を前提に、`GET /api/config` が返す全項目のうち、書き込める（`PUT /api/config`／`POST /api/setup` で受け付ける）キーは `settings::EDITABLE_KEYS` のホワイトリストに載っているものだけに絞っている。載っていないキー（パス・待ち受けアドレス・ポート、`kubo.binary`、`dashboard.ui`、`allowed_hosts`、`kubo.managed`、`ipfs.*`、kind 番号、`gateway.*` など）は、ダッシュボードを触れる相手が任意のファイルパスやリスニングアドレスを差し替えられないようにするため、意図的に対象外にしている。現在のホワイトリスト（`section.field`、種類）:
+すべての設定キーは `src/settings.rs::SETTINGS`（`Setting` の配列。キー・セクション・TOML フィールド・環境変数・種類・`swing.example.toml` 上の見え方・編集可否・英日の説明を持つ）に 1 箇所のカタログとしてまとまっている（[`../architecture.md#設定と環境変数`](../architecture.md#設定と環境変数)）。`GET /api/config` はこのカタログをそのまま列挙するので、載っている項目（パス・待ち受けアドレス・ポート、kind 番号なども含め）はすべて `kind`/`description` を持つ。
+
+ダッシュボードに認証が無いこと（上の「ガード」）を前提に、そのうち書き込める（`PUT /api/config`／`POST /api/setup` で受け付ける）キーはカタログの `editable: true` が付いているものだけに絞っている。`editable: false` のキー（パス・待ち受けアドレス・ポート、`kubo.binary`、`dashboard.ui`、`allowed_hosts`、`kubo.managed`、`ipfs.*`、kind 番号、`gateway.*` など）は、ダッシュボードを触れる相手が任意のファイルパスやリスニングアドレスを差し替えられないようにするため、意図的に対象外にしている。現在編集可能なキー（`section.field`、種類）:
 
 | キー | 種類 |
 |---|---|
@@ -114,7 +116,7 @@ HTTP サーバー（axum 0.8）で、ダッシュボードのブラウザ向け�
 | `kubo.storage_max` | size |
 | `dashboard.gateway` | string |
 
-このリストは `settings::Kind`・`settings::find`・`settings::raw_value` と 1 対 1 対応していて、`GET /api/config` の `kind`/`raw`/`options` はここに載っているキーだけに付く（[`dashboard/http-api.md#get-apiconfig`](dashboard/http-api.md#get-apiconfig)）。載っていても `source: "env"`（環境変数由来）なら `editable: false` になり、`PUT`/`POST /api/setup` はそのキーを含む要求全体を 400 で拒否する（`settings::check_not_env_sourced`。1 つでも env 由来のキーが混ざっていれば、他のキーも含めて丸ごと拒否し、部分的な適用はしない）。`nostr.secret_key` はホワイトリストに無いので `PUT /api/config` からは絶対に書けず、`POST /api/setup` だけが書ける（下記）。
+このリストは、これがダッシュボードの書き込み範囲を決める安全境界であることに変わりはないが、実体は `settings::SETTINGS` の `editable` フィールドであり、`settings::find`・`settings::is_editable`・`settings::raw_value` はすべてこのカタログを引く（[`dashboard/http-api.md#get-apiconfig`](dashboard/http-api.md#get-apiconfig)）。カタログに載っていても `source: "env"`（環境変数由来）なら `editable: false` になり、`PUT`/`POST /api/setup` はそのキーを含む要求全体を 400 で拒否する（`settings::check_not_env_sourced`。1 つでも env 由来のキーが混ざっていれば、他のキーも含めて丸ごと拒否し、部分的な適用はしない）。`nostr.secret_key` はカタログ上 `editable: false` なので `PUT /api/config` からは絶対に書けず、`POST /api/setup` だけが書ける（下記）。
 
 書き込みは `settings::update`（`PUT /api/config`）と `settings::setup`（`POST /api/setup`）の 2 つだけで、どちらも同じ手順を踏む: 既存のファイルを `toml_edit::DocumentMut` として読む（無ければ空文書）→ 渡された項目だけを書き換える（`toml_edit` なのでコメントや他のキーはそのまま残る）→ `config::build_config_from_str` で組み立て直して妥当性を確認する（失敗したらファイルには一切触れない）→ tmp ファイルに書いて `rename`（atomic）。ファイルが元からあればその権限を引き継ぎ、新規作成なら unix で `0600`。`config_path` は常に具体的なパスを持つ（`config::resolve_config_path` が `--config`／`SWING_CONFIG`／`<カレントディレクトリ>/swing.toml` のいずれかを必ず返すため。ファイルが無くても良く、その場合の書き込みは新規作成になる）。
 

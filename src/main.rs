@@ -4,7 +4,7 @@ use std::time::Duration;
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use swing::shutdown::Exit;
-use swing::{config, health, key, mirror, publish, replicas, service, stop, up, webring};
+use swing::{config, health, key, mirror, publish, replicas, service, settings, stop, up, webring};
 use tracing::info;
 use tracing_subscriber::EnvFilter;
 
@@ -137,6 +137,21 @@ enum Command {
         #[command(subcommand)]
         action: KeyCommand,
     },
+    #[command(
+        about = "Print generated reference files from the settings catalog (no config file read)"
+    )]
+    Config {
+        #[command(subcommand)]
+        action: ConfigCommand,
+    },
+}
+
+#[derive(Subcommand)]
+enum ConfigCommand {
+    #[command(about = "Print swing.example.toml, generated from the settings catalog")]
+    Example,
+    #[command(about = "Print .env.example, generated from the settings catalog")]
+    EnvExample,
 }
 
 #[derive(Subcommand)]
@@ -335,6 +350,16 @@ async fn run_other(command: Command) -> Result<()> {
         }
         Command::Key { action } => match action {
             KeyCommand::Generate => key::generate(),
+        },
+        Command::Config { action } => match action {
+            ConfigCommand::Example => {
+                print!("{}", settings::render_toml_example());
+                Ok(())
+            }
+            ConfigCommand::EnvExample => {
+                print!("{}", settings::render_env_example());
+                Ok(())
+            }
         },
     }
 }

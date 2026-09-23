@@ -178,7 +178,7 @@ NIP-05 の検証結果はバッジで `OK`（`verified`）/ `NG`（`mismatch`）
 
 ## Settings 画面の設定編集（`settings.js`）
 
-`renderConfig`（`settings.js`）はセクションごとに表（キー・値・env）を描く。ホワイトリストに載っている項目（`item.editable === true`）は値のセルが入力欄になる（`kind` で分岐: `bool`/`nip05` はセレクト、`list` はテキストエリア、それ以外はテキスト入力。値の初期値は `item.raw`）。載っていない項目・env 由来の項目は従来どおりテキスト表示。`— Locked: set by environment` の注記（`configLockedByEnv`）は「ホワイトリストに載っているのに env 由来で編集できない」項目（`kind` があり `source` が `env`）にだけ添え、もともと画面から変えられない項目には付けない。
+`renderConfig`（`settings.js`）はセクションごとに表（キー・値・env）を描く。ホワイトリストに載っている項目（`item.editable === true`）は値のセルが入力欄になる（`kind` で分岐: `bool`/`nip05` はセレクト、`list` はテキストエリア、それ以外はテキスト入力。値の初期値は `item.raw`）。載っていない項目・env 由来の項目は従来どおりテキスト表示。`kind` はカタログの全項目に付くようになったので、ホワイトリスト判定には使えない。`— Locked: set by environment` の注記（`configLockedByEnv`）は「ホワイトリストに載っているのに env 由来で編集できない」項目（`raw` が付いていて `source` が `env`。`raw` は今もホワイトリストの 20 キーだけに付く）にだけ添え、もともと画面から変えられない項目には付けない。ホワイトリストの項目（`raw` が付くもの）には、値のセル（入力欄・env ロックのテキスト表示のどちらでも）の下に `item.description[lang]`（無ければ `item.description.en`）を `swing-hint` の 1 行として添える。もともと画面から変えられない項目には付けない（`GET /api/config` 自体は全項目に `description` を返す）。`lang` は現在の言語（`i18n.js::currentLang()`、`auto` は英語・日本語のどちらかに解決済み）で、上記の `swing:langchange` による `renderConfig` の再描画でも更新される。
 
 - セクションごとに 1 つの Save ボタン（`.swing-config-actions`、`Apply` ボタンと同じ `.swing-btn.swing-btn-accent` の見た目）。押すと、そのセクション内で初期値から変わったフィールドだけを集めて [`PUT /api/config`](http-api.md#put-apiconfig) に送る（変更が無ければ何もしない）。
 - `config.writable === false`（設定ファイルが書けない。[`dashboard.md#設定の読み込みと編集srcsettingsrs`](../dashboard.md#設定の読み込みと編集srcsettingsrs)）のときは、ホワイトリストに載っている項目も入力欄にせず読み取り専用表示にし、`configNotWritable` の注記を画面上部に出す。
@@ -190,7 +190,7 @@ NIP-05 の検証結果はバッジで `OK`（`verified`）/ `NG`（`mismatch`）
 鍵が未設定の間（[`dashboard.md#セットアップモードと-appstatesetup_mode`](../dashboard.md#セットアップモードと-appstatesetup_mode)）だけ表示できる導入フォーム。`onShow` のたびに `GET /api/overview` → `GET /api/config` を読み直し、`overview.setup` が `false` になっていれば（他のタブなどで既にセットアップ済みなら）`#/sites` に移す。
 
 - 鍵: 「新しい鍵を生成する」（既定）か「既存の鍵を使う」（nsec か hex を 1 行で入力）のラジオ。
-- relays（複数行のテキストエリア。既定の relay 数 + 1 行分の高さを確保している）と、保存上限 3 つ（`max_total_storage` / `max_per_site` / `max_per_account`）を `GET /api/config` の `raw` で事前入力する。
+- relays（複数行のテキストエリア。既定の relay 数 + 1 行分の高さを確保している）と、保存上限 3 つ（`max_total_storage` / `max_per_site` / `max_per_account`）を `GET /api/config` の `raw` で事前入力する。各フィールドの下に、対応する `item.description[lang]`（`item` は `GET /api/config` から探した同じ項目）を `swing-hint` として添える。ロック注記と同じ仕組みで、`swing:langchange` のたびに（値やロック状態はそのまま）文言だけ差し替える（`setup.js::renderFieldDescriptions`）。
 - これら 4 項目のうち、`GET /api/config` 上で `editable: false`（＝ env 由来。compose でよくある。[`docker.md`](../docker.md)）になっているものは、フォームでも disabled にして現在の値をそのまま表示し、`configLockedByEnv` の注記を添える。送信する `items` にもそのキーは含めない（含めるとサーバ側が env 由来として 400 で拒否するため）。
 - 送信すると `POST /api/setup`（[`http-api.md#post-apisetup`](http-api.md#post-apisetup)）を叩く。成功したら生成／使用した鍵の `npub` を表示し、`GET /api/overview` を 1 秒間隔・最大 120 回ポーリングして `setup: false` になったら `#/settings` へ移る（書き込んだ設定をそのまま確認できるようにするため）（`setupTimedOut` はタイムアウト時のメッセージで、エラーではなく「再読み込みして確認して」という案内）。
 - 失敗したらフォームを再度有効にする（env 由来で disabled にしていたフィールドはそのまま disabled に戻す）。

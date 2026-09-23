@@ -598,59 +598,26 @@ pub enum ConfigValue {
 }
 
 #[derive(Debug, Serialize)]
+pub struct DescriptionDto {
+    pub en: &'static str,
+    pub ja: &'static str,
+}
+
+#[derive(Debug, Serialize)]
 pub struct ConfigItemDto {
-    pub key: Option<String>,
-    pub env: Option<String>,
+    pub key: String,
+    pub env: String,
     pub value: ConfigValue,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub display: Option<String>,
     pub source: &'static str,
     pub editable: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub kind: Option<crate::settings::Kind>,
+    pub kind: crate::settings::Kind,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub raw: Option<crate::settings::RawValue>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub options: Option<Vec<&'static str>>,
-    #[serde(skip)]
-    full_key: String,
-}
-
-impl ConfigItemDto {
-    fn new(key: &str, env: &str, value: ConfigValue) -> Self {
-        Self {
-            key: Some(key.to_string()),
-            env: Some(env.to_string()),
-            value,
-            display: None,
-            source: "default",
-            editable: false,
-            kind: None,
-            raw: None,
-            options: None,
-            full_key: String::new(),
-        }
-    }
-
-    fn env_only(full_key: &str, env: &str, value: ConfigValue) -> Self {
-        Self {
-            key: None,
-            env: Some(env.to_string()),
-            value,
-            display: None,
-            source: "default",
-            editable: false,
-            kind: None,
-            raw: None,
-            options: None,
-            full_key: full_key.to_string(),
-        }
-    }
-
-    fn with_display(mut self, display: String) -> Self {
-        self.display = Some(display);
-        self
-    }
+    pub description: DescriptionDto,
 }
 
 fn source_str(source: config::Source) -> &'static str {
@@ -661,35 +628,193 @@ fn source_str(source: config::Source) -> &'static str {
     }
 }
 
-fn finalize_section(
-    name: &str,
-    mut items: Vec<ConfigItemDto>,
+fn config_item_dto(
     config: &config::Config,
-) -> ConfigSectionDto {
-    for item in &mut items {
-        let full_key = if !item.full_key.is_empty() {
-            item.full_key.clone()
-        } else if let Some(local) = &item.key {
-            format!("{name}.{local}")
-        } else {
-            continue;
-        };
-        let source = config
-            .source_of(&full_key)
-            .unwrap_or(config::Source::Default);
-        item.source = source_str(source);
-        item.editable = crate::settings::is_editable(config, &full_key);
-        if let Some(desc) = crate::settings::find(&full_key) {
-            item.kind = Some(desc.kind);
-            item.raw = crate::settings::raw_value(config, &full_key);
-            if desc.kind == crate::settings::Kind::Nip05 {
-                item.options = Some(config::NIP05_MODE_NAMES.to_vec());
-            }
-        }
+    desc: &'static crate::settings::Setting,
+) -> ConfigItemDto {
+    let (value, display) = config_value(config, desc);
+    let source = config
+        .source_of(desc.key)
+        .unwrap_or(config::Source::Default);
+    let options = if desc.kind == crate::settings::Kind::Nip05 {
+        Some(config::NIP05_MODE_NAMES.to_vec())
+    } else {
+        None
+    };
+    ConfigItemDto {
+        key: desc.field.to_string(),
+        env: desc.env.to_string(),
+        value,
+        display,
+        source: source_str(source),
+        editable: crate::settings::is_editable(config, desc.key),
+        kind: desc.kind,
+        raw: crate::settings::raw_value(config, desc.key),
+        options,
+        description: DescriptionDto {
+            en: desc.description.en,
+            ja: desc.description.ja,
+        },
     }
-    ConfigSectionDto {
-        name: name.to_string(),
-        items,
+}
+
+fn opt_path_str(p: &Option<std::path::PathBuf>) -> String {
+    p.as_ref()
+        .map(|p| p.display().to_string())
+        .unwrap_or_default()
+}
+
+/// The current value (and, for size/duration keys, a human-readable
+/// `display` string) for one catalog key. One arm per `settings::SETTINGS`
+/// entry; `settings::SETTINGS.len()` keys must all be handled here (enforced
+/// indirectly by the `_ => unreachable!` arm and the dashboard config tests).
+fn config_value(
+    config: &config::Config,
+    desc: &crate::settings::Setting,
+) -> (ConfigValue, Option<String>) {
+    match desc.key {
+        "nostr.secret_key" => (
+            ConfigValue::Str(
+                if config.nostr.secret_key.is_some() {
+                    "(set, hidden)"
+                } else {
+                    "(not set)"
+                }
+                .to_string(),
+            ),
+            None,
+        ),
+        "nostr.relays" => (ConfigValue::List(config.nostr.relays.clone()), None),
+        "nostr.mirror_set" => (ConfigValue::Str(config.nostr.mirror_set.clone()), None),
+        "nostr.site_event_kind" => (ConfigValue::Num(config.nostr.site_event_kind as u64), None),
+        "nostr.replica_event_kind" => (
+            ConfigValue::Num(config.nostr.replica_event_kind as u64),
+            None,
+        ),
+        "ipfs.api" => (ConfigValue::Str(ipfs_api_str(&config.ipfs.api)), None),
+        "ipfs.mfs_root" => (ConfigValue::Str(config.ipfs.mfs_root.clone()), None),
+        "policy.max_total_storage" => (
+            ConfigValue::Num(config.policy.max_total_storage),
+            Some(format_bytes(config.policy.max_total_storage)),
+        ),
+        "policy.max_per_site" => (
+            ConfigValue::Num(config.policy.max_per_site),
+            Some(format_bytes(config.policy.max_per_site)),
+        ),
+        "policy.max_per_account" => (
+            ConfigValue::Num(config.policy.max_per_account),
+            Some(format_bytes(config.policy.max_per_account)),
+        ),
+        "policy.max_sites_per_account" => (
+            ConfigValue::Num(config.policy.max_sites_per_account as u64),
+            None,
+        ),
+        "policy.max_update_size" => (
+            ConfigValue::Num(config.policy.max_update_size),
+            Some(format_bytes(config.policy.max_update_size)),
+        ),
+        "policy.keep_versions" => (ConfigValue::Num(config.policy.keep_versions as u64), None),
+        "policy.keep_days" => (ConfigValue::Num(config.policy.keep_days), None),
+        "policy.min_update_interval" => (
+            ConfigValue::Num(config.policy.min_update_interval),
+            Some(format_duration_secs(config.policy.min_update_interval)),
+        ),
+        "policy.remove_on_unfollow" => (ConfigValue::Bool(config.policy.remove_on_unfollow), None),
+        "policy.nip05" => (
+            ConfigValue::Str(nip05_mode_str(config.policy.nip05).to_string()),
+            None,
+        ),
+        "policy.nip05_cache_ttl" => (
+            ConfigValue::Num(config.policy.nip05_cache_ttl),
+            Some(format_duration_secs(config.policy.nip05_cache_ttl)),
+        ),
+        "agent.state_dir" => (
+            ConfigValue::Str(config.agent.state_dir.display().to_string()),
+            None,
+        ),
+        "agent.poll_interval" => (
+            ConfigValue::Num(config.agent.poll_interval.as_secs()),
+            Some(format_duration_secs(config.agent.poll_interval.as_secs())),
+        ),
+        "agent.fetch_timeout" => (
+            ConfigValue::Num(config.agent.fetch_timeout.as_secs()),
+            Some(format_duration_secs(config.agent.fetch_timeout.as_secs())),
+        ),
+        "agent.fetch_idle_timeout" => (
+            ConfigValue::Num(config.agent.fetch_idle_timeout.as_secs()),
+            Some(format_duration_secs(
+                config.agent.fetch_idle_timeout.as_secs(),
+            )),
+        ),
+        "agent.concurrency" => (ConfigValue::Num(config.agent.concurrency as u64), None),
+        "agent.report_ttl" => (
+            ConfigValue::Num(config.agent.report_ttl.as_secs()),
+            Some(format_duration_secs(config.agent.report_ttl.as_secs())),
+        ),
+        "publish.nip05" => (
+            ConfigValue::Str(nip05_mode_str(config.publish.nip05).to_string()),
+            None,
+        ),
+        "publish.keep_versions" => (ConfigValue::Num(config.publish.keep_versions as u64), None),
+        "dashboard.listen" => (ConfigValue::Str(config.dashboard.listen.to_string()), None),
+        "dashboard.ui" => (ConfigValue::Bool(config.dashboard.ui), None),
+        "dashboard.allowed_hosts" => (
+            ConfigValue::List(config.dashboard.allowed_hosts.clone()),
+            None,
+        ),
+        "dashboard.gateway" => (
+            ConfigValue::Str(config.dashboard.gateway.clone().unwrap_or_default()),
+            None,
+        ),
+        "dashboard.custom_css" => (
+            ConfigValue::Str(opt_path_str(&config.dashboard.custom_css)),
+            None,
+        ),
+        "dashboard.desktop_page" => (
+            ConfigValue::Str(opt_path_str(&config.dashboard.desktop_page)),
+            None,
+        ),
+        "dashboard.desktop_page_css" => (
+            ConfigValue::Str(opt_path_str(&config.dashboard.desktop_page_css)),
+            None,
+        ),
+        "dashboard.desktop_banner" => (
+            ConfigValue::Str(opt_path_str(&config.dashboard.desktop_banner)),
+            None,
+        ),
+        "dashboard.max_upload" => (
+            ConfigValue::Num(config.dashboard.max_upload),
+            Some(format_bytes(config.dashboard.max_upload)),
+        ),
+        "kubo.managed" => (ConfigValue::Bool(config.kubo.managed), None),
+        "kubo.binary" => (ConfigValue::Str(opt_path_str(&config.kubo.binary)), None),
+        "kubo.repo" => (
+            ConfigValue::Str(config.kubo.repo.display().to_string()),
+            None,
+        ),
+        "kubo.storage_max" => (
+            ConfigValue::Num(config.kubo.storage_max),
+            Some(format_bytes(config.kubo.storage_max)),
+        ),
+        "kubo.provide_strategy" => (ConfigValue::Str(config.kubo.provide_strategy.clone()), None),
+        "kubo.gateway_listen" => (
+            ConfigValue::Str(config.kubo.gateway_listen.to_string()),
+            None,
+        ),
+        "kubo.swarm_port" => (
+            ConfigValue::Str(
+                config
+                    .kubo
+                    .swarm_port
+                    .map(|p| p.to_string())
+                    .unwrap_or_else(|| "-".to_string()),
+            ),
+            None,
+        ),
+        "gateway.listen" => (ConfigValue::Str(listen_str(&config.gateway.listen)), None),
+        "gateway.hosts" => (ConfigValue::List(config.gateway.hosts.clone()), None),
+        "gateway.upstream" => (ConfigValue::Str(config.gateway.upstream.clone()), None),
+        other => unreachable!("settings::SETTINGS has no dto mapping for {other}"),
     }
 }
 
@@ -784,355 +909,27 @@ pub struct ConfigDto {
 }
 
 pub fn config_dto(config: &config::Config, restart_required: bool) -> ConfigDto {
-    let secret_key_display = if config.nostr.secret_key.is_some() {
-        "(set, hidden)"
-    } else {
-        "(not set)"
-    };
-    let nostr = finalize_section(
-        "nostr",
-        vec![
-            ConfigItemDto::new(
-                "secret_key",
-                "SWING_NOSTR_SECRET_KEY",
-                ConfigValue::Str(secret_key_display.to_string()),
-            ),
-            ConfigItemDto::new(
-                "relays",
-                "SWING_NOSTR_RELAYS",
-                ConfigValue::List(config.nostr.relays.clone()),
-            ),
-            ConfigItemDto::new(
-                "mirror_set",
-                "SWING_MIRROR_SET",
-                ConfigValue::Str(config.nostr.mirror_set.clone()),
-            ),
-            ConfigItemDto::new(
-                "site_event_kind",
-                "SWING_SITE_EVENT_KIND",
-                ConfigValue::Num(config.nostr.site_event_kind as u64),
-            ),
-            ConfigItemDto::new(
-                "replica_event_kind",
-                "SWING_REPLICA_EVENT_KIND",
-                ConfigValue::Num(config.nostr.replica_event_kind as u64),
-            ),
-        ],
-        config,
-    );
-
-    let ipfs = finalize_section(
-        "ipfs",
-        vec![
-            ConfigItemDto::new(
-                "api",
-                "SWING_IPFS_API",
-                ConfigValue::Str(ipfs_api_str(&config.ipfs.api)),
-            ),
-            ConfigItemDto::new(
-                "mfs_root",
-                "SWING_MFS_ROOT",
-                ConfigValue::Str(config.ipfs.mfs_root.clone()),
-            ),
-        ],
-        config,
-    );
-
-    let policy = finalize_section(
-        "policy",
-        vec![
-            ConfigItemDto::new(
-                "max_total_storage",
-                "SWING_MAX_TOTAL_STORAGE",
-                ConfigValue::Num(config.policy.max_total_storage),
-            )
-            .with_display(format_bytes(config.policy.max_total_storage)),
-            ConfigItemDto::new(
-                "max_per_site",
-                "SWING_MAX_PER_SITE",
-                ConfigValue::Num(config.policy.max_per_site),
-            )
-            .with_display(format_bytes(config.policy.max_per_site)),
-            ConfigItemDto::new(
-                "max_per_account",
-                "SWING_MAX_PER_ACCOUNT",
-                ConfigValue::Num(config.policy.max_per_account),
-            )
-            .with_display(format_bytes(config.policy.max_per_account)),
-            ConfigItemDto::new(
-                "max_sites_per_account",
-                "SWING_MAX_SITES_PER_ACCOUNT",
-                ConfigValue::Num(config.policy.max_sites_per_account as u64),
-            ),
-            ConfigItemDto::new(
-                "max_update_size",
-                "SWING_MAX_UPDATE_SIZE",
-                ConfigValue::Num(config.policy.max_update_size),
-            )
-            .with_display(format_bytes(config.policy.max_update_size)),
-            ConfigItemDto::new(
-                "keep_versions",
-                "SWING_KEEP_VERSIONS",
-                ConfigValue::Num(config.policy.keep_versions as u64),
-            ),
-            ConfigItemDto::new(
-                "keep_days",
-                "SWING_KEEP_DAYS",
-                ConfigValue::Num(config.policy.keep_days),
-            ),
-            ConfigItemDto::new(
-                "min_update_interval",
-                "SWING_MIN_UPDATE_INTERVAL",
-                ConfigValue::Num(config.policy.min_update_interval),
-            )
-            .with_display(format_duration_secs(config.policy.min_update_interval)),
-            ConfigItemDto::new(
-                "remove_on_unfollow",
-                "SWING_REMOVE_ON_UNFOLLOW",
-                ConfigValue::Bool(config.policy.remove_on_unfollow),
-            ),
-            ConfigItemDto::new(
-                "nip05",
-                "SWING_NIP05",
-                ConfigValue::Str(nip05_mode_str(config.policy.nip05).to_string()),
-            ),
-            ConfigItemDto::new(
-                "nip05_cache_ttl",
-                "SWING_NIP05_CACHE_TTL",
-                ConfigValue::Num(config.policy.nip05_cache_ttl),
-            )
-            .with_display(format_duration_secs(config.policy.nip05_cache_ttl)),
-        ],
-        config,
-    );
-
-    let agent = finalize_section(
-        "agent",
-        vec![
-            ConfigItemDto::new(
-                "state_dir",
-                "SWING_STATE_DIR",
-                ConfigValue::Str(config.agent.state_dir.display().to_string()),
-            ),
-            ConfigItemDto::new(
-                "poll_interval",
-                "SWING_POLL_INTERVAL",
-                ConfigValue::Num(config.agent.poll_interval.as_secs()),
-            )
-            .with_display(format_duration_secs(config.agent.poll_interval.as_secs())),
-            ConfigItemDto::new(
-                "concurrency",
-                "SWING_CONCURRENCY",
-                ConfigValue::Num(config.agent.concurrency as u64),
-            ),
-            ConfigItemDto::new(
-                "report_ttl",
-                "SWING_REPORT_TTL",
-                ConfigValue::Num(config.agent.report_ttl.as_secs()),
-            )
-            .with_display(format_duration_secs(config.agent.report_ttl.as_secs())),
-            ConfigItemDto::env_only(
-                "agent.fetch_timeout",
-                "SWING_FETCH_TIMEOUT",
-                ConfigValue::Num(config.agent.fetch_timeout.as_secs()),
-            )
-            .with_display(format_duration_secs(config.agent.fetch_timeout.as_secs())),
-            ConfigItemDto::env_only(
-                "agent.fetch_idle_timeout",
-                "SWING_FETCH_IDLE_TIMEOUT",
-                ConfigValue::Num(config.agent.fetch_idle_timeout.as_secs()),
-            )
-            .with_display(format_duration_secs(
-                config.agent.fetch_idle_timeout.as_secs(),
-            )),
-        ],
-        config,
-    );
-
-    let publish = finalize_section(
-        "publish",
-        vec![
-            ConfigItemDto::new(
-                "nip05",
-                "SWING_PUBLISH_NIP05",
-                ConfigValue::Str(nip05_mode_str(config.publish.nip05).to_string()),
-            ),
-            ConfigItemDto::new(
-                "keep_versions",
-                "SWING_PUBLISH_KEEP_VERSIONS",
-                ConfigValue::Num(config.publish.keep_versions as u64),
-            ),
-        ],
-        config,
-    );
-
-    let dashboard = finalize_section(
-        "dashboard",
-        vec![
-            ConfigItemDto::new(
-                "listen",
-                "SWING_DASHBOARD_LISTEN",
-                ConfigValue::Str(config.dashboard.listen.to_string()),
-            ),
-            ConfigItemDto::new(
-                "ui",
-                "SWING_DASHBOARD_UI",
-                ConfigValue::Bool(config.dashboard.ui),
-            ),
-            ConfigItemDto::new(
-                "allowed_hosts",
-                "SWING_DASHBOARD_ALLOWED_HOSTS",
-                ConfigValue::List(config.dashboard.allowed_hosts.clone()),
-            ),
-            ConfigItemDto::new(
-                "gateway",
-                "SWING_DASHBOARD_GATEWAY",
-                ConfigValue::Str(config.dashboard.gateway.clone().unwrap_or_default()),
-            ),
-            ConfigItemDto::new(
-                "custom_css",
-                "SWING_DASHBOARD_CUSTOM_CSS",
-                ConfigValue::Str(
-                    config
-                        .dashboard
-                        .custom_css
-                        .as_ref()
-                        .map(|p| p.display().to_string())
-                        .unwrap_or_default(),
-                ),
-            ),
-            ConfigItemDto::new(
-                "desktop_page",
-                "SWING_DASHBOARD_DESKTOP_PAGE",
-                ConfigValue::Str(
-                    config
-                        .dashboard
-                        .desktop_page
-                        .as_ref()
-                        .map(|p| p.display().to_string())
-                        .unwrap_or_default(),
-                ),
-            ),
-            ConfigItemDto::new(
-                "desktop_page_css",
-                "SWING_DASHBOARD_DESKTOP_PAGE_CSS",
-                ConfigValue::Str(
-                    config
-                        .dashboard
-                        .desktop_page_css
-                        .as_ref()
-                        .map(|p| p.display().to_string())
-                        .unwrap_or_default(),
-                ),
-            ),
-            ConfigItemDto::new(
-                "desktop_banner",
-                "SWING_DASHBOARD_DESKTOP_BANNER",
-                ConfigValue::Str(
-                    config
-                        .dashboard
-                        .desktop_banner
-                        .as_ref()
-                        .map(|p| p.display().to_string())
-                        .unwrap_or_default(),
-                ),
-            ),
-            ConfigItemDto::new(
-                "max_upload",
-                "SWING_DASHBOARD_MAX_UPLOAD",
-                ConfigValue::Num(config.dashboard.max_upload),
-            )
-            .with_display(format_bytes(config.dashboard.max_upload)),
-        ],
-        config,
-    );
-
-    let kubo = finalize_section(
-        "kubo",
-        vec![
-            ConfigItemDto::new(
-                "managed",
-                "SWING_KUBO_MANAGED",
-                ConfigValue::Bool(config.kubo.managed),
-            ),
-            ConfigItemDto::new(
-                "binary",
-                "SWING_KUBO_BINARY",
-                ConfigValue::Str(
-                    config
-                        .kubo
-                        .binary
-                        .as_ref()
-                        .map(|p| p.display().to_string())
-                        .unwrap_or_default(),
-                ),
-            ),
-            ConfigItemDto::new(
-                "repo",
-                "SWING_KUBO_REPO",
-                ConfigValue::Str(config.kubo.repo.display().to_string()),
-            ),
-            ConfigItemDto::new(
-                "storage_max",
-                "SWING_KUBO_STORAGE_MAX",
-                ConfigValue::Num(config.kubo.storage_max),
-            )
-            .with_display(format_bytes(config.kubo.storage_max)),
-            ConfigItemDto::new(
-                "provide_strategy",
-                "SWING_KUBO_PROVIDE_STRATEGY",
-                ConfigValue::Str(config.kubo.provide_strategy.clone()),
-            ),
-            ConfigItemDto::new(
-                "gateway_listen",
-                "SWING_KUBO_GATEWAY_LISTEN",
-                ConfigValue::Str(config.kubo.gateway_listen.to_string()),
-            ),
-            ConfigItemDto::new(
-                "swarm_port",
-                "SWING_KUBO_SWARM_PORT",
-                ConfigValue::Str(
-                    config
-                        .kubo
-                        .swarm_port
-                        .map(|p| p.to_string())
-                        .unwrap_or_else(|| "-".to_string()),
-                ),
-            ),
-        ],
-        config,
-    );
-
-    let gateway = finalize_section(
-        "gateway",
-        vec![
-            ConfigItemDto::new(
-                "listen",
-                "SWING_GATEWAY_LISTEN",
-                ConfigValue::Str(listen_str(&config.gateway.listen)),
-            ),
-            ConfigItemDto::new(
-                "hosts",
-                "SWING_GATEWAY_HOSTS",
-                ConfigValue::List(config.gateway.hosts.clone()),
-            ),
-            ConfigItemDto::new(
-                "upstream",
-                "SWING_GATEWAY_UPSTREAM",
-                ConfigValue::Str(config.gateway.upstream.clone()),
-            ),
-        ],
-        config,
-    );
+    let sections = crate::settings::SECTION_ORDER
+        .iter()
+        .map(|&name| {
+            let items = crate::settings::SETTINGS
+                .iter()
+                .filter(|s| s.section == name)
+                .map(|s| config_item_dto(config, s))
+                .collect();
+            ConfigSectionDto {
+                name: name.to_string(),
+                items,
+            }
+        })
+        .collect();
 
     ConfigDto {
         config_path: Some(config.config_path.display().to_string()),
         config_exists: config.config_exists,
         writable: is_config_writable(config),
         restart_required,
-        sections: vec![
-            nostr, ipfs, policy, agent, publish, dashboard, kubo, gateway,
-        ],
+        sections,
     }
 }
 

@@ -128,16 +128,7 @@ cp .env.example .env
 docker compose run --rm mirror key generate
 ```
 
-`.env.example` に含まれる項目は次のとおりです。
-
-| 変数 | 意味 |
-| --- | --- |
-| `SWING_NOSTR_SECRET_KEY` | 署名用の秘密鍵（nsec または hex）。空のままでも起動でき、その場合はダッシュボードのセットアップ画面から鍵を生成・保存できます（上記「はじめかた」を参照） |
-| `SWING_NOSTR_RELAYS` | 接続する Nostr Relay（カンマ区切り）。実際に自分が使っている relay に置き換えることをおすすめします |
-| `SWING_MIRROR_SET` | ミラー対象リスト（Follow Set）の `d` タグ。通常は既定値 `swing` のままで構いません |
-| `SWING_MAX_TOTAL_STORAGE` | 保存する全サイト合計の容量上限（例: `20GB`） |
-
-最低限、`SWING_NOSTR_SECRET_KEY` は必ず自分の値に書き換えてください。他の環境変数の全体像は「設定一覧」を参照してください。
+`.env.example` は `SWING_NOSTR_SECRET_KEY` 以外すべてコメントアウトされていて、コメントを外さない限りコードの既定値がそのまま使われます（relay や保存上限も含め、既定値のまま起動できます）。行ごとの意味は [`.env.example`](.env.example) 自体のコメントと、[設定一覧](#設定一覧) を参照してください。`SWING_NOSTR_RELAYS` は実際に自分が使う relay に、`SWING_MAX_TOTAL_STORAGE` は保存したい容量に、必要に応じてコメントを外して書き換えてください。最低限、`SWING_NOSTR_SECRET_KEY` は必ず自分の値に書き換えてください（空のままでも起動でき、その場合はダッシュボードのセットアップ画面から鍵を生成・保存できます。上記「はじめかた」を参照）。`.env` に書いた値はダッシュボードから編集できなくなる（[設定一覧](#設定一覧)）ので、コメントを外すのは実際に固定したい項目だけにしてください。
 
 `.env` を用意できたら、コンテナを起動します。
 
@@ -341,21 +332,7 @@ SWING_GATEWAY_HOSTS=example.com,blog.example.net
 
 ## どれくらい保存されるか
 
-あなたのサイトを保存してくれる各参加者は、以下のようなポリシーに沿って保存量・保存期間を制限しています。値は参加者ごとのローカル設定であり、SWING の既定値は次のとおりです。
-
-| キー | 既定値 | 意味 |
-| --- | --- | --- |
-| `max_total_storage` | `100GB` | 保存する全サイト合計の容量上限 |
-| `max_per_site` | `10GB` | 1 サイトあたりの容量上限。超えた分は古い版から削除される |
-| `max_per_account` | `20GB` | 1 アカウント（pubkey）が持つ全サイトの合計容量上限。超える更新は保存されない |
-| `max_sites_per_account` | `10` | 1 アカウントあたりに保存するサイト数の上限。既に保存しているサイトの更新は続く |
-| `max_update_size` | `2GB` | 1 回の更新（1 バージョン）あたりのサイズ上限。超えると保存されない |
-| `keep_versions` | `5` | サイトごとに保持する旧バージョンの数。超えた分は古い順に削除される |
-| `keep_days` | `365` | バージョンを保持する日数。最新版を除き、これより古い版は削除される |
-| `min_update_interval` | `1h` | 同じサイトを取り込む最短間隔（実時間）。前回保存してからこれが経つまでは新しい版を受け付けない。見送った版も、経過後の poll で最新版が改めて評価されるので、最新の内容には追いつく |
-| `remove_on_unfollow` | `true` | 相手をミラー対象から外したときに、自動でそのサイトの保存をやめるかどうか。`false` なら最後に保存した版を残し続ける |
-| `nip05` | `warn` | 保存前に行う NIP-05 検証のモード（`off` / `warn` / `require`） |
-| `nip05_cache_ttl` | `1d` | NIP-05 の検証結果を再利用する期間 |
+あなたのサイトを保存してくれる各参加者は、`[policy]`（`max_total_storage`・`max_per_site`・`max_per_account`・`max_sites_per_account`・`max_update_size`・`keep_versions`・`keep_days`・`min_update_interval`・`remove_on_unfollow`・`nip05`・`nip05_cache_ttl` など）に沿って保存量・保存期間を制限しています。値は参加者ごとのローカル設定です。キーごとの既定値と説明は [設定一覧](#設定一覧) を参照してください。
 
 サイズはイベントの `size` タグではなく、実際に取得したデータ量で判定します。取得中に上限（`max_update_size`・`max_per_site`・`max_per_account` の最小値）を超えた時点で取得を打ち切ります。
 
@@ -369,59 +346,7 @@ MFS に置いたサイトを他のノードから見つけてもらうには、K
 
 ## 設定一覧
 
-TOML の設定ファイル（`swing.toml`）を使う場合と、環境変数だけで動かす場合のどちらにも対応しています。環境変数は常に TOML の値を上書きします。設定ファイルの探索順や、容量・時間の書式（`"100GB"` や `"10m"` のような文字列）は [`docs/architecture.md`](docs/architecture.md) を参照してください。設定例は [`swing.example.toml`](swing.example.toml) にあります。
-
-| 環境変数 | 対応する設定 | 説明 |
-| --- | --- | --- |
-| `SWING_CONFIG` | (CLI `--config`) | 設定ファイルのパス。省略時は `./swing.toml`（ファイルが無くてもこのパスがそのまま書き込み先になる） |
-| `SWING_NOSTR_SECRET_KEY` | `nostr.secret_key` | 署名用秘密鍵（nsec または hex）。省略可（上記「はじめかた」のセットアップモード） |
-| `SWING_NOSTR_RELAYS` | `nostr.relays` | 接続する relay（カンマ区切り） |
-| `SWING_MIRROR_SET` | `nostr.mirror_set` | Follow Set の `d` タグ（既定 `swing`） |
-| `SWING_SITE_EVENT_KIND` | `nostr.site_event_kind` | サイトイベントの kind（既定 `35980`） |
-| `SWING_REPLICA_EVENT_KIND` | `nostr.replica_event_kind` | レプリカ報告の kind（既定 `35981`） |
-| `SWING_IPFS_API` | `ipfs.api` | Kubo RPC のエンドポイント。`[kubo].managed = false` のときだけ使う（既定 `http://127.0.0.1:5001`）。`managed = true` のときに指定するとエラー |
-| `SWING_MFS_ROOT` | `ipfs.mfs_root` | SWING が使う MFS のディレクトリ（既定 `/swing`） |
-| `SWING_MAX_TOTAL_STORAGE` | `policy.max_total_storage` | 全体容量上限 |
-| `SWING_MAX_PER_SITE` | `policy.max_per_site` | サイト単位の容量上限 |
-| `SWING_MAX_PER_ACCOUNT` | `policy.max_per_account` | アカウント単位の容量上限 |
-| `SWING_MAX_SITES_PER_ACCOUNT` | `policy.max_sites_per_account` | アカウント単位のサイト数上限（既定 `10`） |
-| `SWING_MAX_UPDATE_SIZE` | `policy.max_update_size` | 1 更新あたりのサイズ上限 |
-| `SWING_KEEP_VERSIONS` | `policy.keep_versions` | 保持する旧バージョン数 |
-| `SWING_KEEP_DAYS` | `policy.keep_days` | バージョン保持日数 |
-| `SWING_MIN_UPDATE_INTERVAL` | `policy.min_update_interval` | 取り込みの最短間隔 |
-| `SWING_REMOVE_ON_UNFOLLOW` | `policy.remove_on_unfollow` | unfollow 時にそのサイトを自動で消すか |
-| `SWING_NIP05` | `policy.nip05` | mirror-agent の NIP-05 検証モード（既定 `warn`） |
-| `SWING_NIP05_CACHE_TTL` | `policy.nip05_cache_ttl` | NIP-05 検証結果のキャッシュ期間（既定 `1d`。`0` で無効） |
-| `SWING_STATE_DIR` | `agent.state_dir` | 状態ファイルを置くディレクトリ |
-| `SWING_POLL_INTERVAL` | `agent.poll_interval` | Follow Set の再取得間隔 |
-| `SWING_CONCURRENCY` | `agent.concurrency` | 同時に取得・保存するサイト数（既定 `4`） |
-| `SWING_REPORT_TTL` | `agent.report_ttl` | レプリカ報告の有効期間（既定 `3d`。半分過ぎたら出し直す。`poll_interval` の 2 倍より長くする） |
-| `SWING_FETCH_TIMEOUT` | (なし) | 1 サイト分の取得のタイムアウト（既定 15 分） |
-| `SWING_FETCH_IDLE_TIMEOUT` | (なし) | 取得中にデータが届かないまま待つ上限（既定 2 分） |
-| `SWING_KUBO_MANAGED` | `kubo.managed` | `swing up` が Kubo を子プロセスとして動かすか（既定 `true`）。付属の `compose.yaml` は `false` を固定で渡す |
-| `SWING_KUBO_BINARY` | `kubo.binary` | 管理する Kubo の実行ファイルのパス。既定: `swing` と同じディレクトリの `ipfs`（`.exe`）、無ければ PATH |
-| `SWING_KUBO_REPO` | `kubo.repo` | 管理する Kubo のリポジトリ（`IPFS_PATH`）。既定は `[agent].state_dir` の下の `kubo` |
-| `SWING_KUBO_STORAGE_MAX` | `kubo.storage_max` | Kubo の `Datastore.StorageMax`。既定は `[policy].max_total_storage` と同じ値。Docker Compose の `ipfs` コンテナでも同じ変数名で使う |
-| `SWING_KUBO_PROVIDE_STRATEGY` | `kubo.provide_strategy` | Kubo の `Provide.Strategy`（既定 `pinned+mfs`）。Docker Compose の `ipfs` コンテナでも同じ変数名で使う |
-| `SWING_KUBO_GATEWAY_LISTEN` | `kubo.gateway_listen` | 管理する Kubo の `Addresses.Gateway`（既定 `127.0.0.1:8080`）。`[kubo].managed = true` のときだけ使う |
-| `SWING_KUBO_SWARM_PORT` | `kubo.swarm_port` | 管理する Kubo の swarm ポート。未設定なら Kubo の既定のまま |
-| `SWING_KUBO_GATEWAY_BIND` | (なし、compose の `ipfs` コンテナ用) | Kubo のゲートウェイをホストのどこに公開するか（既定 `127.0.0.1:8080`） |
-| `SWING_GATEWAY_LISTEN` | `gateway.listen` | SWING 内蔵の DNSLink ゲートウェイの待ち受けアドレス（既定 `off`。無効） |
-| `SWING_GATEWAY_HOSTS` | `gateway.hosts` | DNSLink で配信するホスト名（カンマ区切り）。`listen` が `off` 以外なら必須 |
-| `SWING_GATEWAY_UPSTREAM` | `gateway.upstream` | 転送先の Kubo ゲートウェイ。既定: managed なら `http://<[kubo].gateway_listen>`、そうでなければ `http://127.0.0.1:8080` |
-| `SWING_GATEWAY_BIND` | (なし、compose の `mirror` コンテナ用) | 内蔵ゲートウェイをホストのどこに公開するか（既定 `127.0.0.1:8081`） |
-| `SWING_PUBLISH_KEEP_VERSIONS` | `publish.keep_versions` | `swing publish` が自分のノードに残す版の数（既定 `5`） |
-| `SWING_PUBLISH_NIP05` | `publish.nip05` | `swing publish` の NIP-05 検証モード（既定 `warn`。CLI の `--nip05` が優先） |
-| `SWING_DASHBOARD_LISTEN` | `dashboard.listen` | ダッシュボードの待ち受けアドレス（既定 `127.0.0.1:8082`）。`swing up` が動いている間ずっと待ち受ける。付属の `compose.yaml` ではコンテナ内の既定値として `0.0.0.0:8082` を使うが、`.env` で上書きできる |
-| `SWING_DASHBOARD_UI` | `dashboard.ui` | `false` で Web の管理画面（静的ファイル）を配信せず、`/api/*` の制御 API だけ残す（既定 `true`） |
-| `SWING_DASHBOARD_ALLOWED_HOSTS` | `dashboard.allowed_hosts` | Host ヘッダで追加で許可するホスト名（ポート抜き、カンマ区切り） |
-| `SWING_DASHBOARD_GATEWAY` | `dashboard.gateway` | ダッシュボードから保存済みサイトを開くリンクの IPFS Gateway（既定 `http://localhost:8080`）。環境変数では空文字にできない |
-| `SWING_DASHBOARD_CUSTOM_CSS` | `dashboard.custom_css` | ダッシュボードに読み込ませる追加 CSS ファイルのパス |
-| `SWING_DASHBOARD_DESKTOP_PAGE` | `dashboard.desktop_page` | Desktop 画面のリンク集ページ（HTML ファイル）のパス。未設定なら同梱のページ |
-| `SWING_DASHBOARD_DESKTOP_PAGE_CSS` | `dashboard.desktop_page_css` | そのリンク集ページ専用の CSS ファイルのパス。未設定なら同梱の CSS |
-| `SWING_DASHBOARD_DESKTOP_BANNER` | `dashboard.desktop_banner` | リンク集ページの 88×31 バナー画像のパス（`.png` `.gif` `.jpg` `.jpeg` `.webp` `.svg`）。未設定なら同梱の GIF |
-| `SWING_DASHBOARD_MAX_UPLOAD` | `dashboard.max_upload` | Publish 画面のフォルダアップロードで受け付けるボディの上限（既定 `2GB`） |
-| `SWING_DASHBOARD_BIND` | (なし、compose の mirror 用) | ダッシュボードをホストのどこに公開するか（既定 `127.0.0.1:8082`） |
+TOML の設定ファイル（`swing.toml`）を使う場合と、環境変数だけで動かす場合のどちらにも対応しています。優先順位は環境変数 > TOML > 既定値。キーごとの環境変数名・既定値・説明は [`swing.example.toml`](swing.example.toml) にすべて載っています（`swing config example` で生成、Docker Compose 用の `.env` は [`.env.example`](.env.example)、`swing config env-example` で生成）。設定ファイルの探索順や、容量・時間の書式（`"100GB"` や `"10m"` のような文字列）は [`docs/architecture.md`](docs/architecture.md) を参照してください。ダッシュボードから編集できるのはそのうちの一部（ホワイトリスト、[`docs/architecture/dashboard.md`](docs/architecture/dashboard.md#設定の読み込みと編集srcsettingsrs)）で、環境変数で設定した項目は編集できません。
 
 ## プライバシーと注意点
 
