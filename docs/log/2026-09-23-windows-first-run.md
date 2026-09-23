@@ -46,3 +46,4 @@ WSL から `cargo xwin build --release --target x86_64-pc-windows-msvc` で作�
   - 見送った案: 予備の停止を `/End` ではなく `swing.lock` の PID への `taskkill /PID <pid> /T /F` に変える案。swing 自身のコマンドは直るが、画面の「終了」や手で打った `/End` では止まらないままになる。
   - 常に（端末から起動したときも）親を見張る案は採らなかった。端末から起動した swing はコンソールを閉じれば止まり、起動元が先に終わるランチャーなどから起動した場合に巻き込まれて止まるのを避けるため、タスク経由のときだけ付ける。
   - `--exit-with-parent` を付けたタスクを登録し直して `schtasks /End /TN swing` すると、swing と Kubo の両方が終了することを実機で確認した（`swing.log` の `signal="parent exited"` は見ていない）。
+- `ipfs.exe` のファイアウォール許可ルールを消してからタスク経由で起動し直し、タスクで起動したタイミングで Windows ファイアウォールのダイアログが出ることを実機で確認した（`InteractiveToken` でユーザーのセッションで動いているため）。
