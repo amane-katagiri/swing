@@ -1833,6 +1833,7 @@ dependencies = [
  "tokio",
  "tokio-util",
  "toml",
+ "toml_edit",
  "tower",
  "tower-http",
  "tracing",

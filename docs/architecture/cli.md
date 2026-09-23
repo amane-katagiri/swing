@@ -9,10 +9,11 @@
 - `up`・`publish`・`service install`/`uninstall` 以外は読み取り専用で、`state.json` も MFS も OS のファイルも変えない（`mirror add` / `remove` は Follow Set を relay に送る。`stop`／`service stop` は動いているプロセスに停止・再起動を要求するだけで、ファイルは変えない）。`service install`/`uninstall` は OS のサービス定義ファイル（systemd unit / launchd plist / タスクスケジューラのタスク）を書く・消す。
 - `up` は処理を始める前に `<[agent].state_dir>/swing.lock` のインスタンスロックを取る（[`up.md#多重起動の防止lockrs`](up.md#多重起動の防止lockrs)）。同じ `state_dir` に対して既に動いていれば、起動側のエラーで即座に終了する。
 - `status`・`mirror add`・`mirror remove`・`stop`／`service stop` は relay/Kubo に直接つながず、動いている `swing up` のダッシュボード API（`[dashboard].listen`、既定 `http://127.0.0.1:8082`）を `src/api_client.rs::ApiClient` 経由で叩く。API が `[dashboard].listen` を未指定アドレス（`0.0.0.0` / `::`）で待ち受けていても、クライアントは接続先と `Host` ヘッダをループバックの同じポートへ正規化する。API に接続できなければ `status`・`mirror add`・`mirror remove` は `swing up is not running (cannot connect to <addr>)` でエラー終了し（非ゼロ終了）、`stop`／`service stop` は `not running` を出して正常終了（終了コード 0）する。`sites`・`replicas`・`webring`・`mirror list`・`publish` はこの API を経由せず relay/Kubo に直接つなぐので、`swing up` が動いていなくても使える。
+- `[nostr].secret_key`（`SWING_NOSTR_SECRET_KEY`）は必須ではなくなった。`config::Config::require_secret_key()` を呼ぶコマンド（`sites`・`replicas`・`webring`・`mirror list`・`publish`）は鍵が無ければエラー終了するが、`status`・`mirror add`・`mirror remove`・`stop`／`service stop` はダッシュボード API 経由で鍵を直接使わないので鍵が無くても動く。ただし鍵が無い `swing up` はセットアップモードで動いており（[`up.md#セットアップモード鍵未設定`](up.md#セットアップモード鍵未設定)）、そこでは `status`・`mirror add`・`mirror remove` は 503 `agent is not configured` を返す。
 
 ## up
 
-`[kubo].managed` に応じて Kubo（子プロセス）と mirror-agent の中身を 1 プロセスの supervisor として動かす。mirror-agent はこの `up` だけが起動でき、単体で動かすサブコマンドは無い。Kubo・agent いずれかが落ちても自動で再起動する（[`up.md`](up.md)）。`--log-file <path>` を指定すると、標準エラーの代わりにそのファイルへ追記でログを出す。
+`[kubo].managed` に応じて Kubo（子プロセス）と mirror-agent の中身を 1 プロセスの supervisor として動かす。mirror-agent はこの `up` だけが起動でき、単体で動かすサブコマンドは無い。Kubo・agent いずれかが落ちても自動で再起動する（[`up.md`](up.md)）。`--log-file <path>` を指定すると、標準エラーの代わりにそのファイルへ追記でログを出す。`[nostr].secret_key` が設定ファイル・環境変数のどちらにも無ければ、Kubo も agent も起動せずダッシュボードだけを動かすセットアップモードになる（[`up.md#セットアップモード鍵未設定`](up.md#セットアップモード鍵未設定)）。ダッシュボードのセットアップ画面（`POST /api/setup`）が鍵を書き込むと、プロセスを終了させずに（同じ PID のまま）設定を読み直して通常モードで動き直す（[`up.md#終了要求と-exit-codeshutdownexitrequest-shutdownexit`](up.md#終了要求と-exit-codeshutdownexitrequest-shutdownexit)）。
 
 ## stop
 

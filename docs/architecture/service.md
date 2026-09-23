@@ -101,7 +101,7 @@ plist の主なキー（`launchd_plist`）: `ProgramArguments` = `[<exe>, "up", 
 
 - `install`: XML を一時ファイルに書き、`schtasks /Create /TN swing /XML <tmpfile> /F` で登録してから一時ファイルを削除する。`--no-start` でなければ `schtasks /Run /TN swing` で即時起動する。
 - `uninstall`: まず `stop`（下記）と同じグレースフルな停止を試みる（失敗しても無視して続ける）。続けて `schtasks /End /TN swing`（失敗は無視、既にグレースフルに止まっていれば no-op）→ `schtasks /Delete /TN swing /F`。
-- `stop`: `swing stop`（[`up.md`](up.md#終了要求と-exit-codeshutdownexitrequest-shutdownexit)）と同じロジック（`stop::run`、上記「`swing stop`」）を、設定ファイルを `service.rs` の既存のパス解決（`resolve_service_paths`。`--config` は取らず、`install` と同じ規則で探す）で見つけて 60 秒のタイムアウトで呼ぶ（ダッシュボード API 経由）。失敗したら warn を出して `schtasks /End /TN swing`（強制終了）にフォールバックする。タスクの登録自体は残る（`RestartOnFailure` はコード 3（再起動)/0（そのまま） で up.md のとおりに分かれる。`/End` によるフォールバックは強制終了なので exit code の区別が無く、次のログオン時トリガーまで再起動しない）。
+- `stop`: `swing stop`（[`up.md`](up.md#終了要求と-exit-codeshutdownexitrequest-shutdownexit)）と同じロジック（`stop::run`、上記「`swing stop`」）を、設定ファイルを `service.rs` の既存のパス解決（`resolve_service_paths`。`--config` は取らず、`install` と同じ規則で探す）で見つけて 60 秒のタイムアウトで呼ぶ（ダッシュボード API 経由）。失敗したら warn を出して `schtasks /End /TN swing`（強制終了）にフォールバックする。タスクの登録自体は残る。`swing stop --restart` はプロセスを終了させずに同じ PID のまま再起動する（[`up.md#終了要求と-exit-codeshutdownexitrequest-shutdownexit`](up.md#終了要求と-exit-codeshutdownexitrequest-shutdownexit)）ので `RestartOnFailure` は関与しない。素の `stop` は exit code 0 で正常終了するのでこれも `RestartOnFailure` の対象外（`/End` によるフォールバックは強制終了なので exit code の区別が無く、次のログオン時トリガーまで再起動しない）。
 - `status`: `schtasks /Query /TN swing /FO LIST /V` を実行し、標準出力をそのまま表示する。失敗（未登録など）なら `not installed` と出す。
 
 ## `swing up --log-file <path>`

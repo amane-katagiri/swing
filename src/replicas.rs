@@ -344,7 +344,11 @@ fn print_replicas(authors: &[AuthorReplicas]) {
 
 pub async fn show(config: &Config, inputs: &[String]) -> Result<()> {
     let authors = mirror::parse_pubkey_inputs(inputs)?;
-    let relay = RelayClient::connect(&config.nostr.secret_key, &config.nostr.relays).await?;
+    let relay = RelayClient::connect(
+        config.require_secret_key()?.expose_secret(),
+        &config.nostr.relays,
+    )
+    .await?;
     let authors = if authors.is_empty() {
         vec![relay.keys.public_key()]
     } else {

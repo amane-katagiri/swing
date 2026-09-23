@@ -26,8 +26,13 @@ pub async fn run_until(
     dashboard: Arc<dashboard::AppState>,
     notify: Arc<Notify>,
 ) -> Result<()> {
-    let relay =
-        Arc::new(RelayClient::connect(&config.nostr.secret_key, &config.nostr.relays).await?);
+    let relay = Arc::new(
+        RelayClient::connect(
+            config.require_secret_key()?.expose_secret(),
+            &config.nostr.relays,
+        )
+        .await?,
+    );
     info!(relays = ?relay.relays(), "connected to relays");
 
     let ipfs = IpfsClient::new(config.ipfs_api_url()?);

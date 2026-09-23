@@ -6,18 +6,22 @@ import { SitesView, renderStatusCheck } from './sites.js';
 import { WebringView, renderWebringIfLoaded } from './webring.js';
 import { PublishView, renderIdentity, updateNavFooter, updateUploadInfo, renderMySites, loadOverview } from './publish.js';
 import { SettingsView, renderConfig } from './settings.js';
+import { SetupView } from './setup.js';
 
-const VIEWS = { desktop: DesktopView, sites: SitesView, webring: WebringView, publish: PublishView, settings: SettingsView };
+const VIEWS = { desktop: DesktopView, sites: SitesView, webring: WebringView, publish: PublishView, settings: SettingsView, setup: SetupView };
 
 function currentRoute() {
   const hash = location.hash.replace(/^#\/?/, '');
+  if (cache.overview && cache.overview.setup) return 'setup';
   return Object.prototype.hasOwnProperty.call(VIEWS, hash) ? hash : 'sites';
 }
 
 function showRoute() {
   const name = currentRoute();
+  const setupMode = !!(cache.overview && cache.overview.setup);
   document.body.dataset.view = name;
   document.querySelectorAll('.swing-nav-list a[data-route]').forEach((a) => {
+    a.hidden = setupMode ? a.dataset.route !== 'setup' : a.dataset.route === 'setup';
     if (a.dataset.route === name) a.setAttribute('aria-current', 'page');
     else a.removeAttribute('aria-current');
   });
@@ -79,6 +83,7 @@ function applyLanguage() {
   if (cache.publishSites) renderMySites();
   if (cache.config) renderConfig(cache.config);
   if (cache.status) renderStatusCheck(cache.status);
+  SetupView.render();
 }
 
 function init() {
@@ -91,14 +96,20 @@ function init() {
   WebringView.init();
   PublishView.init();
   SettingsView.init();
+  SetupView.init();
   wireReloadButtons();
   wireCopyButtons();
   document.addEventListener('swing:langchange', applyLanguage);
   window.addEventListener('hashchange', showRoute);
-  showRoute();
   loadOverview()
-    .then(updateNavFooter)
-    .catch(() => {});
+    .then((overview) => {
+      updateNavFooter(overview);
+      if (overview.setup && location.hash.replace(/^#\/?/, '') !== 'setup') {
+        location.hash = '#/setup';
+      }
+    })
+    .catch(() => {})
+    .finally(showRoute);
 }
 
 init();

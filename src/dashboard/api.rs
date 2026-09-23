@@ -1,4 +1,6 @@
+use std::collections::BTreeMap;
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
 
 use axum::Json;
 use axum::extract::{FromRequest, Query, Request, State};
@@ -15,6 +17,7 @@ use crate::mirror;
 use crate::nip05;
 use crate::publish;
 use crate::replicas;
+use crate::settings;
 use crate::webring;
 
 use super::AppState;
@@ -26,6 +29,7 @@ pub enum ApiError {
     BadRequest(String),
     PayloadTooLarge(String),
     NotReady,
+    NotConfigured,
     Upstream(String),
     Conflict(String),
     Internal(String),
@@ -40,6 +44,10 @@ impl IntoResponse for ApiError {
                 StatusCode::SERVICE_UNAVAILABLE,
                 "agent is not ready".to_string(),
             ),
+            ApiError::NotConfigured => (
+                StatusCode::SERVICE_UNAVAILABLE,
+                "agent is not configured".to_string(),
+            ),
             ApiError::Upstream(msg) => (StatusCode::BAD_GATEWAY, msg),
             ApiError::Conflict(msg) => (StatusCode::CONFLICT, msg),
             ApiError::Internal(msg) => (StatusCode::INTERNAL_SERVER_ERROR, msg),
@@ -50,6 +58,14 @@ impl IntoResponse for ApiError {
 
 fn upstream(e: anyhow::Error) -> ApiError {
     ApiError::Upstream(format!("{e:#}"))
+}
+
+fn not_ready(state: &AppState) -> ApiError {
+    if state.setup_mode() {
+        ApiError::NotConfigured
+    } else {
+        ApiError::NotReady
+    }
 }
 
 // axum maps deserialize errors to 422, which this API reserves for the publish NIP-05 require failure.
@@ -83,8 +99,9 @@ pub async fn overview(
     let pubkey = state.own_pubkey;
     Ok(Json(dto::OverviewDto {
         version: env!("CARGO_PKG_VERSION").to_string(),
-        pubkey: pubkey.to_hex(),
-        npub: mirror::npub(&pubkey),
+        setup: pubkey.is_none(),
+        pubkey: pubkey.map(|pk| pk.to_hex()),
+        npub: pubkey.map(|pk| mirror::npub(&pk)),
         relays: state.config.nostr.relays.clone(),
         mirror_set: state.config.nostr.mirror_set.clone(),
         gateway: state.config.dashboard.gateway.clone(),
@@ -94,7 +111,7 @@ pub async fn overview(
 }
 
 pub async fn sites(State(state): State<Arc<AppState>>) -> Result<Json<dto::SitesDto>, ApiError> {
-    let relay = state.relay().await.ok_or(ApiError::NotReady)?;
+    let relay = state.relay().await.ok_or_else(|| not_ready(&state))?;
     let view = mirror::collect_sites(&relay, &state.config)
         .await
         .map_err(upstream)?;
@@ -105,7 +122,7 @@ pub async fn sites(State(state): State<Arc<AppState>>) -> Result<Json<dto::Sites
 }
 
 pub async fn status(State(state): State<Arc<AppState>>) -> Result<Json<dto::StatusDto>, ApiError> {
-    let ipfs = state.ipfs().await.ok_or(ApiError::NotReady)?;
+    let ipfs = state.ipfs().await.ok_or_else(|| not_ready(&state))?;
     let report = health::collect_status(&ipfs, &state.config)
         .await
         .map_err(upstream)?;
@@ -115,7 +132,7 @@ pub async fn status(State(state): State<Arc<AppState>>) -> Result<Json<dto::Stat
 pub async fn mirror_list(
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<dto::MirrorListDto>, ApiError> {
-    let relay = state.relay().await.ok_or(ApiError::NotReady)?;
+    let relay = state.relay().await.ok_or_else(|| not_ready(&state))?;
     let view = mirror::collect_mirror_list(&relay, &state.config)
         .await
         .map_err(upstream)?;
@@ -162,7 +179,7 @@ pub async fn mirror_add(
     AppJson(req): AppJson<MirrorKeysRequest>,
 ) -> Result<Json<dto::MirrorChangeDto>, ApiError> {
     validate_keys(&req.keys)?;
-    let relay = state.relay().await.ok_or(ApiError::NotReady)?;
+    let relay = state.relay().await.ok_or_else(|| not_ready(&state))?;
     let change = mirror::apply_add(&relay, &state.config, &req.keys)
         .await
         .map_err(upstream)?;
@@ -174,7 +191,7 @@ pub async fn mirror_remove(
     AppJson(req): AppJson<MirrorKeysRequest>,
 ) -> Result<Json<dto::MirrorChangeDto>, ApiError> {
     validate_keys(&req.keys)?;
-    let relay = state.relay().await.ok_or(ApiError::NotReady)?;
+    let relay = state.relay().await.ok_or_else(|| not_ready(&state))?;
     let change = mirror::apply_remove(&relay, &state.config, &req.keys)
         .await
         .map_err(upstream)?;
@@ -211,14 +228,18 @@ pub async fn webring(
             "root must include at most {MAX_KEYS} entries"
         )));
     }
+    let relay = state.relay().await.ok_or_else(|| not_ready(&state))?;
     let roots = if root_inputs.is_empty() {
-        vec![state.own_pubkey]
+        vec![
+            state
+                .own_pubkey
+                .expect("own_pubkey is set whenever the relay is ready"),
+        ]
     } else {
         mirror::parse_pubkey_inputs(&root_inputs)
             .map_err(|e| ApiError::BadRequest(format!("{e:#}")))?
     };
 
-    let relay = state.relay().await.ok_or(ApiError::NotReady)?;
     let view = webring::collect(&relay, &state.config, &roots, depth)
         .await
         .map_err(upstream)?;
@@ -239,14 +260,18 @@ pub async fn replicas(
             "key must include at most {MAX_KEYS} entries"
         )));
     }
+    let relay = state.relay().await.ok_or_else(|| not_ready(&state))?;
     let authors = if key_inputs.is_empty() {
-        vec![state.own_pubkey]
+        vec![
+            state
+                .own_pubkey
+                .expect("own_pubkey is set whenever the relay is ready"),
+        ]
     } else {
         mirror::parse_pubkey_inputs(&key_inputs)
             .map_err(|e| ApiError::BadRequest(format!("{e:#}")))?
     };
 
-    let relay = state.relay().await.ok_or(ApiError::NotReady)?;
     let authors_data = replicas::collect(&relay, &state.config, &authors)
         .await
         .map_err(upstream)?;
@@ -296,7 +321,7 @@ pub(super) async fn run_publish(
         ));
     };
 
-    let pubkey_hex = state.own_pubkey.to_hex();
+    let pubkey_hex = state.own_pubkey.ok_or_else(|| not_ready(state))?.to_hex();
 
     let nip05_dto = if nip05_mode != config::Nip05Mode::Off {
         let verifier = nip05::HttpNip05Verifier::public_only();
@@ -315,7 +340,7 @@ pub(super) async fn run_publish(
         dto::nip05_off_dto()
     };
 
-    let ipfs = state.ipfs().await.ok_or(ApiError::NotReady)?;
+    let ipfs = state.ipfs().await.ok_or_else(|| not_ready(state))?;
     let layout = MfsLayout::new(state.config.ipfs.mfs_root.clone());
     let created_at = Timestamp::now();
     let stage = publish::add_and_measure(
@@ -329,7 +354,7 @@ pub(super) async fn run_publish(
     .await
     .map_err(upstream)?;
 
-    let relay = state.relay().await.ok_or(ApiError::NotReady)?;
+    let relay = state.relay().await.ok_or_else(|| not_ready(state))?;
     let relay_results = publish::sign_and_send(
         &relay,
         &publish::SiteAnnouncement {
@@ -382,9 +407,12 @@ pub(super) async fn run_publish(
 pub async fn publish_sites(
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<dto::PublishSitesDto>, ApiError> {
-    let relay = state.relay().await.ok_or(ApiError::NotReady)?;
+    let relay = state.relay().await.ok_or_else(|| not_ready(&state))?;
+    let own_pubkey = state
+        .own_pubkey
+        .expect("own_pubkey is set whenever the relay is ready");
     let events = relay
-        .fetch_site_events(state.config.nostr.site_event_kind, &[state.own_pubkey])
+        .fetch_site_events(state.config.nostr.site_event_kind, &[own_pubkey])
         .await
         .map_err(upstream)?;
     let parsed: Vec<crate::nostr::SiteEvent> = events
@@ -403,7 +431,54 @@ pub async fn publish_sites(
 }
 
 pub async fn config(State(state): State<Arc<AppState>>) -> Json<dto::ConfigDto> {
-    Json(dto::config_dto(&state.config))
+    let restart_required = state.restart_required.load(Ordering::SeqCst);
+    let current = state.display_config().await;
+    Json(dto::config_dto(&current, restart_required))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UpdateConfigRequest {
+    items: BTreeMap<String, settings::InputValue>,
+}
+
+pub async fn update_config(
+    State(state): State<Arc<AppState>>,
+    AppJson(req): AppJson<UpdateConfigRequest>,
+) -> Result<Json<dto::ConfigDto>, ApiError> {
+    let updated = settings::update(&state.config, &req.items)
+        .map_err(|e| ApiError::BadRequest(format!("{e:#}")))?;
+    state.restart_required.store(true, Ordering::SeqCst);
+    let dto = dto::config_dto(&updated, true);
+    state.set_display_config(updated).await;
+    Ok(Json(dto))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SetupRequest {
+    secret_key: Option<String>,
+    #[serde(default)]
+    items: BTreeMap<String, settings::InputValue>,
+}
+
+pub async fn setup(
+    State(state): State<Arc<AppState>>,
+    AppJson(req): AppJson<SetupRequest>,
+) -> Result<Response, ApiError> {
+    if !state.setup_mode() {
+        return Err(ApiError::Conflict(
+            "swing is already configured; setup is no longer available".to_string(),
+        ));
+    }
+    let (_reloaded, keys) = settings::setup(&state.config, req.secret_key.as_deref(), &req.items)
+        .map_err(|e| ApiError::BadRequest(format!("{e:#}")))?;
+    let npub = mirror::npub(&keys.public_key());
+    let exit = state.exit.clone();
+    tokio::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+        exit.restart();
+    });
+    let body = Json(serde_json::json!({ "ok": true, "npub": npub, "restart": true }));
+    Ok((StatusCode::OK, body).into_response())
 }
 
 pub async fn shutdown(State(state): State<Arc<AppState>>) -> Response {

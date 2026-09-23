@@ -6,6 +6,7 @@
 
 - builder `rust:1.97-slim-trixie`、runtime `debian:trixie-slim`（glibc を揃えるため同じコードネーム）。
 - runtime には `/usr/local/bin/swing` だけを置き、ユーザー `swing`（uid/gid 1000）で実行する。`/data` はそのユーザー所有の `VOLUME`。
+- `WORKDIR /data`。`--config`／`SWING_CONFIG` のどちらも無いときに `resolve_config_path` が返す `<cwd>/swing.toml`（[`../architecture.md#設定と環境変数`](../architecture.md#設定と環境変数)）がこの `/data` の下（volume の中）になるようにするため。これが無いと `swing.toml` はコンテナのルート直下に作られ、コンテナを作り直すたびに消える。
 - `ENTRYPOINT ["swing"]`、`CMD ["up"]`（[`up.md`](up.md)）。`mirror` サービスは `SWING_KUBO_MANAGED=false` を固定で渡すので、コンテナの中では Kubo を子プロセスにせず外部の `ipfs` サービスに対して動く（`swing up` の unmanaged 経路）。
 
 ## compose.yaml
@@ -17,11 +18,11 @@
 
 2 サービスとも `restart: unless-stopped`。Caddy による専用の `gateway` サービス（旧 `gateway` プロファイル、`docker/caddy/`）は廃止した。内蔵 gateway（[`gateway.md`](gateway.md)）が `mirror` コンテナの中で同じ役割を果たす。`SWING_GATEWAY_LISTEN` の既定は `off` なので、有効にする場合は `.env` で `SWING_GATEWAY_LISTEN=0.0.0.0:8081`（コンテナ内バインド）と `SWING_GATEWAY_HOSTS` を設定する。ホスト側の 8081 ポート自体は `[gateway].listen` の設定に関わらず常に compose がマッピングする（`SWING_GATEWAY_BIND` で変更・変えなければ `127.0.0.1:8081` に固定で公開される。gateway を使わない構成でもポートだけは空いている、という compose 側のトレードオフ）。
 
-外部ネットワークに出ないデモ用の重ね合わせ（`docker/demo/`）は [`docker/demo/README.md`](../../docker/demo/README.md) を参照。`.env` は mirror の `env_file` と、compose の変数展開の両方に使われる。
+外部ネットワークに出ないデモ用の重ね合わせ（`docker/demo/`）は [`docker/demo/README.md`](../../docker/demo/README.md) を参照。`.env` は mirror の `env_file` と、compose の変数展開の両方に使われる。`.env`（と compose が固定で渡す環境変数）で設定したキーはすべて `Source::Env` になるので、ダッシュボードの Settings／Setup 画面ではロック表示（編集不可）になる（[`dashboard.md`](dashboard.md)）。compose 構成では `nostr.relays` や保存上限などを `.env` に書くほど、ダッシュボードから変更できる項目が減っていく。
 
 ## ダッシュボード（compose）
 
-`mirror` サービスはコンテナ内で `SWING_DASHBOARD_LISTEN=${SWING_DASHBOARD_LISTEN:-0.0.0.0:8082}` を待ち受ける。`.env` に `SWING_DASHBOARD_LISTEN` を書けばそれが使われる（`off` にすればコンテナでもダッシュボードを無効化できる）。ホストにどう公開するかは別の変数 `SWING_DASHBOARD_BIND`（既定 `127.0.0.1:8082`）で決める。`SWING_KUBO_GATEWAY_BIND` と同じ流儀で、**`SWING_DASHBOARD_BIND` は compose 専用の変数展開にしか使われず、Rust 側（`swing` バイナリ）はこの名前を読まない**。
+`mirror` サービスはコンテナ内で `SWING_DASHBOARD_LISTEN=${SWING_DASHBOARD_LISTEN:-0.0.0.0:8082}` を待ち受ける。`.env` に `SWING_DASHBOARD_LISTEN` を書けばそれが使われる。`config::parse_dashboard_listen` は `SocketAddr` としてパースするだけで `off` は受け付けない（`[gateway].listen` など他の listen 系キーとは違い、ダッシュボード自体を無効にする設定は無い）。Web UI の配信だけを止めたいなら `SWING_DASHBOARD_UI=false`（`/api/*` は残る）。ホストにどう公開するかは別の変数 `SWING_DASHBOARD_BIND`（既定 `127.0.0.1:8082`）で決める。`SWING_KUBO_GATEWAY_BIND` と同じ流儀で、**`SWING_DASHBOARD_BIND` は compose 専用の変数展開にしか使われず、Rust 側（`swing` バイナリ）はこの名前を読まない**。
 
 ダッシュボードの Publish 画面はブラウザから直接フォルダをアップロードする方式（`POST /api/publish/upload`。上限は `SWING_DASHBOARD_MAX_UPLOAD`、既定 2GB）だけを使うため、`mirror` コンテナに volume をマウントする必要はない。詳しくは [`dashboard.md`](dashboard/http-api.md#post-apipublishupload) を参照。CLI の `swing publish` をコンテナで使う場合は `docker compose run --rm -v "$PWD/public:/site" mirror publish ...` のような一時マウントでよい。
 

@@ -13,17 +13,19 @@
 | `util.js` | 画面間で共有するキャッシュ・DOM/fetch ユーティリティ・表示スタイル切替・非同期ロードのガード（`createLoadGuard`）。`storage.js`・`i18n.js` に依存する |
 | `ui.js` | 複数画面で共有する UI 部品（コピーボタン、バッジ、relay 結果表示など）。`util.js`・`i18n.js` に依存する |
 | `graph.js` | webring 用の自前 force-directed layout。`util.js` の `clamp` だけに依存する |
-| `sites.js` / `webring.js` / `publish.js` / `settings.js` / `desktop.js` | 各画面（それぞれ Sites・Webring・Publish・Settings・Desktop） |
+| `sites.js` / `webring.js` / `publish.js` / `settings.js` / `setup.js` / `desktop.js` | 各画面（それぞれ Sites・Webring・Publish・Settings・Setup・Desktop） |
 | `boot.js` | 描画前に同期実行する小さな通常スクリプト。サイドナビの折りたたみ状態と、表示言語が英語以外なら翻訳待ちの印を付ける。どのモジュールにも依存しない |
 | `app.js` | ルーター兼エントリポイント。`<script type="module" src="/app.js">` から読み込まれ、各画面モジュールを import する |
 
 CSS は `style.css`（全画面共通）に加え、Desktop 画面のウィンドウ枠専用の `desktop.css` を `index.html` が `<link>` で読み込む（読み込み順は下記「CSS カスタマイズのインターフェース」を参照）。Desktop 画面の「リンク集」ページ本文だけは別ドキュメント（`desktop-page.html` + `desktop-page.css`）で、iframe の中で動く（下記「リンク集ページ（iframe）」）。
 
-`#/desktop` `#/sites` `#/webring` `#/publish` `#/settings` の 5 画面をハッシュルーティングで切り替える（既定は `sites`）。現在の画面のナビのリンクには `aria-current="page"` が付く。書き込みリクエストには `X-Swing-Dashboard: 1` と `Content-Type: application/json` を付ける。relay 由来の文字列は DOM API だけで挿入し、`innerHTML` は使わない。`url` は `^https?://` にマッチするときだけリンクにする。
+`#/desktop` `#/sites` `#/webring` `#/publish` `#/settings` `#/setup` の 6 画面をハッシュルーティングで切り替える（既定は `sites`）。現在の画面のナビのリンクには `aria-current="page"` が付く。書き込みリクエストには `X-Swing-Dashboard: 1` と `Content-Type: application/json` を付ける。relay 由来の文字列は DOM API だけで挿入し、`innerHTML` は使わない。`url` は `^https?://` にマッチするときだけリンクにする。
+
+`app.js` の `init()` は最初のルーティングをする前に `loadOverview()`（[`/api/overview`](http-api.md#get-apioverview)）を待ってから `showRoute()` を呼ぶ（初回描画の一瞬だけ別の画面が見えてから Setup に切り替わる、というちらつきを防ぐため）。`currentRoute()` は `cache.overview.setup` が `true` の間、hash が何であっても常に `'setup'` を返す（URL を直接叩いても Setup に留まる）。`showRoute()` は同じ `cache.overview.setup` を見てサイドナビの表示も切り替える：`true` の間は Setup 項目（Settings と同じ歯車アイコン）だけを表示して `aria-current="page"` を付け、他の 5 項目は `hidden` にする。`false` になれば逆に Setup 項目を隠し、他の 5 項目を通常どおり表示する。`overview.setup` が `true` のまま起動直後に hash が `#/setup` でなければ、`location.hash = '#/setup'` に変えてから描画する。
 
 言語切り替え（Settings 画面）は `settings.js` が `swing:langchange` という `CustomEvent` を `document` に投げ、`app.js` がそれを購読して各画面を再描画する。各画面のロードは世代カウンタ（`createLoadGuard`）でガードし、切り替えが速くても古いレスポンスで上書きしない。
 
-サイドナビの並び順は上から Desktop・Sites・Webring・Publish・Settings（`#/desktop` が一番上）。
+サイドナビの並び順は上から Desktop・Sites・Webring・Publish・Settings・Setup（`#/desktop` が一番上）。Setup 項目は `overview.setup` が `true` の間だけ表示される（上記）。
 
 | 画面 | 内容 | 表示スタイル（`data-style`、localStorage キー `swing:style:<view>`） |
 |---|---|---|
@@ -31,7 +33,8 @@ CSS は `style.css`（全画面共通）に加え、Desktop 画面のウィン�
 | Sites | [`/api/sites`](http-api.md#get-apisites) の一覧、mirror への追加・削除、`Unfollowed but still stored`、[`/api/status`](http-api.md#get-apistatus) を呼ぶ Storage check（版ごとの判定の表と、サイトごとの実容量・合計の表） | `cards`（既定）/ `table` |
 | Webring | [`/api/webring`](http-api.md#get-apiwebringrootkeydepthn) を root・depth 指定で取得。ノード選択で [`/api/replicas?key=`](http-api.md#get-apireplicaskeykey) を引き、詳細パネルからミラー操作もできる | `graph`（既定）/ `list` / `ascii` / `source`（dot・mermaid） |
 | Publish | [`/api/overview`](http-api.md#get-apioverview)・[`/api/publish/sites`](http-api.md#get-apipublishsites)（My sites）、publish フォーム（常にフォルダアップロード） | スタイル切替なし |
-| Settings | [`/api/config`](http-api.md#get-apiconfig) を読み取り専用表示。テーマ・言語・カスタム CSS の設定。プロセスの停止・再起動ボタン（下記「プロセス操作」） | スタイル切替なし |
+| Settings | [`/api/config`](http-api.md#get-apiconfig) を表示。ホワイトリストに載っていて env 由来でない項目はその場で編集できる（下記「設定編集」）。テーマ・言語・カスタム CSS の設定。プロセスの停止・再起動ボタン（下記「プロセス操作」） | スタイル切替なし |
+| Setup | 鍵が未設定（`overview.setup === true`）の間だけ表示できる導入画面。鍵の生成／貼り付け、relays、保存上限 3 つを入力して [`POST /api/setup`](http-api.md#post-apisetup) を送る（下記「Setup 画面」） | スタイル切替なし |
 
 ## Desktop 画面
 
@@ -172,6 +175,25 @@ NIP-05 の検証結果はバッジで `OK`（`verified`）/ `NG`（`mismatch`）
 ### グラフ（`web/graph.js`）
 
 外部ライブラリを使わない自前の force-directed layout。ドラッグでノードを固定でき、クリックで選択して詳細パネルを開く。キーボード操作（Tab で移動、Enter/Space で選択）に対応する。パン・ホイールズーム（0.15〜4 倍）と全体表示（Fit）ができ、`prefers-reduced-motion: reduce` ではアニメーションせず同期的に 1 回だけ描画する。ノード・辺は class と `data-*` だけを持ち、色は付けない（配色は CSS 側、下記参照）。
+
+## Settings 画面の設定編集（`settings.js`）
+
+`renderConfig`（`settings.js`）はセクションごとに表（キー・値・env）を描く。ホワイトリストに載っている項目（`item.editable === true`）は値のセルが入力欄になる（`kind` で分岐: `bool`/`nip05` はセレクト、`list` はテキストエリア、それ以外はテキスト入力。値の初期値は `item.raw`）。載っていない項目・env 由来の項目は従来どおりテキスト表示。`— Locked: set by environment` の注記（`configLockedByEnv`）は「ホワイトリストに載っているのに env 由来で編集できない」項目（`kind` があり `source` が `env`）にだけ添え、もともと画面から変えられない項目には付けない。
+
+- セクションごとに 1 つの Save ボタン（`.swing-config-actions`、`Apply` ボタンと同じ `.swing-btn.swing-btn-accent` の見た目）。押すと、そのセクション内で初期値から変わったフィールドだけを集めて [`PUT /api/config`](http-api.md#put-apiconfig) に送る（変更が無ければ何もしない）。
+- `config.writable === false`（設定ファイルが書けない。[`dashboard.md#設定の読み込みと編集srcsettingsrs`](../dashboard.md#設定の読み込みと編集srcsettingsrs)）のときは、ホワイトリストに載っている項目も入力欄にせず読み取り専用表示にし、`configNotWritable` の注記を画面上部に出す。
+- 保存が成功すると `renderConfig` をレスポンス（更新後の `ConfigDto`）で描き直し、そのセクションの状態行に `configSaved`（「保存しました。反映するにはエージェントを再起動してください」）を出す。失敗時はそのセクションだけを再度編集可能に戻し、状態行にエラーを出す。
+- `config.restart_required === true`（今のプロセスでの保存が 1 回でもあった）なら、画面上部に `configRestartRequiredNotice` の注記を常に出す。プロセスの再起動ボタンは下記「プロセス操作」。
+
+## Setup 画面（`setup.js`）
+
+鍵が未設定の間（[`dashboard.md#セットアップモードと-appstatesetup_mode`](../dashboard.md#セットアップモードと-appstatesetup_mode)）だけ表示できる導入フォーム。`onShow` のたびに `GET /api/overview` → `GET /api/config` を読み直し、`overview.setup` が `false` になっていれば（他のタブなどで既にセットアップ済みなら）`#/sites` に移す。
+
+- 鍵: 「新しい鍵を生成する」（既定）か「既存の鍵を使う」（nsec か hex を 1 行で入力）のラジオ。
+- relays（複数行のテキストエリア。既定の relay 数 + 1 行分の高さを確保している）と、保存上限 3 つ（`max_total_storage` / `max_per_site` / `max_per_account`）を `GET /api/config` の `raw` で事前入力する。
+- これら 4 項目のうち、`GET /api/config` 上で `editable: false`（＝ env 由来。compose でよくある。[`docker.md`](../docker.md)）になっているものは、フォームでも disabled にして現在の値をそのまま表示し、`configLockedByEnv` の注記を添える。送信する `items` にもそのキーは含めない（含めるとサーバ側が env 由来として 400 で拒否するため）。
+- 送信すると `POST /api/setup`（[`http-api.md#post-apisetup`](http-api.md#post-apisetup)）を叩く。成功したら生成／使用した鍵の `npub` を表示し、`GET /api/overview` を 1 秒間隔・最大 120 回ポーリングして `setup: false` になったら `#/settings` へ移る（書き込んだ設定をそのまま確認できるようにするため）（`setupTimedOut` はタイムアウト時のメッセージで、エラーではなく「再読み込みして確認して」という案内）。
+- 失敗したらフォームを再度有効にする（env 由来で disabled にしていたフィールドはそのまま disabled に戻す）。
 
 ## Settings 画面のプロセス操作
 

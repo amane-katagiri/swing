@@ -199,7 +199,11 @@ fn print_mirror_list(config: &Config, view: &MirrorListView) {
 }
 
 pub async fn list(config: &Config) -> Result<()> {
-    let relay = RelayClient::connect(&config.nostr.secret_key, &config.nostr.relays).await?;
+    let relay = RelayClient::connect(
+        config.require_secret_key()?.expose_secret(),
+        &config.nostr.relays,
+    )
+    .await?;
     let view = collect_mirror_list(&relay, config).await?;
     relay.client.shutdown().await;
     print_mirror_list(config, &view);
@@ -738,7 +742,11 @@ fn print_sites(view: &SitesView) -> Result<()> {
 }
 
 pub async fn sites(config: &Config) -> Result<()> {
-    let relay = RelayClient::connect(&config.nostr.secret_key, &config.nostr.relays).await?;
+    let relay = RelayClient::connect(
+        config.require_secret_key()?.expose_secret(),
+        &config.nostr.relays,
+    )
+    .await?;
     let view = collect_sites(&relay, config).await?;
     relay.client.shutdown().await;
     print_sites(&view)

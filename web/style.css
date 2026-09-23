@@ -783,6 +783,14 @@ textarea.swing-input {
   padding: var(--swing-space-3);
 }
 
+.swing-status[data-kind="warn"] {
+  color: var(--swing-warn);
+  background: var(--swing-warn-soft);
+  border: 1px solid var(--swing-warn);
+  border-radius: var(--swing-radius);
+  padding: var(--swing-space-3);
+}
+
 .swing-badge {
   display: inline-block;
   font-size: 0.75rem;
@@ -1401,6 +1409,26 @@ pre.swing-pre {
   font-size: 1rem;
   border-bottom: 1px solid var(--swing-border);
   padding-bottom: var(--swing-space-1);
+}
+
+.swing-config-section td input.swing-input,
+.swing-config-section td select.swing-input {
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.swing-config-section td textarea.swing-input {
+  min-height: 4em;
+}
+
+.swing-config-actions {
+  display: flex;
+  gap: var(--swing-space-2);
+  margin-top: var(--swing-space-2);
+}
+
+.swing-config-actions + .swing-status {
+  margin-top: var(--swing-space-3);
 }
 
 .swing-css-actions {

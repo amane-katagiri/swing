@@ -10,11 +10,20 @@
 HTTP サーバー（axum 0.8）で、ダッシュボードのブラウザ向け管理画面（`[dashboard].ui = true` のとき）と、CLI の一部（`status`・`mirror add`・`mirror remove`・`stop`。[`../architecture/cli.md`](cli.md)）が叩く制御 API（`/api/*`、常に有効）の両方を兼ねる。専用のサブコマンドは無く、`swing up`（`src/up.rs::run`）が起動する。API の寿命は `swing up` プロセスそのものと同じで、Kubo や mirror-agent が落ちて再起動している間も `/api/overview`・`/api/config`・`/api/shutdown`・`/api/restart` は動き続ける。
 
 - relay 接続（`Arc<RelayClient>`）と Kubo クライアント（`IpfsClient`、`Clone`）は agent が接続・確定させたものを `AppState::set_ready` で受け取り、`tokio::sync::RwLock<Option<...>>` に保持する。agent がまだ relay に接続していない、または Kubo の URL を確定していない間（起動直後、または agent が落ちて再起動待ちの間）は `None` で、agent が `run_until` を抜けるときに `set_not_ready` で `None` に戻す。
-  - relay・ipfs を使うエンドポイント（`/api/sites`・`/api/status`・`/api/mirror`・`/api/mirror/add`・`/api/mirror/remove`・`/api/webring`・`/api/replicas`・`/api/publish/sites`・`/api/publish/upload`）は `None` の間 `503 Service Unavailable`、body `{"error": "agent is not ready"}` を返す（`ApiError::NotReady`）。
-  - `/api/overview`・`/api/config`・`/api/shutdown`・`/api/restart` は agent の準備状態に関わらず常に応答する。
+  - relay・ipfs を使うエンドポイント（`/api/sites`・`/api/status`・`/api/mirror`・`/api/mirror/add`・`/api/mirror/remove`・`/api/webring`・`/api/replicas`・`/api/publish/sites`・`/api/publish/upload`）は `None` の間 `503 Service Unavailable`、body `{"error": "agent is not ready"}` を返す（`ApiError::NotReady`）。鍵が未設定（セットアップモード。下記「セットアップモードと `AppState::setup_mode`」）の間はこれらが常に `503`、body `{"error": "agent is not configured"}`（`ApiError::NotConfigured`）になる。
+  - `/api/overview`・`/api/config`・`/api/shutdown`・`/api/restart` は agent の準備状態に関わらず常に応答する。`/api/setup` はセットアップモードの間だけ応答する（それ以外は `409`）。
 - 保存状態は agent の `Mutex<State>` には触れず、CLI の各サブコマンドと同じく `state.json` をディスクから読み直す（`mirror::collect_sites`・`health::collect_status` など）。
 - `mirror add` / `mirror remove` が relay に受理されると `tokio::sync::Notify` で agent の待ち受けループに知らせ、poll tick と同じ `poll_once`（sweep → Follow Set の再取得 → レプリカ報告の同期）をその場で実行させる。
-- 自分の公開鍵（`own_pubkey`）は起動時に 1 回だけ秘密鍵から求めて保持する（リクエストのたびにパースし直さない）。
+- 自分の公開鍵（`AppState.own_pubkey: Option<PublicKey>`）は起動時に 1 回だけ秘密鍵から求めて保持する（リクエストのたびにパースし直さない）。鍵が無ければ `None` で、`AppState::setup_mode()` はこれが `None` かどうかで判定する。
+
+### セットアップモードと `AppState::setup_mode`
+
+`[nostr].secret_key`（`SWING_NOSTR_SECRET_KEY`）が無い状態で `swing up` を起動すると、`dashboard::AppState::new` に `keys: None` が渡り、`own_pubkey` も `None` になる。この状態（セットアップモード）の詳しい起動シーケンス（Kubo・agent を起動しない、ダッシュボードだけ動かす）は [`up.md#セットアップモード鍵未設定`](up.md#セットアップモード鍵未設定) を参照。ダッシュボード側で見えるのはこれだけ:
+
+- `GET /api/overview` の `setup: true`、`pubkey`／`npub` は `null`。
+- relay・Kubo を使うエンドポイントは常に `503 agent is not configured`。
+- `POST /api/setup` だけがこのモードで使え、鍵と初期設定を書いてプロセス内再起動をスケジュールする（下記「設定の読み込みと編集」、[`dashboard/http-api.md#post-apisetup`](dashboard/http-api.md#post-apisetup)）。それ以外の時期に叩くと `409`。
+- フロント（`web/app.js`）は `overview.setup` を見て、どの hash であっても Setup 画面（`#/setup`）に固定する（[`dashboard/web.md`](dashboard/web.md)）。
 
 ### UI と API の分離（`[dashboard].ui`）
 
@@ -27,7 +36,7 @@ HTTP サーバー（axum 0.8）で、ダッシュボードのブラウザ向け�
 `up::run`（`src/up.rs`）の中で行う。全体の起動順は [`up.md`](up.md) を参照。
 
 1. `swing.lock` の取得・シグナルハンドラの設定の後、`<state_dir>/upload/` を掃除（`dashboard::cleanup_upload_dir`）する。
-2. `dashboard::AppState::new` を作る（relay・ipfs はまだ `None`）。`AppState::new` 自体の失敗（秘密鍵パース、`ui = true` のときの `DesktopAssets::load` 失敗）は `swing up` の起動失敗として伝播する。
+2. `config.require_secret_key()` を試す。成功すれば `Keys::parse` した鍵を、失敗すれば `None` を `dashboard::AppState::new(config, notify, exit, keys)` に渡す（`keys: Option<Keys>`）。`AppState::new` 自体の失敗（`ui = true` のときの `DesktopAssets::load` 失敗）は `swing up` の起動失敗として伝播する。
 3. `[dashboard].listen` に `TcpListener::bind` する。bind に失敗すると `swing up` の起動自体がエラーで終了する。bind したアドレスがループバック（`127.0.0.1`/`::1`）以外、または `allowed_hosts` が空でなければ、認証が無いことを `tracing::warn` で警告する。
 4. `dashboard::serve` を別タスクとして `tokio::spawn` する。この時点でダッシュボードは応答するが、relay・ipfs を使うエンドポイントは agent が起動して `set_ready` を呼ぶまで `503` を返す。
 5. この後 Kubo（`managed` なら）と mirror-agent（`agent::run_until`）の起動ループに入る。`agent::run_until` は relay 接続と Kubo の URL 確定が終わった時点で `dashboard.set_ready(relay, ipfs)` を呼び、`run_until` を抜けるとき（エラーでも正常終了でも）`dashboard.set_not_ready()` を呼ぶ。
@@ -77,7 +86,7 @@ HTTP サーバー（axum 0.8）で、ダッシュボードのブラウザ向け�
 | `GET /favicon.svg` | `image/svg+xml`。Desktop 画面の Start ボタンと同じ SWING の 3 色マーク（`icon-desk-start` と同じ図形） |
 | `GET /favicon-32.png` `/apple-touch-icon.png` | `image/png`（`include_bytes!`）。`favicon.svg` から書き出した 32×32（透過、SVG 非対応ブラウザ向け）と 180×180（白背景、iOS のホーム画面向け） |
 | `GET /style.css` `/desktop.css` | `text/css; charset=utf-8` |
-| `GET /boot.js` `/app.js` `/graph.js` `/storage.js` `/i18n.js` `/util.js` `/ui.js` `/sites.js` `/webring.js` `/publish.js` `/settings.js` `/desktop.js` | `text/javascript; charset=utf-8` |
+| `GET /boot.js` `/app.js` `/graph.js` `/storage.js` `/i18n.js` `/util.js` `/ui.js` `/sites.js` `/webring.js` `/publish.js` `/settings.js` `/setup.js` `/desktop.js` | `text/javascript; charset=utf-8` |
 | `GET /desktop-page.html` `/desktop-page.css` | `text/html; charset=utf-8` / `text/css; charset=utf-8`。Desktop 画面の iframe に入るリンク集ページとその CSS |
 | `GET /desktop-frame.css` | `text/css; charset=utf-8`。同じ iframe に `desktop.js` が差し込む窓側の CSS（スクロールバー）。差し替え対象ではない |
 | `GET /desktop-banner` | 既定は `image/gif`。リンク集ページの 88×31 バナー画像。差し替えられるので拡張子はパスに持たせない |
@@ -86,8 +95,38 @@ HTTP サーバー（axum 0.8）で、ダッシュボードのブラウザ向け�
 
 各 JS ファイルの役割・依存関係は [`dashboard/web.md#構成`](dashboard/web.md#構成) を参照。
 
+## 設定の読み込みと編集（`src/settings.rs`）
+
+ダッシュボードに認証が無いこと（上の「ガード」）を前提に、`GET /api/config` が返す全項目のうち、書き込める（`PUT /api/config`／`POST /api/setup` で受け付ける）キーは `settings::EDITABLE_KEYS` のホワイトリストに載っているものだけに絞っている。載っていないキー（パス・待ち受けアドレス・ポート、`kubo.binary`、`dashboard.ui`、`allowed_hosts`、`kubo.managed`、`ipfs.*`、kind 番号、`gateway.*` など）は、ダッシュボードを触れる相手が任意のファイルパスやリスニングアドレスを差し替えられないようにするため、意図的に対象外にしている。現在のホワイトリスト（`section.field`、種類）:
+
+| キー | 種類 |
+|---|---|
+| `nostr.relays` | list |
+| `nostr.mirror_set` | string |
+| `policy.max_total_storage` / `max_per_site` / `max_per_account` / `max_update_size` | size |
+| `policy.max_sites_per_account` / `keep_versions` / `keep_days` | integer |
+| `policy.min_update_interval` / `nip05_cache_ttl` | duration |
+| `policy.remove_on_unfollow` | bool |
+| `policy.nip05` / `publish.nip05` | nip05（`off`/`warn`/`require`） |
+| `agent.poll_interval` / `report_ttl` | duration |
+| `agent.concurrency` | integer |
+| `publish.keep_versions` | integer |
+| `kubo.storage_max` | size |
+| `dashboard.gateway` | string |
+
+このリストは `settings::Kind`・`settings::find`・`settings::raw_value` と 1 対 1 対応していて、`GET /api/config` の `kind`/`raw`/`options` はここに載っているキーだけに付く（[`dashboard/http-api.md#get-apiconfig`](dashboard/http-api.md#get-apiconfig)）。載っていても `source: "env"`（環境変数由来）なら `editable: false` になり、`PUT`/`POST /api/setup` はそのキーを含む要求全体を 400 で拒否する（`settings::check_not_env_sourced`。1 つでも env 由来のキーが混ざっていれば、他のキーも含めて丸ごと拒否し、部分的な適用はしない）。`nostr.secret_key` はホワイトリストに無いので `PUT /api/config` からは絶対に書けず、`POST /api/setup` だけが書ける（下記）。
+
+書き込みは `settings::update`（`PUT /api/config`）と `settings::setup`（`POST /api/setup`）の 2 つだけで、どちらも同じ手順を踏む: 既存のファイルを `toml_edit::DocumentMut` として読む（無ければ空文書）→ 渡された項目だけを書き換える（`toml_edit` なのでコメントや他のキーはそのまま残る）→ `config::build_config_from_str` で組み立て直して妥当性を確認する（失敗したらファイルには一切触れない）→ tmp ファイルに書いて `rename`（atomic）。ファイルが元からあればその権限を引き継ぎ、新規作成なら unix で `0600`。`config_path` は常に具体的なパスを持つ（`config::resolve_config_path` が `--config`／`SWING_CONFIG`／`<カレントディレクトリ>/swing.toml` のいずれかを必ず返すため。ファイルが無くても良く、その場合の書き込みは新規作成になる）。
+
+書き込み成功後の状態は 2 つに分かれる:
+
+- `AppState.restart_required: AtomicBool` — プロセスが起動してから一度でも書き込みが成功すれば `true` になり、実際にプロセスが再起動する（下記）までリセットされない。`GET`/`PUT /api/config` の `restart_required` はこれをそのまま返す。
+- `AppState.display_config: RwLock<Arc<Config>>` — 起動時は `AppState.config`（実際に relay・Kubo・agent が使っている設定）のコピーだが、書き込みが成功するたびに書き換え後の設定に差し替わる。`GET /api/config` は常に `display_config` を見るので、まだ再起動していなくても「再起動したらこうなる」設定を UI に見せられる。実際に動いている relay・Kubo・agent 側の設定（`AppState.config`）は再起動するまで変わらない。
+
+`POST /api/setup` は上と同じ書き込みに加えて `[nostr].secret_key` を書き、成功レスポンスを返した約 300ms 後に `ExitRequest::restart()` を呼んでプロセス内再起動をスケジュールする（[`up.md#セットアップモード鍵未設定`](up.md#セットアップモード鍵未設定)、[`dashboard/http-api.md#post-apisetup`](dashboard/http-api.md#post-apisetup)）。
+
 ## 秘密鍵を出さない仕組み
 
-- `config::Config`（および `NostrConfig`）に `Serialize` を実装していない。DTO は手書きの構造体で、`secret_key` の実値を持つフィールドが型として存在しない。`/api/config` は常に固定文字列 `"(set, hidden)"` を返す。
+- `config::Config`（および `NostrConfig`）に `Serialize` を実装していない。DTO は手書きの構造体で、`secret_key` の実値を持つフィールドが型として存在しない。`/api/config` は常に固定文字列 `"(set, hidden)"`（未設定なら `"(not set)"`）を返す。
 - `Config` の `Debug` 実装も秘密鍵の値を `<redacted>` にする（ログにも出ない）。
-- 表示するのは `npub` / hex 公開鍵のみ。nsec は API のどのエンドポイントにも登場しない。
+- 表示するのは `npub` / hex 公開鍵のみ。nsec・鍵の hex は API のどのレスポンスにも登場しない（`POST /api/setup` も `npub` だけを返す）。鍵を書けるのは `POST /api/setup` だけで、`PUT /api/config` はホワイトリストに `nostr.secret_key` を含まないので書けない。

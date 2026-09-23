@@ -2,14 +2,20 @@
 
 [`../architecture.md`](../architecture.md) の一部。設定キーは [`../architecture.md#設定と環境変数`](../architecture.md#設定と環境変数)、内蔵 gateway は [`gateway.md`](gateway.md)、OS への常駐登録は [`service.md`](service.md)。
 
-`swing up`（`up::run`）は起動順が固定されている: `swing.lock` の取得（[多重起動の防止](#多重起動の防止lockrs)）→ シグナルハンドラの設定（`shutdown::cancel_on_signal()`、下記）→ `<state_dir>/upload/` の掃除（`dashboard::cleanup_upload_dir`）→ ダッシュボードの `AppState` 作成・`TcpListener::bind`・`dashboard::serve` の起動 → `[kubo].managed` に応じた Kubo / agent の起動ループ。ダッシュボードはこの時点で bind・応答を始めるが、relay・Kubo を使うエンドポイントは agent が起動して `AppState::set_ready` を呼ぶまで 503 を返す（[`dashboard.md`](dashboard.md#起動)）。
+`swing up`（`up::run`）は起動順が固定されている: `swing.lock` の取得（[多重起動の防止](#多重起動の防止lockrs)）→ シグナルハンドラの設定（`shutdown::cancel_on_signal()`、下記）→ `<state_dir>/upload/` の掃除（`dashboard::cleanup_upload_dir`）→ `config.require_secret_key()` を試す（下記「セットアップモード」）→ ダッシュボードの `AppState` 作成・`TcpListener::bind`・`dashboard::serve` の起動 → 鍵の有無・`[kubo].managed` に応じた Kubo / agent の起動ループ。ダッシュボードはこの時点で bind・応答を始めるが、relay・Kubo を使うエンドポイントは agent が起動して `AppState::set_ready` を呼ぶまで 503 を返す（[`dashboard.md`](dashboard.md#起動)）。
 
-Kubo / agent のループは `[kubo].managed` に応じて 2 通りに分かれる。
+鍵が設定されていれば、Kubo / agent のループは `[kubo].managed` に応じて 2 通りに分かれる。
 
 - `managed = true`: Kubo を子プロセスとして起動・設定・監視し、その上で `agent::run_until`（[`agent.md`](agent.md)）を動かす。
 - `managed = false`: 外部の Kubo（`[ipfs].api`）のヘルスを待ってから `agent::run_until` を動かす。
 
 どちらも `shutdown::cancel_on_signal()`（下記）で作った `CancellationToken` の下で動き、Kubo・agent いずれかが落ちても `up::run` 自身は動き続けて再起動する（ダッシュボードの API サーバも `up::run` のプロセスの寿命でずっと動き続ける）。ダッシュボードのサーバタスク自体は `up::run` が `dashboard_shutdown_tx`／`dashboard_task` として直接持ち、Kubo・agent のループとは別に、`up::run` 全体の終了時（下記）に最大 5 秒待って止める。
+
+## セットアップモード（鍵未設定）
+
+`config.require_secret_key()`（`[nostr].secret_key` も `SWING_NOSTR_SECRET_KEY` も無い場合にエラーを返す）が失敗すると、`up::run` は Kubo も agent も起動せず、ダッシュボードだけを動かして `token.cancelled()` を待つ（`dashboard::AppState::new` には `keys: None` を渡す。`AppState::setup_mode()` は `own_pubkey.is_none()` で判定する）。relay・Kubo を使う API エンドポイントは `ApiError::NotConfigured`（503、`{"error": "agent is not configured"}`）を返す（`dashboard::api::not_ready` が `setup_mode()` なら `NotConfigured`、そうでなければ通常の `NotReady` を返す）。`GET /api/overview` は `setup: true`、`pubkey`／`npub` は `null` になる（[`dashboard.md`](dashboard.md)、[`dashboard/http-api.md`](dashboard/http-api.md)）。
+
+セットアップモードを抜けるのは `POST /api/setup`（[`dashboard/http-api.md`](dashboard/http-api.md#post-apisetup)）だけで、鍵と初期設定を書き込んだ後、下記の「終了要求と exit code」と同じ `ExitRequest::restart()` を約 300ms 後に呼んでプロセス内再起動をスケジュールする（HTTP レスポンスを返してからにすることで、リクエスト自体は成功として返る）。`swing up` はコマンドラインからは常に起動でき、`swing.toml` が無くても `resolve_config_path` は `<cwd>/swing.toml` という書き込み先を常に返す（存在しなければ `Config::config_exists = false`。[`../architecture.md#設定と環境変数`](../architecture.md#設定と環境変数)）ので、初回起動はこのモードで待ち、ダッシュボードのセットアップ画面から鍵・relays・保存上限を書き込んで自分自身を再起動する（[`dashboard.md`](dashboard.md)）。
 
 ## shutdown（shutdown.rs）
 
@@ -153,20 +159,15 @@ loop {
 
 ## 終了要求と exit code（`shutdown::ExitRequest`, `shutdown::Exit`）
 
-`swing up` は `Result<shutdown::Exit>`（`Exit::Stop` | `Exit::Restart`）を返し、`main.rs` がそれをプロセスの exit code に変換する: `Exit::Stop` → 0、`Exit::Restart` → ランタイムを畳んだ (`shutdown_timeout`) 後に `std::process::exit(3)`。エラー終了（`Err`）はこれまでどおり anyhow 由来の非 0（通常 1）。
+`up::run` は `Result<shutdown::Exit>`（`Exit::Stop` | `Exit::Restart`）を返す。これを消費するのはプロセスではなく `main.rs` の `Command::Up` ループで、`Exit::Stop` ならそこで `Ok(())` を返してプロセスを終了させ（exit code 0）、`Exit::Restart` なら `config::Config::load` で設定を読み直してから同じプロセス内でもう一度 `up::run` を呼ぶ（`continue`）。つまり再起動はプロセスの終了・再起動を伴わない。以前あった「`Exit::Restart` は exit code 3 で終了し、サービスマネージャの再起動ポリシーに任せる」という経路は無くなった。エラー終了（`Err`）はこれまでどおり anyhow 由来の非 0（通常 1）でプロセスごと落ちる。
 
-`ExitRequest` は `up::run` が唯一のオーナーで、`shutdown::cancel_on_signal()` で作った最上位の `CancellationToken` から `ExitRequest::new(token.clone())` として 1 つ作り、`dashboard::AppState`（常に有効。`Option` ではない）にクローンを渡す。ダッシュボード API の `POST /api/shutdown`／`POST /api/restart`（[`dashboard/http-api.md`](dashboard/http-api.md)）はこの `ExitRequest` の `stop()`／`restart()` を呼ぶだけ（`restart()` は内部の `AtomicBool` を立ててから同じトークンを cancel する。`stop()` はトークンを cancel するだけ）。このトークンは Kubo・`agent::run_until` が使う子トークンの親でもあるので、`stop()`／`restart()` は SIGINT/SIGTERM を受けたときと同じ経路でグレースフルシャットダウンを開始させる。`up::run` はループ（`run_managed`／`run_unmanaged`。いずれも `Result<()>` を返すだけで stop/restart の区別を持たない）が終わった後、`exit.exit()`（`restart_requested()` を見て `Exit::Restart`／`Exit::Stop` を組み立てる）を戻り値にする。SIGINT/SIGTERM 経由（誰も `restart()` を呼んでいない）の場合は常に `Exit::Stop` になる。
+`ExitRequest` は `up::run` が呼ばれるたびに新しく作り直され（`shutdown::cancel_on_signal()` で作った、その回の `CancellationToken` から `ExitRequest::new(token.clone())`）、`dashboard::AppState`（常に有効。`Option` ではない）にクローンを渡す。ダッシュボード API の `POST /api/shutdown`／`POST /api/restart`（[`dashboard/http-api.md`](dashboard/http-api.md)）はこの `ExitRequest` の `stop()`／`restart()` を呼ぶだけ（`restart()` は内部の `AtomicBool` を立ててから同じトークンを cancel する。`stop()` はトークンを cancel するだけ）。このトークンは Kubo・`agent::run_until` が使う子トークンの親でもあるので、`stop()`／`restart()` は SIGINT/SIGTERM を受けたときと同じ経路でグレースフルシャットダウンを開始させる。`up::run` はループ（`run_managed`／`run_unmanaged`。いずれも `Result<()>` を返すだけで stop/restart の区別を持たない）が終わった後、`exit.exit()`（`restart_requested()` を見て `Exit::Restart`／`Exit::Stop` を組み立てる）を戻り値にする。SIGINT/SIGTERM 経由（誰も `restart()` を呼んでいない）の場合は常に `Exit::Stop` になる。セットアップモードの終了要求（`token.cancelled().await` を抜けるだけ）も同じ `exit.exit()` を経由する。
 
-`swing up`（managed）が Kubo をグレースフルに止めてから終了するのは、`run_managed` が `token.cancelled()` を検知したときに `Daemon::stop(30s)` を呼んでから `Ok(())` を返すため（上記「managed」のループ参照）。ダッシュボードから `restart` を要求すると: `POST /api/restart` → `ExitRequest.restart()` → 最上位トークンを cancel → `run_managed`／`run_unmanaged` と `agent::run_until` がグレースフルに終了 → `up::run` が `exit.exit()` で `Exit::Restart` を返す → `main.rs` が exit code 3 で終了する。
+`swing up`（managed）が Kubo をグレースフルに止めてから終了するのは、`run_managed` が `token.cancelled()` を検知したときに `Daemon::stop(30s)` を呼んでから `Ok(())` を返すため（上記「managed」のループ参照）。ダッシュボードから `restart` を要求すると: `POST /api/restart`（または `POST /api/setup` が内部で行う `exit.restart()`）→ `ExitRequest.restart()` → その回の最上位トークンを cancel → `run_managed`／`run_unmanaged` と `agent::run_until` がグレースフルに終了 → `up::run` が `exit.exit()` で `Exit::Restart` を返す → `main.rs` のループが設定を読み直して `up::run` を再度呼ぶ（新しい `swing.lock` の取得からやり直し。同じプロセス・同じ PID のまま）。
 
-### 各サービスマネージャの反応
+### サービスマネージャとの関係
 
-| マネージャ | `Exit::Stop`（code 0） | `Exit::Restart`（code 3） |
-|---|---|---|
-| systemd（`Restart=on-failure`） | 0 は失敗扱いではないので再起動しない。停止したままになる | 3 は失敗扱いなので `RestartSec=5` 後に再起動する |
-| launchd（`KeepAlive = { SuccessfulExit = false }`） | 0 は成功終了なので再起動しない。次のログインまで停止したまま（再開は `launchctl kickstart -k`） | 3 は非 0 なので再起動する。シグナルで死んだ場合も再起動する |
-| Windows タスクスケジューラ（`RestartOnFailure`） | systemd と同様、0 は成功終了なので再起動しない | 3 は失敗扱いなので `Interval = PT1M` 後に再起動する |
-| compose（`restart: unless-stopped`） | 終了コードに関わらず再起動する（`unless-stopped` は `docker stop` で明示的に止めない限り常に再起動） | 同上、再起動する |
+`swing stop --restart` やダッシュボードの再起動ボタンは、上記のとおりプロセスを終了させずに済ませるので、systemd/launchd/タスクスケジューラの再起動ポリシー（`Restart=on-failure` など）は一切関与しない。これらのポリシーが働くのは、プロセスがシグナルや panic・`Err` で実際に終了したとき（グレースフルな `stop`＝exit code 0 は再起動条件に当たらず、クラッシュ＝非 0 だけが対象になる）に限られる。各マネージャの `stop` の扱いは [`service.md`](service.md) を参照。
 
 ### Windows の制約
 

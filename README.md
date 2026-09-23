@@ -66,6 +66,8 @@ git clone <このリポジトリ>
 cd swing
 ```
 
+`swing.toml` を用意せずに `swing up` を起動することもできます。設定ファイルが無い（かつ環境変数にも鍵が無い）状態で起動すると、ダッシュボードだけが動く「セットアップモード」になります。ブラウザでダッシュボードを開くとセットアップ画面が表示され、鍵の生成（または既存の鍵の貼り付け）・relay・保存上限を入力して送信すると `swing.toml` が作られ（バイナリならカレントディレクトリ、Docker Compose ならコンテナの `/data`＝`swing-data` volume）、エージェントはプロセスを終了させずにそのまま通常モードで動き直します。以下は設定ファイルを事前に用意して起動する手順で、どちらでも構いません。設定は後からダッシュボードの Settings 画面（環境変数で設定した値を除く）からも変更でき、変更後は再起動すると反映されます。詳しくは [`docs/architecture/dashboard.md`](docs/architecture/dashboard.md) と [`docs/architecture/up.md`](docs/architecture/up.md) を参照してください。
+
 ### バイナリで動かす
 
 `swing` バイナリをビルドします（Rust 1.97 が必要です。ビルド済みバイナリの配布は今のところありません。[`docs/todo.md`](docs/todo.md) を参照してください）。
@@ -130,7 +132,7 @@ docker compose run --rm mirror key generate
 
 | 変数 | 意味 |
 | --- | --- |
-| `SWING_NOSTR_SECRET_KEY` | 署名用の秘密鍵（nsec または hex）。空のままでは起動できません |
+| `SWING_NOSTR_SECRET_KEY` | 署名用の秘密鍵（nsec または hex）。空のままでも起動でき、その場合はダッシュボードのセットアップ画面から鍵を生成・保存できます（上記「はじめかた」を参照） |
 | `SWING_NOSTR_RELAYS` | 接続する Nostr Relay（カンマ区切り）。実際に自分が使っている relay に置き換えることをおすすめします |
 | `SWING_MIRROR_SET` | ミラー対象リスト（Follow Set）の `d` タグ。通常は既定値 `swing` のままで構いません |
 | `SWING_MAX_TOTAL_STORAGE` | 保存する全サイト合計の容量上限（例: `20GB`） |
@@ -195,7 +197,8 @@ SWING は mirror-agent（バイナリでは `swing up`、Docker Compose では `
 - **Sites**: `swing sites` と同じ内容を一覧表示し、そのまま「mirror に追加」「mirror から外す」を操作できます。ボタンひとつで `swing status` 相当のストレージチェックも実行できます。
 - **Webring**: `swing webring` のグラフを、ドラッグ・パン・ズームできる図として表示します。ノードを選ぶとレプリカ数の詳細が見られ、そこから mirror への追加もできます。
 - **Publish**: これまでに公開したサイトの一覧（「My sites」）から選び直したり、新しく publish したりできます。ブラウザから直接フォルダを選んでアップロードする方式なので、**Docker Compose でも volume のマウントは不要**です（既定の上限は 2GB、`SWING_DASHBOARD_MAX_UPLOAD` で変更可）。
-- **Settings**: 現在の設定を読み取り専用で表示します（秘密鍵の値は一切表示されません）。ブラウザ側のテーマ・表示言語（日本語/English）・カスタム CSS もここで設定します。
+- **Settings**: 現在の設定を表示します（秘密鍵の値は一切表示されません）。環境変数で設定した項目を除き、その場で編集して保存できます（保存後、エージェントを再起動すると反映されます）。ブラウザ側のテーマ・表示言語（日本語/English）・カスタム CSS もここで設定します。
+- **Setup**: 鍵が未設定のとき（セットアップモード）だけ表示される導入画面です。上記「はじめかた」を参照してください。
 
 ダッシュボードは既定で `127.0.0.1` だけで待ち受け、認証はありません（信頼できる利用者だけがアクセスできる前提です）。`swing status`・`swing mirror add`・`swing mirror remove`・`swing stop` はこのダッシュボードの API を経由します。ホストでの公開先を変えたい場合や、Web の管理画面だけを外して API だけ残したい場合は `.env` に次のように設定してください。
 
@@ -370,8 +373,8 @@ TOML の設定ファイル（`swing.toml`）を使う場合と、環境変数だ
 
 | 環境変数 | 対応する設定 | 説明 |
 | --- | --- | --- |
-| `SWING_CONFIG` | (CLI `--config`) | 設定ファイルのパス。省略時は `./swing.toml` |
-| `SWING_NOSTR_SECRET_KEY` | `nostr.secret_key` | 署名用秘密鍵（nsec または hex） |
+| `SWING_CONFIG` | (CLI `--config`) | 設定ファイルのパス。省略時は `./swing.toml`（ファイルが無くてもこのパスがそのまま書き込み先になる） |
+| `SWING_NOSTR_SECRET_KEY` | `nostr.secret_key` | 署名用秘密鍵（nsec または hex）。省略可（上記「はじめかた」のセットアップモード） |
 | `SWING_NOSTR_RELAYS` | `nostr.relays` | 接続する relay（カンマ区切り） |
 | `SWING_MIRROR_SET` | `nostr.mirror_set` | Follow Set の `d` タグ（既定 `swing`） |
 | `SWING_SITE_EVENT_KIND` | `nostr.site_event_kind` | サイトイベントの kind（既定 `35980`） |

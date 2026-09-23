@@ -33,35 +33,57 @@ pub struct AppState {
     relay: RwLock<Option<Arc<RelayClient>>>,
     ipfs: RwLock<Option<IpfsClient>>,
     pub config: Arc<Config>,
+    display_config: RwLock<Arc<Config>>,
     pub notify: Arc<Notify>,
     pub started_at: u64,
     pub publish_lock: Mutex<()>,
-    pub own_pubkey: PublicKey,
+    pub own_pubkey: Option<PublicKey>,
     pub desktop: Option<DesktopAssets>,
     pub exit: ExitRequest,
+    pub restart_required: std::sync::atomic::AtomicBool,
 }
 
 impl AppState {
-    pub fn new(config: Arc<Config>, notify: Arc<Notify>, exit: ExitRequest) -> Result<Self> {
-        let own_pubkey = Keys::parse(config.nostr.secret_key.expose_secret())
-            .context("parsing configured secret key")?
-            .public_key();
+    pub fn new(
+        config: Arc<Config>,
+        notify: Arc<Notify>,
+        exit: ExitRequest,
+        keys: Option<Keys>,
+    ) -> Result<Self> {
+        let own_pubkey = keys.map(|k| k.public_key());
         let desktop = if config.dashboard.ui {
             Some(DesktopAssets::load(&config.dashboard)?)
         } else {
             None
         };
+        let display_config = RwLock::new(config.clone());
         Ok(Self {
             relay: RwLock::new(None),
             ipfs: RwLock::new(None),
             config,
+            display_config,
             notify,
             started_at: Timestamp::now().as_secs(),
             publish_lock: Mutex::new(()),
             own_pubkey,
             desktop,
             exit,
+            restart_required: std::sync::atomic::AtomicBool::new(false),
         })
+    }
+
+    pub fn setup_mode(&self) -> bool {
+        self.own_pubkey.is_none()
+    }
+
+    // Reflects the file on disk once it's been edited, so the settings UI can show what a
+    // restart will pick up even before the running process reloads it.
+    pub async fn display_config(&self) -> Arc<Config> {
+        self.display_config.read().await.clone()
+    }
+
+    pub async fn set_display_config(&self, config: Config) {
+        *self.display_config.write().await = Arc::new(config);
     }
 
     pub async fn set_ready(&self, relay: Arc<RelayClient>, ipfs: IpfsClient) {
@@ -102,6 +124,7 @@ fn ui_router() -> Router<Arc<AppState>> {
         .route("/webring.js", get(assets::webring_js))
         .route("/publish.js", get(assets::publish_js))
         .route("/settings.js", get(assets::settings_js))
+        .route("/setup.js", get(assets::setup_js))
         .route("/desktop.js", get(assets::desktop_js))
         .route("/desktop-page.html", get(assets::desktop_page))
         .route("/desktop-page.css", get(assets::desktop_page_css))
@@ -139,7 +162,8 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/api/webring", get(api::webring))
         .route("/api/replicas", get(api::replicas))
         .route("/api/publish/sites", get(api::publish_sites))
-        .route("/api/config", get(api::config))
+        .route("/api/config", get(api::config).put(api::update_config))
+        .route("/api/setup", post(api::setup))
         .route("/api/shutdown", post(api::shutdown))
         .route("/api/restart", post(api::restart));
 
@@ -203,7 +227,7 @@ mod tests {
         let secret_hex = Keys::generate().secret_key().to_secret_hex();
         let config = Config {
             nostr: NostrConfig {
-                secret_key: secret_hex.clone().into(),
+                secret_key: Some(secret_hex.clone().into()),
                 relays: vec!["wss://relay.example".to_string()],
                 mirror_set: "swing".to_string(),
                 site_event_kind: 35980,
@@ -263,14 +287,28 @@ mod tests {
                 hosts: Vec::new(),
                 upstream: "http://127.0.0.1:8080".to_string(),
             },
-            config_path: None,
+            config_path: PathBuf::from("./swing.toml"),
+            config_exists: true,
+            sources: std::collections::BTreeMap::new(),
         };
         (config, secret_hex)
     }
 
+    fn test_keys(secret_hex: &str) -> Option<Keys> {
+        Some(Keys::parse(secret_hex).unwrap())
+    }
+
     fn test_state() -> Arc<AppState> {
-        let (config, _secret_hex) = test_config(true);
-        Arc::new(AppState::new(Arc::new(config), Arc::new(Notify::new()), test_exit()).unwrap())
+        let (config, secret_hex) = test_config(true);
+        Arc::new(
+            AppState::new(
+                Arc::new(config),
+                Arc::new(Notify::new()),
+                test_exit(),
+                test_keys(&secret_hex),
+            )
+            .unwrap(),
+        )
     }
 
     async fn call(app: Router, req: Request<Body>) -> axum::http::Response<Body> {
@@ -357,12 +395,18 @@ mod tests {
         std::fs::write(&page_css, "body { color: red }").unwrap();
         std::fs::write(&banner, b"GIF89a").unwrap();
 
-        let (mut config, _secret_hex) = test_config(true);
+        let (mut config, secret_hex) = test_config(true);
         config.dashboard.desktop_page = Some(page);
         config.dashboard.desktop_page_css = Some(page_css);
         config.dashboard.desktop_banner = Some(banner);
         let state = Arc::new(
-            AppState::new(Arc::new(config), Arc::new(Notify::new()), test_exit()).unwrap(),
+            AppState::new(
+                Arc::new(config),
+                Arc::new(Notify::new()),
+                test_exit(),
+                test_keys(&secret_hex),
+            )
+            .unwrap(),
         );
 
         for (path, content_type, expected) in [
@@ -401,9 +445,14 @@ mod tests {
     #[test]
     fn an_unreadable_desktop_page_fails_at_startup() {
         let dir = tempfile::tempdir().unwrap();
-        let (mut config, _secret_hex) = test_config(true);
+        let (mut config, secret_hex) = test_config(true);
         config.dashboard.desktop_page = Some(dir.path().join("missing.html"));
-        let err = match AppState::new(Arc::new(config), Arc::new(Notify::new()), test_exit()) {
+        let err = match AppState::new(
+            Arc::new(config),
+            Arc::new(Notify::new()),
+            test_exit(),
+            test_keys(&secret_hex),
+        ) {
             Ok(_) => panic!("expected a startup error"),
             Err(err) => err,
         };
@@ -415,9 +464,14 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let banner = dir.path().join("banner.bmp");
         std::fs::write(&banner, b"BM").unwrap();
-        let (mut config, _secret_hex) = test_config(true);
+        let (mut config, secret_hex) = test_config(true);
         config.dashboard.desktop_banner = Some(banner);
-        let err = match AppState::new(Arc::new(config), Arc::new(Notify::new()), test_exit()) {
+        let err = match AppState::new(
+            Arc::new(config),
+            Arc::new(Notify::new()),
+            test_exit(),
+            test_keys(&secret_hex),
+        ) {
             Ok(_) => panic!("expected a startup error"),
             Err(err) => err,
         };
@@ -438,10 +492,16 @@ mod tests {
 
     #[tokio::test]
     async fn allowed_host_from_config_is_accepted() {
-        let (mut config, _secret_hex) = test_config(true);
+        let (mut config, secret_hex) = test_config(true);
         config.dashboard.allowed_hosts = vec!["my.example".to_string()];
         let state = Arc::new(
-            AppState::new(Arc::new(config), Arc::new(Notify::new()), test_exit()).unwrap(),
+            AppState::new(
+                Arc::new(config),
+                Arc::new(Notify::new()),
+                test_exit(),
+                test_keys(&secret_hex),
+            )
+            .unwrap(),
         );
         let app = router(state);
         let req = Request::builder()
@@ -502,7 +562,13 @@ mod tests {
     async fn config_endpoint_never_exposes_the_secret_key_value() {
         let (config, secret_hex) = test_config(true);
         let state = Arc::new(
-            AppState::new(Arc::new(config), Arc::new(Notify::new()), test_exit()).unwrap(),
+            AppState::new(
+                Arc::new(config),
+                Arc::new(Notify::new()),
+                test_exit(),
+                test_keys(&secret_hex),
+            )
+            .unwrap(),
         );
         let app = router(state);
         let req = Request::builder()
@@ -663,10 +729,18 @@ mod tests {
     }
 
     fn test_state_with(state_dir: PathBuf, max_upload: u64) -> Arc<AppState> {
-        let (mut config, _secret_hex) = test_config(true);
+        let (mut config, secret_hex) = test_config(true);
         config.agent.state_dir = state_dir;
         config.dashboard.max_upload = max_upload;
-        Arc::new(AppState::new(Arc::new(config), Arc::new(Notify::new()), test_exit()).unwrap())
+        Arc::new(
+            AppState::new(
+                Arc::new(config),
+                Arc::new(Notify::new()),
+                test_exit(),
+                test_keys(&secret_hex),
+            )
+            .unwrap(),
+        )
     }
 
     fn multipart_body(boundary: &str, parts: &[(&str, Option<&str>, &[u8])]) -> Vec<u8> {
@@ -889,10 +963,16 @@ mod tests {
 
     #[tokio::test]
     async fn set_ready_then_not_ready_flips_availability() {
-        let (config, _secret_hex) = test_config(true);
-        let secret_key = config.nostr.secret_key.expose_secret().to_string();
+        let (config, secret_hex) = test_config(true);
+        let secret_key = secret_hex.clone();
         let state = Arc::new(
-            AppState::new(Arc::new(config), Arc::new(Notify::new()), test_exit()).unwrap(),
+            AppState::new(
+                Arc::new(config),
+                Arc::new(Notify::new()),
+                test_exit(),
+                test_keys(&secret_hex),
+            )
+            .unwrap(),
         );
         let relay = Arc::new(
             crate::nostr::RelayClient::connect(&secret_key, &[])
@@ -911,10 +991,16 @@ mod tests {
 
     #[tokio::test]
     async fn ui_disabled_hides_static_routes_but_keeps_the_api() {
-        let (mut config, _secret_hex) = test_config(true);
+        let (mut config, secret_hex) = test_config(true);
         config.dashboard.ui = false;
         let state = Arc::new(
-            AppState::new(Arc::new(config), Arc::new(Notify::new()), test_exit()).unwrap(),
+            AppState::new(
+                Arc::new(config),
+                Arc::new(Notify::new()),
+                test_exit(),
+                test_keys(&secret_hex),
+            )
+            .unwrap(),
         );
 
         let app = router(Arc::clone(&state));
@@ -937,8 +1023,16 @@ mod tests {
     }
 
     fn test_state_with_exit(exit: ExitRequest) -> Arc<AppState> {
-        let (config, _secret_hex) = test_config(true);
-        Arc::new(AppState::new(Arc::new(config), Arc::new(Notify::new()), exit).unwrap())
+        let (config, secret_hex) = test_config(true);
+        Arc::new(
+            AppState::new(
+                Arc::new(config),
+                Arc::new(Notify::new()),
+                exit,
+                test_keys(&secret_hex),
+            )
+            .unwrap(),
+        )
     }
 
     #[tokio::test]
@@ -999,5 +1093,183 @@ mod tests {
         assert_eq!(json["action"], "restart");
         assert!(token.is_cancelled());
         assert!(exit.restart_requested());
+    }
+
+    fn test_config_in_dir(dir: &std::path::Path, ui: bool, with_key: bool) -> (Config, String) {
+        let (mut config, secret_hex) = test_config(ui);
+        config.config_path = dir.join("swing.toml");
+        config.config_exists = false;
+        if !with_key {
+            config.nostr.secret_key = None;
+        }
+        (config, secret_hex)
+    }
+
+    #[tokio::test]
+    async fn put_config_updates_the_file_and_marks_restart_required() {
+        let dir = tempfile::tempdir().unwrap();
+        let (config, secret_hex) = test_config_in_dir(dir.path(), true, true);
+        let state = Arc::new(
+            AppState::new(
+                Arc::new(config),
+                Arc::new(Notify::new()),
+                test_exit(),
+                test_keys(&secret_hex),
+            )
+            .unwrap(),
+        );
+        let app = router(state);
+        let body = serde_json::json!({
+            "items": { "policy.max_total_storage": "20GB" }
+        })
+        .to_string();
+        let req = Request::builder()
+            .method("PUT")
+            .uri("/api/config")
+            .header("Host", "127.0.0.1:8082")
+            .header("x-swing-dashboard", "1")
+            .header("content-type", "application/json")
+            .body(Body::from(body))
+            .unwrap();
+        let resp = call(app.clone(), req).await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["restart_required"], true);
+        assert!(dir.path().join("swing.toml").exists());
+        let policy = json["sections"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|s| s["name"] == "policy")
+            .unwrap();
+        let item = policy["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|i| i["key"] == "max_total_storage")
+            .unwrap();
+        assert_eq!(item["source"], "file");
+        assert_eq!(item["raw"], "20 GB");
+
+        let get_req = Request::builder()
+            .uri("/api/config")
+            .header("Host", "127.0.0.1:8082")
+            .body(Body::empty())
+            .unwrap();
+        let get_resp = call(app, get_req).await;
+        assert_eq!(get_resp.status(), StatusCode::OK);
+        let get_body = axum::body::to_bytes(get_resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let get_json: serde_json::Value = serde_json::from_slice(&get_body).unwrap();
+        assert_eq!(get_json["restart_required"], true);
+        let policy = get_json["sections"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|s| s["name"] == "policy")
+            .unwrap();
+        let item = policy["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|i| i["key"] == "max_total_storage")
+            .unwrap();
+        assert_eq!(item["source"], "file");
+    }
+
+    #[tokio::test]
+    async fn post_setup_generates_a_key_and_schedules_a_restart() {
+        let dir = tempfile::tempdir().unwrap();
+        let (config, _secret_hex) = test_config_in_dir(dir.path(), true, false);
+        let state = Arc::new(
+            AppState::new(Arc::new(config), Arc::new(Notify::new()), test_exit(), None).unwrap(),
+        );
+        assert!(state.setup_mode());
+        let app = router(state);
+        let body = serde_json::json!({ "secret_key": null, "items": {} }).to_string();
+        let req = Request::builder()
+            .method("POST")
+            .uri("/api/setup")
+            .header("Host", "127.0.0.1:8082")
+            .header("x-swing-dashboard", "1")
+            .header("content-type", "application/json")
+            .body(Body::from(body))
+            .unwrap();
+        let resp = call(app, req).await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["ok"], true);
+        assert_eq!(json["restart"], true);
+        assert!(json["npub"].as_str().unwrap().starts_with("npub1"));
+        assert!(dir.path().join("swing.toml").exists());
+    }
+
+    #[tokio::test]
+    async fn post_setup_when_already_configured_is_conflict() {
+        let app = router(test_state());
+        let body = serde_json::json!({ "secret_key": null, "items": {} }).to_string();
+        let req = Request::builder()
+            .method("POST")
+            .uri("/api/setup")
+            .header("Host", "127.0.0.1:8082")
+            .header("x-swing-dashboard", "1")
+            .header("content-type", "application/json")
+            .body(Body::from(body))
+            .unwrap();
+        let resp = call(app, req).await;
+        assert_eq!(resp.status(), StatusCode::CONFLICT);
+    }
+
+    #[tokio::test]
+    async fn setup_mode_relay_endpoints_report_not_configured() {
+        let dir = tempfile::tempdir().unwrap();
+        let (config, _secret_hex) = test_config_in_dir(dir.path(), true, false);
+        let state = Arc::new(
+            AppState::new(Arc::new(config), Arc::new(Notify::new()), test_exit(), None).unwrap(),
+        );
+        let app = router(state);
+        let req = Request::builder()
+            .uri("/api/sites")
+            .header("Host", "127.0.0.1:8082")
+            .body(Body::empty())
+            .unwrap();
+        let resp = call(app, req).await;
+        assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
+        let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["error"], "agent is not configured");
+    }
+
+    #[tokio::test]
+    async fn overview_reports_setup_mode_with_null_identity() {
+        let dir = tempfile::tempdir().unwrap();
+        let (config, _secret_hex) = test_config_in_dir(dir.path(), true, false);
+        let state = Arc::new(
+            AppState::new(Arc::new(config), Arc::new(Notify::new()), test_exit(), None).unwrap(),
+        );
+        let app = router(state);
+        let req = Request::builder()
+            .uri("/api/overview")
+            .header("Host", "127.0.0.1:8082")
+            .body(Body::empty())
+            .unwrap();
+        let resp = call(app, req).await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["setup"], true);
+        assert!(json["pubkey"].is_null());
+        assert!(json["npub"].is_null());
     }
 }

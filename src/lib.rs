@@ -16,6 +16,7 @@ pub mod policy;
 pub mod publish;
 pub mod replicas;
 pub mod service;
+pub mod settings;
 pub mod shutdown;
 pub mod state;
 pub mod stop;

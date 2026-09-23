@@ -217,7 +217,7 @@ impl ReportRelay for FakeRelay {
 pub(super) fn test_config(policy: PolicyConfig) -> Config {
     Config {
         nostr: NostrConfig {
-            secret_key: "unused".to_string().into(),
+            secret_key: Some("unused".to_string().into()),
             relays: vec![],
             mirror_set: "site-mirror".to_string(),
             site_event_kind: 35980,
@@ -265,7 +265,9 @@ pub(super) fn test_config(policy: PolicyConfig) -> Config {
             hosts: Vec::new(),
             upstream: "http://127.0.0.1:8080".to_string(),
         },
-        config_path: None,
+        config_path: std::path::PathBuf::from("./swing.toml"),
+        config_exists: true,
+        sources: std::collections::BTreeMap::new(),
     }
 }
 

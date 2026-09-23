@@ -12,6 +12,7 @@ RUN groupadd --system --gid 1000 swing \
     && chown swing:swing /data
 COPY --from=builder /build/target/release/swing /usr/local/bin/swing
 USER swing
+WORKDIR /data
 VOLUME /data
 ENTRYPOINT ["swing"]
 CMD ["up"]

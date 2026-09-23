@@ -525,6 +525,7 @@
       <li><a href="#/webring" data-route="webring"><svg class="swing-nav-icon" aria-hidden="true"><use href="#icon-webring"></use></svg><span class="swing-nav-label">Webring</span></a></li>
       <li><a href="#/publish" data-route="publish"><svg class="swing-nav-icon" aria-hidden="true"><use href="#icon-publish"></use></svg><span class="swing-nav-label" data-i18n="navPublish">Publish</span></a></li>
       <li><a href="#/settings" data-route="settings"><svg class="swing-nav-icon" aria-hidden="true"><use href="#icon-settings"></use></svg><span class="swing-nav-label" data-i18n="navSettings">Settings</span></a></li>
+      <li><a href="#/setup" data-route="setup" hidden><svg class="swing-nav-icon" aria-hidden="true"><use href="#icon-settings"></use></svg><span class="swing-nav-label" data-i18n="navSetup">Setup</span></a></li>
     </ul>
     <div class="swing-nav-bottom">
       <div class="swing-nav-footer">
@@ -819,7 +820,9 @@
       <div class="swing-view-head">
         <h1 data-i18n="settingsHeading">Settings</h1>
       </div>
-      <p class="swing-hint" data-i18n="settingsReadonlyHint">Configuration is read-only here. Change swing.toml or the environment on the agent's host, then restart the agent.</p>
+      <p class="swing-hint" data-i18n="settingsReadonlyHint">Values set by an environment variable are read-only here. Other values can be changed here and take effect after a restart.</p>
+      <div id="settings-not-writable-notice" class="swing-status" aria-live="polite"></div>
+      <div id="settings-restart-notice" class="swing-status" aria-live="polite"></div>
       <div id="settings-config-status" class="swing-status" aria-live="polite"></div>
       <div id="settings-config-content"></div>
 
@@ -856,6 +859,54 @@
         </div>
         <div id="process-status" class="swing-status" aria-live="polite"></div>
       </div>
+    </section>
+
+    <section id="view-setup" class="swing-view" data-view-name="setup" hidden>
+      <div class="swing-view-head">
+        <h1 data-i18n="setupHeading">Set up SWING</h1>
+      </div>
+
+      <div class="swing-panel">
+        <p class="swing-hint" id="setup-intro"></p>
+      </div>
+
+      <div id="setup-status" class="swing-status" aria-live="polite"></div>
+
+      <form id="setup-form" class="swing-panel" hidden>
+        <h2 data-i18n="setupKeyHeading">Key</h2>
+        <div class="swing-field">
+          <label class="swing-checkbox"><input type="radio" name="keyChoice" value="generate" checked> <span data-i18n="setupKeyGenerate">Generate a new key</span></label>
+          <label class="swing-checkbox"><input type="radio" name="keyChoice" value="existing"> <span data-i18n="setupKeyExisting">Use an existing key</span></label>
+        </div>
+        <label class="swing-field" id="setup-key-field" hidden><span data-i18n="setupKeyInputLabel">Secret key (nsec or hex)</span>
+          <input type="password" name="secretKey" class="swing-input" autocomplete="off">
+        </label>
+
+        <h2 data-i18n="setupRelaysHeading">Relays</h2>
+        <label class="swing-field"><span data-i18n="relaysLabel">Relays</span>
+          <textarea name="relays" class="swing-input" rows="6"></textarea>
+          <span class="swing-hint" id="setup-relays-lock-hint" hidden></span>
+        </label>
+
+        <h2 data-i18n="setupStorageHeading">Storage limits</h2>
+        <label class="swing-field"><span data-i18n="setupMaxTotalStorageLabel">Max total storage</span>
+          <input type="text" name="maxTotalStorage" class="swing-input">
+          <span class="swing-hint" id="setup-max-total-storage-lock-hint" hidden></span>
+        </label>
+        <label class="swing-field"><span data-i18n="setupMaxPerSiteLabel">Max per site</span>
+          <input type="text" name="maxPerSite" class="swing-input">
+          <span class="swing-hint" id="setup-max-per-site-lock-hint" hidden></span>
+        </label>
+        <label class="swing-field"><span data-i18n="setupMaxPerAccountLabel">Max per account</span>
+          <input type="text" name="maxPerAccount" class="swing-input">
+          <span class="swing-hint" id="setup-max-per-account-lock-hint" hidden></span>
+        </label>
+
+        <button type="submit" class="swing-btn swing-btn-accent" data-i18n="setupSubmitBtn">Set up</button>
+      </form>
+
+      <div id="setup-form-status" class="swing-status" aria-live="polite"></div>
+      <div id="setup-result" class="swing-panel" hidden></div>
     </section>
 
   </main>

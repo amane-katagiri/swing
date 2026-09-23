@@ -2,6 +2,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
+use nostr_sdk::prelude::Keys;
 use tokio::sync::Notify;
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info, warn};
@@ -68,10 +69,18 @@ pub async fn run(config: Config) -> Result<Exit> {
         .await
         .context("cleaning up leftover dashboard uploads")?;
 
+    let keys = match config.require_secret_key() {
+        Ok(secret) => {
+            Some(Keys::parse(secret.expose_secret()).context("parsing configured secret key")?)
+        }
+        Err(_) => None,
+    };
+
     let dashboard_state = Arc::new(dashboard::AppState::new(
         Arc::new(config.clone()),
         Arc::clone(&notify),
         exit.clone(),
+        keys.clone(),
     )?);
 
     let addr = config.dashboard.listen;
@@ -95,7 +104,13 @@ pub async fn run(config: Config) -> Result<Exit> {
         }
     });
 
-    let result = if config.kubo.managed {
+    let result = if keys.is_none() {
+        info!(
+            "no Nostr secret key configured; running in setup mode (dashboard only, waiting for setup)"
+        );
+        token.cancelled().await;
+        Ok(())
+    } else if config.kubo.managed {
         run_managed(
             config,
             token,

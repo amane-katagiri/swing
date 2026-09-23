@@ -300,7 +300,8 @@ pub async fn run(
         println!("Message: {message}");
     }
 
-    let keys = Keys::parse(&config.nostr.secret_key).context("parsing Nostr secret key")?;
+    let keys = Keys::parse(config.require_secret_key()?.expose_secret())
+        .context("parsing Nostr secret key")?;
     let pubkey_hex = keys.public_key().to_hex();
 
     if nip05_mode != Nip05Mode::Off {
@@ -330,7 +331,11 @@ pub async fn run(
     println!();
     println!("Nostr");
 
-    let relay = RelayClient::connect(&config.nostr.secret_key, &config.nostr.relays).await?;
+    let relay = RelayClient::connect(
+        config.require_secret_key()?.expose_secret(),
+        &config.nostr.relays,
+    )
+    .await?;
     let send_result = sign_and_send(
         &relay,
         &SiteAnnouncement {

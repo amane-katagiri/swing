@@ -5,11 +5,12 @@ use anyhow::{Context, Result, bail};
 use crate::config::resolve_config_path;
 
 fn resolve_service_paths(config_path: Option<&Path>) -> Result<(PathBuf, PathBuf, PathBuf)> {
-    let config = resolve_config_path(config_path)
-        .filter(|p| p.exists())
-        .context(
-            "service install needs a config file (swing.toml): pass --config or set SWING_CONFIG",
-        )?;
+    let config = resolve_config_path(config_path);
+    if !config.exists() {
+        bail!(
+            "service install needs a config file (swing.toml): pass --config or set SWING_CONFIG"
+        );
+    }
     let config = config
         .canonicalize()
         .with_context(|| format!("resolving config path {}", config.display()))?;

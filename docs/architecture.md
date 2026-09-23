@@ -58,11 +58,12 @@ swing/
     lock.rs          多重起動防止のインスタンスロック（swing.lock）。詳細は architecture/up.md
     gateway.rs       内蔵 gateway（axum）。Host 名での振り分けと Kubo gateway へのプロキシ。詳細は architecture/gateway.md
     service.rs       `swing service install/uninstall/status/stop`（systemd / launchd / タスクスケジューラ）。詳細は architecture/service.md
+    settings.rs      ダッシュボードから編集できる設定キーのホワイトリスト（EDITABLE_KEYS）、`PUT /api/config`（update）・`POST /api/setup`（setup）の読み書き（toml_edit）。詳細は architecture/dashboard.md
     stop.rs          `swing stop`（動いている `swing up` のダッシュボード API 経由。API に到達できなければ「動いていない」として終了する）。詳細は architecture/up.md, architecture/service.md
     shutdown.rs      `cancel_on_signal`（SIGINT/SIGTERM → CancellationToken、force-exit watchdog）、`ExitRequest`/`Exit`（ダッシュボードからの停止・再起動要求と exit code）。up/agent 共通
     dashboard/       `swing up` 常駐の Web ダッシュボード兼制御 API（mod.rs, guard.rs, api.rs, dto.rs, assets.rs）。詳細は architecture/dashboard.md
     api_client.rs    ダッシュボード API を呼ぶ CLI 共通クライアント（`ApiClient`）。`status`・`mirror add`・`mirror remove`・`stop` が使う。詳細は architecture/dashboard/http-api.md
-  web/               ダッシュボードのフロント（index.html, style.css, ES modules, 画像・フォントなどの静的アセット一式）。ビルド工程なしで include_str!/include_bytes! によりバイナリへ埋め込む。desktop-page.html / desktop-page.css / desktop-banner.gif（Desktop 画面のリンク集ページ）だけは設定で差し替えられる。詳細は architecture/dashboard.md
+  web/               ダッシュボードのフロント（index.html, style.css, ES modules（setup.js を含む）, 画像・フォントなどの静的アセット一式）。ビルド工程なしで include_str!/include_bytes! によりバイナリへ埋め込む。desktop-page.html / desktop-page.css / desktop-banner.gif（Desktop 画面のリンク集ページ）だけは設定で差し替えられる。詳細は architecture/dashboard.md
   tests/
     kubo_integration.rs          Kubo 連携の統合テスト（#[ignore]）
     nostr_relay_integration.rs   relay 連携の統合テスト（#[ignore]）
@@ -95,14 +96,15 @@ swing webring [<key>...] [--depth <N>] [--format <text|dot|mermaid>] [--config <
 swing key generate
 ```
 
-`swing up` は Kubo（`[kubo].managed = true` なら）と mirror-agent の中身を 1 プロセスの supervisor として動かす（[`architecture/up.md`](architecture/up.md)）。`managed = false` なら既に動いている Kubo（外部のもの）を待ってから同じことをする。mirror-agent を単体で起動するサブコマンドは無く、常に `swing up` を経由する。`swing service` は `swing up` を OS の常駐に登録する（[`architecture/service.md`](architecture/service.md)）。`swing stop`／`swing service stop` は動いている `swing up` にグレースフルな停止・再起動を要求する（[`architecture/up.md#終了要求と-exit-codeshutdownexitrequest-shutdownexit`](architecture/up.md#終了要求と-exit-codeshutdownexitrequest-shutdownexit)）。
+`swing up` は Kubo（`[kubo].managed = true` なら）と mirror-agent の中身を 1 プロセスの supervisor として動かす（[`architecture/up.md`](architecture/up.md)）。`managed = false` なら既に動いている Kubo（外部のもの）を待ってから同じことをする。mirror-agent を単体で起動するサブコマンドは無く、常に `swing up` を経由する。`swing service` は `swing up` を OS の常駐に登録する（[`architecture/service.md`](architecture/service.md)）。`swing stop`／`swing service stop` は動いている `swing up` にグレースフルな停止・再起動を要求する（[`architecture/up.md#終了要求と-exit-codeshutdownexitrequest-shutdownexit`](architecture/up.md#終了要求と-exit-codeshutdownexitrequest-shutdownexit)）。`--restart` による再起動はプロセスを終了させず、同じプロセス内で設定を読み直して動き直す（exit code でサービスマネージャに再起動させる古い経路は無くなった）。
 
-設定ファイルは次の順に探す。1 か 2 で指定したファイルが無ければエラー終了。3 が無ければ環境変数だけで動く。
+`[nostr].secret_key`（`SWING_NOSTR_SECRET_KEY`）は無くてもよい。無いと `swing up` はセットアップモード（ダッシュボードのみ）で起動し、ダッシュボードのセットアップ画面から書き込める（[`architecture/up.md#セットアップモード鍵未設定`](architecture/up.md#セットアップモード鍵未設定)）。鍵を直接使うコマンド（`sites`・`replicas`・`webring`・`mirror list`・`publish`）は鍵が無ければエラー終了するが、ダッシュボード API 経由の `status`・`mirror add`・`mirror remove`・`stop`／`service stop` は鍵無しでも動く（[`architecture/cli.md`](architecture/cli.md)）。
+
+設定ファイルは次の順で 1 つのパスに決まる（`config::resolve_config_path`）。1 か 2 を指定してそのファイルが無ければエラー終了。3 は存在確認をせず、そのままファイルの読み書き先になる（無ければ設定は既定値と環境変数だけで組み立て、`Config.config_exists = false` になる。ダッシュボードのセットアップ・設定編集はこのパスに新規作成・上書きする）。`SWING_CONFIG` の空文字は未設定として扱う。
 
 1. `--config <path>`
 2. 環境変数 `SWING_CONFIG`
-3. `./swing.toml`
-4. 環境変数のみ
+3. `<カレントディレクトリ>/swing.toml`
 
 各サブコマンドの動作と出力は [`architecture/cli.md`](architecture/cli.md) を参照。
 
@@ -112,7 +114,7 @@ swing key generate
 
 ```toml
 [nostr]
-secret_key = "nsec1..."             # SWING_NOSTR_SECRET_KEY（nsec または hex）
+#secret_key = "nsec1..."            # SWING_NOSTR_SECRET_KEY（nsec または hex。省略可。無いと swing up はセットアップモードで起動する）
 relays = ["wss://relay.damus.io", "wss://nos.lol", "wss://relay.primal.net", "wss://yabu.me", "wss://relay-jp.nostr.wirednet.jp"]
                                     # SWING_NOSTR_RELAYS（カンマ区切り）
 mirror_set = "swing"                # SWING_MIRROR_SET（kind 30000 の d タグ）

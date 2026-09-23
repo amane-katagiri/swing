@@ -5,6 +5,7 @@ use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use swing::shutdown::Exit;
 use swing::{config, health, key, mirror, publish, replicas, service, stop, up, webring};
+use tracing::info;
 use tracing_subscriber::EnvFilter;
 
 // Not #[tokio::main]: shutdown_timeout keeps a stuck blocking thread from holding the process open.
@@ -245,22 +246,22 @@ fn main() -> Result<()> {
         .build()?;
     let result = runtime.block_on(run(cli));
     runtime.shutdown_timeout(RUNTIME_SHUTDOWN_TIMEOUT);
-    match result? {
-        Exit::Stop => Ok(()),
-        Exit::Restart => std::process::exit(3),
-    }
+    result
 }
 
-async fn run(cli: Cli) -> Result<Exit> {
+async fn run(cli: Cli) -> Result<()> {
     match cli.command {
-        Command::Up { config, .. } => {
+        Command::Up { config, .. } => loop {
             let cfg = config::Config::load(config.as_deref())?;
-            up::run(cfg).await
-        }
-        other => {
-            run_other(other).await?;
-            Ok(Exit::Stop)
-        }
+            match up::run(cfg).await? {
+                Exit::Stop => return Ok(()),
+                Exit::Restart => {
+                    info!("restarting: reloading configuration");
+                    continue;
+                }
+            }
+        },
+        other => run_other(other).await,
     }
 }
 

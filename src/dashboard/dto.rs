@@ -65,8 +65,9 @@ pub fn gateway_url(gateway: Option<&str>, cid: &str, stored: bool) -> Option<Str
 #[derive(Debug, Serialize)]
 pub struct OverviewDto {
     pub version: String,
-    pub pubkey: String,
-    pub npub: String,
+    pub setup: bool,
+    pub pubkey: Option<String>,
+    pub npub: Option<String>,
     pub relays: Vec<String>,
     pub mirror_set: String,
     pub gateway: Option<String>,
@@ -603,6 +604,16 @@ pub struct ConfigItemDto {
     pub value: ConfigValue,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub display: Option<String>,
+    pub source: &'static str,
+    pub editable: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub kind: Option<crate::settings::Kind>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub raw: Option<crate::settings::RawValue>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub options: Option<Vec<&'static str>>,
+    #[serde(skip)]
+    full_key: String,
 }
 
 impl ConfigItemDto {
@@ -612,21 +623,73 @@ impl ConfigItemDto {
             env: Some(env.to_string()),
             value,
             display: None,
+            source: "default",
+            editable: false,
+            kind: None,
+            raw: None,
+            options: None,
+            full_key: String::new(),
         }
     }
 
-    fn env_only(env: &str, value: ConfigValue) -> Self {
+    fn env_only(full_key: &str, env: &str, value: ConfigValue) -> Self {
         Self {
             key: None,
             env: Some(env.to_string()),
             value,
             display: None,
+            source: "default",
+            editable: false,
+            kind: None,
+            raw: None,
+            options: None,
+            full_key: full_key.to_string(),
         }
     }
 
     fn with_display(mut self, display: String) -> Self {
         self.display = Some(display);
         self
+    }
+}
+
+fn source_str(source: config::Source) -> &'static str {
+    match source {
+        config::Source::Env => "env",
+        config::Source::File => "file",
+        config::Source::Default => "default",
+    }
+}
+
+fn finalize_section(
+    name: &str,
+    mut items: Vec<ConfigItemDto>,
+    config: &config::Config,
+) -> ConfigSectionDto {
+    for item in &mut items {
+        let full_key = if !item.full_key.is_empty() {
+            item.full_key.clone()
+        } else if let Some(local) = &item.key {
+            format!("{name}.{local}")
+        } else {
+            continue;
+        };
+        let source = config
+            .source_of(&full_key)
+            .unwrap_or(config::Source::Default);
+        item.source = source_str(source);
+        item.editable = crate::settings::is_editable(config, &full_key);
+        if let Some(desc) = crate::settings::find(&full_key) {
+            item.kind = Some(desc.kind);
+            item.raw = crate::settings::raw_value(config, &full_key);
+            if desc.kind == crate::settings::Kind::Nip05 {
+                item.options = Some(config::NIP05_MODE_NAMES.to_vec());
+            }
+        }
+    }
+    ConfigSectionDto {
+        name: name.to_string(),
+        items,
     }
 }
 
@@ -691,20 +754,48 @@ fn ipfs_api_str(api: &config::IpfsApi) -> String {
     }
 }
 
+fn is_config_writable(config: &config::Config) -> bool {
+    if config.config_exists {
+        return std::fs::OpenOptions::new()
+            .append(true)
+            .open(&config.config_path)
+            .is_ok();
+    }
+    let Some(parent) = config
+        .config_path
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+    else {
+        return true;
+    };
+    match std::fs::metadata(parent) {
+        Ok(meta) => !meta.permissions().readonly(),
+        Err(_) => false,
+    }
+}
+
 #[derive(Debug, Serialize)]
 pub struct ConfigDto {
     pub config_path: Option<String>,
+    pub config_exists: bool,
+    pub writable: bool,
+    pub restart_required: bool,
     pub sections: Vec<ConfigSectionDto>,
 }
 
-pub fn config_dto(config: &config::Config) -> ConfigDto {
-    let nostr = ConfigSectionDto {
-        name: "nostr".to_string(),
-        items: vec![
+pub fn config_dto(config: &config::Config, restart_required: bool) -> ConfigDto {
+    let secret_key_display = if config.nostr.secret_key.is_some() {
+        "(set, hidden)"
+    } else {
+        "(not set)"
+    };
+    let nostr = finalize_section(
+        "nostr",
+        vec![
             ConfigItemDto::new(
                 "secret_key",
                 "SWING_NOSTR_SECRET_KEY",
-                ConfigValue::Str("(set, hidden)".to_string()),
+                ConfigValue::Str(secret_key_display.to_string()),
             ),
             ConfigItemDto::new(
                 "relays",
@@ -727,11 +818,12 @@ pub fn config_dto(config: &config::Config) -> ConfigDto {
                 ConfigValue::Num(config.nostr.replica_event_kind as u64),
             ),
         ],
-    };
+        config,
+    );
 
-    let ipfs = ConfigSectionDto {
-        name: "ipfs".to_string(),
-        items: vec![
+    let ipfs = finalize_section(
+        "ipfs",
+        vec![
             ConfigItemDto::new(
                 "api",
                 "SWING_IPFS_API",
@@ -743,11 +835,12 @@ pub fn config_dto(config: &config::Config) -> ConfigDto {
                 ConfigValue::Str(config.ipfs.mfs_root.clone()),
             ),
         ],
-    };
+        config,
+    );
 
-    let policy = ConfigSectionDto {
-        name: "policy".to_string(),
-        items: vec![
+    let policy = finalize_section(
+        "policy",
+        vec![
             ConfigItemDto::new(
                 "max_total_storage",
                 "SWING_MAX_TOTAL_STORAGE",
@@ -810,11 +903,12 @@ pub fn config_dto(config: &config::Config) -> ConfigDto {
             )
             .with_display(format_duration_secs(config.policy.nip05_cache_ttl)),
         ],
-    };
+        config,
+    );
 
-    let agent = ConfigSectionDto {
-        name: "agent".to_string(),
-        items: vec![
+    let agent = finalize_section(
+        "agent",
+        vec![
             ConfigItemDto::new(
                 "state_dir",
                 "SWING_STATE_DIR",
@@ -838,11 +932,13 @@ pub fn config_dto(config: &config::Config) -> ConfigDto {
             )
             .with_display(format_duration_secs(config.agent.report_ttl.as_secs())),
             ConfigItemDto::env_only(
+                "agent.fetch_timeout",
                 "SWING_FETCH_TIMEOUT",
                 ConfigValue::Num(config.agent.fetch_timeout.as_secs()),
             )
             .with_display(format_duration_secs(config.agent.fetch_timeout.as_secs())),
             ConfigItemDto::env_only(
+                "agent.fetch_idle_timeout",
                 "SWING_FETCH_IDLE_TIMEOUT",
                 ConfigValue::Num(config.agent.fetch_idle_timeout.as_secs()),
             )
@@ -850,11 +946,12 @@ pub fn config_dto(config: &config::Config) -> ConfigDto {
                 config.agent.fetch_idle_timeout.as_secs(),
             )),
         ],
-    };
+        config,
+    );
 
-    let publish = ConfigSectionDto {
-        name: "publish".to_string(),
-        items: vec![
+    let publish = finalize_section(
+        "publish",
+        vec![
             ConfigItemDto::new(
                 "nip05",
                 "SWING_PUBLISH_NIP05",
@@ -866,11 +963,12 @@ pub fn config_dto(config: &config::Config) -> ConfigDto {
                 ConfigValue::Num(config.publish.keep_versions as u64),
             ),
         ],
-    };
+        config,
+    );
 
-    let dashboard = ConfigSectionDto {
-        name: "dashboard".to_string(),
-        items: vec![
+    let dashboard = finalize_section(
+        "dashboard",
+        vec![
             ConfigItemDto::new(
                 "listen",
                 "SWING_DASHBOARD_LISTEN",
@@ -946,11 +1044,12 @@ pub fn config_dto(config: &config::Config) -> ConfigDto {
             )
             .with_display(format_bytes(config.dashboard.max_upload)),
         ],
-    };
+        config,
+    );
 
-    let kubo = ConfigSectionDto {
-        name: "kubo".to_string(),
-        items: vec![
+    let kubo = finalize_section(
+        "kubo",
+        vec![
             ConfigItemDto::new(
                 "managed",
                 "SWING_KUBO_MANAGED",
@@ -1001,11 +1100,12 @@ pub fn config_dto(config: &config::Config) -> ConfigDto {
                 ),
             ),
         ],
-    };
+        config,
+    );
 
-    let gateway = ConfigSectionDto {
-        name: "gateway".to_string(),
-        items: vec![
+    let gateway = finalize_section(
+        "gateway",
+        vec![
             ConfigItemDto::new(
                 "listen",
                 "SWING_GATEWAY_LISTEN",
@@ -1022,10 +1122,14 @@ pub fn config_dto(config: &config::Config) -> ConfigDto {
                 ConfigValue::Str(config.gateway.upstream.clone()),
             ),
         ],
-    };
+        config,
+    );
 
     ConfigDto {
-        config_path: config.config_path.as_ref().map(|p| p.display().to_string()),
+        config_path: Some(config.config_path.display().to_string()),
+        config_exists: config.config_exists,
+        writable: is_config_writable(config),
+        restart_required,
         sections: vec![
             nostr, ipfs, policy, agent, publish, dashboard, kubo, gateway,
         ],
@@ -1123,5 +1227,59 @@ mod tests {
         assert!(invalid.path.is_none());
         assert!(invalid.size.is_none());
         assert!(invalid.created_at.is_none());
+    }
+
+    fn test_config_at(path: PathBuf, exists: bool) -> config::Config {
+        let mut cfg = config::build_config_from_str(
+            "[nostr]\nsecret_key = \"k\"\nrelays = [\"wss://r\"]\n",
+            |_| None,
+        )
+        .unwrap();
+        cfg.config_path = path;
+        cfg.config_exists = exists;
+        cfg
+    }
+
+    #[test]
+    fn missing_config_with_a_missing_parent_directory_is_not_writable() {
+        let cfg = test_config_at(
+            PathBuf::from("/nonexistent-swing-test-dir-xyz/swing.toml"),
+            false,
+        );
+        assert!(!is_config_writable(&cfg));
+    }
+
+    #[test]
+    fn missing_config_in_a_writable_directory_is_writable() {
+        let dir = tempfile::tempdir().unwrap();
+        let cfg = test_config_at(dir.path().join("swing.toml"), false);
+        assert!(is_config_writable(&cfg));
+    }
+
+    #[test]
+    fn existing_writable_config_is_writable() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("swing.toml");
+        std::fs::write(&path, "").unwrap();
+        let cfg = test_config_at(path, true);
+        assert!(is_config_writable(&cfg));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn existing_readonly_config_is_not_writable() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("swing.toml");
+        std::fs::write(&path, "").unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o400)).unwrap();
+        let cfg = test_config_at(path.clone(), true);
+        if std::fs::OpenOptions::new().append(true).open(&path).is_ok() {
+            // Running as root (or on a filesystem that ignores permission bits):
+            // the read-only bit doesn't block writes, so there's nothing to assert.
+            return;
+        }
+        assert!(!is_config_writable(&cfg));
     }
 }

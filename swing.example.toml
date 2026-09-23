@@ -1,5 +1,5 @@
 [nostr]
-secret_key = "nsec1..."             # SWING_NOSTR_SECRET_KEY（nsec または hex）
+#secret_key = "nsec1..."            # SWING_NOSTR_SECRET_KEY（nsec または hex）。省略可。無いと swing up はダッシュボードだけが動くセットアップモードで起動し、ブラウザのセットアップ画面から生成・保存できる
 relays = ["wss://relay.damus.io", "wss://nos.lol", "wss://relay.primal.net", "wss://yabu.me", "wss://relay-jp.nostr.wirednet.jp"]
                                     # SWING_NOSTR_RELAYS（カンマ区切り）
 mirror_set = "swing"                # SWING_MIRROR_SET（kind 30000 の d タグ）

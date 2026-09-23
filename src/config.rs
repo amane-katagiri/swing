@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::env;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
@@ -53,6 +54,8 @@ pub enum Nip05Mode {
     Warn,
     Require,
 }
+
+pub const NIP05_MODE_NAMES: [&str; 3] = ["off", "warn", "require"];
 
 pub fn parse_nip05_mode(input: &str) -> Result<Nip05Mode> {
     match input.trim().to_ascii_lowercase().as_str() {
@@ -157,11 +160,18 @@ impl From<String> for NostrSecretKey {
 
 #[derive(Debug, Clone)]
 pub struct NostrConfig {
-    pub secret_key: NostrSecretKey,
+    pub secret_key: Option<NostrSecretKey>,
     pub relays: Vec<String>,
     pub mirror_set: String,
     pub site_event_kind: u16,
     pub replica_event_kind: u16,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Source {
+    Env,
+    File,
+    Default,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -282,49 +292,47 @@ pub struct Config {
     pub dashboard: DashboardConfig,
     pub kubo: KuboConfig,
     pub gateway: GatewayConfig,
-    pub config_path: Option<PathBuf>,
+    pub config_path: PathBuf,
+    pub config_exists: bool,
+    pub sources: BTreeMap<String, Source>,
 }
 
-pub fn resolve_config_path(cli_path: Option<&Path>) -> Option<PathBuf> {
+pub fn resolve_config_path(cli_path: Option<&Path>) -> PathBuf {
     if let Some(p) = cli_path {
-        return Some(p.to_path_buf());
+        return p.to_path_buf();
     }
-    if let Ok(p) = env::var("SWING_CONFIG") {
-        return Some(PathBuf::from(p));
+    if let Some(p) = env_var("SWING_CONFIG") {
+        return PathBuf::from(p);
     }
-    let default = PathBuf::from("./swing.toml");
-    if default.exists() {
-        return Some(default);
-    }
-    None
+    let cwd = env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    cwd.join("swing.toml")
 }
 
-fn load_file(cli_path: Option<&Path>) -> Result<(ConfigFile, Option<PathBuf>)> {
-    match resolve_config_path(cli_path) {
-        Some(path) => {
-            if !path.exists() {
-                if cli_path.is_some() || env::var("SWING_CONFIG").is_ok() {
-                    bail!("config file not found: {}", path.display());
-                }
-                return Ok((ConfigFile::default(), None));
-            }
-            let text = std::fs::read_to_string(&path)
-                .with_context(|| format!("reading config file {}", path.display()))?;
-            let file: ConfigFile = toml::from_str(&text)
-                .with_context(|| format!("parsing config file {}", path.display()))?;
-            Ok((file, Some(path)))
+fn load_file(cli_path: Option<&Path>) -> Result<(ConfigFile, PathBuf, bool)> {
+    let path = resolve_config_path(cli_path);
+    if !path.exists() {
+        if cli_path.is_some() || env_var("SWING_CONFIG").is_some() {
+            bail!("config file not found: {}", path.display());
         }
-        None => Ok((ConfigFile::default(), None)),
+        return Ok((ConfigFile::default(), path, false));
     }
+    let text = std::fs::read_to_string(&path)
+        .with_context(|| format!("reading config file {}", path.display()))?;
+    let file: ConfigFile =
+        toml::from_str(&text).with_context(|| format!("parsing config file {}", path.display()))?;
+    Ok((file, path, true))
 }
 
-fn env_var(name: &str) -> Option<String> {
+pub(crate) fn env_var(name: &str) -> Option<String> {
     env::var(name).ok().filter(|v| !v.is_empty())
 }
 
 /// Resolves a value whose TOML representation is a raw string needing the
 /// same `parse` as the environment variable, trying the environment first.
+#[allow(clippy::too_many_arguments)]
 fn resolve<T>(
+    sources: &mut BTreeMap<String, Source>,
+    key: &str,
     get_env: &impl Fn(&str) -> Option<String>,
     env_key: &str,
     file_val: Option<String>,
@@ -334,17 +342,29 @@ fn resolve<T>(
     default: T,
 ) -> Result<T> {
     match get_env(env_key) {
-        Some(v) => parse(&v).context(env_ctx.to_string()),
+        Some(v) => {
+            sources.insert(key.to_string(), Source::Env);
+            parse(&v).context(env_ctx.to_string())
+        }
         None => match file_val {
-            Some(v) => parse(&v).context(file_ctx.to_string()),
-            None => Ok(default),
+            Some(v) => {
+                sources.insert(key.to_string(), Source::File);
+                parse(&v).context(file_ctx.to_string())
+            }
+            None => {
+                sources.insert(key.to_string(), Source::Default);
+                Ok(default)
+            }
         },
     }
 }
 
 /// Resolves a value whose TOML representation is already the target type,
 /// only the environment variable needs `parse`.
+#[allow(clippy::too_many_arguments)]
 fn resolve_typed<T>(
+    sources: &mut BTreeMap<String, Source>,
+    key: &str,
     get_env: &impl Fn(&str) -> Option<String>,
     env_key: &str,
     file_val: Option<T>,
@@ -353,8 +373,20 @@ fn resolve_typed<T>(
     default: T,
 ) -> Result<T> {
     match get_env(env_key) {
-        Some(v) => parse(&v).context(env_ctx.to_string()),
-        None => Ok(file_val.unwrap_or(default)),
+        Some(v) => {
+            sources.insert(key.to_string(), Source::Env);
+            parse(&v).context(env_ctx.to_string())
+        }
+        None => match file_val {
+            Some(v) => {
+                sources.insert(key.to_string(), Source::File);
+                Ok(v)
+            }
+            None => {
+                sources.insert(key.to_string(), Source::Default);
+                Ok(default)
+            }
+        },
     }
 }
 
@@ -431,7 +463,15 @@ pub fn parse_mfs_root(input: &str) -> Result<String> {
     Ok(trimmed.to_string())
 }
 
-fn parse_bool(input: &str) -> Result<bool> {
+pub(crate) fn build_config_from_str(
+    text: &str,
+    get_env: impl Fn(&str) -> Option<String>,
+) -> Result<Config> {
+    let file: ConfigFile = toml::from_str(text).context("parsing config file")?;
+    build_config(file, get_env)
+}
+
+pub fn parse_bool(input: &str) -> Result<bool> {
     match input.trim().to_ascii_lowercase().as_str() {
         "1" | "true" | "yes" | "on" => Ok(true),
         "0" | "false" | "no" | "off" => Ok(false),
@@ -440,29 +480,65 @@ fn parse_bool(input: &str) -> Result<bool> {
 }
 
 fn build_config(file: ConfigFile, get_env: impl Fn(&str) -> Option<String>) -> Result<Config> {
-    let secret_key = get_env("SWING_NOSTR_SECRET_KEY")
-        .or(file.nostr.secret_key)
-        .context("missing Nostr secret key: set SWING_NOSTR_SECRET_KEY or [nostr].secret_key")?;
+    let mut sources: BTreeMap<String, Source> = BTreeMap::new();
 
-    let relays = match get_env("SWING_NOSTR_RELAYS") {
-        Some(v) => v
-            .split(',')
-            .map(|s| s.trim().to_string())
-            .filter(|s| !s.is_empty())
-            .collect(),
-        None => file.nostr.relays.unwrap_or_default(),
-    };
-    let relays = if relays.is_empty() {
-        DEFAULT_RELAYS.iter().map(|s| s.to_string()).collect()
+    let secret_key_env = get_env("SWING_NOSTR_SECRET_KEY");
+    let secret_key_source = if secret_key_env.is_some() {
+        Source::Env
+    } else if file.nostr.secret_key.is_some() {
+        Source::File
     } else {
-        relays
+        Source::Default
     };
+    sources.insert("nostr.secret_key".to_string(), secret_key_source);
+    let secret_key = secret_key_env.or(file.nostr.secret_key);
 
-    let mirror_set = get_env("SWING_MIRROR_SET")
-        .or(file.nostr.mirror_set)
-        .unwrap_or_else(|| "swing".to_string());
+    let relays_env = get_env("SWING_NOSTR_RELAYS");
+    let (relays, relays_source) = match relays_env {
+        Some(v) => {
+            let parsed: Vec<String> = v
+                .split(',')
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect();
+            if parsed.is_empty() {
+                (
+                    DEFAULT_RELAYS.iter().map(|s| s.to_string()).collect(),
+                    Source::Default,
+                )
+            } else {
+                (parsed, Source::Env)
+            }
+        }
+        None => {
+            let file_relays = file.nostr.relays.unwrap_or_default();
+            if file_relays.is_empty() {
+                (
+                    DEFAULT_RELAYS.iter().map(|s| s.to_string()).collect(),
+                    Source::Default,
+                )
+            } else {
+                (file_relays, Source::File)
+            }
+        }
+    };
+    sources.insert("nostr.relays".to_string(), relays_source);
+
+    let mirror_set = resolve(
+        &mut sources,
+        "nostr.mirror_set",
+        &get_env,
+        "SWING_MIRROR_SET",
+        file.nostr.mirror_set,
+        |s| Ok(s.to_string()),
+        "invalid SWING_MIRROR_SET",
+        "invalid [nostr].mirror_set",
+        "swing".to_string(),
+    )?;
 
     let site_event_kind = resolve_typed(
+        &mut sources,
+        "nostr.site_event_kind",
         &get_env,
         "SWING_SITE_EVENT_KIND",
         file.nostr.site_event_kind,
@@ -472,6 +548,8 @@ fn build_config(file: ConfigFile, get_env: impl Fn(&str) -> Option<String>) -> R
     )?;
 
     let replica_event_kind = resolve_typed(
+        &mut sources,
+        "nostr.replica_event_kind",
         &get_env,
         "SWING_REPLICA_EVENT_KIND",
         file.nostr.replica_event_kind,
@@ -481,6 +559,8 @@ fn build_config(file: ConfigFile, get_env: impl Fn(&str) -> Option<String>) -> R
     )?;
 
     let kubo_managed = resolve_typed(
+        &mut sources,
+        "kubo.managed",
         &get_env,
         "SWING_KUBO_MANAGED",
         file.kubo.managed,
@@ -489,7 +569,15 @@ fn build_config(file: ConfigFile, get_env: impl Fn(&str) -> Option<String>) -> R
         true,
     )?;
 
-    let ipfs_api_file = get_env("SWING_IPFS_API").or(file.ipfs.api);
+    let ipfs_api_env = get_env("SWING_IPFS_API");
+    let ipfs_api_explicit_source = if ipfs_api_env.is_some() {
+        Some(Source::Env)
+    } else if file.ipfs.api.is_some() {
+        Some(Source::File)
+    } else {
+        None
+    };
+    let ipfs_api_file = ipfs_api_env.or(file.ipfs.api);
     if kubo_managed && ipfs_api_file.is_some() {
         bail!("[ipfs].api conflicts with [kubo].managed = true");
     }
@@ -498,8 +586,18 @@ fn build_config(file: ConfigFile, get_env: impl Fn(&str) -> Option<String>) -> R
     } else {
         IpfsApi::Url(ipfs_api_file.unwrap_or_else(|| "http://127.0.0.1:5001".to_string()))
     };
+    sources.insert(
+        "ipfs.api".to_string(),
+        if kubo_managed {
+            Source::Default
+        } else {
+            ipfs_api_explicit_source.unwrap_or(Source::Default)
+        },
+    );
 
     let mfs_root = resolve(
+        &mut sources,
+        "ipfs.mfs_root",
         &get_env,
         "SWING_MFS_ROOT",
         file.ipfs.mfs_root,
@@ -510,6 +608,8 @@ fn build_config(file: ConfigFile, get_env: impl Fn(&str) -> Option<String>) -> R
     )?;
 
     let max_total_storage = resolve(
+        &mut sources,
+        "policy.max_total_storage",
         &get_env,
         "SWING_MAX_TOTAL_STORAGE",
         file.policy.max_total_storage,
@@ -520,6 +620,8 @@ fn build_config(file: ConfigFile, get_env: impl Fn(&str) -> Option<String>) -> R
     )?;
 
     let max_per_site = resolve(
+        &mut sources,
+        "policy.max_per_site",
         &get_env,
         "SWING_MAX_PER_SITE",
         file.policy.max_per_site,
@@ -530,6 +632,8 @@ fn build_config(file: ConfigFile, get_env: impl Fn(&str) -> Option<String>) -> R
     )?;
 
     let max_per_account = resolve(
+        &mut sources,
+        "policy.max_per_account",
         &get_env,
         "SWING_MAX_PER_ACCOUNT",
         file.policy.max_per_account,
@@ -540,6 +644,8 @@ fn build_config(file: ConfigFile, get_env: impl Fn(&str) -> Option<String>) -> R
     )?;
 
     let max_sites_per_account = resolve_typed(
+        &mut sources,
+        "policy.max_sites_per_account",
         &get_env,
         "SWING_MAX_SITES_PER_ACCOUNT",
         file.policy.max_sites_per_account,
@@ -552,6 +658,8 @@ fn build_config(file: ConfigFile, get_env: impl Fn(&str) -> Option<String>) -> R
     }
 
     let max_update_size = resolve(
+        &mut sources,
+        "policy.max_update_size",
         &get_env,
         "SWING_MAX_UPDATE_SIZE",
         file.policy.max_update_size,
@@ -562,6 +670,8 @@ fn build_config(file: ConfigFile, get_env: impl Fn(&str) -> Option<String>) -> R
     )?;
 
     let keep_versions = resolve_typed(
+        &mut sources,
+        "policy.keep_versions",
         &get_env,
         "SWING_KEEP_VERSIONS",
         file.policy.keep_versions,
@@ -571,6 +681,8 @@ fn build_config(file: ConfigFile, get_env: impl Fn(&str) -> Option<String>) -> R
     )?;
 
     let keep_days = resolve_typed(
+        &mut sources,
+        "policy.keep_days",
         &get_env,
         "SWING_KEEP_DAYS",
         file.policy.keep_days,
@@ -580,6 +692,8 @@ fn build_config(file: ConfigFile, get_env: impl Fn(&str) -> Option<String>) -> R
     )?;
 
     let min_update_interval = resolve(
+        &mut sources,
+        "policy.min_update_interval",
         &get_env,
         "SWING_MIN_UPDATE_INTERVAL",
         file.policy.min_update_interval,
@@ -590,6 +704,8 @@ fn build_config(file: ConfigFile, get_env: impl Fn(&str) -> Option<String>) -> R
     )?;
 
     let remove_on_unfollow = resolve_typed(
+        &mut sources,
+        "policy.remove_on_unfollow",
         &get_env,
         "SWING_REMOVE_ON_UNFOLLOW",
         file.policy.remove_on_unfollow,
@@ -599,6 +715,8 @@ fn build_config(file: ConfigFile, get_env: impl Fn(&str) -> Option<String>) -> R
     )?;
 
     let nip05 = resolve(
+        &mut sources,
+        "policy.nip05",
         &get_env,
         "SWING_NIP05",
         file.policy.nip05,
@@ -609,6 +727,8 @@ fn build_config(file: ConfigFile, get_env: impl Fn(&str) -> Option<String>) -> R
     )?;
 
     let nip05_cache_ttl = resolve(
+        &mut sources,
+        "policy.nip05_cache_ttl",
         &get_env,
         "SWING_NIP05_CACHE_TTL",
         file.policy.nip05_cache_ttl,
@@ -618,11 +738,22 @@ fn build_config(file: ConfigFile, get_env: impl Fn(&str) -> Option<String>) -> R
         86_400,
     )?;
 
-    let state_dir = get_env("SWING_STATE_DIR")
+    let state_dir_env = get_env("SWING_STATE_DIR");
+    let state_dir_source = if state_dir_env.is_some() {
+        Source::Env
+    } else if file.agent.state_dir.is_some() {
+        Source::File
+    } else {
+        Source::Default
+    };
+    sources.insert("agent.state_dir".to_string(), state_dir_source);
+    let state_dir = state_dir_env
         .or(file.agent.state_dir)
         .unwrap_or_else(|| "./data".to_string());
 
     let poll_interval = resolve(
+        &mut sources,
+        "agent.poll_interval",
         &get_env,
         "SWING_POLL_INTERVAL",
         file.agent.poll_interval,
@@ -636,6 +767,8 @@ fn build_config(file: ConfigFile, get_env: impl Fn(&str) -> Option<String>) -> R
     }
 
     let fetch_timeout = resolve_typed(
+        &mut sources,
+        "agent.fetch_timeout",
         &get_env,
         "SWING_FETCH_TIMEOUT",
         None,
@@ -648,6 +781,8 @@ fn build_config(file: ConfigFile, get_env: impl Fn(&str) -> Option<String>) -> R
     }
 
     let fetch_idle_timeout = resolve_typed(
+        &mut sources,
+        "agent.fetch_idle_timeout",
         &get_env,
         "SWING_FETCH_IDLE_TIMEOUT",
         None,
@@ -660,6 +795,8 @@ fn build_config(file: ConfigFile, get_env: impl Fn(&str) -> Option<String>) -> R
     }
 
     let concurrency = resolve_typed(
+        &mut sources,
+        "agent.concurrency",
         &get_env,
         "SWING_CONCURRENCY",
         file.agent.concurrency,
@@ -672,6 +809,8 @@ fn build_config(file: ConfigFile, get_env: impl Fn(&str) -> Option<String>) -> R
     }
 
     let report_ttl = resolve(
+        &mut sources,
+        "agent.report_ttl",
         &get_env,
         "SWING_REPORT_TTL",
         file.agent.report_ttl,
@@ -685,6 +824,8 @@ fn build_config(file: ConfigFile, get_env: impl Fn(&str) -> Option<String>) -> R
     }
 
     let publish_nip05 = resolve(
+        &mut sources,
+        "publish.nip05",
         &get_env,
         "SWING_PUBLISH_NIP05",
         file.publish.nip05,
@@ -695,6 +836,8 @@ fn build_config(file: ConfigFile, get_env: impl Fn(&str) -> Option<String>) -> R
     )?;
 
     let publish_keep_versions = resolve_typed(
+        &mut sources,
+        "publish.keep_versions",
         &get_env,
         "SWING_PUBLISH_KEEP_VERSIONS",
         file.publish.keep_versions,
@@ -707,6 +850,8 @@ fn build_config(file: ConfigFile, get_env: impl Fn(&str) -> Option<String>) -> R
     }
 
     let dashboard_listen = resolve(
+        &mut sources,
+        "dashboard.listen",
         &get_env,
         "SWING_DASHBOARD_LISTEN",
         file.dashboard.listen,
@@ -717,6 +862,8 @@ fn build_config(file: ConfigFile, get_env: impl Fn(&str) -> Option<String>) -> R
     )?;
 
     let dashboard_ui = resolve_typed(
+        &mut sources,
+        "dashboard.ui",
         &get_env,
         "SWING_DASHBOARD_UI",
         file.dashboard.ui,
@@ -725,7 +872,19 @@ fn build_config(file: ConfigFile, get_env: impl Fn(&str) -> Option<String>) -> R
         true,
     )?;
 
-    let dashboard_allowed_hosts = match get_env("SWING_DASHBOARD_ALLOWED_HOSTS") {
+    let dashboard_allowed_hosts_env = get_env("SWING_DASHBOARD_ALLOWED_HOSTS");
+    let dashboard_allowed_hosts_source = if dashboard_allowed_hosts_env.is_some() {
+        Source::Env
+    } else if file.dashboard.allowed_hosts.is_some() {
+        Source::File
+    } else {
+        Source::Default
+    };
+    sources.insert(
+        "dashboard.allowed_hosts".to_string(),
+        dashboard_allowed_hosts_source,
+    );
+    let dashboard_allowed_hosts = match dashboard_allowed_hosts_env {
         Some(v) => v
             .split(',')
             .map(|s| s.trim().to_string())
@@ -734,7 +893,16 @@ fn build_config(file: ConfigFile, get_env: impl Fn(&str) -> Option<String>) -> R
         None => file.dashboard.allowed_hosts.unwrap_or_default(),
     };
 
-    let dashboard_gateway = match get_env("SWING_DASHBOARD_GATEWAY") {
+    let dashboard_gateway_env = get_env("SWING_DASHBOARD_GATEWAY");
+    let dashboard_gateway_source = if dashboard_gateway_env.is_some() {
+        Source::Env
+    } else if file.dashboard.gateway.is_some() {
+        Source::File
+    } else {
+        Source::Default
+    };
+    sources.insert("dashboard.gateway".to_string(), dashboard_gateway_source);
+    let dashboard_gateway = match dashboard_gateway_env {
         Some(v) => Some(v),
         None => Some(
             file.dashboard
@@ -744,27 +912,73 @@ fn build_config(file: ConfigFile, get_env: impl Fn(&str) -> Option<String>) -> R
     }
     .filter(|s| !s.is_empty());
 
-    let dashboard_custom_css = match get_env("SWING_DASHBOARD_CUSTOM_CSS") {
+    let dashboard_custom_css_env = get_env("SWING_DASHBOARD_CUSTOM_CSS");
+    sources.insert(
+        "dashboard.custom_css".to_string(),
+        if dashboard_custom_css_env.is_some() {
+            Source::Env
+        } else if file.dashboard.custom_css.is_some() {
+            Source::File
+        } else {
+            Source::Default
+        },
+    );
+    let dashboard_custom_css = match dashboard_custom_css_env {
         Some(v) => Some(PathBuf::from(v)),
         None => file.dashboard.custom_css.map(PathBuf::from),
     };
 
-    let dashboard_desktop_page = match get_env("SWING_DASHBOARD_DESKTOP_PAGE") {
+    let dashboard_desktop_page_env = get_env("SWING_DASHBOARD_DESKTOP_PAGE");
+    sources.insert(
+        "dashboard.desktop_page".to_string(),
+        if dashboard_desktop_page_env.is_some() {
+            Source::Env
+        } else if file.dashboard.desktop_page.is_some() {
+            Source::File
+        } else {
+            Source::Default
+        },
+    );
+    let dashboard_desktop_page = match dashboard_desktop_page_env {
         Some(v) => Some(PathBuf::from(v)),
         None => file.dashboard.desktop_page.map(PathBuf::from),
     };
 
-    let dashboard_desktop_page_css = match get_env("SWING_DASHBOARD_DESKTOP_PAGE_CSS") {
+    let dashboard_desktop_page_css_env = get_env("SWING_DASHBOARD_DESKTOP_PAGE_CSS");
+    sources.insert(
+        "dashboard.desktop_page_css".to_string(),
+        if dashboard_desktop_page_css_env.is_some() {
+            Source::Env
+        } else if file.dashboard.desktop_page_css.is_some() {
+            Source::File
+        } else {
+            Source::Default
+        },
+    );
+    let dashboard_desktop_page_css = match dashboard_desktop_page_css_env {
         Some(v) => Some(PathBuf::from(v)),
         None => file.dashboard.desktop_page_css.map(PathBuf::from),
     };
 
-    let dashboard_desktop_banner = match get_env("SWING_DASHBOARD_DESKTOP_BANNER") {
+    let dashboard_desktop_banner_env = get_env("SWING_DASHBOARD_DESKTOP_BANNER");
+    sources.insert(
+        "dashboard.desktop_banner".to_string(),
+        if dashboard_desktop_banner_env.is_some() {
+            Source::Env
+        } else if file.dashboard.desktop_banner.is_some() {
+            Source::File
+        } else {
+            Source::Default
+        },
+    );
+    let dashboard_desktop_banner = match dashboard_desktop_banner_env {
         Some(v) => Some(PathBuf::from(v)),
         None => file.dashboard.desktop_banner.map(PathBuf::from),
     };
 
     let dashboard_max_upload = resolve(
+        &mut sources,
+        "dashboard.max_upload",
         &get_env,
         "SWING_DASHBOARD_MAX_UPLOAD",
         file.dashboard.max_upload,
@@ -779,6 +993,8 @@ fn build_config(file: ConfigFile, get_env: impl Fn(&str) -> Option<String>) -> R
 
     let kubo_repo_default = PathBuf::from(&state_dir).join("kubo");
     let kubo_repo = resolve(
+        &mut sources,
+        "kubo.repo",
         &get_env,
         "SWING_KUBO_REPO",
         file.kubo.repo,
@@ -788,12 +1004,25 @@ fn build_config(file: ConfigFile, get_env: impl Fn(&str) -> Option<String>) -> R
         kubo_repo_default,
     )?;
 
-    let kubo_binary = match get_env("SWING_KUBO_BINARY") {
+    let kubo_binary_env = get_env("SWING_KUBO_BINARY");
+    sources.insert(
+        "kubo.binary".to_string(),
+        if kubo_binary_env.is_some() {
+            Source::Env
+        } else if file.kubo.binary.is_some() {
+            Source::File
+        } else {
+            Source::Default
+        },
+    );
+    let kubo_binary = match kubo_binary_env {
         Some(v) => Some(PathBuf::from(v)),
         None => file.kubo.binary.map(PathBuf::from),
     };
 
     let kubo_storage_max = resolve(
+        &mut sources,
+        "kubo.storage_max",
         &get_env,
         "SWING_KUBO_STORAGE_MAX",
         file.kubo.storage_max,
@@ -803,7 +1032,18 @@ fn build_config(file: ConfigFile, get_env: impl Fn(&str) -> Option<String>) -> R
         max_total_storage,
     )?;
 
-    let kubo_provide_strategy = get_env("SWING_KUBO_PROVIDE_STRATEGY")
+    let kubo_provide_strategy_env = get_env("SWING_KUBO_PROVIDE_STRATEGY");
+    sources.insert(
+        "kubo.provide_strategy".to_string(),
+        if kubo_provide_strategy_env.is_some() {
+            Source::Env
+        } else if file.kubo.provide_strategy.is_some() {
+            Source::File
+        } else {
+            Source::Default
+        },
+    );
+    let kubo_provide_strategy = kubo_provide_strategy_env
         .or(file.kubo.provide_strategy)
         .unwrap_or_else(|| "pinned+mfs".to_string());
     if kubo_provide_strategy.trim().is_empty() {
@@ -811,6 +1051,8 @@ fn build_config(file: ConfigFile, get_env: impl Fn(&str) -> Option<String>) -> R
     }
 
     let kubo_gateway_listen = resolve(
+        &mut sources,
+        "kubo.gateway_listen",
         &get_env,
         "SWING_KUBO_GATEWAY_LISTEN",
         file.kubo.gateway_listen,
@@ -824,7 +1066,18 @@ fn build_config(file: ConfigFile, get_env: impl Fn(&str) -> Option<String>) -> R
         SocketAddr::from(([127, 0, 0, 1], 8080)),
     )?;
 
-    let kubo_swarm_port = match get_env("SWING_KUBO_SWARM_PORT") {
+    let kubo_swarm_port_env = get_env("SWING_KUBO_SWARM_PORT");
+    sources.insert(
+        "kubo.swarm_port".to_string(),
+        if kubo_swarm_port_env.is_some() {
+            Source::Env
+        } else if file.kubo.swarm_port.is_some() {
+            Source::File
+        } else {
+            Source::Default
+        },
+    );
+    let kubo_swarm_port = match kubo_swarm_port_env {
         Some(v) => Some(
             v.trim()
                 .parse::<u16>()
@@ -837,6 +1090,8 @@ fn build_config(file: ConfigFile, get_env: impl Fn(&str) -> Option<String>) -> R
     }
 
     let gateway_listen = resolve(
+        &mut sources,
+        "gateway.listen",
         &get_env,
         "SWING_GATEWAY_LISTEN",
         file.gateway.listen,
@@ -846,7 +1101,18 @@ fn build_config(file: ConfigFile, get_env: impl Fn(&str) -> Option<String>) -> R
         Listen::Off,
     )?;
 
-    let gateway_hosts: Vec<String> = match get_env("SWING_GATEWAY_HOSTS") {
+    let gateway_hosts_env = get_env("SWING_GATEWAY_HOSTS");
+    sources.insert(
+        "gateway.hosts".to_string(),
+        if gateway_hosts_env.is_some() {
+            Source::Env
+        } else if file.gateway.hosts.is_some() {
+            Source::File
+        } else {
+            Source::Default
+        },
+    );
+    let gateway_hosts: Vec<String> = match gateway_hosts_env {
         Some(v) => v
             .split(',')
             .map(|s| s.trim().to_string())
@@ -870,18 +1136,29 @@ fn build_config(file: ConfigFile, get_env: impl Fn(&str) -> Option<String>) -> R
         bail!("[gateway].hosts must not be empty when [gateway].listen is enabled");
     }
 
+    let gateway_upstream_env = get_env("SWING_GATEWAY_UPSTREAM");
+    sources.insert(
+        "gateway.upstream".to_string(),
+        if gateway_upstream_env.is_some() {
+            Source::Env
+        } else if file.gateway.upstream.is_some() {
+            Source::File
+        } else {
+            Source::Default
+        },
+    );
     let gateway_upstream_default = if kubo_managed {
         format!("http://{kubo_gateway_listen}")
     } else {
         "http://127.0.0.1:8080".to_string()
     };
-    let gateway_upstream = get_env("SWING_GATEWAY_UPSTREAM")
+    let gateway_upstream = gateway_upstream_env
         .or(file.gateway.upstream)
         .unwrap_or(gateway_upstream_default);
 
     Ok(Config {
         nostr: NostrConfig {
-            secret_key: secret_key.into(),
+            secret_key: secret_key.map(NostrSecretKey::from),
             relays,
             mirror_set,
             site_event_kind,
@@ -941,7 +1218,9 @@ fn build_config(file: ConfigFile, get_env: impl Fn(&str) -> Option<String>) -> R
             hosts: gateway_hosts,
             upstream: gateway_upstream,
         },
-        config_path: None,
+        config_path: PathBuf::new(),
+        config_exists: false,
+        sources,
     })
 }
 
@@ -954,10 +1233,22 @@ impl Config {
     }
 
     pub fn load(cli_path: Option<&Path>) -> Result<Self> {
-        let (file, config_path) = load_file(cli_path)?;
+        let (file, config_path, config_exists) = load_file(cli_path)?;
         let mut config = build_config(file, env_var)?;
         config.config_path = config_path;
+        config.config_exists = config_exists;
         Ok(config)
+    }
+
+    pub fn require_secret_key(&self) -> Result<&NostrSecretKey> {
+        self.nostr
+            .secret_key
+            .as_ref()
+            .context("missing Nostr secret key: set SWING_NOSTR_SECRET_KEY or [nostr].secret_key")
+    }
+
+    pub fn source_of(&self, key: &str) -> Option<Source> {
+        self.sources.get(key).copied()
     }
 }
 
@@ -1119,7 +1410,9 @@ mod tests {
 
     #[test]
     fn missing_secret_key_is_clear_error() {
-        let err = build_config(ConfigFile::default(), |_| None).unwrap_err();
+        let cfg = build_config(ConfigFile::default(), |_| None).unwrap();
+        assert!(cfg.nostr.secret_key.is_none());
+        let err = cfg.require_secret_key().unwrap_err();
         assert!(err.to_string().contains("secret key"));
     }
 
@@ -1141,7 +1434,10 @@ mod tests {
             _ => None,
         })
         .unwrap();
-        assert_eq!(cfg.nostr.secret_key.expose_secret(), "env-key");
+        assert_eq!(
+            cfg.nostr.secret_key.as_ref().unwrap().expose_secret(),
+            "env-key"
+        );
         assert_eq!(cfg.nostr.relays, vec!["wss://a", "wss://b"]);
         assert_eq!(cfg.nostr.mirror_set, "from-file-set");
         assert_eq!(cfg.nostr.site_event_kind, 1111);
@@ -1502,7 +1798,8 @@ mod tests {
         )
         .unwrap();
         let cfg = Config::load(Some(&path)).unwrap();
-        assert_eq!(cfg.config_path.as_deref(), Some(path.as_path()));
+        assert_eq!(cfg.config_path, path);
+        assert!(cfg.config_exists);
     }
 
     #[test]
@@ -1824,6 +2121,59 @@ mod tests {
     #[test]
     fn resolve_config_path_prefers_cli_over_env_and_default() {
         let cli = PathBuf::from("/tmp/from-cli.toml");
-        assert_eq!(resolve_config_path(Some(&cli)), Some(cli));
+        assert_eq!(resolve_config_path(Some(&cli)), cli);
+    }
+
+    #[test]
+    fn resolve_config_path_defaults_to_swing_toml_in_cwd_even_when_absent() {
+        let path = resolve_config_path(None);
+        assert!(path.is_absolute());
+        assert_eq!(path.file_name().unwrap(), "swing.toml");
+    }
+
+    #[test]
+    fn missing_config_file_without_explicit_path_is_not_an_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let orig = env::current_dir().unwrap();
+        env::set_current_dir(dir.path()).unwrap();
+        let result = load_file(None);
+        env::set_current_dir(orig).unwrap();
+        let (file, path, exists) = result.unwrap();
+        assert!(!exists);
+        assert_eq!(path, dir.path().join("swing.toml"));
+        assert!(file.nostr.secret_key.is_none());
+    }
+
+    #[test]
+    fn source_tracking_distinguishes_env_file_and_default() {
+        let file = ConfigFile {
+            policy: PolicyFile {
+                max_per_site: Some("5GB".into()),
+                ..Default::default()
+            },
+            ..minimal_file()
+        };
+        let cfg = build_config(file, |k| match k {
+            "SWING_MAX_TOTAL_STORAGE" => Some("10GB".into()),
+            _ => None,
+        })
+        .unwrap();
+        assert_eq!(cfg.source_of("policy.max_total_storage"), Some(Source::Env));
+        assert_eq!(cfg.source_of("policy.max_per_site"), Some(Source::File));
+        assert_eq!(
+            cfg.source_of("policy.max_per_account"),
+            Some(Source::Default)
+        );
+        assert_eq!(cfg.source_of("kubo.storage_max"), Some(Source::Default));
+    }
+
+    #[test]
+    fn source_tracking_covers_secret_key_and_managed_ipfs_api() {
+        let cfg = build_config(minimal_file(), |_| None).unwrap();
+        assert_eq!(cfg.source_of("nostr.secret_key"), Some(Source::File));
+        assert_eq!(cfg.source_of("ipfs.api"), Some(Source::Default));
+
+        let cfg = build_config(ConfigFile::default(), |_| None).unwrap();
+        assert_eq!(cfg.source_of("nostr.secret_key"), Some(Source::Default));
     }
 }
