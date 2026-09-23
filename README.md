@@ -139,6 +139,8 @@ docker compose up -d
 
 `ipfs`（Kubo）と `mirror`（このツール本体、`swing up` を実行します。Kubo は `ipfs` コンテナ側を使うため `SWING_KUBO_MANAGED=false` を固定で渡しています）の 2 つのコンテナが立ち上がります。外部に公開されるのは IPFS の swarm 用ポート（`4001/tcp`・`4001/udp`）だけです。Kubo の RPC（5001）はホストにも公開されず、ゲートウェイ（8080）はホストの `127.0.0.1:8080` だけに公開されます。
 
+あとからバイナリの `swing up` に切り替える場合は、volume の中身（保存したサイトと agent の状態）をそのまま持っていけます。手順は [`docs/architecture/docker.md#compose-から-swing-up-への移行`](docs/architecture/docker.md#compose-から-swing-up-への移行) を参照してください。
+
 ### ミラー対象を管理する・状態を見る
 
 ここから先のコマンド例はバイナリで直接動かしている場合の書き方です。Docker Compose の場合は `swing ...` を `docker compose exec mirror swing ...` に読み替えてください（`up` はコンテナ起動時に自動で実行されるので、`swing up` 自体を読み替える必要はありません）。

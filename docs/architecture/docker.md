@@ -61,3 +61,40 @@ Kubo の Gateway は `NoFetch` なので、ローカルにあるブロックだ�
 `127.0.0.1:8080`（Kubo 直接）はすべてのパスを受け付ける（`localhost` ではサブドメイン Gateway（`/ipfs/<cid>` は `<cid>.ipfs.localhost` へリダイレクト）、`127.0.0.1` ではパス Gateway）。`SWING_GATEWAY_HOSTS` はカンマ区切りのホスト名（小文字英数字・`-`・`.`）。起動スクリプトが各ホストを `{"Paths": [], "UseSubdomains": false, "NoDNSLink": false}` で `Gateway.PublicGateways` に入れる。これらのホストでは DNSLink（`_dnslink.<host>`）の内容だけを返し、`/ipfs/`・`/ipns/`・`/routing/v1` は 404。不正な名前があると `ipfs` は起動しない。
 
 Kubo は `Host` と `X-Forwarded-Host` をそのまま信じるので、Kubo の 8080 を外に出してはいけない。compose では内蔵 gateway（[`gateway.md`](gateway.md)。`mirror` コンテナの中で `SWING_GATEWAY_UPSTREAM=http://ipfs:8080` としてこの Kubo にプロキシする）を前段に置き、ホスト名での振り分けと `X-Forwarded-*` の付け直しをそちらに任せる。内蔵 gateway 自体の Host 判定・転送するヘッダー・404/502 の挙動は [`gateway.md`](gateway.md) を参照。
+
+## compose から `swing up` への移行
+
+compose の 2 つの volume をホストにコピーすれば、同じ Kubo（PeerID・ブロック・MFS）と同じ agent の状態のまま `swing up`（`[kubo].managed = true`）に移れる。
+
+| volume | 中身 | 移し先 |
+|---|---|---|
+| `swing-data`（`mirror:/data`） | `state.json`・`dashboard.token`・`remote-signer.json`（署名アプリを使っている場合）・`swing.toml`（ダッシュボードのセットアップや Settings で書いた場合） | `<dir>/data`。`swing.toml` だけ `<dir>/swing.toml` へ |
+| `ipfs-data`（`ipfs:/data/ipfs`） | Kubo の repo | `<dir>/data/kubo` |
+
+`<dir>` は `swing.toml` を置くディレクトリ。`state_dir` の既定 `./data` と `[kubo].repo` の既定 `<state_dir>/kubo`（[`../architecture.md#設定と環境変数`](../architecture.md#設定と環境変数)）にそのまま合う配置で、`swing service install` も作業ディレクトリを `swing.toml` の親にする（[`service.md`](service.md)）。
+
+```sh
+cd <このリポジトリ>                       # compose.yaml のあるディレクトリ
+docker compose stop                       # volume は消さない
+dest=~/swing                              # <dir>。data はまだ作らない
+mkdir -p "$dest"
+docker compose cp mirror:/data "$dest/data"
+docker compose cp ipfs:/data/ipfs "$dest/data/kubo"
+[ -f "$dest/data/swing.toml" ] && mv "$dest/data/swing.toml" "$dest/"
+```
+
+- `docker compose cp` は止まっているコンテナにも使え、コピーしたファイルはコマンドを実行したユーザーの所有になる（コンテナ内の uid 1000 は引き継がない）。Windows（PowerShell）でも `docker compose cp` はそのまま使える（`$dest` を `"$HOME\swing"` などに、最後の行を `Move-Item` に読み替える）。コピー先の `data` が既にあると `data/data` の下に入るので、先に作らない。
+- `.env` の設定を `<dir>/swing.toml` に移す。`swing service install` で登録したサービスは `.env` を読まない。キー名の対応は [`swing.example.toml`](../../swing.example.toml) の各行のコメント（`SWING_...` がその行の環境変数）。compose だけの変数は次のように扱う。
+
+| `.env`・`compose.yaml` の変数 | `swing up` での扱い |
+|---|---|
+| `SWING_IPFS_API`・`SWING_STATE_DIR`・`SWING_KUBO_MANAGED`・`SWING_GATEWAY_UPSTREAM`（`compose.yaml` が固定で渡す） | 書かない（既定値で managed の構成になる） |
+| `SWING_DASHBOARD_LISTEN`（コンテナ内の待ち受け） | 書かない。代わりに `SWING_DASHBOARD_BIND` を変えていたらその値を `[dashboard].listen` に |
+| `SWING_KUBO_GATEWAY_BIND` | 変えていたら `[kubo].gateway_listen` に |
+| `SWING_GATEWAY_LISTEN`（`off` 以外にしていた場合）と `SWING_GATEWAY_BIND` | `SWING_GATEWAY_BIND` の値を `[gateway].listen` に |
+| `SWING_DASHBOARD_PUBLIC_URL` | ホスト側のポートに合わせて書いていただけなら書かない |
+
+- ホストの `ipfs` は compose のイメージと同じ 0.43.1 にする（[`kubo.md#kubo-のバージョン`](kubo.md#kubo-のバージョン)）。古い Kubo は新しい repo を開けない。新しい Kubo は `--migrate=true` で repo を移行するので、その後は compose のイメージに戻せない。
+- Kubo の設定は、`swing up` が起動のたびに `apply_config` で上書きする（[`up.md#適用する-kubo-設定kuboapply_config`](up.md#適用する-kubo-設定kuboapply_config)）。compose の `Addresses.API`（`/ip4/0.0.0.0/tcp/5001`）と `Addresses.Gateway`（`/ip4/0.0.0.0/tcp/8080`）は `127.0.0.1` に戻る。`Addresses.Swarm` は `[kubo].swarm_port` を設定しない限りコピーした値（4001）のまま。PeerID・keystore・`Bootstrap` など、`apply_config` が触らないキーはコピーした値のまま。
+- 4001・8080・8082 は compose と同じポートなので、compose を止めてから `swing up` を起動する。
+- `swing up` が動いて `swing status` で保存済みの版が `[ok]` になることを確かめたら、`docker compose down -v` で volume を消す。同じ PeerID と同じ鍵で 2 つ動かすことになるので、移行後に compose をまた起動しない。

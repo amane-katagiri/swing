@@ -4,7 +4,7 @@
 
 | 文書 | 内容 |
 |---|---|
-| このファイル | 構成、CLI の一覧、設定、イベントの検証、テスト |
+| このファイル | 構成、CLI の一覧、設定、イベントの検証、テスト、ビルドとリリース |
 | [`architecture/cli.md`](architecture/cli.md) | 各サブコマンドの動作と出力 |
 | [`architecture/agent.md`](architecture/agent.md) | mirror-agent の動作、ポリシー判定、レプリカ報告の送信、`state.json` |
 | [`architecture/signer.md`](architecture/signer.md) | 署名（`signer.rs`）: 秘密鍵か NIP-46 の署名アプリか、`remote-signer.json`、QR コードでのペアリング |
@@ -13,7 +13,7 @@
 | [`architecture/up.md`](architecture/up.md) | `swing up`（supervisor）と Kubo の起動・設定・終了（`kubo.rs`） |
 | [`architecture/gateway.md`](architecture/gateway.md) | 内蔵 gateway（`gateway.rs`）: Host 振り分けと Kubo gateway へのプロキシ |
 | [`architecture/service.md`](architecture/service.md) | `swing service install / uninstall / status / stop`（systemd / launchd / タスクスケジューラ）、`swing stop`（`stop.rs`） |
-| [`architecture/docker.md`](architecture/docker.md) | Dockerfile、compose、外部 Kubo コンテナの設定 |
+| [`architecture/docker.md`](architecture/docker.md) | Dockerfile、compose、外部 Kubo コンテナの設定、compose から `swing up` への移行 |
 | [`architecture/dashboard.md`](architecture/dashboard.md) | `swing up` の寿命で常時動く Web ダッシュボード兼制御 API（起動と終了、設定、ガード、静的ファイル、agent 未準備時の扱い） |
 | [`architecture/dashboard/http-api.md`](architecture/dashboard/http-api.md) | ダッシュボードの HTTP API |
 | [`architecture/dashboard/web.md`](architecture/dashboard/web.md) | ダッシュボードの画面と CSS カスタマイズ |
@@ -74,6 +74,7 @@ swing/
     nostr_relay_integration.rs   relay 連携の統合テスト（#[ignore]）
   docker/kubo-init.d/  Kubo コンテナの起動スクリプト（外部 Kubo の設定。compose 専用）
   Dockerfile, compose.yaml, .env.example, swing.example.toml
+  .github/workflows/release.yml  配布用バイナリのビルドとドラフトリリース（[ビルドとリリース](#ビルドとリリース)）
   docs/                役割は AGENTS.md を参照
 ```
 
@@ -224,4 +225,21 @@ docker run -d --rm -p 127.0.0.1:18080:8080 scsibug/nostr-rs-relay
 cargo test --test nostr_relay_integration -- --ignored --test-threads=1
 ```
 
-Windows 向けのクロスビルド（WSL / Linux から）: `cargo install cargo-xwin` と `lld-link`（Homebrew なら `brew install lld`）を用意して `cargo xwin clippy --target x86_64-pc-windows-msvc --all-targets -- -D warnings` / `cargo xwin build --release --target x86_64-pc-windows-msvc`。macOS 向けは SDK を自動取得できないため実機か CI でビルドする。
+Windows 向けのクロスビルド（WSL / Linux から）: `cargo install cargo-xwin` と `lld-link`（Homebrew なら `brew install lld`）を用意して `cargo xwin clippy --target x86_64-pc-windows-msvc --all-targets -- -D warnings` / `cargo xwin build --release --target x86_64-pc-windows-msvc`。macOS 向けは `ring` の C コードに macOS SDK のヘッダが要り、WSL からは `cargo check` も通らないので、下の release ワークフローで確かめる。
+
+## ビルドとリリース
+
+`.github/workflows/release.yml` が配布用のバイナリを作る。`v*` タグの push と手動実行（`workflow_dispatch`）で動き、push や PR では動かない（private リポジトリで macOS ランナーの分の無料枠を多く使うため）。
+
+| target | ランナー | fmt / clippy / test | ビルド |
+|---|---|---|---|
+| `x86_64-unknown-linux-musl` | ubuntu-latest | する（ホストの gnu で） | `cargo zigbuild` |
+| `aarch64-unknown-linux-musl` | ubuntu-latest | しない | `cargo zigbuild` |
+| `aarch64-apple-darwin` | macos-latest | する | `cargo build` |
+| `x86_64-apple-darwin` | macos-latest | しない | `cargo build`（クロス） |
+| `x86_64-pc-windows-msvc` | windows-latest | する | `cargo build` |
+
+- Rust は 1.97（Dockerfile と同じ）。Linux は glibc のバージョンに依存しないよう musl の静的バイナリにする。
+- 成果物は `swing-<ref>-<target>.tar.gz`（Windows は `.zip`）で、中身は `swing`（`swing.exe`）・`LICENSE`・`README.md`。Kubo は同梱しない。
+- タグのときは、タグ名と `Cargo.toml` の `version` が一致しないと失敗する（`v0.1.0` と `0.1.0`）。全 target が通ると `SHA256SUMS` を付けた**ドラフト**のリリースを作る。公開は GitHub 上で手動で行う。
+- 手動実行のときはリリースを作らず、Actions の artifact として残すだけ。
