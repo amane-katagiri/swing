@@ -26,13 +26,11 @@ pub async fn run_until(
     dashboard: Arc<dashboard::AppState>,
     notify: Arc<Notify>,
 ) -> Result<()> {
-    let relay = Arc::new(
-        RelayClient::connect(
-            config.require_secret_key()?.expose_secret(),
-            &config.nostr.relays,
-        )
-        .await?,
-    );
+    let signer = dashboard
+        .signer
+        .clone()
+        .context("the agent started without a Nostr key")?;
+    let relay = Arc::new(RelayClient::connect(signer, &config.nostr.relays).await?);
     info!(relays = ?relay.relays(), "connected to relays");
 
     let ipfs = IpfsClient::new(config.ipfs_api_url()?);

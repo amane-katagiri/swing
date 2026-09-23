@@ -6,6 +6,7 @@ use crate::health;
 use crate::mirror;
 use crate::nostr;
 use crate::replicas;
+use crate::signer::{PairingState, SignFailure, Signer};
 use crate::webring;
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -80,6 +81,68 @@ pub struct OverviewDto {
     pub started_at: u64,
     pub instance: String,
     pub max_upload: u64,
+    pub signer: Option<SignerDto>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct SignerDto {
+    pub remote: bool,
+    pub relays: Vec<String>,
+    pub last_failure: Option<SignFailure>,
+}
+
+pub fn signer_dto(signer: &Signer) -> SignerDto {
+    SignerDto {
+        remote: signer.is_remote(),
+        relays: signer.signer_relays().to_vec(),
+        last_failure: signer.last_failure(),
+    }
+}
+
+#[derive(Debug, Serialize)]
+pub struct PairingStartDto {
+    pub uri: String,
+    pub qr_svg: String,
+}
+
+#[derive(Debug, Serialize, PartialEq, Eq)]
+pub struct PairingStatusDto {
+    pub state: &'static str,
+    pub npub: Option<String>,
+    pub probe_signed: Option<bool>,
+    pub error: Option<String>,
+}
+
+pub fn pairing_status_dto(state: Option<&PairingState>) -> PairingStatusDto {
+    let empty = PairingStatusDto {
+        state: "idle",
+        npub: None,
+        probe_signed: None,
+        error: None,
+    };
+    match state {
+        None => empty,
+        Some(PairingState::Waiting) => PairingStatusDto {
+            state: "waiting",
+            ..empty
+        },
+        Some(PairingState::Checking { user }) => PairingStatusDto {
+            state: "checking",
+            npub: Some(mirror::npub(user)),
+            ..empty
+        },
+        Some(PairingState::Ready(paired)) => PairingStatusDto {
+            state: "ready",
+            npub: Some(mirror::npub(&paired.user)),
+            probe_signed: Some(paired.probe_signed),
+            error: paired.probe_error.clone(),
+        },
+        Some(PairingState::Failed(error)) => PairingStatusDto {
+            state: "failed",
+            error: Some(error.clone()),
+            ..empty
+        },
+    }
 }
 
 #[derive(Debug, Serialize)]

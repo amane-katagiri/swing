@@ -173,6 +173,8 @@ pub(super) struct FakeRelayState {
     pub(super) sent: Vec<Event>,
     pub(super) fail_fetch: bool,
     pub(super) reject: bool,
+    pub(super) fail_sign: bool,
+    pub(super) send_attempts: usize,
 }
 
 pub(super) struct FakeRelay {
@@ -205,6 +207,10 @@ impl ReportRelay for FakeRelay {
     async fn send_report(&self, report: EventBuilder) -> anyhow::Result<bool> {
         let event = report.finalize(&self.keys)?;
         let mut s = self.s.lock().unwrap();
+        s.send_attempts += 1;
+        if s.fail_sign {
+            anyhow::bail!("simulated signer failure");
+        }
         if s.reject {
             return Ok(false);
         }

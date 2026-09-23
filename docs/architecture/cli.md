@@ -9,7 +9,7 @@
 - `up`・`publish`・`service install`/`uninstall` 以外は読み取り専用で、`state.json` も MFS も OS のファイルも変えない（`mirror add` / `remove` は Follow Set を relay に送る。`stop`／`service stop` は動いているプロセスに停止・再起動を要求するだけで、ファイルは変えない）。`service install`/`uninstall` は OS のサービス定義ファイル（systemd unit / launchd plist / タスクスケジューラのタスク）を書く・消す。
 - `up` は処理を始める前に `<[agent].state_dir>/swing.lock` のインスタンスロックを取る（[`up.md#多重起動の防止lockrs`](up.md#多重起動の防止lockrs)）。同じ `state_dir` に対して既に動いていれば、起動側のエラーで即座に終了する。
 - `status`・`mirror add`・`mirror remove`・`stop`／`service stop`・`dashboard open`・`dashboard rotate-token` は relay/Kubo に直接つながず、動いている `swing up` のダッシュボード API（`[dashboard].listen`、既定 `http://127.0.0.1:8082`）を `src/api_client.rs::ApiClient` 経由で叩く。`<[agent].state_dir>/dashboard.token` を読んで `Authorization: Bearer` で送るので、`swing up` と同じ設定（同じ `state_dir`）を読めて、そのファイルを読めるユーザーで実行する必要がある。API が `[dashboard].listen` を未指定アドレス（`0.0.0.0` / `::`）で待ち受けていても、クライアントは接続先と `Host` ヘッダをループバックの同じポートへ正規化する。API に接続できなければ `status`・`mirror add`・`mirror remove` は `swing up is not running (cannot connect to <addr>)` でエラー終了し（非ゼロ終了）、`stop`／`service stop` は `not running` を出して正常終了（終了コード 0）する。`sites`・`replicas`・`webring`・`mirror list`・`publish` はこの API を経由せず relay/Kubo に直接つなぐので、`swing up` が動いていなくても使える。
-- `[nostr].secret_key`（`SWING_NOSTR_SECRET_KEY`）は必須ではなくなった。`config::Config::require_secret_key()` を呼ぶコマンド（`sites`・`replicas`・`webring`・`mirror list`・`publish`）は鍵が無ければエラー終了するが、`status`・`mirror add`・`mirror remove`・`stop`／`service stop` はダッシュボード API 経由で鍵を直接使わないので鍵が無くても動く。ただし鍵が無い `swing up` はセットアップモードで動いており（[`up.md#セットアップモード鍵未設定`](up.md#セットアップモード鍵未設定)）、そこでは `status`・`mirror add`・`mirror remove` は 503 `agent is not configured` を返す。
+- `[nostr].secret_key`（`SWING_NOSTR_SECRET_KEY`）は必須ではない。`signer::Signer::require` を呼ぶコマンド（`sites`・`replicas`・`webring`・`mirror list`・`publish`）は秘密鍵も `<state_dir>/remote-signer.json`（NIP-46 の署名アプリ。[`signer.md`](signer.md)）も無ければエラー終了するが、`status`・`mirror add`・`mirror remove`・`stop`／`service stop` はダッシュボード API 経由で鍵を直接使わないので鍵が無くても動く。ただし鍵が無い `swing up` はセットアップモードで動いており（[`up.md#セットアップモード鍵未設定`](up.md#セットアップモード鍵未設定)）、そこでは `status`・`mirror add`・`mirror remove` は 503 `agent is not configured` を返す。
 
 ## up
 
@@ -47,7 +47,7 @@
 1. `--nip05` が `off` でなければ、`d` と自分の pubkey で NIP-05 を検証し、`NIP-05` 見出しの下に結果を表示する（`✓ verified` / `! mismatch: ...` / `- not applicable (d is not a domain)` / `! error: ...`）。`require` で `Verified` 以外（`NotApplicable` を含む）なら add せず終了する。
 2. 現在時刻を `created_at` に決め、`DIR` を CIDv1・pin なしで add し、`<mfs_root>/publish/<pubkey hex>/<site>/<created_at>` に置く（既存の項目は先に消す）。
 3. `dag/stat`（`offline=true`）の `TotalSize` を `size` タグにする。失敗したら（ブロックが欠けていたら）エラーで終了する。
-4. サイトイベント（`alt` は `SWING site announcement: <d>`）を 2 の `created_at` で作って署名し、全 relay に送る。relay ごとの成否（✓/✗）を表示する。どこにも受理されなければエラーで終了し、古い版は消さない。
+4. サイトイベント（`alt` は `SWING site announcement: <d>`）を 2 の `created_at` で作って署名し、全 relay に送る。署名アプリを使っているときは、署名の前に `waiting for the signer app to sign the site event...` を表示し、署名アプリの返事（承認）を最大 90 秒待つ。署名できなければエラーで終了し、古い版は消さない。relay ごとの成否（✓/✗）を表示する。どこにも受理されなければエラーで終了し、古い版は消さない。
 5. `<mfs_root>/publish/<pubkey hex>/<site>/` の中で名前が整数の項目を新しい順に `[publish].keep_versions` 個残して消す（`Old versions (keeping N)` 見出し）。一覧に失敗したら警告を出して続ける。
 6. `Published.` で終わる。
 

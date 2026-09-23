@@ -20,6 +20,7 @@ pub mod replicas;
 pub mod service;
 pub mod settings;
 pub mod shutdown;
+pub mod signer;
 pub mod state;
 pub mod stop;
 pub mod up;

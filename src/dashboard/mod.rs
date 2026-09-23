@@ -16,7 +16,7 @@ use axum::Router;
 use axum::extract::DefaultBodyLimit;
 use axum::http::StatusCode;
 use axum::routing::{get, post};
-use nostr_sdk::prelude::{Keys, PublicKey, Timestamp};
+use nostr_sdk::prelude::{PublicKey, Timestamp};
 use tokio::net::TcpListener;
 use tokio::sync::{Mutex, Notify, RwLock, oneshot};
 use tower_http::timeout::TimeoutLayer;
@@ -27,6 +27,7 @@ use crate::config::Config;
 use crate::ipfs::IpfsClient;
 use crate::nostr::RelayClient;
 use crate::shutdown::ExitRequest;
+use crate::signer::{Pairing, PairingState, Signer};
 
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(120);
 const UPLOAD_TIMEOUT: Duration = Duration::from_secs(30 * 60);
@@ -41,6 +42,8 @@ pub struct AppState {
     pub instance: String,
     pub publish_lock: Mutex<()>,
     pub own_pubkey: Option<PublicKey>,
+    pub signer: Option<Signer>,
+    pub pairing: std::sync::Mutex<Option<Pairing>>,
     pub desktop: Option<DesktopAssets>,
     pub exit: ExitRequest,
     pub restart_required: std::sync::atomic::AtomicBool,
@@ -53,10 +56,10 @@ impl AppState {
         config: Arc<Config>,
         notify: Arc<Notify>,
         exit: ExitRequest,
-        keys: Option<Keys>,
+        signer: Option<Signer>,
         token: String,
     ) -> Result<Self> {
-        let own_pubkey = keys.map(|k| k.public_key());
+        let own_pubkey = signer.as_ref().map(Signer::public_key);
         let desktop = if config.dashboard.ui {
             Some(DesktopAssets::load(&config.dashboard)?)
         } else {
@@ -73,6 +76,8 @@ impl AppState {
             instance: random_instance_id(),
             publish_lock: Mutex::new(()),
             own_pubkey,
+            signer,
+            pairing: std::sync::Mutex::new(None),
             desktop,
             exit,
             restart_required: std::sync::atomic::AtomicBool::new(false),
@@ -91,6 +96,14 @@ impl AppState {
 
     pub fn setup_mode(&self) -> bool {
         self.own_pubkey.is_none()
+    }
+
+    pub fn pairing_state(&self) -> Option<PairingState> {
+        self.pairing
+            .lock()
+            .expect("pairing lock")
+            .as_ref()
+            .map(Pairing::state)
     }
 
     // Reflects the file on disk once it's been edited, so the settings UI can show what a
@@ -142,6 +155,7 @@ fn ui_router() -> Router<Arc<AppState>> {
         .route("/publish.js", get(assets::publish_js))
         .route("/settings.js", get(assets::settings_js))
         .route("/setup.js", get(assets::setup_js))
+        .route("/pairing.js", get(assets::pairing_js))
         .route("/login.js", get(assets::login_js))
         .route("/desktop.js", get(assets::desktop_js))
         .route("/desktop-page.html", get(assets::desktop_page))
@@ -183,6 +197,11 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/api/publish/sites", get(api::publish_sites))
         .route("/api/config", get(api::config).put(api::update_config))
         .route("/api/setup", post(api::setup))
+        .route(
+            "/api/setup/signer",
+            get(api::pairing_status).post(api::start_pairing),
+        )
+        .route("/api/signer/reconnect", post(api::reconnect_signer))
         .route("/api/shutdown", post(api::shutdown))
         .route("/api/restart", post(api::restart))
         .route("/api/login", post(session::login))
@@ -327,8 +346,8 @@ mod tests {
         (config, secret_hex)
     }
 
-    fn test_keys(secret_hex: &str) -> Option<Keys> {
-        Some(Keys::parse(secret_hex).unwrap())
+    fn test_keys(secret_hex: &str) -> Option<Signer> {
+        Some(Signer::Local(Keys::parse(secret_hex).unwrap()))
     }
 
     fn test_state() -> Arc<AppState> {
@@ -354,6 +373,31 @@ mod tests {
             .entry(axum::http::header::AUTHORIZATION)
             .or_insert(axum::http::HeaderValue::from_static("Bearer test-token"));
         call_anonymous(app, req).await
+    }
+
+    #[tokio::test]
+    async fn every_imported_module_is_served() {
+        let web = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("web");
+        let mut modules = std::collections::BTreeSet::new();
+        for entry in std::fs::read_dir(&web).unwrap() {
+            let path = entry.unwrap().path();
+            if path.extension().is_some_and(|e| e == "js") {
+                let source = std::fs::read_to_string(&path).unwrap();
+                for part in source.split("from './").skip(1) {
+                    modules.insert(part.split('\'').next().unwrap().to_string());
+                }
+            }
+        }
+        assert!(modules.contains("pairing.js"));
+        for module in modules {
+            let req = Request::builder()
+                .uri(format!("/{module}"))
+                .header("Host", "127.0.0.1:8082")
+                .body(Body::empty())
+                .unwrap();
+            let resp = call(router(test_state()), req).await;
+            assert_eq!(resp.status(), StatusCode::OK, "{module}");
+        }
     }
 
     #[tokio::test]
@@ -1023,7 +1067,7 @@ mod tests {
             .unwrap(),
         );
         let relay = Arc::new(
-            crate::nostr::RelayClient::connect(&secret_key, &[])
+            crate::nostr::RelayClient::connect(test_keys(&secret_key).unwrap(), &[])
                 .await
                 .unwrap(),
         );
@@ -1269,6 +1313,257 @@ mod tests {
         assert!(dir.path().join("swing.toml").exists());
     }
 
+    fn setup_mode_state(dir: &std::path::Path) -> Arc<AppState> {
+        let (mut config, _secret_hex) = test_config_in_dir(dir, true, false);
+        config.agent.state_dir = dir.join("data");
+        Arc::new(
+            AppState::new(
+                Arc::new(config),
+                Arc::new(Notify::new()),
+                test_exit(),
+                None,
+                TEST_TOKEN.to_string(),
+            )
+            .unwrap(),
+        )
+    }
+
+    async fn send_json(
+        app: Router,
+        method: &str,
+        uri: &str,
+        body: Option<serde_json::Value>,
+    ) -> (StatusCode, serde_json::Value) {
+        let mut builder = Request::builder()
+            .method(method)
+            .uri(uri)
+            .header("Host", "127.0.0.1:8082")
+            .header("x-swing-dashboard", "1");
+        let body = match body {
+            Some(json) => {
+                builder = builder.header("content-type", "application/json");
+                Body::from(json.to_string())
+            }
+            None => Body::empty(),
+        };
+        let resp = call(app, builder.body(body).unwrap()).await;
+        let status = resp.status();
+        let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        (status, serde_json::from_slice(&bytes).unwrap_or_default())
+    }
+
+    #[tokio::test]
+    async fn signer_pairing_is_not_available_with_a_local_key() {
+        let app = router(test_state());
+        let body = serde_json::json!({ "relays": ["wss://relay.example"] });
+        let (status, _) = send_json(app.clone(), "POST", "/api/setup/signer", Some(body)).await;
+        assert_eq!(status, StatusCode::CONFLICT);
+        let (status, _) = send_json(app, "GET", "/api/setup/signer", None).await;
+        assert_eq!(status, StatusCode::CONFLICT);
+    }
+
+    #[tokio::test]
+    async fn starting_a_pairing_returns_a_qr_code_and_waits_for_the_signer() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = setup_mode_state(dir.path());
+        let app = router(Arc::clone(&state));
+        let (status, json) = send_json(app.clone(), "GET", "/api/setup/signer", None).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(json["state"], "idle");
+
+        let body = serde_json::json!({ "relays": ["ws://127.0.0.1:1"] });
+        let (status, json) = send_json(app.clone(), "POST", "/api/setup/signer", Some(body)).await;
+        assert_eq!(status, StatusCode::OK);
+        let uri = reqwest::Url::parse(json["uri"].as_str().unwrap()).unwrap();
+        assert_eq!(uri.scheme(), "nostrconnect");
+        let perms = uri
+            .query_pairs()
+            .find(|(k, _)| k == "perms")
+            .map(|(_, v)| v.into_owned());
+        assert_eq!(
+            perms.as_deref(),
+            Some("get_public_key,sign_event:35981,sign_event:35980,sign_event:30000")
+        );
+        assert!(json["qr_svg"].as_str().unwrap().contains("<svg"));
+
+        let (status, json) = send_json(app, "GET", "/api/setup/signer", None).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(json["state"], "waiting");
+    }
+
+    #[tokio::test]
+    async fn invalid_signer_relays_are_rejected() {
+        let dir = tempfile::tempdir().unwrap();
+        let app = router(setup_mode_state(dir.path()));
+        for relays in [
+            serde_json::json!([]),
+            serde_json::json!(["https://relay.example"]),
+            serde_json::json!([
+                "wss://a", "wss://b", "wss://c", "wss://d", "wss://e", "wss://f"
+            ]),
+        ] {
+            let body = serde_json::json!({ "relays": relays });
+            let (status, _) = send_json(app.clone(), "POST", "/api/setup/signer", Some(body)).await;
+            assert_eq!(status, StatusCode::BAD_REQUEST, "{relays}");
+        }
+    }
+
+    fn remote_signer_file(user: PublicKey) -> crate::signer::RemoteSignerFile {
+        crate::signer::RemoteSignerFile {
+            app_secret_key: Keys::generate().secret_key().to_secret_hex(),
+            signer_pubkey: Keys::generate().public_key().to_hex(),
+            relays: vec!["wss://relay.example".to_string()],
+            user_pubkey: user.to_hex(),
+        }
+    }
+
+    fn remote_signer_state(dir: &std::path::Path, user: PublicKey) -> Arc<AppState> {
+        let (mut config, _secret_hex) = test_config_in_dir(dir, true, false);
+        config.agent.state_dir = dir.join("data");
+        let remote = crate::signer::RemoteSigner::from_file(
+            &remote_signer_file(user),
+            Duration::from_secs(1),
+        )
+        .unwrap();
+        Arc::new(
+            AppState::new(
+                Arc::new(config),
+                Arc::new(Notify::new()),
+                test_exit(),
+                Some(Signer::Remote(Arc::new(remote))),
+                TEST_TOKEN.to_string(),
+            )
+            .unwrap(),
+        )
+    }
+
+    fn finish_pairing(state: &AppState, file: crate::signer::RemoteSignerFile, user: PublicKey) {
+        *state.pairing.lock().unwrap() = Some(Pairing::finished(PairingState::Ready(Box::new(
+            crate::signer::PairedSigner {
+                file,
+                user,
+                probe_signed: true,
+                probe_error: None,
+            },
+        ))));
+    }
+
+    #[tokio::test]
+    async fn a_running_signer_app_user_can_pair_again() {
+        let dir = tempfile::tempdir().unwrap();
+        let user = Keys::generate().public_key();
+        let state = remote_signer_state(dir.path(), user);
+        let app = router(Arc::clone(&state));
+        let (status, json) = send_json(app.clone(), "GET", "/api/overview", None).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(json["signer"]["remote"], true);
+        assert_eq!(
+            json["signer"]["relays"],
+            serde_json::json!(["wss://relay.example"])
+        );
+
+        let body = serde_json::json!({ "relays": ["ws://127.0.0.1:1"] });
+        let (status, _) = send_json(app.clone(), "POST", "/api/setup/signer", Some(body)).await;
+        assert_eq!(status, StatusCode::OK);
+        let (status, _) = send_json(app.clone(), "POST", "/api/signer/reconnect", None).await;
+        assert_eq!(status, StatusCode::CONFLICT);
+
+        let file = remote_signer_file(user);
+        finish_pairing(&state, file.clone(), user);
+        let (status, json) = send_json(app, "POST", "/api/signer/reconnect", None).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(json["restart"], true);
+        let saved = crate::signer::RemoteSignerFile::load(&state.config.agent.state_dir)
+            .unwrap()
+            .unwrap();
+        assert_eq!(saved, file);
+        assert!(state.pairing_state().is_none());
+    }
+
+    #[tokio::test]
+    async fn reconnecting_a_different_account_is_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        let user = Keys::generate().public_key();
+        let state = remote_signer_state(dir.path(), user);
+        let other = Keys::generate().public_key();
+        finish_pairing(&state, remote_signer_file(other), other);
+        let (status, json) = send_json(
+            router(Arc::clone(&state)),
+            "POST",
+            "/api/signer/reconnect",
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::CONFLICT);
+        assert!(
+            json["error"]
+                .as_str()
+                .unwrap()
+                .contains("same Nostr account")
+        );
+        assert!(
+            crate::signer::RemoteSignerFile::load(&state.config.agent.state_dir)
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[tokio::test]
+    async fn reconnecting_needs_a_signer_app() {
+        let (status, _) =
+            send_json(router(test_state()), "POST", "/api/signer/reconnect", None).await;
+        assert_eq!(status, StatusCode::CONFLICT);
+    }
+
+    #[tokio::test]
+    async fn setup_with_a_signer_needs_a_finished_pairing() {
+        let dir = tempfile::tempdir().unwrap();
+        let app = router(setup_mode_state(dir.path()));
+        let body = serde_json::json!({ "remote_signer": true, "items": {} });
+        let (status, _) = send_json(app, "POST", "/api/setup", Some(body)).await;
+        assert_eq!(status, StatusCode::CONFLICT);
+    }
+
+    #[tokio::test]
+    async fn setup_with_a_paired_signer_saves_it_without_a_secret_key() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = setup_mode_state(dir.path());
+        let user = Keys::generate().public_key();
+        let file = crate::signer::RemoteSignerFile {
+            app_secret_key: Keys::generate().secret_key().to_secret_hex(),
+            signer_pubkey: Keys::generate().public_key().to_hex(),
+            relays: vec!["wss://relay.example".to_string()],
+            user_pubkey: user.to_hex(),
+        };
+        *state.pairing.lock().unwrap() = Some(Pairing::finished(PairingState::Ready(Box::new(
+            crate::signer::PairedSigner {
+                file: file.clone(),
+                user,
+                probe_signed: true,
+                probe_error: None,
+            },
+        ))));
+        let app = router(Arc::clone(&state));
+        let (status, json) = send_json(app.clone(), "GET", "/api/setup/signer", None).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(json["state"], "ready");
+        assert_eq!(json["probe_signed"], true);
+
+        let body = serde_json::json!({ "remote_signer": true, "items": {} });
+        let (status, json) = send_json(app, "POST", "/api/setup", Some(body)).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(json["npub"], crate::mirror::npub(&user));
+        let saved = crate::signer::RemoteSignerFile::load(&state.config.agent.state_dir)
+            .unwrap()
+            .unwrap();
+        assert_eq!(saved, file);
+        let written = std::fs::read_to_string(dir.path().join("swing.toml")).unwrap();
+        assert!(!written.contains("secret_key"));
+        assert!(state.pairing_state().is_none());
+    }
+
     #[tokio::test]
     async fn post_setup_when_already_configured_is_conflict() {
         let app = router(test_state());
@@ -1343,6 +1638,14 @@ mod tests {
         assert_eq!(json["setup"], true);
         assert!(json["pubkey"].is_null());
         assert!(json["npub"].is_null());
+        assert!(json["signer"].is_null());
+    }
+
+    #[tokio::test]
+    async fn overview_tells_whether_a_signer_app_signs() {
+        let (_status, json) = send_json(router(test_state()), "GET", "/api/overview", None).await;
+        assert_eq!(json["signer"]["remote"], false);
+        assert!(json["signer"]["last_failure"].is_null());
     }
 
     fn get(uri: &str) -> Request<Body> {

@@ -1044,33 +1044,39 @@ pub fn update(current: &Config, items: &BTreeMap<String, InputValue>) -> Result<
     Config::load(Some(&current.config_path))
 }
 
+pub fn setup_keys(secret_key_input: Option<&str>) -> Result<Keys> {
+    match secret_key_input {
+        Some(raw) if !raw.trim().is_empty() => {
+            Keys::parse(raw.trim()).context("invalid secret key")
+        }
+        _ => Ok(Keys::generate()),
+    }
+}
+
 pub fn setup(
     current: &Config,
-    secret_key_input: Option<&str>,
+    keys: Option<&Keys>,
     items: &BTreeMap<String, InputValue>,
-) -> Result<(Config, Keys)> {
+) -> Result<Config> {
     if current.nostr.secret_key.is_some() {
         bail!("setup is only available before a Nostr key is configured");
     }
     check_not_env_sourced(current, items)?;
-    let keys = match secret_key_input {
-        Some(raw) if !raw.trim().is_empty() => {
-            Keys::parse(raw.trim()).context("invalid secret key")?
-        }
-        _ => Keys::generate(),
-    };
-    let secret_hex = keys.secret_key().to_secret_hex();
 
     let mut doc = load_document(current)?;
     apply_items(&mut doc, items)?;
-    let nostr_table = ensure_table(&mut doc, "nostr")?;
-    nostr_table.insert("secret_key", Item::Value(Value::from(secret_hex)));
+    if let Some(keys) = keys {
+        let nostr_table = ensure_table(&mut doc, "nostr")?;
+        nostr_table.insert(
+            "secret_key",
+            Item::Value(Value::from(keys.secret_key().to_secret_hex())),
+        );
+    }
     let rendered = doc.to_string();
     config::build_config_from_str(&rendered, config::env_var)
         .context("edited configuration is invalid")?;
     write_atomic(&current.config_path, &rendered, current.config_exists)?;
-    let reloaded = Config::load(Some(&current.config_path))?;
-    Ok((reloaded, keys))
+    Config::load(Some(&current.config_path))
 }
 
 #[cfg(test)]
@@ -1216,9 +1222,34 @@ mod tests {
         cfg.config_exists = false;
         assert!(cfg.nostr.secret_key.is_none());
         let items = BTreeMap::new();
-        let (reloaded, _keys) = setup(&cfg, None, &items).unwrap();
-        assert!(reloaded.nostr.secret_key.is_some());
+        let keys = setup_keys(None).unwrap();
+        let reloaded = setup(&cfg, Some(&keys), &items).unwrap();
+        assert_eq!(
+            reloaded
+                .nostr
+                .secret_key
+                .as_ref()
+                .map(|k| k.expose_secret()),
+            Some(keys.secret_key().to_secret_hex().as_str())
+        );
         assert!(path.exists());
+    }
+
+    #[test]
+    fn setup_for_a_signer_app_writes_no_key() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("swing.toml");
+        let mut cfg = config::build_config_from_str("", |_| None).unwrap();
+        cfg.config_path = path.clone();
+        cfg.config_exists = false;
+        let mut items = BTreeMap::new();
+        items.insert(
+            "nostr.relays".to_string(),
+            InputValue::List(vec!["wss://relay.example".to_string()]),
+        );
+        let reloaded = setup(&cfg, None, &items).unwrap();
+        assert!(reloaded.nostr.secret_key.is_none());
+        assert_eq!(reloaded.nostr.relays, vec!["wss://relay.example"]);
     }
 
     #[test]

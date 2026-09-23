@@ -9,7 +9,7 @@
 - `POST /api/login` 以外の `/api/*` は認証が要る。`Authorization: Bearer <token>` かセッション cookie が無い・合わなければ 401 `{"error": "missing or invalid dashboard token or session"}`（ガードが返す。[`../dashboard.md#認証srcauthrs-srcdashboardsessionrs`](../dashboard.md#認証srcauthrs-srcdashboardsessionrs)）。
 - `keys`（mirror add/remove）・`root`（webring）・`key`（replicas）は 1 リクエストあたり最大 100 件、超えると 400。
 - relay を引く API（sites・mirror・webring・replicas）はサーバ側でキャッシュせず、同時実行数の制限やレート制限も無い。
-- API は `swing up` プロセスの寿命でずっと動く（[`../dashboard.md`](../dashboard.md#概要)）。relay・ipfs を使うエンドポイント（`/api/sites`・`/api/status`・`/api/mirror`・`/api/mirror/add`・`/api/mirror/remove`・`/api/webring`・`/api/replicas`・`/api/publish/sites`・`/api/publish/upload`）は agent が relay 接続と Kubo の URL 確定を終えるまで 503 を返す。鍵が未設定（セットアップモード。[`../up.md#セットアップモード鍵未設定`](../up.md#セットアップモード鍵未設定)）の間はこれらが常に 503 `agent is not configured` を返す（`dashboard::api::not_ready` が `AppState::setup_mode()` を見て `NotReady` と `NotConfigured` を切り替える）。`/api/overview`・`/api/config`・`/api/shutdown`・`/api/restart` は agent の準備状態に関わらず常に応答する。`/api/setup` はセットアップモードの間だけ `200`、それ以外は `409`（下記）。
+- API は `swing up` プロセスの寿命でずっと動く（[`../dashboard.md`](../dashboard.md#概要)）。relay・ipfs を使うエンドポイント（`/api/sites`・`/api/status`・`/api/mirror`・`/api/mirror/add`・`/api/mirror/remove`・`/api/webring`・`/api/replicas`・`/api/publish/sites`・`/api/publish/upload`）は agent が relay 接続と Kubo の URL 確定を終えるまで 503 を返す。鍵が未設定（セットアップモード。[`../up.md#セットアップモード鍵未設定`](../up.md#セットアップモード鍵未設定)）の間はこれらが常に 503 `agent is not configured` を返す（`dashboard::api::not_ready` が `AppState::setup_mode()` を見て `NotReady` と `NotConfigured` を切り替える）。`/api/overview`・`/api/config`・`/api/shutdown`・`/api/restart` は agent の準備状態に関わらず常に応答する。`/api/setup` はセットアップモードの間だけ、`/api/setup/signer` はセットアップモードの間と署名アプリを使っている間だけ使え、それ以外は `409`（下記）。`/api/signer/reconnect` は署名アプリを使っている間だけ使える。署名を伴う API（`/api/mirror/add`・`/api/mirror/remove`・`/api/publish/upload`）は、NIP-46 の署名アプリを使っていると署名アプリの返事（承認）を最大 90 秒待ち、署名できなければ 502 になる（[`../signer.md`](../signer.md)）。
 - CLI の `swing status`・`swing mirror add`・`swing mirror remove`・`swing stop`・`swing dashboard open`・`swing dashboard rotate-token` はこの API のクライアント（`src/api_client.rs::ApiClient`。`<state_dir>/dashboard.token` を Bearer トークンとして送る）で、それぞれ `/api/status`・`/api/mirror/add`・`/api/mirror/remove`・`/api/shutdown`（`--restart` なら `/api/restart`）・`/api/login-code`・`/api/token/rotate` を叩く。`swing sites`・`replicas`・`webring`・`mirror list`・`publish` はこの API を経由せず relay/Kubo に直接つなぐ（[`../cli.md`](../cli.md)）。
 
 ## 既知の性質
@@ -20,10 +20,10 @@
 ## GET /api/overview
 
 ```json
-{ "version": "0.1.0", "setup": false, "pubkey": "ab12…", "npub": "npub1…", "relays": ["wss://relay.damus.io"], "mirror_set": "swing", "gateway": "http://localhost:8080", "started_at": 1790000000, "instance": "cdeee5bc85519f44", "max_upload": 2147483648 }
+{ "version": "0.1.0", "setup": false, "pubkey": "ab12…", "npub": "npub1…", "relays": ["wss://relay.damus.io"], "mirror_set": "swing", "gateway": "http://localhost:8080", "started_at": 1790000000, "instance": "cdeee5bc85519f44", "max_upload": 2147483648, "signer": { "remote": true, "relays": ["wss://relay.primal.net"], "last_failure": { "at": 1790000100, "message": "the signer app did not answer in time; check that it is running and approve the request" } } }
 ```
 
-`gateway` は `[dashboard].gateway` が空なら `null`。`started_at` はダッシュボードが有効になった起動時刻。`instance` は `up::run` の回ごと（`AppState` を作るたび）に変わるランダムな 16 桁の 16 進文字列で、同じプロセスの中での再起動（`POST /api/restart`）も見分けられる（`started_at` は秒単位なので 1 秒以内の再起動では変わらない）。`swing stop --restart` が再起動の完了を待つのに使う（[`../service.md`](../service.md)）。`max_upload` は `[dashboard].max_upload` のバイト数。`setup` は鍵が未設定（セットアップモード）かどうかで、そのときは `pubkey`／`npub` も `null` になる（[`../up.md#セットアップモード鍵未設定`](../up.md#セットアップモード鍵未設定)）。フロント（`web/app.js`）はこれを見て、通常なら hash ルーティングするところをどのルートでも常に `#/setup` に固定する（[`web.md`](web.md)）。
+`gateway` は `[dashboard].gateway` が空なら `null`。`started_at` はダッシュボードが有効になった起動時刻。`instance` は `up::run` の回ごと（`AppState` を作るたび）に変わるランダムな 16 桁の 16 進文字列で、同じプロセスの中での再起動（`POST /api/restart`）も見分けられる（`started_at` は秒単位なので 1 秒以内の再起動では変わらない）。`swing stop --restart` が再起動の完了を待つのに使う（[`../service.md`](../service.md)）。`max_upload` は `[dashboard].max_upload` のバイト数。`signer` は署名の方法で、`remote` は NIP-46 の署名アプリを使っているかどうか、`relays` は署名アプリとのやりとりに使っている relay（秘密鍵なら空）、`last_failure` は署名アプリへの最後のリクエストが失敗したときの時刻とメッセージ（成功していれば・秘密鍵なら `null`。[`../signer.md`](../signer.md)）。`setup` は鍵も署名アプリも未設定（セットアップモード）かどうかで、そのときは `pubkey`／`npub`／`signer` も `null` になる（[`../up.md#セットアップモード鍵未設定`](../up.md#セットアップモード鍵未設定)）。フロント（`web/app.js`）はこれを見て、通常なら hash ルーティングするところをどのルートでも常に `#/setup` に固定する（[`web.md`](web.md)）。
 
 ## GET /api/sites
 
@@ -195,12 +195,14 @@ Follow Set が無ければ `title: null`、`members: []`。
 セットアップモード（[`../up.md#セットアップモード鍵未設定`](../up.md#セットアップモード鍵未設定)）の間だけ使える。それ以外のとき（`AppState::setup_mode() == false`）は 409 `{"error": "swing is already configured; setup is no longer available"}`。
 
 ```json
-{ "secret_key": null, "items": { "nostr.relays": ["wss://relay.damus.io"], "policy.max_total_storage": "100GB", "policy.max_per_site": "10GB", "policy.max_per_account": "20GB" } }
+{ "secret_key": null, "remote_signer": false, "items": { "nostr.relays": ["wss://relay.damus.io"], "policy.max_total_storage": "100GB", "policy.max_per_site": "10GB", "policy.max_per_account": "20GB" } }
 ```
 
+- `remote_signer`（省略時 `false`）: `true` なら秘密鍵を書かず、`POST /api/setup/signer`（下記）で済ませたペアリングの結果を `<state_dir>/remote-signer.json` に保存する（[`../signer.md#remote-signerjson`](../signer.md#remote-signerjson)）。ペアリングが `ready` になっていなければ 409 `{"error": "no signer app is connected yet; scan the QR code first"}`。`true` のとき `secret_key` は見ない。
 - `secret_key`: `null`（または省略・空文字）なら `nostr_sdk::Keys::generate()` で新しい鍵を作る。nsec か hex の文字列を渡せば `Keys::parse` でその鍵を使う。
 - `items` は `PUT /api/config` と同じホワイトリスト・同じ env 由来チェックを通す（`settings::setup` も内部で `check_not_env_sourced` を呼ぶ）。セットアップ画面（`web/setup.js`）は relays と 3 つの保存上限だけをフォームに出す。
-- 成功したら `[nostr].secret_key` に鍵の hex を書き、`items` と合わせて 1 回の書き込みで保存する（`settings::setup`。バリデーション・atomic write は `PUT /api/config` と同じ。ファイルが無ければ `config_path`—常に決まっている、下記—に新規作成する）。
+- 成功したら `[nostr].secret_key` に鍵の hex を書き、`items` と合わせて 1 回の書き込みで保存する（`settings::setup`。バリデーション・atomic write は `PUT /api/config` と同じ。ファイルが無ければ `config_path`—常に決まっている、下記—に新規作成する）。`remote_signer: true` のときは `items` だけを書いてから `remote-signer.json` を書き、ペアリングの状態を捨てる。
+- `npub` は、秘密鍵ならその鍵の、署名アプリならペアリングで受け取ったユーザーの公開鍵。
 
 ```json
 { "ok": true, "npub": "npub1…", "restart": true }
@@ -208,6 +210,47 @@ Follow Set が無ければ `title: null`、`members: []`。
 
 - 秘密鍵の値そのものは応答に含めない（`npub` だけ）。
 - レスポンスを返した後、約 300ms 待ってから `shutdown::ExitRequest::restart()` を呼ぶ（`tokio::spawn` した別タスクで。レスポンスの送出をブロックしない）。これは `POST /api/restart`（下記）と同じ経路で、プロセスを終了させずに `swing up` をプロセス内で再起動する（[`up.md#終了要求と-exit-codeshutdownexitrequest-shutdownexit`](../up.md#終了要求と-exit-codeshutdownexitrequest-shutdownexit)）。`web/setup.js` は成功表示を出した後、`GET /api/overview` を 1 秒間隔でポーリングして `setup: false` に変わるのを待つ。
+
+## POST /api/setup/signer
+
+セットアップモードの間と、署名アプリを使っている間（つなぎ直し）だけ使える（秘密鍵で動いているときは 409）。NIP-46 の署名アプリとのペアリングを始める（[`../signer.md#ペアリングpairing`](../signer.md#ペアリングpairing)）。前のペアリングがあれば捨てる。
+
+```json
+{ "relays": ["wss://relay.primal.net"] }
+```
+
+- `relays`: 署名アプリとのやりとりに使う relay。空白だけの要素は無視し、1〜5 個。ws / wss の URL でなければ 400。
+- URI の `perms` は常に `get_public_key` と、レプリカ報告・サイトイベント・Follow Set の `sign_event:<kind>`（[`../signer.md#ペアリングpairing`](../signer.md#ペアリングpairing)）。
+
+```json
+{ "uri": "nostrconnect://<アプリの公開鍵>?relay=…&secret=…&perms=…&name=SWING&metadata=…", "qr_svg": "<svg …>" }
+```
+
+`qr_svg` は `uri` を QR コードにした SVG（黒と白、余白付き、256px 以上）。`web/setup.js` はこれを `data:` URI にして `<img>` に入れる（CSP の `img-src 'self' data:` の範囲）。
+
+## GET /api/setup/signer
+
+`POST /api/setup/signer` と同じ条件で使える（それ以外は 409）。今のペアリングの状態を返す。
+
+```json
+{ "state": "ready", "npub": "npub1…", "probe_signed": false, "error": "the signer app refused the request: Rejected" }
+```
+
+| `state` | 意味 | 付く値 |
+|---|---|---|
+| `idle` | ペアリングを始めていない | なし |
+| `waiting` | 署名アプリの接続を待っている（最大 10 分。15 秒たっても relay につながらなければ `failed`） | なし |
+| `checking` | 接続できた。確認のためレプリカ報告の kind の署名をリクエストしている（最大 60 秒） | `npub` |
+| `ready` | ペアリング完了。`POST /api/setup` の `remote_signer: true` で保存できる | `npub`、`probe_signed`（確認の署名が通ったか。自動で許可されたのかその場で承認されたのかは区別しない）、通らなかったときの `error` |
+| `failed` | 接続できなかった | `error` |
+
+## POST /api/signer/reconnect
+
+署名アプリを使っている間だけ使える（秘密鍵で動いている・セットアップモードのときは 409 `{"error": "swing does not use a signer app"}`）。ボディは無し。`POST /api/setup/signer` で済ませたペアリングの結果で `<state_dir>/remote-signer.json` を書き換え、プロセス内再起動をスケジュールする（`POST /api/setup` と同じく約 300ms 後に `ExitRequest::restart()`）。
+
+- ペアリングが `ready` でなければ 409 `{"error": "no signer app is connected yet; scan the QR code first"}`。
+- 署名アプリがいまの公開鍵と別のアカウントで署名するなら 409（`... connect the same Nostr account`）。ファイルは書き換えない。
+- 成功したら `AppState.restart_required` を `true` にし、ペアリングの状態を捨てて `{ "ok": true, "npub": "npub1…", "restart": true }` を返す。
 
 ### 設定ファイルのパス解決
 

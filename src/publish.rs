@@ -8,6 +8,7 @@ use crate::ipfs::IpfsClient;
 use crate::mfs::MfsLayout;
 use crate::nip05::{self, Nip05Verify};
 use crate::nostr::{self, RelayClient, RelaySendResult, build_site_event_builder};
+use crate::signer::Signer;
 
 fn versions_to_prune(names: &[String], keep: usize) -> Vec<String> {
     let mut versions: Vec<(u64, &String)> = names
@@ -201,7 +202,7 @@ pub async fn sign_and_send(
     relay: &RelayClient,
     announcement: &SiteAnnouncement<'_>,
 ) -> Result<Vec<RelaySendResult>> {
-    let event = build_site_event_builder(
+    let builder = build_site_event_builder(
         announcement.site_event_kind,
         announcement.d,
         announcement.cid,
@@ -210,9 +211,8 @@ pub async fn sign_and_send(
         announcement.title,
         announcement.message,
     )
-    .custom_created_at(announcement.created_at)
-    .finalize(&relay.keys)
-    .context("signing site event")?;
+    .custom_created_at(announcement.created_at);
+    let event = relay.sign(builder).await.context("signing site event")?;
     let output = relay.publish_to_relays(&event).await?;
     Ok(nostr::relay_send_results(relay.relays(), &output))
 }
@@ -300,9 +300,8 @@ pub async fn run(
         println!("Message: {message}");
     }
 
-    let keys = Keys::parse(config.require_secret_key()?.expose_secret())
-        .context("parsing Nostr secret key")?;
-    let pubkey_hex = keys.public_key().to_hex();
+    let signer = Signer::require(&config)?;
+    let pubkey_hex = signer.public_key().to_hex();
 
     if nip05_mode != Nip05Mode::Off {
         let verifier = nip05::HttpNip05Verifier::new();
@@ -331,11 +330,10 @@ pub async fn run(
     println!();
     println!("Nostr");
 
-    let relay = RelayClient::connect(
-        config.require_secret_key()?.expose_secret(),
-        &config.nostr.relays,
-    )
-    .await?;
+    if signer.is_remote() {
+        println!("  waiting for the signer app to sign the site event...");
+    }
+    let relay = RelayClient::connect(signer, &config.nostr.relays).await?;
     let send_result = sign_and_send(
         &relay,
         &SiteAnnouncement {
@@ -353,13 +351,13 @@ pub async fn run(
     let results = match send_result {
         Ok(results) => results,
         Err(e) => {
-            relay.client.shutdown().await;
+            relay.shutdown().await;
             return Err(e);
         }
     };
 
     nostr::print_relay_send_result_lines(&results);
-    relay.client.shutdown().await;
+    relay.shutdown().await;
     if !results.iter().any(|r| r.ok) {
         anyhow::bail!("no relay accepted the site event; old versions were kept");
     }

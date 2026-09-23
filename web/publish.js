@@ -17,6 +17,7 @@ import {
   sanitizeMessage,
 } from './util.js';
 import { appendLinksAndMessage, renderRelayResults } from './ui.js';
+import { createPairing } from './pairing.js';
 
 const publishEls = {
   status: document.getElementById('publish-status'),
@@ -26,6 +27,13 @@ const publishEls = {
   hex: document.getElementById('pub-hex'),
   mirrorSet: document.getElementById('pub-mirror-set'),
   relays: document.getElementById('pub-relays'),
+  signer: document.getElementById('pub-signer'),
+  signerStatus: document.getElementById('pub-signer-status'),
+  reconnect: document.getElementById('pub-signer-reconnect'),
+  reconnectRelay: document.getElementById('pub-signer-relay'),
+  reconnectSave: document.getElementById('pub-signer-save'),
+  reconnectCancel: document.getElementById('pub-signer-cancel'),
+  reconnectStatus: document.getElementById('pub-signer-save-status'),
   mySitesStatus: document.getElementById('my-sites-status'),
   mySitesContent: document.getElementById('my-sites-content'),
   uploadInput: document.getElementById('publish-upload-input'),
@@ -34,6 +42,9 @@ const publishEls = {
 };
 
 let publishing = false;
+let reconnectPairing = null;
+let reconnectSaving = false;
+const MAX_RESTART_POLLS = 120;
 const publishLoadGuard = createLoadGuard();
 const mySitesLoadGuard = createLoadGuard();
 
@@ -179,7 +190,9 @@ export async function loadOverview(force) {
 }
 
 export function updateNavFooter(overview) {
-  document.getElementById('nav-mirror-set').textContent = t('navFooterMirror', { name: overview.mirror_set });
+  const mirrorSet = document.getElementById('nav-mirror-set');
+  mirrorSet.textContent = t('navFooterMirror', { name: overview.mirror_set });
+  mirrorSet.title = mirrorSet.textContent;
   document.getElementById('nav-version').textContent = t('navFooterVersion', { version: overview.version });
   document.getElementById('page-footer').textContent = `${t('navFooterMirror', { name: overview.mirror_set })} · ${t('navFooterVersion', { version: overview.version })}`;
 }
@@ -190,18 +203,155 @@ export function renderIdentity(overview) {
   publishEls.mirrorSet.textContent = overview.mirror_set;
   publishEls.relays.replaceChildren();
   for (const r of overview.relays) publishEls.relays.append(el('li', {}, r));
+  renderSigner(overview.signer);
+}
+
+function renderSigner(signer) {
+  const remote = !!(signer && signer.remote);
+  const children = [el('span', {}, t(remote ? 'signerRemote' : 'signerLocal'))];
+  if (remote) {
+    children.push(
+      el('button', { type: 'button', class: 'swing-btn swing-btn-small', onclick: openReconnect }, t('signerReconnectBtn')),
+      el('span', { class: 'swing-hint' }, t('signerRemoteHint')),
+    );
+  }
+  publishEls.signer.replaceChildren(...children);
+  const failure = signer && signer.last_failure;
+  if (failure) {
+    setStatus(
+      publishEls.signerStatus,
+      'warn',
+      `${t('signerLastFailure', { time: formatTime(failure.at), message: failure.message })} ${t('signerLastFailureHint')}`,
+    );
+  } else {
+    clearStatus(publishEls.signerStatus);
+  }
+  if (!remote) publishEls.reconnect.hidden = true;
+  if (reconnectPairing) reconnectPairing.render();
+}
+
+function refreshReconnectSave() {
+  publishEls.reconnectSave.disabled = reconnectSaving || !reconnectPairing || !reconnectPairing.ready();
+}
+
+function openReconnect() {
+  const signer = cache.overview && cache.overview.signer;
+  if (!reconnectPairing) {
+    reconnectPairing = createPairing(
+      {
+        relay: publishEls.reconnectRelay,
+        start: document.getElementById('pub-signer-start'),
+        status: document.getElementById('pub-signer-pairing-status'),
+        qr: document.getElementById('pub-signer-qr'),
+        qrImg: document.getElementById('pub-signer-qr-img'),
+        uri: document.getElementById('pub-signer-uri'),
+        readyKey: 'signerReconnectReady',
+      },
+      refreshReconnectSave,
+    );
+  }
+  if (publishEls.reconnect.hidden && signer && signer.relays && signer.relays.length) {
+    publishEls.reconnectRelay.value = signer.relays[0];
+  }
+  clearStatus(publishEls.reconnectStatus);
+  publishEls.reconnect.hidden = false;
+  refreshReconnectSave();
+}
+
+function closeReconnect() {
+  if (reconnectPairing) reconnectPairing.reset();
+  clearStatus(publishEls.reconnectStatus);
+  publishEls.reconnect.hidden = true;
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function waitForRestart(previousInstance) {
+  for (let attempt = 0; attempt < MAX_RESTART_POLLS; attempt += 1) {
+    await sleep(1000);
+    try {
+      const overview = await apiFetch('/api/overview');
+      if (overview.instance !== previousInstance) {
+        location.reload();
+        return;
+      }
+    } catch {
+      // still restarting
+    }
+  }
+  setStatus(publishEls.reconnectStatus, 'error', t('setupTimedOut'));
+}
+
+async function saveReconnect() {
+  if (reconnectSaving) return;
+  reconnectSaving = true;
+  refreshReconnectSave();
+  setBusy(publishEls.reconnectSave, true);
+  setStatus(publishEls.reconnectStatus, 'loading', t('signerReconnectSaving'));
+  try {
+    const previous = cache.overview ? cache.overview.instance : null;
+    await apiFetch('/api/signer/reconnect', { method: 'POST' });
+    reconnectPairing.stop();
+    setStatus(publishEls.reconnectStatus, 'loading', t('setupRestarting'));
+    await waitForRestart(previous);
+  } catch (err) {
+    setStatus(publishEls.reconnectStatus, 'error', describeError(err));
+    reconnectSaving = false;
+    setBusy(publishEls.reconnectSave, false);
+    refreshReconnectSave();
+  }
+}
+
+async function refreshSigner() {
+  if (!usesSignerApp()) return;
+  try {
+    renderIdentity(await loadOverview(true));
+  } catch {
+    // the next visit shows it
+  }
+}
+
+const NIP05_ERROR_KEYS = { unreachable: 'nip05ErrorUnreachable', timeout: 'nip05ErrorTimeout', invalid_response: 'nip05ErrorInvalidResponse' };
+
+function describeNip05(nip05) {
+  switch (nip05.status) {
+    case 'verified':
+      return t('nip05StatusVerified');
+    case 'mismatch':
+      return t('nip05StatusMismatch');
+    case 'not_applicable':
+      return t('nip05StatusNotApplicable');
+    case 'off':
+      return t('nip05StatusOff');
+    case 'error':
+      return t('nip05StatusError', { reason: NIP05_ERROR_KEYS[nip05.detail] ? t(NIP05_ERROR_KEYS[nip05.detail]) : nip05.detail || '' });
+    default:
+      return `${nip05.status}${nip05.detail ? ` — ${nip05.detail}` : ''}`;
+  }
+}
+
+function usesSignerApp() {
+  return !!(cache.overview && cache.overview.signer && cache.overview.signer.remote);
 }
 
 function renderPublishResult(result, errBody) {
   publishEls.result.hidden = false;
   publishEls.result.replaceChildren();
   if (result) {
+    const accepted = result.relays.filter((r) => r.ok).length;
+    const counts = { site: result.site, ok: accepted, total: result.relays.length };
+    if (accepted === result.relays.length) setStatus(publishEls.status, 'ok', t('publishDone', counts));
+    else setStatus(publishEls.status, 'warn', t('publishDonePartial', counts));
+    publishEls.result.append(el('h2', {}, t('publishResultHeading')));
     const dl = el('dl', { class: 'swing-result-grid' });
     const addRow = (k, v) => dl.append(el('dt', {}, k), el('dd', {}, v));
     addRow(t('resultSite'), result.site);
     if (result.url) addRow(t('resultUrl'), result.url);
     if (result.title) addRow(t('resultTitle'), result.title);
-    addRow(t('resultNip05'), `${result.nip05.status}${result.nip05.detail ? ` — ${result.nip05.detail}` : ''}`);
+    addRow(t('resultNip05'), describeNip05(result.nip05));
+    if (usesSignerApp()) addRow(t('signerLabel'), t('signerRemote'));
     addRow(t('resultCid'), result.cid);
     addRow(t('resultSize'), formatBytes(result.size));
     addRow(t('resultCreated'), formatTime(result.created_at));
@@ -209,12 +359,14 @@ function renderPublishResult(result, errBody) {
     if (result.files != null) addRow(t('resultFiles'), String(result.files));
     if (result.pruned && result.pruned.length) addRow(t('resultPruned'), result.pruned.join(', '));
     if (result.prune_error) addRow(t('resultPruneError'), result.prune_error);
+    const relayCell = el('dd', {});
+    renderRelayResults(relayCell, result.relays);
+    dl.append(el('dt', {}, t('resultRelays')), relayCell);
     publishEls.result.append(dl);
     if (result.gateway_url) publishEls.result.append(el('p', {}, maybeLink(result.gateway_url, t('openGateway'))));
-    renderRelayResults(publishEls.result, result.relays);
   } else if (errBody && errBody.nip05) {
     const dl = el('dl', { class: 'swing-result-grid' });
-    dl.append(el('dt', {}, t('resultNip05')), el('dd', {}, `${errBody.nip05.status}${errBody.nip05.detail ? ` — ${errBody.nip05.detail}` : ''}`));
+    dl.append(el('dt', {}, t('resultNip05')), el('dd', {}, describeNip05(errBody.nip05)));
     publishEls.result.append(dl);
   }
 }
@@ -265,7 +417,7 @@ function submitUpload({ site, url, title, message, nip05, files }) {
     });
     xhr.upload.addEventListener('load', () => {
       showProgress('processing', 100);
-      setStatus(publishEls.status, 'loading', t('processingOnAgent'));
+      setStatus(publishEls.status, 'loading', t(usesSignerApp() ? 'processingOnAgentSigner' : 'processingOnAgent'));
     });
     xhr.addEventListener('error', () => {
       showProgress('error', 100);
@@ -283,8 +435,7 @@ function submitUpload({ site, url, title, message, nip05, files }) {
         }
       }
       if (xhr.status >= 200 && xhr.status < 300) {
-        showProgress('done', 100);
-        clearStatus(publishEls.status);
+        hideProgress();
         renderPublishResult(body, null);
         saveLastPublish({ site, url, title, message, nip05 });
         publishEls.uploadInput.value = '';
@@ -294,6 +445,7 @@ function submitUpload({ site, url, title, message, nip05, files }) {
         handlePublishHttpError(xhr.status, body);
       }
       finishUpload();
+      refreshSigner();
       resolve();
     });
     xhr.send(buildUploadFormData({ site, url, title, message, nip05, files }));
@@ -312,6 +464,8 @@ export const PublishView = {
     publishEls.uploadInput.addEventListener('change', () => updateUploadInfo());
     publishEls.form.elements.site.addEventListener('input', () => refreshSubmitState());
     document.querySelector('[data-action="reload-my-sites"]').addEventListener('click', (ev) => loadMySites(true, ev.currentTarget));
+    publishEls.reconnectSave.addEventListener('click', saveReconnect);
+    publishEls.reconnectCancel.addEventListener('click', closeReconnect);
 
     const last = readLastPublish();
     if (last) {
@@ -344,7 +498,7 @@ export const PublishView = {
     });
   },
   onShow() {
-    this.load();
+    this.load(usesSignerApp());
     loadMySites();
   },
   async load(force) {

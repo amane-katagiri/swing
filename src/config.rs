@@ -1282,13 +1282,6 @@ impl Config {
         Ok(config)
     }
 
-    pub fn require_secret_key(&self) -> Result<&NostrSecretKey> {
-        self.nostr
-            .secret_key
-            .as_ref()
-            .context("missing Nostr secret key: set SWING_NOSTR_SECRET_KEY or [nostr].secret_key")
-    }
-
     pub fn source_of(&self, key: &str) -> Option<Source> {
         self.sources.get(key).copied()
     }
@@ -1448,14 +1441,6 @@ mod tests {
         let missing = dir.path().join("nope.toml");
         let err = load_file(Some(&missing)).unwrap_err();
         assert!(err.to_string().contains("not found"));
-    }
-
-    #[test]
-    fn missing_secret_key_is_clear_error() {
-        let cfg = build_config(ConfigFile::default(), |_| None).unwrap();
-        assert!(cfg.nostr.secret_key.is_none());
-        let err = cfg.require_secret_key().unwrap_err();
-        assert!(err.to_string().contains("secret key"));
     }
 
     #[test]

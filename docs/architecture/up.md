@@ -2,7 +2,7 @@
 
 [`../architecture.md`](../architecture.md) の一部。設定キーは [`../architecture.md#設定と環境変数`](../architecture.md#設定と環境変数)、内蔵 gateway は [`gateway.md`](gateway.md)、OS への常駐登録は [`service.md`](service.md)。
 
-`swing up`（`up::run`）は起動順が固定されている: `swing.lock` の取得（[多重起動の防止](#多重起動の防止lockrs)）→ シグナルハンドラの設定（`shutdown::cancel_on_signal()`、下記）→ `<state_dir>/upload/` の掃除（`dashboard::cleanup_upload_dir`）→ `config.require_secret_key()` を試す（下記「セットアップモード」）→ ダッシュボードのトークン（`<state_dir>/dashboard.token`）の読み込み・作成（`auth::load_or_create_token`）→ ダッシュボードの `AppState` 作成・`TcpListener::bind`・`dashboard::serve` の起動 → 鍵の有無・`[kubo].managed` に応じた Kubo / agent の起動ループ。ダッシュボードはこの時点で bind・応答を始めるが、relay・Kubo を使うエンドポイントは agent が起動して `AppState::set_ready` を呼ぶまで 503 を返す（[`dashboard.md`](dashboard.md#起動)）。
+`swing up`（`up::run`）は起動順が固定されている: `swing.lock` の取得（[多重起動の防止](#多重起動の防止lockrs)）→ シグナルハンドラの設定（`shutdown::cancel_on_signal()`、下記）→ `<state_dir>/upload/` の掃除（`dashboard::cleanup_upload_dir`）→ `signer::Signer::load` で署名の方法を決める（下記「セットアップモード」、[`signer.md`](signer.md)）→ ダッシュボードのトークン（`<state_dir>/dashboard.token`）の読み込み・作成（`auth::load_or_create_token`）→ ダッシュボードの `AppState` 作成・`TcpListener::bind`・`dashboard::serve` の起動 → 鍵の有無・`[kubo].managed` に応じた Kubo / agent の起動ループ → 終わったらダッシュボードを止め、署名アプリとの接続を閉じる（`Signer::shutdown`）。ダッシュボードはこの時点で bind・応答を始めるが、relay・Kubo を使うエンドポイントは agent が起動して `AppState::set_ready` を呼ぶまで 503 を返す（[`dashboard.md`](dashboard.md#起動)）。
 
 鍵が設定されていれば、Kubo / agent のループは `[kubo].managed` に応じて 2 通りに分かれる。
 
@@ -13,9 +13,9 @@
 
 ## セットアップモード（鍵未設定）
 
-`config.require_secret_key()`（`[nostr].secret_key` も `SWING_NOSTR_SECRET_KEY` も無い場合にエラーを返す）が失敗すると、`up::run` は Kubo も agent も起動せず、ダッシュボードだけを動かして `token.cancelled()` を待つ（`dashboard::AppState::new` には `keys: None` を渡す。`AppState::setup_mode()` は `own_pubkey.is_none()` で判定する）。relay・Kubo を使う API エンドポイントは `ApiError::NotConfigured`（503、`{"error": "agent is not configured"}`）を返す（`dashboard::api::not_ready` が `setup_mode()` なら `NotConfigured`、そうでなければ通常の `NotReady` を返す）。`GET /api/overview` は `setup: true`、`pubkey`／`npub` は `null` になる（[`dashboard.md`](dashboard.md)、[`dashboard/http-api.md`](dashboard/http-api.md)）。
+`signer::Signer::load(&config)` が `None`（`[nostr].secret_key` も `SWING_NOSTR_SECRET_KEY` も `<state_dir>/remote-signer.json` も無い。[`signer.md`](signer.md)）を返すと、`up::run` は Kubo も agent も起動せず、ダッシュボードだけを動かして `token.cancelled()` を待つ（`dashboard::AppState::new` には `signer: None` を渡す。秘密鍵と `remote-signer.json` の両方があれば `Signer::load` がエラーを返し、`up::run` は起動に失敗する。`AppState::setup_mode()` は `own_pubkey.is_none()` で判定する）。relay・Kubo を使う API エンドポイントは `ApiError::NotConfigured`（503、`{"error": "agent is not configured"}`）を返す（`dashboard::api::not_ready` が `setup_mode()` なら `NotConfigured`、そうでなければ通常の `NotReady` を返す）。`GET /api/overview` は `setup: true`、`pubkey`／`npub` は `null` になる（[`dashboard.md`](dashboard.md)、[`dashboard/http-api.md`](dashboard/http-api.md)）。
 
-セットアップモードを抜けるのは `POST /api/setup`（[`dashboard/http-api.md`](dashboard/http-api.md#post-apisetup)）だけで、鍵と初期設定を書き込んだ後、下記の「終了要求と exit code」と同じ `ExitRequest::restart()` を約 300ms 後に呼んでプロセス内再起動をスケジュールする（HTTP レスポンスを返してからにすることで、リクエスト自体は成功として返る）。`swing up` はコマンドラインからは常に起動でき、`swing.toml` が無くても `resolve_config_path` は `<cwd>/swing.toml` という書き込み先を常に返す（存在しなければ `Config::config_exists = false`。[`../architecture.md#設定と環境変数`](../architecture.md#設定と環境変数)）ので、初回起動はこのモードで待ち、ダッシュボードのセットアップ画面から鍵・relays・保存上限を書き込んで自分自身を再起動する（[`dashboard.md`](dashboard.md)）。
+セットアップモードを抜けるのは `POST /api/setup`（[`dashboard/http-api.md`](dashboard/http-api.md#post-apisetup)）だけで、鍵（または署名アプリの接続情報）と初期設定を書き込んだ後、下記の「終了要求と exit code」と同じ `ExitRequest::restart()` を約 300ms 後に呼んでプロセス内再起動をスケジュールする（HTTP レスポンスを返してからにすることで、リクエスト自体は成功として返る）。`swing up` はコマンドラインからは常に起動でき、`swing.toml` が無くても `resolve_config_path` は `<cwd>/swing.toml` という書き込み先を常に返す（存在しなければ `Config::config_exists = false`。[`../architecture.md#設定と環境変数`](../architecture.md#設定と環境変数)）ので、初回起動はこのモードで待ち、ダッシュボードのセットアップ画面から鍵（または署名アプリとのペアリング）・relays・保存上限を書き込んで自分自身を再起動する（[`dashboard.md`](dashboard.md)）。
 
 ## shutdown（shutdown.rs）
 

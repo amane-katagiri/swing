@@ -2,7 +2,6 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
-use nostr_sdk::prelude::Keys;
 use tokio::sync::Notify;
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info, warn};
@@ -14,6 +13,7 @@ use crate::dashboard;
 use crate::kubo;
 use crate::lock;
 use crate::shutdown::{Exit, ExitRequest};
+use crate::signer::Signer;
 
 const UNMANAGED_HEALTH_TIMEOUT: Duration = Duration::from_secs(30);
 const MANAGED_HEALTH_TIMEOUT: Duration = Duration::from_secs(120);
@@ -68,12 +68,8 @@ pub async fn run(config: Config, token: CancellationToken) -> Result<Exit> {
         .await
         .context("cleaning up leftover dashboard uploads")?;
 
-    let keys = match config.require_secret_key() {
-        Ok(secret) => {
-            Some(Keys::parse(secret.expose_secret()).context("parsing configured secret key")?)
-        }
-        Err(_) => None,
-    };
+    let signer = Signer::load(&config)?;
+    let setup_mode = signer.is_none();
 
     let dashboard_token = auth::load_or_create_token(&config.agent.state_dir)
         .context("preparing the dashboard token")?;
@@ -81,7 +77,7 @@ pub async fn run(config: Config, token: CancellationToken) -> Result<Exit> {
         Arc::new(config.clone()),
         Arc::clone(&notify),
         exit.clone(),
-        keys.clone(),
+        signer,
         dashboard_token,
     )?);
 
@@ -105,9 +101,9 @@ pub async fn run(config: Config, token: CancellationToken) -> Result<Exit> {
         }
     });
 
-    let result = if keys.is_none() {
+    let result = if setup_mode {
         info!(
-            "no Nostr secret key configured; running in setup mode (dashboard only, waiting for setup)"
+            "no Nostr key or signer app configured; running in setup mode (dashboard only, waiting for setup)"
         );
         token.cancelled().await;
         Ok(())
@@ -138,6 +134,9 @@ pub async fn run(config: Config, token: CancellationToken) -> Result<Exit> {
             timeout = ?DASHBOARD_SHUTDOWN_TIMEOUT,
             "dashboard server did not shut down in time; leaving it behind"
         );
+    }
+    if let Some(signer) = &dashboard_state.signer {
+        signer.shutdown().await;
     }
 
     result?;

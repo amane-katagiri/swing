@@ -18,6 +18,7 @@ use crate::nip05;
 use crate::publish;
 use crate::replicas;
 use crate::settings;
+use crate::signer::{self, Pairing, PairingRequest, PairingState, Signer};
 use crate::webring;
 
 use super::AppState;
@@ -110,6 +111,7 @@ pub async fn overview(
         started_at: state.started_at,
         instance: state.instance.clone(),
         max_upload: state.config.dashboard.max_upload,
+        signer: state.signer.as_ref().map(dto::signer_dto),
     }))
 }
 
@@ -460,28 +462,165 @@ pub async fn update_config(
 pub struct SetupRequest {
     secret_key: Option<String>,
     #[serde(default)]
+    remote_signer: bool,
+    #[serde(default)]
     items: BTreeMap<String, settings::InputValue>,
+}
+
+fn ensure_setup_mode(state: &AppState) -> Result<(), ApiError> {
+    if state.setup_mode() {
+        Ok(())
+    } else {
+        Err(ApiError::Conflict(
+            "swing is already configured; setup is no longer available".to_string(),
+        ))
+    }
+}
+
+fn uses_signer_app(state: &AppState) -> bool {
+    state.signer.as_ref().is_some_and(Signer::is_remote)
+}
+
+fn ensure_can_pair(state: &AppState) -> Result<(), ApiError> {
+    if state.setup_mode() || uses_signer_app(state) {
+        Ok(())
+    } else {
+        Err(ApiError::Conflict(
+            "a signer app can be paired only during setup or when swing already uses one"
+                .to_string(),
+        ))
+    }
+}
+
+fn ready_pairing(state: &AppState) -> Result<Box<signer::PairedSigner>, ApiError> {
+    match state.pairing_state() {
+        Some(PairingState::Ready(paired)) => Ok(paired),
+        _ => Err(ApiError::Conflict(
+            "no signer app is connected yet; scan the QR code first".to_string(),
+        )),
+    }
+}
+
+fn schedule_restart(state: &AppState) {
+    let exit = state.exit.clone();
+    tokio::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+        exit.restart();
+    });
 }
 
 pub async fn setup(
     State(state): State<Arc<AppState>>,
     AppJson(req): AppJson<SetupRequest>,
 ) -> Result<Response, ApiError> {
-    if !state.setup_mode() {
-        return Err(ApiError::Conflict(
-            "swing is already configured; setup is no longer available".to_string(),
-        ));
-    }
-    let (_reloaded, keys) = settings::setup(&state.config, req.secret_key.as_deref(), &req.items)
-        .map_err(|e| ApiError::BadRequest(format!("{e:#}")))?;
-    let npub = mirror::npub(&keys.public_key());
-    let exit = state.exit.clone();
-    tokio::spawn(async move {
-        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
-        exit.restart();
-    });
+    ensure_setup_mode(&state)?;
+    let bad_request = |e: anyhow::Error| ApiError::BadRequest(format!("{e:#}"));
+    let pubkey = if req.remote_signer {
+        let paired = ready_pairing(&state)?;
+        settings::setup(&state.config, None, &req.items).map_err(bad_request)?;
+        paired
+            .file
+            .save(&state.config.agent.state_dir)
+            .map_err(|e| ApiError::Internal(format!("{e:#}")))?;
+        *state.pairing.lock().expect("pairing lock") = None;
+        paired.user
+    } else {
+        let keys = settings::setup_keys(req.secret_key.as_deref()).map_err(bad_request)?;
+        settings::setup(&state.config, Some(&keys), &req.items).map_err(bad_request)?;
+        keys.public_key()
+    };
+    let npub = mirror::npub(&pubkey);
+    schedule_restart(&state);
     let body = Json(serde_json::json!({ "ok": true, "npub": npub, "restart": true }));
     Ok((StatusCode::OK, body).into_response())
+}
+
+pub async fn reconnect_signer(State(state): State<Arc<AppState>>) -> Result<Response, ApiError> {
+    if !uses_signer_app(&state) {
+        return Err(ApiError::Conflict(
+            "swing does not use a signer app".to_string(),
+        ));
+    }
+    let paired = ready_pairing(&state)?;
+    let own = state.own_pubkey.expect("a signer implies a public key");
+    if paired.user != own {
+        return Err(ApiError::Conflict(format!(
+            "the signer app signs as {}, not as this swing's {}; connect the same Nostr account",
+            mirror::npub(&paired.user),
+            mirror::npub(&own)
+        )));
+    }
+    paired
+        .file
+        .save(&state.config.agent.state_dir)
+        .map_err(|e| ApiError::Internal(format!("{e:#}")))?;
+    *state.pairing.lock().expect("pairing lock") = None;
+    state.restart_required.store(true, Ordering::SeqCst);
+    schedule_restart(&state);
+    let body = Json(serde_json::json!({ "ok": true, "npub": mirror::npub(&own), "restart": true }));
+    Ok((StatusCode::OK, body).into_response())
+}
+
+const MAX_SIGNER_RELAYS: usize = 5;
+
+#[derive(Debug, Deserialize)]
+pub struct StartPairingRequest {
+    relays: Vec<String>,
+}
+
+fn parse_signer_relays(relays: &[String]) -> Result<Vec<RelayUrl>, ApiError> {
+    let relays: Vec<&str> = relays
+        .iter()
+        .map(|r| r.trim())
+        .filter(|r| !r.is_empty())
+        .collect();
+    if relays.is_empty() {
+        return Err(ApiError::BadRequest(
+            "relays must include at least one entry".to_string(),
+        ));
+    }
+    if relays.len() > MAX_SIGNER_RELAYS {
+        return Err(ApiError::BadRequest(format!(
+            "relays must include at most {MAX_SIGNER_RELAYS} entries"
+        )));
+    }
+    relays
+        .into_iter()
+        .map(|r| {
+            RelayUrl::parse(r).map_err(|e| ApiError::BadRequest(format!("invalid relay {r}: {e}")))
+        })
+        .collect()
+}
+
+pub async fn start_pairing(
+    State(state): State<Arc<AppState>>,
+    AppJson(req): AppJson<StartPairingRequest>,
+) -> Result<Json<dto::PairingStartDto>, ApiError> {
+    ensure_can_pair(&state)?;
+    let relays = parse_signer_relays(&req.relays)?;
+    let nostr = &state.config.nostr;
+    let pairing = Pairing::start(PairingRequest {
+        relays,
+        perms: signer::requested_perms(&[nostr.replica_event_kind, nostr.site_event_kind, 30000]),
+        probe_kind: nostr.replica_event_kind,
+        pairing_timeout: signer::PAIRING_TIMEOUT,
+        relay_timeout: signer::RELAY_CONNECT_TIMEOUT,
+        probe_timeout: signer::PROBE_TIMEOUT,
+    })
+    .map_err(|e| ApiError::BadRequest(format!("{e:#}")))?;
+    let uri = pairing.uri().to_string();
+    let qr_svg = signer::qr_svg(&uri).map_err(|e| ApiError::Internal(format!("{e:#}")))?;
+    *state.pairing.lock().expect("pairing lock") = Some(pairing);
+    Ok(Json(dto::PairingStartDto { uri, qr_svg }))
+}
+
+pub async fn pairing_status(
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<dto::PairingStatusDto>, ApiError> {
+    ensure_can_pair(&state)?;
+    Ok(Json(dto::pairing_status_dto(
+        state.pairing_state().as_ref(),
+    )))
 }
 
 pub async fn shutdown(State(state): State<Arc<AppState>>) -> Response {

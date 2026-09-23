@@ -7,6 +7,7 @@ use nostr_sdk::prelude::*;
 use crate::config::Config;
 use crate::mirror;
 use crate::nostr::{self, RelayClient, SiteEvent};
+use crate::signer::Signer;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
 pub enum Format {
@@ -473,18 +474,14 @@ pub async fn collect(
 
 pub async fn show(config: &Config, inputs: &[String], depth: usize, format: Format) -> Result<()> {
     let roots = mirror::parse_pubkey_inputs(inputs)?;
-    let relay = RelayClient::connect(
-        config.require_secret_key()?.expose_secret(),
-        &config.nostr.relays,
-    )
-    .await?;
+    let relay = RelayClient::connect(Signer::require(config)?, &config.nostr.relays).await?;
     let roots = if roots.is_empty() {
-        vec![relay.keys.public_key()]
+        vec![relay.public_key()]
     } else {
         roots
     };
     let result = collect(&relay, config, &roots, depth).await;
-    relay.client.shutdown().await;
+    relay.shutdown().await;
     let view = result?;
     let rendered = match format {
         Format::Text => render_text(

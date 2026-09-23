@@ -6,6 +6,7 @@ use nostr_sdk::prelude::*;
 use crate::config::Config;
 use crate::mirror;
 use crate::nostr::{self, RelayClient, ReplicaReport, SiteEvent};
+use crate::signer::Signer;
 
 pub type SiteAddress = (PublicKey, String);
 
@@ -344,18 +345,14 @@ fn print_replicas(authors: &[AuthorReplicas]) {
 
 pub async fn show(config: &Config, inputs: &[String]) -> Result<()> {
     let authors = mirror::parse_pubkey_inputs(inputs)?;
-    let relay = RelayClient::connect(
-        config.require_secret_key()?.expose_secret(),
-        &config.nostr.relays,
-    )
-    .await?;
+    let relay = RelayClient::connect(Signer::require(config)?, &config.nostr.relays).await?;
     let authors = if authors.is_empty() {
-        vec![relay.keys.public_key()]
+        vec![relay.public_key()]
     } else {
         authors
     };
     let result = collect(&relay, config, &authors).await;
-    relay.client.shutdown().await;
+    relay.shutdown().await;
     print_replicas(&result?);
     Ok(())
 }

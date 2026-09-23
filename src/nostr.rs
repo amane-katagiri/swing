@@ -5,6 +5,8 @@ use std::time::Duration;
 use anyhow::{Context, Result};
 use nostr_sdk::prelude::*;
 
+use crate::signer::Signer;
+
 pub const SITE_SUBSCRIPTION_ID: &str = "swing-sites";
 
 // `created_at` is self-declared by the author, so a small tolerance is all that
@@ -31,13 +33,12 @@ fn capped_limit(count: usize, per: usize) -> usize {
 
 pub struct RelayClient {
     pub client: Client,
-    pub keys: Keys,
+    pub signer: Signer,
     relays: Vec<String>,
 }
 
 impl RelayClient {
-    pub async fn connect(secret_key: &str, relays: &[String]) -> Result<Self> {
-        let keys = Keys::parse(secret_key).context("parsing Nostr secret key")?;
+    pub async fn connect(signer: Signer, relays: &[String]) -> Result<Self> {
         let client = Client::new();
         for url in relays {
             client
@@ -48,13 +49,26 @@ impl RelayClient {
         client.connect().await;
         Ok(Self {
             client,
-            keys,
+            signer,
             relays: relays.to_vec(),
         })
     }
 
     pub fn relays(&self) -> &[String] {
         &self.relays
+    }
+
+    pub fn public_key(&self) -> PublicKey {
+        self.signer.public_key()
+    }
+
+    pub async fn sign(&self, builder: EventBuilder) -> Result<Event> {
+        self.signer.sign(builder).await
+    }
+
+    pub async fn shutdown(&self) {
+        self.client.shutdown().await;
+        self.signer.shutdown().await;
     }
 
     async fn fetch(&self, filter: Filter, context: &'static str) -> Result<Vec<Event>> {
@@ -71,14 +85,14 @@ impl RelayClient {
     pub async fn fetch_follow_set(&self, mirror_set: &str) -> Result<Option<Event>> {
         let filter = Filter::new()
             .kind(Kind::Custom(30000))
-            .author(self.keys.public_key())
+            .author(self.public_key())
             .identifier(mirror_set);
         let events = self.fetch(filter, "fetching follow set").await?;
         let now = Timestamp::now().as_secs();
         // Defense in depth against a relay that ignores the filter.
         Ok(events
             .into_iter()
-            .filter(|e| is_follow_set_of(e, &self.keys.public_key(), mirror_set))
+            .filter(|e| is_follow_set_of(e, &self.public_key(), mirror_set))
             .filter(|e| plausible_at(e.created_at.as_secs(), now))
             .reduce(|a, b| if is_newer_replaceable(&b, &a) { b } else { a }))
     }
@@ -227,20 +241,18 @@ pub trait ReportRelay {
 
 impl ReportRelay for RelayClient {
     fn public_key(&self) -> PublicKey {
-        self.keys.public_key()
+        RelayClient::public_key(self)
     }
 
     async fn fetch_own_reports(&self, report_kind: u16) -> Result<Vec<Event>> {
         let filter = Filter::new()
             .kind(Kind::Custom(report_kind))
-            .author(self.keys.public_key());
+            .author(RelayClient::public_key(self));
         self.fetch(filter, "fetching own replica reports").await
     }
 
     async fn send_report(&self, report: EventBuilder) -> Result<bool> {
-        let event = report
-            .finalize(&self.keys)
-            .context("signing replica report")?;
+        let event = self.sign(report).await.context("signing replica report")?;
         let output = self.publish_to_relays(&event).await?;
         Ok(!output.success.is_empty())
     }

@@ -41,8 +41,14 @@ pub fn write_new_token(state_dir: &Path) -> Result<String> {
     std::fs::create_dir_all(state_dir)
         .with_context(|| format!("creating state dir {}", state_dir.display()))?;
     let token = random_hex(TOKEN_BYTES);
-    let path = token_path(state_dir);
-    let tmp = path.with_extension("token.tmp");
+    write_private_file(&token_path(state_dir), &format!("{token}\n"))?;
+    Ok(token)
+}
+
+pub(crate) fn write_private_file(path: &Path, contents: &str) -> Result<()> {
+    let mut tmp = path.as_os_str().to_owned();
+    tmp.push(".tmp");
+    let tmp = PathBuf::from(tmp);
     let _ = std::fs::remove_file(&tmp);
     let mut options = std::fs::OpenOptions::new();
     options.write(true).create_new(true);
@@ -54,15 +60,15 @@ pub fn write_new_token(state_dir: &Path) -> Result<String> {
     let mut file = options
         .open(&tmp)
         .with_context(|| format!("creating {}", tmp.display()))?;
-    writeln!(file, "{token}").with_context(|| format!("writing {}", tmp.display()))?;
+    file.write_all(contents.as_bytes())
+        .with_context(|| format!("writing {}", tmp.display()))?;
     file.sync_all()
         .with_context(|| format!("writing {}", tmp.display()))?;
     drop(file);
-    std::fs::rename(&tmp, &path).with_context(|| format!("replacing {}", path.display()))?;
-    Ok(token)
+    std::fs::rename(&tmp, path).with_context(|| format!("replacing {}", path.display()))
 }
 
-fn random_hex(len: usize) -> String {
+pub(crate) fn random_hex(len: usize) -> String {
     let mut bytes = vec![0u8; len];
     getrandom::fill(&mut bytes).expect("reading OS randomness");
     hex(&bytes)

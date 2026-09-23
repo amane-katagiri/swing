@@ -1,5 +1,6 @@
 use nostr_sdk::prelude::*;
 use swing::nostr;
+use swing::signer::Signer;
 
 fn relay_url() -> String {
     std::env::var("SWING_TEST_RELAY").unwrap_or_else(|_| "ws://127.0.0.1:18080".to_string())
@@ -11,8 +12,7 @@ fn relay_url() -> String {
 #[ignore]
 async fn publish_and_fetch_site_event_round_trip() {
     let keys = Keys::generate();
-    let secret = keys.secret_key().to_secret_hex();
-    let relay = nostr::RelayClient::connect(&secret, &[relay_url()])
+    let relay = nostr::RelayClient::connect(Signer::Local(keys.clone()), &[relay_url()])
         .await
         .expect("connect");
 
@@ -25,7 +25,7 @@ async fn publish_and_fetch_site_event_round_trip() {
         Some("Roundtrip site"),
         Some("Add a roundtrip page"),
     )
-    .finalize(&relay.keys)
+    .finalize(&keys)
     .unwrap();
 
     let out = relay.publish_to_relays(&event).await.expect("publish");
@@ -56,18 +56,12 @@ async fn replica_reports_are_found_by_site_and_replaced_by_withdrawals() {
     use std::collections::BTreeSet;
 
     let author = Keys::generate();
-    let reporter = nostr::RelayClient::connect(
-        &Keys::generate().secret_key().to_secret_hex(),
-        &[relay_url()],
-    )
-    .await
-    .expect("connect reporter");
-    let other = nostr::RelayClient::connect(
-        &Keys::generate().secret_key().to_secret_hex(),
-        &[relay_url()],
-    )
-    .await
-    .expect("connect other");
+    let reporter = nostr::RelayClient::connect(Signer::Local(Keys::generate()), &[relay_url()])
+        .await
+        .expect("connect reporter");
+    let other = nostr::RelayClient::connect(Signer::Local(Keys::generate()), &[relay_url()])
+        .await
+        .expect("connect other");
     let cid = "bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi".to_string();
     let now = Timestamp::now().as_secs();
     let build = |d: &str, cids: BTreeSet<String>, created_at: u64| {
@@ -133,34 +127,34 @@ async fn replica_reports_are_found_by_site_and_replaced_by_withdrawals() {
         .collect();
     reports.sort_by_key(|r| r.cids.is_empty());
     assert_eq!(reports.len(), 2);
-    assert_eq!(reports[0].reporter, reporter.keys.public_key());
+    assert_eq!(reports[0].reporter, reporter.public_key());
     assert_eq!(reports[0].d, "replica.example");
     assert_eq!(reports[0].cids, BTreeSet::from([cid.clone()]));
-    assert_eq!(reports[1].reporter, other.keys.public_key());
+    assert_eq!(reports[1].reporter, other.public_key());
     assert!(reports[1].cids.is_empty());
 
-    let follow_set = EventBuilder::new(Kind::Custom(30000), "")
-        .tag(Tag::identifier("swing"))
-        .tag(Tag::public_key(author.public_key()))
-        .finalize(&reporter.keys)
-        .unwrap();
-    reporter.publish_to_relays(&follow_set).await.unwrap();
-    let follow_sets = reporter
-        .fetch_follow_sets(
-            "swing",
-            &[reporter.keys.public_key(), other.keys.public_key()],
+    let follow_set = reporter
+        .sign(
+            EventBuilder::new(Kind::Custom(30000), "")
+                .tag(Tag::identifier("swing"))
+                .tag(Tag::public_key(author.public_key())),
         )
         .await
         .unwrap();
+    reporter.publish_to_relays(&follow_set).await.unwrap();
+    let follow_sets = reporter
+        .fetch_follow_sets("swing", &[reporter.public_key(), other.public_key()])
+        .await
+        .unwrap();
     assert_eq!(follow_sets.len(), 1);
-    assert_eq!(follow_sets[&reporter.keys.public_key()].id, follow_set.id);
+    assert_eq!(follow_sets[&reporter.public_key()].id, follow_set.id);
 
     reporter.client.shutdown().await;
     other.client.shutdown().await;
 }
 
 async fn publish(relay: &nostr::RelayClient, builder: EventBuilder) {
-    let event = builder.finalize(&relay.keys).unwrap();
+    let event = relay.sign(builder).await.unwrap();
     let out = relay.publish_to_relays(&event).await.unwrap();
     assert!(!out.success.is_empty(), "relay did not ack the event");
 }
@@ -170,12 +164,9 @@ async fn publish(relay: &nostr::RelayClient, builder: EventBuilder) {
 async fn follow_set_authors_are_found_by_referenced_account() {
     let target = Keys::generate().public_key();
     let connect = || async {
-        nostr::RelayClient::connect(
-            &Keys::generate().secret_key().to_secret_hex(),
-            &[relay_url()],
-        )
-        .await
-        .expect("connect")
+        nostr::RelayClient::connect(Signer::Local(Keys::generate()), &[relay_url()])
+            .await
+            .expect("connect")
     };
     let (follower, former, other_set) = (connect().await, connect().await, connect().await);
     let now = Timestamp::now().as_secs();
@@ -196,7 +187,7 @@ async fn follow_set_authors_are_found_by_referenced_account() {
         .unwrap();
     assert_eq!(
         authors,
-        std::collections::HashSet::from([follower.keys.public_key()])
+        std::collections::HashSet::from([follower.public_key()])
     );
 
     for relay in [follower, former, other_set] {

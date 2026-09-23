@@ -14,15 +14,15 @@ HTTP サーバー（axum 0.8）で、ダッシュボードのブラウザ向け�
   - `/api/overview`・`/api/config`・`/api/shutdown`・`/api/restart` は agent の準備状態に関わらず常に応答する。`/api/setup` はセットアップモードの間だけ応答する（それ以外は `409`）。
 - 保存状態は agent の `Mutex<State>` には触れず、CLI の各サブコマンドと同じく `state.json` をディスクから読み直す（`mirror::collect_sites`・`health::collect_status` など）。
 - `mirror add` / `mirror remove` が relay に受理されると `tokio::sync::Notify` で agent の待ち受けループに知らせ、poll tick と同じ `poll_once`（sweep → Follow Set の再取得 → レプリカ報告の同期）をその場で実行させる。
-- 自分の公開鍵（`AppState.own_pubkey: Option<PublicKey>`）は起動時に 1 回だけ秘密鍵から求めて保持する（リクエストのたびにパースし直さない）。鍵が無ければ `None` で、`AppState::setup_mode()` はこれが `None` かどうかで判定する。
+- 署名の方法（`AppState.signer: Option<signer::Signer>`。秘密鍵か NIP-46 の署名アプリ。[`signer.md`](signer.md)）は `up::run` が起動時に 1 回だけ決めて渡す。agent はこれを使い回す。自分の公開鍵（`AppState.own_pubkey: Option<PublicKey>`）はそこから求めて保持する（署名アプリの場合もリクエストは送らない）。どちらも無ければ `None` で、`AppState::setup_mode()` はこれが `None` かどうかで判定する。
 
 ### セットアップモードと `AppState::setup_mode`
 
-`[nostr].secret_key`（`SWING_NOSTR_SECRET_KEY`）が無い状態で `swing up` を起動すると、`dashboard::AppState::new` に `keys: None` が渡り、`own_pubkey` も `None` になる。この状態（セットアップモード）の詳しい起動シーケンス（Kubo・agent を起動しない、ダッシュボードだけ動かす）は [`up.md#セットアップモード鍵未設定`](up.md#セットアップモード鍵未設定) を参照。ダッシュボード側で見えるのはこれだけ:
+`[nostr].secret_key`（`SWING_NOSTR_SECRET_KEY`）も `<state_dir>/remote-signer.json` も無い状態で `swing up` を起動すると、`dashboard::AppState::new` に `signer: None` が渡り、`own_pubkey` も `None` になる。この状態（セットアップモード）の詳しい起動シーケンス（Kubo・agent を起動しない、ダッシュボードだけ動かす）は [`up.md#セットアップモード鍵未設定`](up.md#セットアップモード鍵未設定) を参照。ダッシュボード側で見えるのはこれだけ:
 
 - `GET /api/overview` の `setup: true`、`pubkey`／`npub` は `null`。
 - relay・Kubo を使うエンドポイントは常に `503 agent is not configured`。
-- `POST /api/setup` だけがこのモードで使え、鍵と初期設定を書いてプロセス内再起動をスケジュールする（下記「設定の読み込みと編集」、[`dashboard/http-api.md#post-apisetup`](dashboard/http-api.md#post-apisetup)）。それ以外の時期に叩くと `409`。
+- `POST /api/setup` と `GET`／`POST /api/setup/signer` だけがこのモードで使える（`/api/setup/signer` は署名アプリで動いている間も、つなぎ直しのために使える）。`/api/setup/signer` は NIP-46 の署名アプリとのペアリングを始め、その状態を返す（ペアリングの状態は `AppState.pairing` に 1 つだけ持つ。[`signer.md#ペアリングpairing`](signer.md#ペアリングpairing)）。`POST /api/setup` は鍵（または署名アプリの接続情報）と初期設定を書いてプロセス内再起動をスケジュールする（下記「設定の読み込みと編集」、[`dashboard/http-api.md#post-apisetup`](dashboard/http-api.md#post-apisetup)）。それ以外の時期に叩くと `409`。
 - フロント（`web/app.js`）は `overview.setup` を見て、どの hash であっても Setup 画面（`#/setup`）に固定する（[`dashboard/web.md`](dashboard/web.md)）。
 
 ### UI と API の分離（`[dashboard].ui`）
@@ -36,7 +36,7 @@ HTTP サーバー（axum 0.8）で、ダッシュボードのブラウザ向け�
 `up::run`（`src/up.rs`）の中で行う。全体の起動順は [`up.md`](up.md) を参照。
 
 1. `swing.lock` の取得・シグナルハンドラの設定の後、`<state_dir>/upload/` を掃除（`dashboard::cleanup_upload_dir`）する。
-2. `config.require_secret_key()` を試す。成功すれば `Keys::parse` した鍵を、失敗すれば `None` を `dashboard::AppState::new(config, notify, exit, keys, token)` に渡す（`keys: Option<Keys>`）。`token` は `auth::load_or_create_token(state_dir)` で `<state_dir>/dashboard.token` から読む（無ければ作る。下記「認証」）。`AppState::new` 自体の失敗（`ui = true` のときの `DesktopAssets::load` 失敗）は `swing up` の起動失敗として伝播する。
+2. `signer::Signer::load` で署名の方法を決め、`dashboard::AppState::new(config, notify, exit, signer, token)` に渡す（`signer: Option<Signer>`。秘密鍵も署名アプリも無ければ `None`、両方あれば `swing up` の起動失敗）。`token` は `auth::load_or_create_token(state_dir)` で `<state_dir>/dashboard.token` から読む（無ければ作る。下記「認証」）。`AppState::new` 自体の失敗（`ui = true` のときの `DesktopAssets::load` 失敗）は `swing up` の起動失敗として伝播する。
 3. `[dashboard].listen` に `TcpListener::bind` する。bind に失敗すると `swing up` の起動自体がエラーで終了する。bind したアドレスがループバック（`127.0.0.1`/`::1`）以外なら、前段に TLS を終端する HTTP リバースプロキシが無いとログインコードとセッション cookie が平文で流れることを `tracing::warn` で警告する（`allowed_hosts` だけを設定した構成は、ループバックで待ち受けて同じホストのプロキシから受ける使い方があるので警告しない）。bind できたら `dashboard listening; run `swing dashboard open` to log in` を info で出す。
 4. `dashboard::serve` を別タスクとして `tokio::spawn` する。この時点でダッシュボードは応答するが、relay・ipfs を使うエンドポイントは agent が起動して `set_ready` を呼ぶまで `503` を返す。
 5. この後 Kubo（`managed` なら）と mirror-agent（`agent::run_until`）の起動ループに入る。`agent::run_until` は relay 接続と Kubo の URL 確定が終わった時点で `dashboard.set_ready(relay, ipfs)` を呼び、`run_until` を抜けるとき（エラーでも正常終了でも）`dashboard.set_not_ready()` を呼ぶ。
@@ -154,10 +154,10 @@ HTTP サーバー（axum 0.8）で、ダッシュボードのブラウザ向け�
 - `AppState.restart_required: AtomicBool` — プロセスが起動してから一度でも書き込みが成功すれば `true` になり、実際にプロセスが再起動する（下記）までリセットされない。`GET`/`PUT /api/config` の `restart_required` はこれをそのまま返す。
 - `AppState.display_config: RwLock<Arc<Config>>` — 起動時は `AppState.config`（実際に relay・Kubo・agent が使っている設定）のコピーだが、書き込みが成功するたびに書き換え後の設定に差し替わる。`GET /api/config` は常に `display_config` を見るので、まだ再起動していなくても「再起動したらこうなる」設定を UI に見せられる。実際に動いている relay・Kubo・agent 側の設定（`AppState.config`）は再起動するまで変わらない。
 
-`POST /api/setup` は上と同じ書き込みに加えて `[nostr].secret_key` を書き、成功レスポンスを返した約 300ms 後に `ExitRequest::restart()` を呼んでプロセス内再起動をスケジュールする（[`up.md#セットアップモード鍵未設定`](up.md#セットアップモード鍵未設定)、[`dashboard/http-api.md#post-apisetup`](dashboard/http-api.md#post-apisetup)）。
+`POST /api/setup` は上と同じ書き込みに加えて `[nostr].secret_key` を書き（署名アプリを選んだときは書かず、代わりに `<state_dir>/remote-signer.json` を書く。設定ファイルを先に書き、その後で `remote-signer.json` を書く）、成功レスポンスを返した約 300ms 後に `ExitRequest::restart()` を呼んでプロセス内再起動をスケジュールする（[`up.md#セットアップモード鍵未設定`](up.md#セットアップモード鍵未設定)、[`dashboard/http-api.md#post-apisetup`](dashboard/http-api.md#post-apisetup)）。
 
 ## 秘密鍵を出さない仕組み
 
 - `config::Config`（および `NostrConfig`）に `Serialize` を実装していない。DTO は手書きの構造体で、`secret_key` の実値を持つフィールドが型として存在しない。`/api/config` は常に固定文字列 `"(set, hidden)"`（未設定なら `"(not set)"`）を返す。
 - `Config` の `Debug` 実装も秘密鍵の値を `<redacted>` にする（ログにも出ない）。
-- 表示するのは `npub` / hex 公開鍵のみ。nsec・鍵の hex は API のどのレスポンスにも登場しない（`POST /api/setup` も `npub` だけを返す）。鍵を書けるのは `POST /api/setup` だけで、`PUT /api/config` はホワイトリストに `nostr.secret_key` を含まないので書けない。
+- 表示するのは `npub` / hex 公開鍵のみ。nsec・鍵の hex は API のどのレスポンスにも登場しない（`POST /api/setup` も `npub` だけを返す）。署名アプリとの接続に使うアプリ鍵（`remote-signer.json` の `app_secret_key`）もどの API にも出さない。`POST /api/setup/signer` が返す `nostrconnect://` URI にはアプリの公開鍵とペアリングの secret が入る（署名アプリに渡すためのもの）。鍵を書けるのは `POST /api/setup` だけで、`PUT /api/config` はホワイトリストに `nostr.secret_key` を含まないので書けない。

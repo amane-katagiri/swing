@@ -29,7 +29,7 @@ pub(super) async fn refresh_follow_set<C, N, R>(
             (None, false)
         }
     };
-    let own = relay.keys.public_key();
+    let own = relay.public_key();
     let choice = {
         let mut state = agent.state.lock().await;
         let stored = state

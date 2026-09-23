@@ -764,7 +764,31 @@
           <dt>hex</dt><dd><code id="pub-hex"></code><button type="button" class="swing-btn swing-copy-btn" data-copy-target="pub-hex" data-i18n="copy">Copy</button></dd>
           <dt data-i18n="mirrorSetLabel">Mirror set</dt><dd id="pub-mirror-set"></dd>
           <dt data-i18n="relaysLabel">Relays</dt><dd><ul id="pub-relays" class="swing-plain-list"></ul></dd>
+          <dt data-i18n="signerLabel">Signer</dt><dd id="pub-signer"></dd>
         </dl>
+        <div id="pub-signer-status" class="swing-status" aria-live="polite"></div>
+        <div id="pub-signer-reconnect" class="swing-signer-reconnect" hidden>
+          <h3 data-i18n="signerReconnectHeading">Reconnect the signer app</h3>
+          <p class="swing-hint" data-i18n="signerReconnectIntro">Use this when the signer app ended the connection, or to move to another signer app. Connect the same Nostr account; SWING restarts once it is connected.</p>
+          <label class="swing-field"><span data-i18n="setupSignerRelayLabel">Relay for talking to the signer app</span>
+            <input type="text" id="pub-signer-relay" class="swing-input" value="wss://relay.primal.net" autocomplete="off" spellcheck="false">
+            <span class="swing-hint" data-i18n="setupSignerRelayHint">Both SWING and the signer app must reach this relay. If your signer app uses a particular relay, use that one. The messages are encrypted.</span>
+          </label>
+          <div class="swing-process-actions">
+            <button type="button" class="swing-btn" id="pub-signer-start">Show QR code</button>
+          </div>
+          <div id="pub-signer-pairing-status" class="swing-status" aria-live="polite"></div>
+          <figure class="swing-signer-qr" id="pub-signer-qr" hidden>
+            <img id="pub-signer-qr-img" width="256" height="256" alt="">
+            <figcaption class="swing-hint" data-i18n="setupSignerQrCaption">Scan this with the QR scanner inside the signer app (the phone's camera app may not open it). If the signer app cannot scan it, copy the link and paste it into the signer app.</figcaption>
+            <div><code id="pub-signer-uri" hidden></code><button type="button" class="swing-btn swing-copy-btn" data-copy-target="pub-signer-uri" data-i18n="setupSignerCopyLink">Copy link</button></div>
+          </figure>
+          <div class="swing-css-actions">
+            <button type="button" class="swing-btn swing-btn-accent" id="pub-signer-save" data-i18n="signerReconnectSave" disabled>Reconnect and restart</button>
+            <button type="button" class="swing-btn" id="pub-signer-cancel" data-i18n="cancel">Cancel</button>
+          </div>
+          <div id="pub-signer-save-status" class="swing-status" aria-live="polite"></div>
+        </div>
       </div>
 
       <section class="swing-panel swing-my-sites">
@@ -877,10 +901,34 @@
         <div class="swing-field">
           <label class="swing-checkbox"><input type="radio" name="keyChoice" value="generate" checked> <span data-i18n="setupKeyGenerate">Generate a new key</span></label>
           <label class="swing-checkbox"><input type="radio" name="keyChoice" value="existing"> <span data-i18n="setupKeyExisting">Use an existing key</span></label>
+          <label class="swing-checkbox"><input type="radio" name="keyChoice" value="signer"> <span data-i18n="setupKeySigner">Sign with a signer app on your phone (NIP-46)</span></label>
+          <span class="swing-hint" id="setup-key-choice-hint"></span>
         </div>
         <label class="swing-field" id="setup-key-field" hidden><span data-i18n="setupKeyInputLabel">Secret key (nsec or hex)</span>
           <input type="password" name="secretKey" class="swing-input" autocomplete="off">
         </label>
+        <div id="setup-signer-field" hidden>
+          <p class="swing-hint" data-i18n="setupSignerHowItWorks">SWING talks to the signer app over a relay. Every few days it requests a signature on its own for the replica report (kind 35981) of each stored site. While the signer app is offline, SWING cannot publish, change the mirror list, or refresh replica reports.</p>
+          <div class="swing-field"><span data-i18n="setupSignerAppsLabel">Signer apps you can use</span>
+            <span class="swing-hint" data-i18n="setupSignerAppsIntro">Any signer app that supports NIP-46 connections started from a nostrconnect:// link works. For example:</span>
+            <span class="swing-hint"><span data-i18n="setupSignerAppsAndroid">Android:</span> <a href="https://github.com/greenart7c3/Amber" target="_blank" rel="noopener noreferrer">Amber</a> <span data-i18n="setupSignerAppsAmberNote">(not on Google Play; install it from Zapstore, Obtainium, or its GitHub releases)</span></span>
+            <span class="swing-hint"><span data-i18n="setupSignerAppsIos">iPhone / iPad:</span> <a href="https://apps.apple.com/app/id6762104155" target="_blank" rel="noopener noreferrer">Clave</a> <span data-i18n="setupSignerAppsClaveNote">(on the App Store; paste the copied link into Connect in Clave)</span></span>
+          </div>
+          <p class="swing-hint" data-i18n="setupSignerPermissions">When the signer app asks for approval, choosing to always allow requests from SWING is recommended. To confirm publishing and mirror-list changes every time instead, allow only kind 35981 for SWING in the signer app’s per-app permissions, if it has them.</p>
+          <label class="swing-field"><span data-i18n="setupSignerRelayLabel">Relay for talking to the signer app</span>
+            <input type="text" name="signerRelay" id="setup-signer-relay" class="swing-input" value="wss://relay.primal.net" autocomplete="off" spellcheck="false">
+            <span class="swing-hint" data-i18n="setupSignerRelayHint">Both SWING and the signer app must reach this relay. If your signer app uses a particular relay, use that one. The messages are encrypted.</span>
+          </label>
+          <div class="swing-process-actions">
+            <button type="button" class="swing-btn" id="setup-signer-start">Show QR code</button>
+          </div>
+          <div id="setup-signer-status" class="swing-status" aria-live="polite"></div>
+          <figure class="swing-signer-qr" id="setup-signer-qr" hidden>
+            <img id="setup-signer-qr-img" width="256" height="256" alt="">
+            <figcaption class="swing-hint" data-i18n="setupSignerQrCaption">Scan this with the QR scanner inside the signer app (the phone's camera app may not open it). If the signer app cannot scan it, copy the link and paste it into the signer app.</figcaption>
+            <div><code id="setup-signer-uri" hidden></code><button type="button" class="swing-btn swing-copy-btn" data-copy-target="setup-signer-uri" data-i18n="setupSignerCopyLink">Copy link</button></div>
+          </figure>
+        </div>
 
         <h2 data-i18n="setupRelaysHeading">Relays</h2>
         <label class="swing-field"><span data-i18n="relaysLabel">Relays</span>

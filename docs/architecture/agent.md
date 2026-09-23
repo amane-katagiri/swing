@@ -131,6 +131,7 @@ state のロックの中で行う。
 
 - `created_at` は現在時刻。記録の `created_at` 以下になるときは記録の `created_at + 1` にする。`expiration` は `created_at + report_ttl`。
 - 全 relay に送り、どこかに受理されたら記録を更新する。受理されなければ warn を出し、次の同期で送り直す。
+- 署名（NIP-46 の署名アプリへのリクエストを含む。[`signer.md`](signer.md)）か送信がエラーになったら warn を出して、その回の残りの報告は送らずに打ち切る。残りは次の同期で送り直す。署名アプリがオフラインのとき、報告の件数ぶん署名のタイムアウト（90 秒）を待たないようにするため。
 - 取り下げた記録は `cid` 無しで残り、出し直さない。
 
 受信側で報告を数える規則（`replicas::collect_reports` / `ReplicaReport::counts_at`）は agent 自身の動作ではなく [`cli.md`](cli.md#replicas) を参照。`report_ttl` の既定 `3d` に対し、数えるのをやめる期間（`nostr::MAX_REPORT_AGE`、7 日）はそれより長い。TTL を伸ばした他クライアントの報告も、期限切れ前に数えられなくなることがないようにするため。

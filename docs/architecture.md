@@ -7,6 +7,7 @@
 | このファイル | 構成、CLI の一覧、設定、イベントの検証、テスト |
 | [`architecture/cli.md`](architecture/cli.md) | 各サブコマンドの動作と出力 |
 | [`architecture/agent.md`](architecture/agent.md) | mirror-agent の動作、ポリシー判定、レプリカ報告の送信、`state.json` |
+| [`architecture/signer.md`](architecture/signer.md) | 署名（`signer.rs`）: 秘密鍵か NIP-46 の署名アプリか、`remote-signer.json`、QR コードでのペアリング |
 | [`architecture/nip05.md`](architecture/nip05.md) | NIP-05 検証（agent と publish で共通） |
 | [`architecture/kubo.md`](architecture/kubo.md) | MFS の使い方、Kubo RPC、Kubo のバージョン |
 | [`architecture/up.md`](architecture/up.md) | `swing up`（supervisor）と Kubo の起動・設定・終了（`kubo.rs`） |
@@ -22,7 +23,8 @@
 | 要素 | 実体 |
 |---|---|
 | 言語・ランタイム | Rust (edition 2024)、`tokio` |
-| Nostr | `nostr-sdk` 0.45 |
+| Nostr | `nostr-sdk` 0.45、NIP-46 に `nostr-connect` 0.45 |
+| QR コード | `qrcode`（SVG だけ） |
 | Kubo RPC | `reqwest`（rustls、multipart、stream）で直接呼ぶ |
 | ダッシュボードの HTTP サーバ | `axum` 0.8、リクエストタイムアウトに `tower-http` |
 | 設定 | `toml` + `serde`、環境変数が TOML を上書き |
@@ -53,6 +55,7 @@ swing/
     replicas.rs      レプリカ報告の集計、replicas サブコマンド
     webring.rs       Follow Set のたどり方とグラフの組み立て・出力、webring サブコマンド
     nip05.rs         NIP-05 検証
+    signer.rs        署名（Signer: 秘密鍵か NIP-46 の署名アプリ）、remote-signer.json、QR コードでのペアリング。詳細は architecture/signer.md
     up.rs            `swing up` supervisor（Kubo の起動・監視、agent の起動・再起動、バックオフ）。詳細は architecture/up.md
     kubo.rs          Kubo バイナリの検出・init・`ipfs config` 適用・子プロセスの起動と終了・ヘルス待ち・kubo.pid と孤児回収。詳細は architecture/up.md
     lock.rs          多重起動防止のインスタンスロック（swing.lock）。詳細は architecture/up.md
@@ -104,7 +107,7 @@ swing config env-example
 
 `swing up` は Kubo（`[kubo].managed = true` なら）と mirror-agent の中身を 1 プロセスの supervisor として動かす（[`architecture/up.md`](architecture/up.md)）。`managed = false` なら既に動いている Kubo（外部のもの）を待ってから同じことをする。mirror-agent を単体で起動するサブコマンドは無く、常に `swing up` を経由する。`swing service` は `swing up` を OS の常駐に登録する（[`architecture/service.md`](architecture/service.md)）。`swing stop`／`swing service stop` は動いている `swing up` にグレースフルな停止・再起動を要求する（[`architecture/up.md#終了要求と-exit-codeshutdownexitrequest-shutdownexit`](architecture/up.md#終了要求と-exit-codeshutdownexitrequest-shutdownexit)）。`--restart` による再起動はプロセスを終了させず、同じプロセス内で設定を読み直して動き直す（exit code でサービスマネージャに再起動させる古い経路は無くなった）。
 
-`[nostr].secret_key`（`SWING_NOSTR_SECRET_KEY`）は無くてもよい。無いと `swing up` はセットアップモード（ダッシュボードのみ）で起動し、ダッシュボードのセットアップ画面から書き込める（[`architecture/up.md#セットアップモード鍵未設定`](architecture/up.md#セットアップモード鍵未設定)）。鍵を直接使うコマンド（`sites`・`replicas`・`webring`・`mirror list`・`publish`）は鍵が無ければエラー終了するが、ダッシュボード API 経由の `status`・`mirror add`・`mirror remove`・`stop`／`service stop` は鍵無しでも動く（[`architecture/cli.md`](architecture/cli.md)）。
+署名には `[nostr].secret_key`（`SWING_NOSTR_SECRET_KEY`）の秘密鍵か、`<state_dir>/remote-signer.json` に保存した NIP-46 の署名アプリのどちらか 1 つを使う（[`architecture/signer.md`](architecture/signer.md)）。どちらも無いと `swing up` はセットアップモード（ダッシュボードのみ）で起動し、ダッシュボードのセットアップ画面から鍵を書き込むか署名アプリとペアリングできる（[`architecture/up.md#セットアップモード鍵未設定`](architecture/up.md#セットアップモード鍵未設定)）。鍵を直接使うコマンド（`sites`・`replicas`・`webring`・`mirror list`・`publish`）は鍵も署名アプリも無ければエラー終了するが、ダッシュボード API 経由の `status`・`mirror add`・`mirror remove`・`stop`／`service stop` は鍵無しでも動く（[`architecture/cli.md`](architecture/cli.md)）。
 
 設定ファイルは次の順で 1 つのパスに決まる（`config::resolve_config_path`）。1 か 2 を指定してそのファイルが無ければエラー終了。3 は存在確認をせず、そのままファイルの読み書き先になる（無ければ設定は既定値と環境変数だけで組み立て、`Config.config_exists = false` になる。ダッシュボードのセットアップ・設定編集はこのパスに新規作成・上書きする）。`SWING_CONFIG` の空文字は未設定として扱う。
 
@@ -205,7 +208,7 @@ webring でも同じ考え方を使う。`#p` で見つかる「起点を名指�
 
 ## テスト
 
-- ユニットテスト: `cargo test`。agent のテストは MFS をメモリ上で真似る `FakeKubo` と `FakeNip05` を使う。ダッシュボードのテストは axum の `Router` に `oneshot` でリクエストを投げ、TCP で listen しない。
+- ユニットテスト: `cargo test`。agent のテストは MFS をメモリ上で真似る `FakeKubo` と `FakeNip05` を使う。ダッシュボードのテストは axum の `Router` に `oneshot` でリクエストを投げ、TCP で listen しない。NIP-46 のペアリングのテストは nostr-sdk の `LocalRelay`（プロセス内の relay、ループバックで listen する）と署名アプリ役を使う（[`architecture/signer.md#テスト`](architecture/signer.md#テスト)）。
 - 統合テスト（`#[ignore]`、ローカルの Kubo / relay が必要。公開ネットワークには接続しない）:
 
 ```bash

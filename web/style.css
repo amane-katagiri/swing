@@ -351,6 +351,11 @@ p {
   font-family: var(--swing-font-mono);
   white-space: nowrap;
   overflow: hidden;
+}
+
+.swing-nav-footer > span {
+  min-width: 0;
+  overflow: hidden;
   text-overflow: ellipsis;
 }
 
@@ -1449,4 +1454,49 @@ pre.swing-pre {
 
 .swing-process-actions + .swing-status {
   margin-top: var(--swing-space-3);
+}
+
+#setup-signer-field .swing-process-actions,
+.swing-signer-reconnect .swing-process-actions {
+  margin-bottom: var(--swing-space-3);
+}
+
+#setup-signer-field .swing-process-actions + .swing-status,
+.swing-signer-reconnect .swing-process-actions + .swing-status {
+  margin-top: 0;
+}
+
+.swing-signer-reconnect {
+  margin-top: var(--swing-space-5);
+}
+
+.swing-signer-reconnect h3 {
+  font-family: var(--swing-font-ui);
+  font-size: 1rem;
+  border-bottom: 1px solid var(--swing-border);
+  padding-bottom: var(--swing-space-1);
+}
+
+.swing-signer-reconnect .swing-css-actions + .swing-status {
+  margin-top: var(--swing-space-3);
+}
+
+.swing-result-grid .swing-relay-results {
+  margin-top: 0;
+}
+
+.swing-identity dl + .swing-status {
+  margin-top: var(--swing-space-3);
+}
+
+.swing-signer-qr {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--swing-space-2);
+  margin: 0 0 var(--swing-space-3) 0;
+}
+
+.swing-signer-qr img {
+  border-radius: var(--swing-radius);
 }

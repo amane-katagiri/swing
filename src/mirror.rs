@@ -10,6 +10,7 @@ use crate::config::Config;
 use crate::dashboard::dto;
 use crate::nostr::{self, RelayClient};
 use crate::replicas::{self, SiteAddress};
+use crate::signer::Signer;
 use crate::state::{self, State, VersionRecord};
 
 const FOLLOW_SET_KIND: u16 = 30000;
@@ -164,9 +165,10 @@ async fn current_follow_set(
     config: &Config,
 ) -> Result<(Option<Event>, Option<&'static str>)> {
     let fetched = relay.fetch_follow_set(&config.nostr.mirror_set).await?;
-    let saved = load_state(config).await?.follow_set.filter(|ev| {
-        nostr::is_follow_set_of(ev, &relay.keys.public_key(), &config.nostr.mirror_set)
-    });
+    let saved = load_state(config)
+        .await?
+        .follow_set
+        .filter(|ev| nostr::is_follow_set_of(ev, &relay.public_key(), &config.nostr.mirror_set));
     Ok(newest_follow_set(
         fetched,
         saved,
@@ -199,13 +201,9 @@ fn print_mirror_list(config: &Config, view: &MirrorListView) {
 }
 
 pub async fn list(config: &Config) -> Result<()> {
-    let relay = RelayClient::connect(
-        config.require_secret_key()?.expose_secret(),
-        &config.nostr.relays,
-    )
-    .await?;
+    let relay = RelayClient::connect(Signer::require(config)?, &config.nostr.relays).await?;
     let view = collect_mirror_list(&relay, config).await?;
-    relay.client.shutdown().await;
+    relay.shutdown().await;
     print_mirror_list(config, &view);
     Ok(())
 }
@@ -230,9 +228,9 @@ async fn publish_if_changed(
     if changed.is_empty() {
         return Ok((false, Vec::new()));
     }
-    let event = set
-        .build_event_builder(&config.nostr.mirror_set)
-        .finalize(&relay.keys)
+    let event = relay
+        .sign(set.build_event_builder(&config.nostr.mirror_set))
+        .await
         .context("signing mirror set event")?;
     let output = relay.publish_to_relays(&event).await?;
     Ok((true, nostr::relay_send_results(relay.relays(), &output)))
@@ -742,13 +740,9 @@ fn print_sites(view: &SitesView) -> Result<()> {
 }
 
 pub async fn sites(config: &Config) -> Result<()> {
-    let relay = RelayClient::connect(
-        config.require_secret_key()?.expose_secret(),
-        &config.nostr.relays,
-    )
-    .await?;
+    let relay = RelayClient::connect(Signer::require(config)?, &config.nostr.relays).await?;
     let view = collect_sites(&relay, config).await?;
-    relay.client.shutdown().await;
+    relay.shutdown().await;
     print_sites(&view)
 }
 

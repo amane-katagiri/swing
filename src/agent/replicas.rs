@@ -194,7 +194,8 @@ impl<C: KuboStore, N: Nip05Verify, R: ReportRelay> Agent<C, N, R> {
                     warn!(site_key = %key, "no relay accepted the replica report; will retry")
                 }
                 Err(e) => {
-                    warn!(site_key = %key, error = %e, "sending the replica report failed; will retry")
+                    warn!(site_key = %key, error = format!("{e:#}"), "sending the replica report failed; retrying the rest on the next poll");
+                    break;
                 }
             }
         }
@@ -383,6 +384,21 @@ mod tests {
         fx.relay().reject = false;
         fx.agent.sync_reports().await;
         assert_eq!(fx.take_reports(), vec![(fx.key(D), cids(&["bafy-a"]))]);
+    }
+
+    #[tokio::test]
+    async fn a_signing_failure_stops_the_round_and_the_rest_are_retried() {
+        let fx = Fixture::new(default_policy(), FakeKubo::default());
+        fx.seed("a.example", "bafy-a", 1, 100).await;
+        fx.seed("b.example", "bafy-b", 1, 100).await;
+        fx.relay().fail_sign = true;
+        fx.agent.sync_reports().await;
+        assert_eq!(fx.relay().send_attempts, 1);
+        assert!(fx.take_reports().is_empty());
+
+        fx.relay().fail_sign = false;
+        fx.agent.sync_reports().await;
+        assert_eq!(fx.take_reports().len(), 2);
     }
 
     #[tokio::test]
