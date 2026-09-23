@@ -19,10 +19,10 @@
 ## GET /api/overview
 
 ```json
-{ "version": "0.1.0", "setup": false, "pubkey": "ab12…", "npub": "npub1…", "relays": ["wss://relay.damus.io"], "mirror_set": "swing", "gateway": "http://localhost:8080", "started_at": 1790000000, "max_upload": 2147483648 }
+{ "version": "0.1.0", "setup": false, "pubkey": "ab12…", "npub": "npub1…", "relays": ["wss://relay.damus.io"], "mirror_set": "swing", "gateway": "http://localhost:8080", "started_at": 1790000000, "instance": "cdeee5bc85519f44", "max_upload": 2147483648 }
 ```
 
-`gateway` は `[dashboard].gateway` が空なら `null`。`started_at` はダッシュボードが有効になった起動時刻。`max_upload` は `[dashboard].max_upload` のバイト数。`setup` は鍵が未設定（セットアップモード）かどうかで、そのときは `pubkey`／`npub` も `null` になる（[`../up.md#セットアップモード鍵未設定`](../up.md#セットアップモード鍵未設定)）。フロント（`web/app.js`）はこれを見て、通常なら hash ルーティングするところをどのルートでも常に `#/setup` に固定する（[`web.md`](web.md)）。
+`gateway` は `[dashboard].gateway` が空なら `null`。`started_at` はダッシュボードが有効になった起動時刻。`instance` は `up::run` の回ごと（`AppState` を作るたび）に変わるランダムな 16 桁の 16 進文字列で、同じプロセスの中での再起動（`POST /api/restart`）も見分けられる（`started_at` は秒単位なので 1 秒以内の再起動では変わらない）。`swing stop --restart` が再起動の完了を待つのに使う（[`../service.md`](../service.md)）。`max_upload` は `[dashboard].max_upload` のバイト数。`setup` は鍵が未設定（セットアップモード）かどうかで、そのときは `pubkey`／`npub` も `null` になる（[`../up.md#セットアップモード鍵未設定`](../up.md#セットアップモード鍵未設定)）。フロント（`web/app.js`）はこれを見て、通常なら hash ルーティングするところをどのルートでも常に `#/setup` に固定する（[`web.md`](web.md)）。
 
 ## GET /api/sites
 

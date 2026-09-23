@@ -61,3 +61,12 @@ WSL2（systemd 有効）で、鍵を置かない使い捨ての設定（`[dashbo
   - `service stop` と `swing stop` のどちらでも `inactive`・`Result=success`・exit code 0 で止まり、再起動されない。
   - `service uninstall` で unit と `default.target.wants` のリンクが消える。
 - Kubo を管理する通常のモードを systemd 経由で動かすのは、このマシンに `ipfs` が無いので確かめていない。
+
+### 追記: Kubo を管理するモード
+
+`ipfs/kubo:v0.43.1` の Docker イメージから `ipfs` を取り出して swing の横に置き、`ipfs init --profile test` のあと `Bootstrap = []`・`Discovery.MDNS.Enabled = false`・`Routing.Type = none`・`AutoConf.Enabled = false`・`Addresses.Swarm = ["/ip4/127.0.0.1/tcp/0"]` にした repo を先に作ってから（swing は repo があれば init せず、これらの設定には触れない）、使い捨ての鍵と `relays = ["ws://127.0.0.1:9"]`（何も待ち受けていない）の設定で systemd に登録した。`ss` でループバック以外への接続が無いことを確かめた。
+
+- Kubo が swing の子として同じ cgroup で起動し、ダッシュボードが 200 を返す。
+- `kill -9` で swing を落とすと Kubo も 1 秒以内に落ち（`PR_SET_PDEATHSIG`）、systemd が swing を起動し直す。新しい swing は `stale kubo.pid` を出して新しい Kubo を起動する。
+- `service stop` で `inactive`・exit code 0 になり、Kubo も終わって `kubo.pid` が消える。
+- `swing stop --restart` が、実際には再起動できているのに 60 秒待って「swing did not stop within 60s」で失敗した。`--restart` でも「API に接続できなくなる」ことを待っていたが、同じプロセスの中での再起動ではダッシュボードが閉じている時間が 500ms のポーリング間隔より短く、見逃す。OS には関係しない。`/api/overview` に `up::run` の回ごとに変わる `instance` を足し、`--restart` では `instance` が変わるのを待つようにした。`started_at` は秒単位なので、1 秒以内に終わる再起動（セットアップモードなど）を見分けられず使わなかった。直したあと 3 回続けて `restarted` になり、swing の PID は変わらず Kubo の PID だけ変わることを確認した。

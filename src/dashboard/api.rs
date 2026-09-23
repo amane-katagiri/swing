@@ -106,6 +106,7 @@ pub async fn overview(
         mirror_set: state.config.nostr.mirror_set.clone(),
         gateway: state.config.dashboard.gateway.clone(),
         started_at: state.started_at,
+        instance: state.instance.clone(),
         max_upload: state.config.dashboard.max_upload,
     }))
 }

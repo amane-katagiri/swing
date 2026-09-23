@@ -23,8 +23,9 @@ swing stop [--config <path>] [--restart] [--timeout <secs>, 既定 60]
 
 `swing service stop` とは別に、`swing up` を OS のサービス登録に関わらず直接止められる CLI（[`up.md#終了要求と-exit-codeshutdownexitrequest-shutdownexit`](up.md#終了要求と-exit-codeshutdownexitrequest-shutdownexit)）。動いている `swing up` のダッシュボード API を使う（手順は `stop::run`）:
 
-1. `POST http://<[dashboard].listen>/api/shutdown`（`--restart` なら `/api/restart`）を `ApiClient`（`src/api_client.rs`）経由で叩く。API に接続できなければ（＝ `swing up` が動いていない）`not running` と出してすぐ成功終了する。2xx 以外のレスポンスはそのままエラーにする。
-2. 呼び出しが通ったら `GET /api/overview` を 500ms 間隔でポーリングし、接続できなくなった時点（プロセスが終了した時点）で `stopped` と出して成功終了する。`--timeout` 秒（既定 60）を超えたらエラー（「swing did not stop within N s」）。
+1. `--restart` のときだけ、先に `GET /api/overview` で今の `instance` を読んでおく（接続できなければ `not running` で成功終了）。
+2. `POST http://<[dashboard].listen>/api/shutdown`（`--restart` なら `/api/restart`）を `ApiClient`（`src/api_client.rs`）経由で叩く。API に接続できなければ（＝ `swing up` が動いていない）`not running` と出してすぐ成功終了する。2xx 以外のレスポンスはそのままエラーにする。
+3. 呼び出しが通ったら `GET /api/overview` を 500ms 間隔でポーリングする。`--restart` なしなら、接続できなくなった時点（プロセスが終了した時点）で `stopped` と出して成功終了する。`--restart` なら、応答の `instance` が 1. で読んだ値と変わった時点（同じプロセスの中で `up::run` がやり直された時点）で `restarted` と出して成功終了する（再起動中にダッシュボードが閉じている時間はポーリング間隔より短いことが多いので、接続できなくなることは待たない）。`--timeout` 秒（既定 60）を超えたらエラー（「swing did not stop within N s」／「swing did not come back within N s」）。
 
 `swing service stop`（Windows のみ）はこの `stop::run` をそのまま使う（上記「Windows（タスクスケジューラ）」参照）。
 

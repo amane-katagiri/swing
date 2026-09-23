@@ -36,6 +36,7 @@ pub struct AppState {
     display_config: RwLock<Arc<Config>>,
     pub notify: Arc<Notify>,
     pub started_at: u64,
+    pub instance: String,
     pub publish_lock: Mutex<()>,
     pub own_pubkey: Option<PublicKey>,
     pub desktop: Option<DesktopAssets>,
@@ -64,6 +65,7 @@ impl AppState {
             display_config,
             notify,
             started_at: Timestamp::now().as_secs(),
+            instance: random_instance_id(),
             publish_lock: Mutex::new(()),
             own_pubkey,
             desktop,
@@ -200,6 +202,14 @@ pub async fn serve(
         .await
         .context("dashboard server error")?;
     Ok(())
+}
+
+fn random_instance_id() -> String {
+    use std::hash::BuildHasher;
+    format!(
+        "{:016x}",
+        std::collections::hash_map::RandomState::new().hash_one(())
+    )
 }
 
 #[cfg(test)]

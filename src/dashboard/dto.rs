@@ -72,6 +72,7 @@ pub struct OverviewDto {
     pub mirror_set: String,
     pub gateway: Option<String>,
     pub started_at: u64,
+    pub instance: String,
     pub max_upload: u64,
 }
 

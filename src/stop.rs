@@ -13,8 +13,25 @@ async fn post_dashboard_action(client: &ApiClient, restart: bool) -> Result<(), 
     Ok(())
 }
 
+fn instance(overview: &serde_json::Value) -> Option<&str> {
+    overview.get("instance").and_then(|v| v.as_str())
+}
+
 pub async fn run(config: &Config, restart: bool, timeout: Duration) -> Result<()> {
     let client = ApiClient::new(config.dashboard.listen);
+
+    let before = if restart {
+        match client.get::<serde_json::Value>("/api/overview").await {
+            Ok(overview) => instance(&overview).map(str::to_owned),
+            Err(ApiClientError::Unreachable(_)) => {
+                println!("not running");
+                return Ok(());
+            }
+            Err(other) => bail!("{other}"),
+        }
+    } else {
+        None
+    };
 
     if let Err(e) = post_dashboard_action(&client, restart).await {
         match e {
@@ -28,13 +45,21 @@ pub async fn run(config: &Config, restart: bool, timeout: Duration) -> Result<()
 
     let deadline = Instant::now() + timeout;
     loop {
-        if let Err(ApiClientError::Unreachable(_)) =
-            client.get::<serde_json::Value>("/api/overview").await
-        {
-            println!("stopped");
-            return Ok(());
+        match client.get::<serde_json::Value>("/api/overview").await {
+            Err(ApiClientError::Unreachable(_)) if !restart => {
+                println!("stopped");
+                return Ok(());
+            }
+            Ok(overview) if restart && instance(&overview) != before.as_deref() => {
+                println!("restarted");
+                return Ok(());
+            }
+            _ => {}
         }
         if Instant::now() >= deadline {
+            if restart {
+                bail!("swing did not come back within {}s", timeout.as_secs());
+            }
             bail!("swing did not stop within {}s", timeout.as_secs());
         }
         tokio::time::sleep(Duration::from_millis(500)).await;
