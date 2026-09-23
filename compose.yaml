@@ -29,26 +29,15 @@ services:
       SWING_IPFS_API: http://ipfs:5001
       SWING_STATE_DIR: /data
       SWING_DASHBOARD_LISTEN: ${SWING_DASHBOARD_LISTEN:-0.0.0.0:8082}
+      SWING_KUBO_MANAGED: "false"
+      SWING_GATEWAY_LISTEN: ${SWING_GATEWAY_LISTEN:-off}
+      SWING_GATEWAY_UPSTREAM: http://ipfs:8080
       RUST_LOG: info
     volumes:
       - swing-data:/data
     ports:
       - "${SWING_DASHBOARD_BIND:-127.0.0.1:8082}:8082"
-    depends_on:
-      ipfs:
-        condition: service_healthy
-
-  gateway:
-    image: caddy:2.11.4-alpine
-    profiles: [gateway]
-    restart: unless-stopped
-    entrypoint: ["/etc/caddy/entrypoint.sh"]
-    environment:
-      SWING_GATEWAY_HOSTS: ${SWING_GATEWAY_HOSTS:-}
-    volumes:
-      - ./docker/caddy:/etc/caddy:ro
-    ports:
-      - "${SWING_GATEWAY_BIND:-127.0.0.1:8081}:80"
+      - "${SWING_GATEWAY_BIND:-127.0.0.1:8081}:8081"
     depends_on:
       ipfs:
         condition: service_healthy

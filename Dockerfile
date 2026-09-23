@@ -14,4 +14,4 @@ COPY --from=builder /build/target/release/swing /usr/local/bin/swing
 USER swing
 VOLUME /data
 ENTRYPOINT ["swing"]
-CMD ["agent"]
+CMD ["up"]
