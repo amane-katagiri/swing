@@ -389,7 +389,7 @@ fn print_status_dto(state_path: &std::path::Path, dto: &StatusDto) {
 }
 
 pub async fn status(config: &Config) -> Result<()> {
-    let client = ApiClient::new(config.dashboard.listen);
+    let client = ApiClient::for_config(config)?;
     let dto = client
         .get::<StatusDto>("/api/status")
         .await

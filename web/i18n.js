@@ -208,6 +208,15 @@ const MESSAGES = {
     processStopResult: 'Stop requested. If this runs as a service, it may or may not come back depending on how it is set up.',
     processRestartResult: 'Restart requested.',
 
+    loginHeading: 'Log in',
+    loginIntro: 'Run this on the machine where swing up is running. It opens the dashboard with a single-use login link.',
+    loginCodeHeading: 'Enter a login code',
+    loginCodePlaceholder: 'Login code',
+    loginSubmit: 'Log in',
+    loginCodeHint: 'If no browser can be opened there (inside a container, for example), add --no-browser and enter the printed code here. A code works once and expires after 5 minutes.',
+    loginSubmitting: 'Logging in…',
+    loginInvalid: 'The login code is invalid or has expired. Run swing dashboard open again.',
+
     setupHeading: 'Set up SWING',
     setupIntro: 'This writes {path} and restarts the agent.',
     setupKeyHeading: 'Key',
@@ -433,6 +442,15 @@ const MESSAGES = {
     processRestartConfirm: 'swingプロセスを今すぐ再起動しますか？',
     processStopResult: '停止コマンドを送信しました。サービスの設定によって再起動される場合があります。',
     processRestartResult: '再起動コマンドを送信しました。',
+
+    loginHeading: 'ログイン',
+    loginIntro: 'swing up を動かしているマシンで次のコマンドを実行してください。使い捨てのログインリンクでダッシュボードが開きます。',
+    loginCodeHeading: 'ログインコードを入力',
+    loginCodePlaceholder: 'ログインコード',
+    loginSubmit: 'ログイン',
+    loginCodeHint: 'そのマシンでブラウザを開けない場合（コンテナの中など）は --no-browser を付けて実行し、表示されたコードをここに入力してください。コードは 1 回だけ使えて、5 分で期限が切れます。',
+    loginSubmitting: 'ログイン中…',
+    loginInvalid: 'ログインコードが無効か、期限が切れています。swing dashboard open をもう一度実行してください。',
 
     setupHeading: 'SWINGのセットアップ',
     setupIntro: '{path} を書き込み、エージェントを再起動します。',

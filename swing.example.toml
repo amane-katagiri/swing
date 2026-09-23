@@ -39,6 +39,8 @@ keep_versions = 5                    # SWING_PUBLISH_KEEP_VERSIONS: swing publis
 listen = "127.0.0.1:8082"            # SWING_DASHBOARD_LISTEN: ダッシュボードの待ち受けアドレス（swing up が動いている間ずっと待ち受ける）
 ui = true                            # SWING_DASHBOARD_UI: false で静的な Web UI を配信せず、/api/* の制御 API だけ残す
 allowed_hosts = []                   # SWING_DASHBOARD_ALLOWED_HOSTS: Host ヘッダで追加で許可するホスト名（ポート抜き、カンマ区切り）
+#public_url = "http://127.0.0.1:8082"
+                                     # SWING_DASHBOARD_PUBLIC_URL: ブラウザからダッシュボードを開く URL（swing dashboard open が出すログインリンクの頭に使う）。未設定なら待ち受けアドレス
 gateway = "http://localhost:8080"    # SWING_DASHBOARD_GATEWAY: 保存済みサイトを開くリンクの IPFS Gateway。空文字にするとリンクを表示しない
 #custom_css = "/path/to/custom.css"  # SWING_DASHBOARD_CUSTOM_CSS: ダッシュボードに読み込ませる追加 CSS ファイルのパス
 #desktop_page = "/path/to/links.html"

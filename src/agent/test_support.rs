@@ -244,6 +244,7 @@ pub(super) fn test_config(policy: PolicyConfig) -> Config {
             listen: ([127, 0, 0, 1], 8082).into(),
             ui: true,
             allowed_hosts: Vec::new(),
+            public_url: None,
             gateway: None,
             custom_css: None,
             desktop_page: None,

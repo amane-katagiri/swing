@@ -42,6 +42,7 @@ case "${1:-}" in
       touch "$seeded"
     fi
     echo "dashboard: http://127.0.0.1:18082/"
+    echo "login link: $0 exec mirror swing dashboard open --no-browser"
     ;;
   seed)
     "$root/docker/demo/seed.sh"

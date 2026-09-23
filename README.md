@@ -66,7 +66,7 @@ git clone <このリポジトリ>
 cd swing
 ```
 
-`swing.toml` を用意せずに `swing up` を起動することもできます。設定ファイルが無い（かつ環境変数にも鍵が無い）状態で起動すると、ダッシュボードだけが動く「セットアップモード」になります。ブラウザでダッシュボードを開くとセットアップ画面が表示され、鍵の生成（または既存の鍵の貼り付け）・relay・保存上限を入力して送信すると `swing.toml` が作られ（バイナリならカレントディレクトリ、Docker Compose ならコンテナの `/data`＝`swing-data` volume）、エージェントはプロセスを終了させずにそのまま通常モードで動き直します。以下は設定ファイルを事前に用意して起動する手順で、どちらでも構いません。設定は後からダッシュボードの Settings 画面（環境変数で設定した値を除く）からも変更でき、変更後は再起動すると反映されます。詳しくは [`docs/architecture/dashboard.md`](docs/architecture/dashboard.md) と [`docs/architecture/up.md`](docs/architecture/up.md) を参照してください。
+`swing.toml` を用意せずに `swing up` を起動することもできます。設定ファイルが無い（かつ環境変数にも鍵が無い）状態で起動すると、ダッシュボードだけが動く「セットアップモード」になります。ダッシュボードにログインする（下記）とセットアップ画面が表示され、鍵の生成（または既存の鍵の貼り付け）・relay・保存上限を入力して送信すると `swing.toml` が作られ（バイナリならカレントディレクトリ、Docker Compose ならコンテナの `/data`＝`swing-data` volume）、エージェントはプロセスを終了させずにそのまま通常モードで動き直します。以下は設定ファイルを事前に用意して起動する手順で、どちらでも構いません。設定は後からダッシュボードの Settings 画面（環境変数で設定した値を除く）からも変更でき、変更後は再起動すると反映されます。詳しくは [`docs/architecture/dashboard.md`](docs/architecture/dashboard.md) と [`docs/architecture/up.md`](docs/architecture/up.md) を参照してください。
 
 ### バイナリで動かす
 
@@ -182,7 +182,18 @@ docker compose logs -f mirror
 
 ## ダッシュボード
 
-SWING は mirror-agent（バイナリでは `swing up`、Docker Compose では `mirror` コンテナ）がブラウザ向けの管理画面も兼ねています。起動したら、バイナリでも Docker Compose でも同じ URL `http://127.0.0.1:8082/` を開いてください。
+SWING は mirror-agent（バイナリでは `swing up`、Docker Compose では `mirror` コンテナ）がブラウザ向けの管理画面も兼ねています。起動したら、次のコマンドでログインしてダッシュボード（`http://127.0.0.1:8082/`）を開いてください。使い捨てのログインリンクがブラウザで開き、ログイン状態は 30 日続きます。
+
+```bash
+# バイナリ
+swing dashboard open
+# Docker Compose（コンテナ内ではブラウザを開けないので、表示された URL を開く）
+docker compose exec mirror swing dashboard open --no-browser
+```
+
+`SWING_DASHBOARD_BIND` でポートを変えた場合など、ブラウザから開く URL が `http://127.0.0.1:8082` と違うときは、`.env` に `SWING_DASHBOARD_PUBLIC_URL=http://127.0.0.1:18082` のように書くと、表示される URL がそれに合わせて変わります（表示されたコードをログイン画面に貼っても構いません）。
+
+全ブラウザのログインを取り消したいときは `swing dashboard rotate-token` を実行します。
 
 - **Desktop**: 保存中のサイトを、懐かしい Windows 風デスクトップ上のブラウザウィンドウに表示される「リンク集」ページ風に眺められます。
 - **Sites**: `swing sites` と同じ内容を一覧表示し、そのまま「mirror に追加」「mirror から外す」を操作できます。ボタンひとつで `swing status` 相当のストレージチェックも実行できます。
@@ -191,7 +202,7 @@ SWING は mirror-agent（バイナリでは `swing up`、Docker Compose では `
 - **Settings**: 現在の設定を表示します（秘密鍵の値は一切表示されません）。環境変数で設定した項目を除き、その場で編集して保存できます（保存後、エージェントを再起動すると反映されます）。ブラウザ側のテーマ・表示言語（日本語/English）・カスタム CSS もここで設定します。
 - **Setup**: 鍵が未設定のとき（セットアップモード）だけ表示される導入画面です。上記「はじめかた」を参照してください。
 
-ダッシュボードは既定で `127.0.0.1` だけで待ち受け、認証はありません（信頼できる利用者だけがアクセスできる前提です）。`swing status`・`swing mirror add`・`swing mirror remove`・`swing stop` はこのダッシュボードの API を経由します。ホストでの公開先を変えたい場合や、Web の管理画面だけを外して API だけ残したい場合は `.env` に次のように設定してください。
+ダッシュボードは既定で `127.0.0.1` だけで待ち受け、ログインが必要です。`swing status`・`swing mirror add`・`swing mirror remove`・`swing stop` はこのダッシュボードの API を経由し、データディレクトリの `dashboard.token` を使って認証します（`swing up` と同じ設定・同じユーザーで実行してください）。ホストでの公開先を変えたい場合や、Web の管理画面だけを外して API だけ残したい場合は `.env` に次のように設定してください。
 
 ```bash
 # ホストでの公開先を変える（既定は 127.0.0.1:8082）
@@ -352,7 +363,7 @@ TOML の設定ファイル（`swing.toml`）を使う場合と、環境変数だ
 
 SWING は公開の IPFS Mainnet をそのまま使うため、匿名性は提供しません。他の IPFS peer から、あなたの Peer ID・IP アドレス・提供している CID などの関連を観測される可能性があります。もともと公開 Web サイトを保存することが前提のツールなので、この点は許容した上でご利用ください。
 
-一方で、Kubo の RPC やローカルのゲートウェイ、ダッシュボード（管理 UI）は外部に公開しません。外部に公開する必要があるのは IPFS swarm 用のポート（`4001`）だけです。バイナリで `swing up` が Kubo を管理する場合、RPC はループバックのランダムなポートで待ち受けるため外部から触ることはできません。Docker Compose の構成でも、Kubo の RPC（5001）はホストに公開されず、ゲートウェイ（`8080`）とダッシュボード（`8082`）はどちらも既定で `127.0.0.1` だけで待ち受けます。ダッシュボードには認証が無いため、`SWING_DASHBOARD_BIND`（またはバイナリの `dashboard.listen`）を変えて外部に公開する場合は自己責任で行ってください。内蔵ゲートウェイで外部に配信するのは、設定した `SWING_GATEWAY_HOSTS`（または `gateway.hosts`）のホストの DNSLink だけです。
+一方で、Kubo の RPC やローカルのゲートウェイ、ダッシュボード（管理 UI）は外部に公開しません。外部に公開する必要があるのは IPFS swarm 用のポート（`4001`）だけです。バイナリで `swing up` が Kubo を管理する場合、RPC はループバックのランダムなポートで待ち受けるため外部から触ることはできません。Docker Compose の構成でも、Kubo の RPC（5001）はホストに公開されず、ゲートウェイ（`8080`）とダッシュボード（`8082`）はどちらも既定で `127.0.0.1` だけで待ち受けます。ダッシュボードは平文の HTTP なので、外の端末から使う場合は TLS を終端する HTTP のリバースプロキシ（nginx・Caddy・Cloudflare Tunnel など）の裏に置いてください。`SWING_DASHBOARD_BIND` を変えて平文のまま外部に出すと、ログインコードとログイン状態の cookie がそのまま流れます。プロキシ側の設定（`SWING_DASHBOARD_ALLOWED_HOSTS`・`SWING_DASHBOARD_PUBLIC_URL`・`Host` を書き換えないこと）と既知の弱点は [`docs/architecture/dashboard.md`](docs/architecture/dashboard.md#リバースプロキシ経由での公開) を参照してください。内蔵ゲートウェイで外部に配信するのは、設定した `SWING_GATEWAY_HOSTS`（または `gateway.hosts`）のホストの DNSLink だけです。
 
 Nostr の秘密鍵は、Docker Compose で動かす場合は `.env` に、バイナリで `swing.toml` を使う場合は `swing.toml` の `secret_key` に、どちらも平文で保存されます。サイト公開・ミラー参加専用の鍵を新しく作り、他の用途の鍵とは分けて扱うことをおすすめします。`.env` や `swing.toml` を Git にコミットしないよう注意してください。
 

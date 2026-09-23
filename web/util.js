@@ -183,6 +183,9 @@ export async function apiFetch(path, opts) {
       body = null;
     }
   }
+  if (res.status === 401 && path !== '/api/login') {
+    document.dispatchEvent(new CustomEvent('swing:unauthorized'));
+  }
   if (!res.ok) {
     const message = body && typeof body.error === 'string' ? body.error : `HTTP ${res.status}`;
     const err = new Error(message);

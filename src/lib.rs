@@ -1,5 +1,6 @@
 pub mod agent;
 pub mod api_client;
+pub mod auth;
 pub mod config;
 pub mod dashboard;
 pub mod gateway;
@@ -8,6 +9,7 @@ pub mod ipfs;
 pub mod key;
 pub mod kubo;
 pub mod lock;
+pub mod login;
 pub mod mfs;
 pub mod mirror;
 pub mod nip05;

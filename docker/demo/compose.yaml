@@ -16,6 +16,8 @@ services:
   mirror:
     env_file: !override
       - docker/demo/demo.env
+    environment:
+      SWING_DASHBOARD_PUBLIC_URL: http://127.0.0.1:18082
     ports: !reset []
     networks: !override [isolated]
     depends_on:

@@ -913,6 +913,30 @@
       <div id="setup-result" class="swing-panel" hidden></div>
     </section>
 
+    <section id="view-login" class="swing-view" data-view-name="login" hidden>
+      <div class="swing-view-head">
+        <h1 data-i18n="loginHeading">Log in</h1>
+      </div>
+
+      <div class="swing-panel">
+        <p class="swing-hint" data-i18n="loginIntro">Run this on the machine where swing up is running. It opens the dashboard with a single-use login link.</p>
+        <p><code>swing dashboard open</code></p>
+      </div>
+
+      <form id="login-form" class="swing-panel">
+        <h2 data-i18n="loginCodeHeading">Enter a login code</h2>
+        <div class="swing-field">
+          <div class="swing-inline-form">
+            <input type="text" name="code" class="swing-input" data-i18n-placeholder="loginCodePlaceholder" placeholder="Login code" autocomplete="off" spellcheck="false">
+            <button type="submit" class="swing-btn swing-btn-accent" data-i18n="loginSubmit">Log in</button>
+          </div>
+          <span class="swing-hint" data-i18n="loginCodeHint">If no browser can be opened there (inside a container, for example), add --no-browser and enter the printed code here. A code works once and expires after 5 minutes.</span>
+        </div>
+      </form>
+
+      <div id="login-status" class="swing-status" aria-live="polite"></div>
+    </section>
+
   </main>
 </div>
 <footer class="swing-page-footer" id="page-footer"></footer>

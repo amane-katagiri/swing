@@ -2,7 +2,7 @@
 
 [`../architecture.md`](../architecture.md) の一部。設定キーは [`../architecture.md#設定と環境変数`](../architecture.md#設定と環境変数)、内蔵 gateway は [`gateway.md`](gateway.md)、OS への常駐登録は [`service.md`](service.md)。
 
-`swing up`（`up::run`）は起動順が固定されている: `swing.lock` の取得（[多重起動の防止](#多重起動の防止lockrs)）→ シグナルハンドラの設定（`shutdown::cancel_on_signal()`、下記）→ `<state_dir>/upload/` の掃除（`dashboard::cleanup_upload_dir`）→ `config.require_secret_key()` を試す（下記「セットアップモード」）→ ダッシュボードの `AppState` 作成・`TcpListener::bind`・`dashboard::serve` の起動 → 鍵の有無・`[kubo].managed` に応じた Kubo / agent の起動ループ。ダッシュボードはこの時点で bind・応答を始めるが、relay・Kubo を使うエンドポイントは agent が起動して `AppState::set_ready` を呼ぶまで 503 を返す（[`dashboard.md`](dashboard.md#起動)）。
+`swing up`（`up::run`）は起動順が固定されている: `swing.lock` の取得（[多重起動の防止](#多重起動の防止lockrs)）→ シグナルハンドラの設定（`shutdown::cancel_on_signal()`、下記）→ `<state_dir>/upload/` の掃除（`dashboard::cleanup_upload_dir`）→ `config.require_secret_key()` を試す（下記「セットアップモード」）→ ダッシュボードのトークン（`<state_dir>/dashboard.token`）の読み込み・作成（`auth::load_or_create_token`）→ ダッシュボードの `AppState` 作成・`TcpListener::bind`・`dashboard::serve` の起動 → 鍵の有無・`[kubo].managed` に応じた Kubo / agent の起動ループ。ダッシュボードはこの時点で bind・応答を始めるが、relay・Kubo を使うエンドポイントは agent が起動して `AppState::set_ready` を呼ぶまで 503 を返す（[`dashboard.md`](dashboard.md#起動)）。
 
 鍵が設定されていれば、Kubo / agent のループは `[kubo].managed` に応じて 2 通りに分かれる。
 

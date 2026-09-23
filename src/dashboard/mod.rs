@@ -2,6 +2,7 @@ mod api;
 mod assets;
 pub(crate) mod dto;
 pub mod guard;
+mod session;
 mod upload;
 
 pub use assets::DesktopAssets;
@@ -21,6 +22,7 @@ use tokio::sync::{Mutex, Notify, RwLock, oneshot};
 use tower_http::timeout::TimeoutLayer;
 use tracing::info;
 
+use crate::auth::LoginCodes;
 use crate::config::Config;
 use crate::ipfs::IpfsClient;
 use crate::nostr::RelayClient;
@@ -42,6 +44,8 @@ pub struct AppState {
     pub desktop: Option<DesktopAssets>,
     pub exit: ExitRequest,
     pub restart_required: std::sync::atomic::AtomicBool,
+    token: std::sync::RwLock<String>,
+    pub login_codes: LoginCodes,
 }
 
 impl AppState {
@@ -50,6 +54,7 @@ impl AppState {
         notify: Arc<Notify>,
         exit: ExitRequest,
         keys: Option<Keys>,
+        token: String,
     ) -> Result<Self> {
         let own_pubkey = keys.map(|k| k.public_key());
         let desktop = if config.dashboard.ui {
@@ -71,7 +76,17 @@ impl AppState {
             desktop,
             exit,
             restart_required: std::sync::atomic::AtomicBool::new(false),
+            token: std::sync::RwLock::new(token),
+            login_codes: LoginCodes::default(),
         })
+    }
+
+    pub fn token(&self) -> String {
+        self.token.read().expect("token lock").clone()
+    }
+
+    pub fn set_token(&self, token: String) {
+        *self.token.write().expect("token lock") = token;
     }
 
     pub fn setup_mode(&self) -> bool {
@@ -127,6 +142,7 @@ fn ui_router() -> Router<Arc<AppState>> {
         .route("/publish.js", get(assets::publish_js))
         .route("/settings.js", get(assets::settings_js))
         .route("/setup.js", get(assets::setup_js))
+        .route("/login.js", get(assets::login_js))
         .route("/desktop.js", get(assets::desktop_js))
         .route("/desktop-page.html", get(assets::desktop_page))
         .route("/desktop-page.css", get(assets::desktop_page_css))
@@ -141,6 +157,7 @@ fn ui_router() -> Router<Arc<AppState>> {
             get(assets::font_pixelmplus12_bold),
         )
         .route("/custom.css", get(assets::custom_css))
+        .route("/login", get(session::login_page))
 }
 
 pub fn router(state: Arc<AppState>) -> Router {
@@ -167,7 +184,10 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/api/config", get(api::config).put(api::update_config))
         .route("/api/setup", post(api::setup))
         .route("/api/shutdown", post(api::shutdown))
-        .route("/api/restart", post(api::restart));
+        .route("/api/restart", post(api::restart))
+        .route("/api/login", post(session::login))
+        .route("/api/login-code", post(session::login_code))
+        .route("/api/token/rotate", post(session::rotate_token));
 
     if state.config.dashboard.ui {
         app = app.merge(ui_router());
@@ -193,7 +213,7 @@ pub async fn serve(
     let addr = listener
         .local_addr()
         .context("reading dashboard listener address")?;
-    info!(%addr, "dashboard listening");
+    info!(%addr, "dashboard listening; run `swing dashboard open` to log in");
     let app = router(state);
     axum::serve(listener, app)
         .with_graceful_shutdown(async move {
@@ -228,6 +248,8 @@ mod tests {
         AgentConfig, DashboardConfig, GatewayConfig, IpfsApi, IpfsConfig, KuboConfig, Listen,
         Nip05Mode, NostrConfig, PolicyConfig, PublishConfig,
     };
+
+    const TEST_TOKEN: &str = "test-token";
 
     fn test_exit() -> ExitRequest {
         ExitRequest::new(CancellationToken::new())
@@ -276,6 +298,7 @@ mod tests {
                 listen: SocketAddr::from(([127, 0, 0, 1], 8082)),
                 ui,
                 allowed_hosts: Vec::new(),
+                public_url: None,
                 gateway: Some("http://localhost:8080".to_string()),
                 custom_css: None,
                 desktop_page: None,
@@ -316,13 +339,21 @@ mod tests {
                 Arc::new(Notify::new()),
                 test_exit(),
                 test_keys(&secret_hex),
+                TEST_TOKEN.to_string(),
             )
             .unwrap(),
         )
     }
 
-    async fn call(app: Router, req: Request<Body>) -> axum::http::Response<Body> {
+    async fn call_anonymous(app: Router, req: Request<Body>) -> axum::http::Response<Body> {
         app.oneshot(req).await.unwrap()
+    }
+
+    async fn call(app: Router, mut req: Request<Body>) -> axum::http::Response<Body> {
+        req.headers_mut()
+            .entry(axum::http::header::AUTHORIZATION)
+            .or_insert(axum::http::HeaderValue::from_static("Bearer test-token"));
+        call_anonymous(app, req).await
     }
 
     #[tokio::test]
@@ -415,6 +446,7 @@ mod tests {
                 Arc::new(Notify::new()),
                 test_exit(),
                 test_keys(&secret_hex),
+                TEST_TOKEN.to_string(),
             )
             .unwrap(),
         );
@@ -462,6 +494,7 @@ mod tests {
             Arc::new(Notify::new()),
             test_exit(),
             test_keys(&secret_hex),
+            TEST_TOKEN.to_string(),
         ) {
             Ok(_) => panic!("expected a startup error"),
             Err(err) => err,
@@ -481,6 +514,7 @@ mod tests {
             Arc::new(Notify::new()),
             test_exit(),
             test_keys(&secret_hex),
+            TEST_TOKEN.to_string(),
         ) {
             Ok(_) => panic!("expected a startup error"),
             Err(err) => err,
@@ -510,6 +544,7 @@ mod tests {
                 Arc::new(Notify::new()),
                 test_exit(),
                 test_keys(&secret_hex),
+                TEST_TOKEN.to_string(),
             )
             .unwrap(),
         );
@@ -577,6 +612,7 @@ mod tests {
                 Arc::new(Notify::new()),
                 test_exit(),
                 test_keys(&secret_hex),
+                TEST_TOKEN.to_string(),
             )
             .unwrap(),
         );
@@ -748,6 +784,7 @@ mod tests {
                 Arc::new(Notify::new()),
                 test_exit(),
                 test_keys(&secret_hex),
+                TEST_TOKEN.to_string(),
             )
             .unwrap(),
         )
@@ -981,6 +1018,7 @@ mod tests {
                 Arc::new(Notify::new()),
                 test_exit(),
                 test_keys(&secret_hex),
+                TEST_TOKEN.to_string(),
             )
             .unwrap(),
         );
@@ -1009,6 +1047,7 @@ mod tests {
                 Arc::new(Notify::new()),
                 test_exit(),
                 test_keys(&secret_hex),
+                TEST_TOKEN.to_string(),
             )
             .unwrap(),
         );
@@ -1040,6 +1079,7 @@ mod tests {
                 Arc::new(Notify::new()),
                 exit,
                 test_keys(&secret_hex),
+                TEST_TOKEN.to_string(),
             )
             .unwrap(),
         )
@@ -1125,6 +1165,7 @@ mod tests {
                 Arc::new(Notify::new()),
                 test_exit(),
                 test_keys(&secret_hex),
+                TEST_TOKEN.to_string(),
             )
             .unwrap(),
         );
@@ -1196,7 +1237,14 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let (config, _secret_hex) = test_config_in_dir(dir.path(), true, false);
         let state = Arc::new(
-            AppState::new(Arc::new(config), Arc::new(Notify::new()), test_exit(), None).unwrap(),
+            AppState::new(
+                Arc::new(config),
+                Arc::new(Notify::new()),
+                test_exit(),
+                None,
+                TEST_TOKEN.to_string(),
+            )
+            .unwrap(),
         );
         assert!(state.setup_mode());
         let app = router(state);
@@ -1242,7 +1290,14 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let (config, _secret_hex) = test_config_in_dir(dir.path(), true, false);
         let state = Arc::new(
-            AppState::new(Arc::new(config), Arc::new(Notify::new()), test_exit(), None).unwrap(),
+            AppState::new(
+                Arc::new(config),
+                Arc::new(Notify::new()),
+                test_exit(),
+                None,
+                TEST_TOKEN.to_string(),
+            )
+            .unwrap(),
         );
         let app = router(state);
         let req = Request::builder()
@@ -1264,7 +1319,14 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let (config, _secret_hex) = test_config_in_dir(dir.path(), true, false);
         let state = Arc::new(
-            AppState::new(Arc::new(config), Arc::new(Notify::new()), test_exit(), None).unwrap(),
+            AppState::new(
+                Arc::new(config),
+                Arc::new(Notify::new()),
+                test_exit(),
+                None,
+                TEST_TOKEN.to_string(),
+            )
+            .unwrap(),
         );
         let app = router(state);
         let req = Request::builder()
@@ -1281,5 +1343,189 @@ mod tests {
         assert_eq!(json["setup"], true);
         assert!(json["pubkey"].is_null());
         assert!(json["npub"].is_null());
+    }
+
+    fn get(uri: &str) -> Request<Body> {
+        Request::builder()
+            .uri(uri)
+            .header("Host", "127.0.0.1:8082")
+            .body(Body::empty())
+            .unwrap()
+    }
+
+    fn post_json(uri: &str, body: &str) -> Request<Body> {
+        Request::builder()
+            .method("POST")
+            .uri(uri)
+            .header("Host", "127.0.0.1:8082")
+            .header("x-swing-dashboard", "1")
+            .header("content-type", "application/json")
+            .body(Body::from(body.to_string()))
+            .unwrap()
+    }
+
+    fn set_cookie(resp: &axum::http::Response<Body>) -> Option<String> {
+        resp.headers()
+            .get("set-cookie")
+            .map(|v| v.to_str().unwrap().to_string())
+    }
+
+    fn cookie_pair(set_cookie: &str) -> String {
+        set_cookie.split(';').next().unwrap().to_string()
+    }
+
+    async fn issue_code(state: &Arc<AppState>) -> String {
+        let resp = call(router(Arc::clone(state)), post_json("/api/login-code", "")).await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(json["expires_in"], 300);
+        json["code"].as_str().unwrap().to_string()
+    }
+
+    #[tokio::test]
+    async fn api_requires_authentication_but_static_ui_does_not() {
+        let state = test_state();
+        let resp = call_anonymous(router(Arc::clone(&state)), get("/api/overview")).await;
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+        assert_eq!(resp.headers().get("cache-control").unwrap(), "no-store");
+        let resp = call_anonymous(router(Arc::clone(&state)), get("/")).await;
+        assert_eq!(resp.status(), StatusCode::OK);
+
+        let mut req = get("/api/overview");
+        req.headers_mut()
+            .insert("authorization", "Bearer wrong".parse().unwrap());
+        let resp = call_anonymous(router(state), req).await;
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn login_code_exchanges_for_a_session_cookie_once() {
+        let state = test_state();
+        let code = issue_code(&state).await;
+        let body = format!("{{\"code\":\"{code}\"}}");
+
+        let resp = call_anonymous(router(Arc::clone(&state)), post_json("/api/login", &body)).await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        let cookie = set_cookie(&resp).unwrap();
+        assert!(cookie.starts_with("swing_session_8082="));
+        assert!(cookie.contains("HttpOnly"));
+        assert!(cookie.contains("SameSite=Strict"));
+        assert!(cookie.contains("Max-Age=2592000"));
+
+        let mut req = get("/api/overview");
+        req.headers_mut()
+            .insert("cookie", cookie_pair(&cookie).parse().unwrap());
+        let resp = call_anonymous(router(Arc::clone(&state)), req).await;
+        assert_eq!(resp.status(), StatusCode::OK);
+
+        let resp = call_anonymous(router(state), post_json("/api/login", &body)).await;
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+        assert!(set_cookie(&resp).is_none());
+    }
+
+    #[tokio::test]
+    async fn login_link_sets_the_cookie_and_redirects_home() {
+        let state = test_state();
+        let code = issue_code(&state).await;
+        let resp = call_anonymous(
+            router(Arc::clone(&state)),
+            get(&format!("/login?code={code}")),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::SEE_OTHER);
+        assert_eq!(resp.headers().get("location").unwrap(), "/");
+        assert!(
+            set_cookie(&resp)
+                .unwrap()
+                .starts_with("swing_session_8082=")
+        );
+
+        let resp = call_anonymous(router(state), get(&format!("/login?code={code}"))).await;
+        assert_eq!(resp.status(), StatusCode::SEE_OTHER);
+        assert_eq!(resp.headers().get("location").unwrap(), "/#/login/invalid");
+        assert!(set_cookie(&resp).is_none());
+    }
+
+    #[tokio::test]
+    async fn rotating_the_token_invalidates_the_old_token_and_sessions() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = test_state_with(dir.path().to_path_buf(), 1 << 20);
+        let session = crate::auth::new_session(TEST_TOKEN, crate::auth::DASHBOARD_SESSION);
+
+        let resp = call(
+            router(Arc::clone(&state)),
+            post_json("/api/token/rotate", ""),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        let rotated = crate::auth::read_token(dir.path()).unwrap().unwrap();
+        assert_ne!(rotated, TEST_TOKEN);
+
+        let resp = call(router(Arc::clone(&state)), get("/api/overview")).await;
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+        let mut req = get("/api/overview");
+        req.headers_mut().insert(
+            "cookie",
+            format!("swing_session_8082={session}").parse().unwrap(),
+        );
+        let resp = call_anonymous(router(Arc::clone(&state)), req).await;
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+
+        let mut req = get("/api/overview");
+        req.headers_mut().insert(
+            "authorization",
+            format!("Bearer {rotated}").parse().unwrap(),
+        );
+        let resp = call_anonymous(router(state), req).await;
+        assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    async fn login_cookie(state: &Arc<AppState>, forwarded_proto: Option<&str>) -> String {
+        let code = issue_code(state).await;
+        let mut req = post_json("/api/login", &format!("{{\"code\":\"{code}\"}}"));
+        if let Some(proto) = forwarded_proto {
+            req.headers_mut()
+                .insert("x-forwarded-proto", proto.parse().unwrap());
+        }
+        let resp = call_anonymous(router(Arc::clone(state)), req).await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        set_cookie(&resp).unwrap()
+    }
+
+    #[tokio::test]
+    async fn session_cookie_is_secure_behind_an_https_proxy() {
+        let state = test_state();
+        assert!(!login_cookie(&state, None).await.contains("Secure"));
+        assert!(!login_cookie(&state, Some("http")).await.contains("Secure"));
+        assert!(
+            login_cookie(&state, Some("HTTPS"))
+                .await
+                .ends_with("; Secure")
+        );
+        assert!(
+            login_cookie(&state, Some("https, http"))
+                .await
+                .ends_with("; Secure")
+        );
+    }
+
+    #[tokio::test]
+    async fn session_cookie_is_secure_when_public_url_is_https() {
+        let (mut config, secret_hex) = test_config(true);
+        config.dashboard.public_url = Some("https://dash.example".to_string());
+        let state = Arc::new(
+            AppState::new(
+                Arc::new(config),
+                Arc::new(Notify::new()),
+                test_exit(),
+                test_keys(&secret_hex),
+                TEST_TOKEN.to_string(),
+            )
+            .unwrap(),
+        );
+        assert!(login_cookie(&state, None).await.ends_with("; Secure"));
     }
 }

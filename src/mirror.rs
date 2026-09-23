@@ -326,11 +326,11 @@ struct MirrorKeysBody<'a> {
 }
 
 async fn api_mirror_change(
-    listen: std::net::SocketAddr,
+    config: &Config,
     path: &str,
     inputs: &[String],
 ) -> Result<dto::MirrorChangeDto> {
-    let client = ApiClient::new(listen);
+    let client = ApiClient::for_config(config)?;
     client
         .post_json(path, &MirrorKeysBody { keys: inputs })
         .await
@@ -385,13 +385,13 @@ fn print_mirror_change_dto(
 }
 
 pub async fn add(config: &Config, inputs: &[String]) -> Result<()> {
-    let change = api_mirror_change(config.dashboard.listen, "/api/mirror/add", inputs).await?;
+    let change = api_mirror_change(config, "/api/mirror/add", inputs).await?;
     print_mirror_change_dto(&change, "already in mirror set", "added", false);
     Ok(())
 }
 
 pub async fn remove(config: &Config, inputs: &[String]) -> Result<()> {
-    let change = api_mirror_change(config.dashboard.listen, "/api/mirror/remove", inputs).await?;
+    let change = api_mirror_change(config, "/api/mirror/remove", inputs).await?;
     print_mirror_change_dto(&change, "not in mirror set", "removed", true);
     Ok(())
 }

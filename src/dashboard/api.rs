@@ -27,6 +27,7 @@ const MAX_KEYS: usize = 100;
 
 pub enum ApiError {
     BadRequest(String),
+    Unauthorized(String),
     PayloadTooLarge(String),
     NotReady,
     NotConfigured,
@@ -39,6 +40,7 @@ impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
         let (status, message) = match self {
             ApiError::BadRequest(msg) => (StatusCode::BAD_REQUEST, msg),
+            ApiError::Unauthorized(msg) => (StatusCode::UNAUTHORIZED, msg),
             ApiError::PayloadTooLarge(msg) => (StatusCode::PAYLOAD_TOO_LARGE, msg),
             ApiError::NotReady => (
                 StatusCode::SERVICE_UNAVAILABLE,

@@ -112,6 +112,7 @@ pub struct DashboardFile {
     pub listen: Option<String>,
     pub ui: Option<bool>,
     pub allowed_hosts: Option<Vec<String>>,
+    pub public_url: Option<String>,
     pub gateway: Option<String>,
     pub custom_css: Option<String>,
     pub desktop_page: Option<String>,
@@ -278,6 +279,7 @@ pub struct DashboardConfig {
     pub listen: SocketAddr,
     pub ui: bool,
     pub allowed_hosts: Vec<String>,
+    pub public_url: Option<String>,
     pub gateway: Option<String>,
     pub custom_css: Option<PathBuf>,
     pub desktop_page: Option<PathBuf>,
@@ -465,6 +467,17 @@ pub fn parse_mfs_root(input: &str) -> Result<String> {
         bail!("MFS root must be a non-root path without empty, . or .. segments: {input}");
     }
     Ok(trimmed.to_string())
+}
+
+pub fn parse_public_url(input: &str) -> Result<String> {
+    let trimmed = input.trim().trim_end_matches('/');
+    let authority = trimmed
+        .strip_prefix("http://")
+        .or_else(|| trimmed.strip_prefix("https://"));
+    match authority {
+        Some(a) if !a.is_empty() && !a.contains(['/', '?', '#', ' ']) => Ok(trimmed.to_string()),
+        _ => bail!("dashboard public URL must be http(s)://host[:port] without a path: {input}"),
+    }
 }
 
 pub(crate) fn build_config_from_str(
@@ -899,6 +912,28 @@ fn build_config(file: ConfigFile, get_env: impl Fn(&str) -> Option<String>) -> R
         None => file.dashboard.allowed_hosts.unwrap_or_default(),
     };
 
+    let dashboard_public_url_env = get_env(settings::env_of("dashboard.public_url"));
+    sources.insert(
+        "dashboard.public_url".to_string(),
+        if dashboard_public_url_env.is_some() {
+            Source::Env
+        } else if file.dashboard.public_url.is_some() {
+            Source::File
+        } else {
+            Source::Default
+        },
+    );
+    let dashboard_public_url = match dashboard_public_url_env {
+        Some(v) => Some(parse_public_url(&v).context("invalid SWING_DASHBOARD_PUBLIC_URL")?),
+        None => file
+            .dashboard
+            .public_url
+            .as_deref()
+            .map(parse_public_url)
+            .transpose()
+            .context("invalid [dashboard].public_url")?,
+    };
+
     let dashboard_gateway_env = get_env(settings::env_of("dashboard.gateway"));
     let dashboard_gateway_source = if dashboard_gateway_env.is_some() {
         Source::Env
@@ -1203,6 +1238,7 @@ fn build_config(file: ConfigFile, get_env: impl Fn(&str) -> Option<String>) -> R
             listen: dashboard_listen,
             ui: dashboard_ui,
             allowed_hosts: dashboard_allowed_hosts,
+            public_url: dashboard_public_url,
             gateway: dashboard_gateway,
             custom_css: dashboard_custom_css,
             desktop_page: dashboard_desktop_page,
@@ -1728,6 +1764,7 @@ mod tests {
                 listen: Some("127.0.0.1:9000".into()),
                 ui: Some(false),
                 allowed_hosts: Some(vec!["example.com".into()]),
+                public_url: None,
                 gateway: Some("http://gateway.example".into()),
                 custom_css: Some("/etc/swing/custom.css".into()),
                 desktop_page: Some("/etc/swing/page.html".into()),
@@ -2181,5 +2218,59 @@ mod tests {
 
         let cfg = build_config(ConfigFile::default(), |_| None).unwrap();
         assert_eq!(cfg.source_of("nostr.secret_key"), Some(Source::Default));
+    }
+
+    #[test]
+    fn public_url_accepts_scheme_and_authority_only() {
+        assert_eq!(
+            parse_public_url(" http://127.0.0.1:18082/ ").unwrap(),
+            "http://127.0.0.1:18082"
+        );
+        assert_eq!(
+            parse_public_url("https://swing.example").unwrap(),
+            "https://swing.example"
+        );
+        for bad in [
+            "127.0.0.1:8082",
+            "http://",
+            "ftp://x",
+            "http://x/dash",
+            "http://x?y",
+            "http://x y",
+        ] {
+            assert!(parse_public_url(bad).is_err(), "{bad}");
+        }
+    }
+
+    #[test]
+    fn public_url_comes_from_env_or_file() {
+        let config = build_config_from_str(
+            "[dashboard]\npublic_url = \"http://127.0.0.1:18082/\"\n",
+            |_| None,
+        )
+        .unwrap();
+        assert_eq!(
+            config.dashboard.public_url.as_deref(),
+            Some("http://127.0.0.1:18082")
+        );
+        let config = build_config_from_str("", |k| {
+            (k == "SWING_DASHBOARD_PUBLIC_URL").then(|| "http://localhost:9000".to_string())
+        })
+        .unwrap();
+        assert_eq!(
+            config.dashboard.public_url.as_deref(),
+            Some("http://localhost:9000")
+        );
+        assert!(
+            build_config_from_str("", |_| None)
+                .unwrap()
+                .dashboard
+                .public_url
+                .is_none()
+        );
+        assert!(
+            build_config_from_str("[dashboard]\npublic_url = \"http://x/sub\"\n", |_| None)
+                .is_err()
+        );
     }
 }

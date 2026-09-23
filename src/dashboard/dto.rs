@@ -62,6 +62,12 @@ pub fn gateway_url(gateway: Option<&str>, cid: &str, stored: bool) -> Option<Str
     Some(format!("{}/ipfs/{cid}/", gateway.trim_end_matches('/')))
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+pub struct LoginCodeDto {
+    pub code: String,
+    pub expires_in: u64,
+}
+
 #[derive(Debug, Serialize)]
 pub struct OverviewDto {
     pub version: String,
@@ -761,6 +767,10 @@ fn config_value(
         "dashboard.ui" => (ConfigValue::Bool(config.dashboard.ui), None),
         "dashboard.allowed_hosts" => (
             ConfigValue::List(config.dashboard.allowed_hosts.clone()),
+            None,
+        ),
+        "dashboard.public_url" => (
+            ConfigValue::Str(config.dashboard.public_url.clone().unwrap_or_default()),
             None,
         ),
         "dashboard.gateway" => (

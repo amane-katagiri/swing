@@ -4,7 +4,9 @@ use std::time::Duration;
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use swing::shutdown::{self, Exit};
-use swing::{config, health, key, mirror, publish, replicas, service, settings, stop, up, webring};
+use swing::{
+    config, health, key, login, mirror, publish, replicas, service, settings, stop, up, webring,
+};
 use tracing::info;
 use tracing_subscriber::EnvFilter;
 
@@ -64,6 +66,13 @@ enum Command {
     Service {
         #[command(subcommand)]
         action: ServiceCommand,
+    },
+    #[command(
+        about = "Log in to the dashboard of a running `swing up` and manage its access token"
+    )]
+    Dashboard {
+        #[command(subcommand)]
+        action: DashboardCommand,
     },
     #[command(about = "Add a static site to IPFS and announce its CID on Nostr")]
     Publish {
@@ -146,6 +155,26 @@ enum Command {
     Config {
         #[command(subcommand)]
         action: ConfigCommand,
+    },
+}
+
+#[derive(Subcommand)]
+enum DashboardCommand {
+    #[command(
+        about = "Open the dashboard in a browser with a single-use login link, via a running `swing up`'s dashboard API (POST /api/login-code)"
+    )]
+    Open {
+        #[arg(long, help = "Config file (default: $SWING_CONFIG or ./swing.toml)")]
+        config: Option<PathBuf>,
+        #[arg(long, help = "Only print the login link and code")]
+        no_browser: bool,
+    },
+    #[command(
+        about = "Replace the dashboard token, logging out every browser session (POST /api/token/rotate, or the token file directly when swing up is not running)"
+    )]
+    RotateToken {
+        #[arg(long, help = "Config file (default: $SWING_CONFIG or ./swing.toml)")]
+        config: Option<PathBuf>,
     },
 }
 
@@ -319,6 +348,16 @@ async fn run_other(command: Command) -> Result<()> {
             ServiceCommand::Uninstall { system } => service::uninstall(system).await,
             ServiceCommand::Stop { system } => service::stop(system).await,
             ServiceCommand::Status { system } => service::status(system),
+        },
+        Command::Dashboard { action } => match action {
+            DashboardCommand::Open { config, no_browser } => {
+                let cfg = config::Config::load(config.as_deref())?;
+                login::open(&cfg, no_browser).await
+            }
+            DashboardCommand::RotateToken { config } => {
+                let cfg = config::Config::load(config.as_deref())?;
+                login::rotate_token(&cfg).await
+            }
         },
         Command::Publish {
             config,

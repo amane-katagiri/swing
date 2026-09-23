@@ -13,15 +13,17 @@
 | `util.js` | 画面間で共有するキャッシュ・DOM/fetch ユーティリティ・表示スタイル切替・非同期ロードのガード（`createLoadGuard`）。`storage.js`・`i18n.js` に依存する |
 | `ui.js` | 複数画面で共有する UI 部品（コピーボタン、バッジ、relay 結果表示など）。`util.js`・`i18n.js` に依存する |
 | `graph.js` | webring 用の自前 force-directed layout。`util.js` の `clamp` だけに依存する |
-| `sites.js` / `webring.js` / `publish.js` / `settings.js` / `setup.js` / `desktop.js` | 各画面（それぞれ Sites・Webring・Publish・Settings・Setup・Desktop） |
+| `sites.js` / `webring.js` / `publish.js` / `settings.js` / `setup.js` / `login.js` / `desktop.js` | 各画面（それぞれ Sites・Webring・Publish・Settings・Setup・Login・Desktop） |
 | `boot.js` | 描画前に同期実行する小さな通常スクリプト。サイドナビの折りたたみ状態と、表示言語が英語以外なら翻訳待ちの印を付ける。どのモジュールにも依存しない |
 | `app.js` | ルーター兼エントリポイント。`<script type="module" src="/app.js">` から読み込まれ、各画面モジュールを import する |
 
 CSS は `style.css`（全画面共通）に加え、Desktop 画面のウィンドウ枠専用の `desktop.css` を `index.html` が `<link>` で読み込む（読み込み順は下記「CSS カスタマイズのインターフェース」を参照）。Desktop 画面の「リンク集」ページ本文だけは別ドキュメント（`desktop-page.html` + `desktop-page.css`）で、iframe の中で動く（下記「リンク集ページ（iframe）」）。
 
-`#/desktop` `#/sites` `#/webring` `#/publish` `#/settings` `#/setup` の 6 画面をハッシュルーティングで切り替える（既定は `sites`）。現在の画面のナビのリンクには `aria-current="page"` が付く。書き込みリクエストには `X-Swing-Dashboard: 1` と `Content-Type: application/json` を付ける。relay 由来の文字列は DOM API だけで挿入し、`innerHTML` は使わない。`url` は `^https?://` にマッチするときだけリンクにする。
+`#/desktop` `#/sites` `#/webring` `#/publish` `#/settings` `#/setup` の 6 画面と、未ログインのときだけ出す Login 画面をハッシュルーティングで切り替える（既定は `sites`）。現在の画面のナビのリンクには `aria-current="page"` が付く。書き込みリクエストには `X-Swing-Dashboard: 1` と `Content-Type: application/json` を付ける。relay 由来の文字列は DOM API だけで挿入し、`innerHTML` は使わない。`url` は `^https?://` にマッチするときだけリンクにする。
 
 `app.js` の `init()` は最初のルーティングをする前に `loadOverview()`（[`/api/overview`](http-api.md#get-apioverview)）を待ってから `showRoute()` を呼ぶ（初回描画の一瞬だけ別の画面が見えてから Setup に切り替わる、というちらつきを防ぐため）。`currentRoute()` は `cache.overview.setup` が `true` の間、hash が何であっても常に `'setup'` を返す（URL を直接叩いても Setup に留まる）。`showRoute()` は同じ `cache.overview.setup` を見てサイドナビの表示も切り替える：`true` の間は Setup 項目（Settings と同じ歯車アイコン）だけを表示して `aria-current="page"` を付け、他の 5 項目は `hidden` にする。`false` になれば逆に Setup 項目を隠し、他の 5 項目を通常どおり表示する。`overview.setup` が `true` のまま起動直後に hash が `#/setup` でなければ、`location.hash = '#/setup'` に変えてから描画する。
+
+未ログイン（`apiFetch` が `/api/login` 以外で 401 を受けた）のときは、`util.js::apiFetch` が `swing:unauthorized` という `CustomEvent` を `document` に投げ、`app.js` がそれを受けて以後 `currentRoute()` を常に `'login'` にし、サイドナビの項目をすべて `hidden` にする。起動時の `loadOverview()` が 401 になった場合も同じ経路で Login 画面になる。ログイン済みのときに `#/login` を開いても `sites` に落とす。
 
 言語切り替え（Settings 画面）は `settings.js` が `swing:langchange` という `CustomEvent` を `document` に投げ、`app.js` がそれを購読して各画面を再描画する。各画面のロードは世代カウンタ（`createLoadGuard`）でガードし、切り替えが速くても古いレスポンスで上書きしない。
 
@@ -194,6 +196,13 @@ NIP-05 の検証結果はバッジで `OK`（`verified`）/ `NG`（`mismatch`）
 - これら 4 項目のうち、`GET /api/config` 上で `editable: false`（＝ env 由来。compose でよくある。[`docker.md`](../docker.md)）になっているものは、フォームでも disabled にして現在の値をそのまま表示し、`configLockedByEnv` の注記を添える。送信する `items` にもそのキーは含めない（含めるとサーバ側が env 由来として 400 で拒否するため）。
 - 送信すると `POST /api/setup`（[`http-api.md#post-apisetup`](http-api.md#post-apisetup)）を叩く。成功したら生成／使用した鍵の `npub` を表示し、`GET /api/overview` を 1 秒間隔・最大 120 回ポーリングして `setup: false` になったら `#/settings` へ移る（書き込んだ設定をそのまま確認できるようにするため）（`setupTimedOut` はタイムアウト時のメッセージで、エラーではなく「再読み込みして確認して」という案内）。
 - 失敗したらフォームを再度有効にする（env 由来で disabled にしていたフィールドはそのまま disabled に戻す）。
+
+## Login 画面（`login.js`）
+
+- `swing dashboard open` の案内（コマンドを `<code>` で表示）と、ログインコードの入力欄（`swing-inline-form`）・その下の注記（`--no-browser` で表示されたコードを貼る、1 回限り・5 分）を出す。
+- 送信すると [`POST /api/login`](http-api.md#post-apilogin) を呼び、成功したら `location.replace('/')` でページごと読み込み直す（cookie が付いた状態で `init()` からやり直す）。401 なら「コードが無効か期限切れ」を、それ以外は `describeError` を `#login-status` に出す。
+- `GET /login?code=` が無効なコードで `/#/login/invalid` にリダイレクトしてきた場合は、表示時に同じ「無効か期限切れ」を出す。
+- 状態行の文言は i18n のキーで覚えておき、`swing:langchange` で差し替える（`LoginView.render`）。
 
 ## Settings 画面のプロセス操作
 

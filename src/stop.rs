@@ -18,7 +18,7 @@ fn instance(overview: &serde_json::Value) -> Option<&str> {
 }
 
 pub async fn run(config: &Config, restart: bool, timeout: Duration) -> Result<()> {
-    let client = ApiClient::new(config.dashboard.listen);
+    let client = ApiClient::for_config(config)?;
 
     let before = if restart {
         match client.get::<serde_json::Value>("/api/overview").await {

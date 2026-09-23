@@ -2,9 +2,12 @@ use std::fmt;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::time::Duration;
 
-use reqwest::{Client, StatusCode};
+use reqwest::{Client, Method, RequestBuilder, StatusCode};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
+
+use crate::auth;
+use crate::config::Config;
 
 // Above the dashboard's own REQUEST_TIMEOUT (120s, src/dashboard/mod.rs) so a
 // slow server-side call surfaces as the server's own timeout response rather
@@ -56,16 +59,31 @@ fn loopback_addr(addr: SocketAddr) -> SocketAddr {
 pub struct ApiClient {
     client: Client,
     addr: SocketAddr,
+    token: Option<String>,
 }
 
 impl ApiClient {
-    pub fn new(listen: SocketAddr) -> Self {
+    pub fn new(listen: SocketAddr, token: Option<String>) -> Self {
         Self {
             client: Client::builder()
                 .timeout(REQUEST_TIMEOUT)
                 .build()
                 .expect("building the dashboard API client"),
             addr: loopback_addr(listen),
+            token,
+        }
+    }
+
+    pub fn for_config(config: &Config) -> anyhow::Result<Self> {
+        let token = auth::read_token(&config.agent.state_dir)?;
+        Ok(Self::new(config.dashboard.listen, token))
+    }
+
+    fn request(&self, method: Method, path: &str) -> RequestBuilder {
+        let req = self.client.request(method, self.url(path));
+        match &self.token {
+            Some(token) => req.bearer_auth(token),
+            None => req,
         }
     }
 
@@ -106,14 +124,13 @@ impl ApiClient {
     }
 
     pub async fn get<T: DeserializeOwned>(&self, path: &str) -> Result<T, ApiClientError> {
-        let result = self.client.get(self.url(path)).send().await;
+        let result = self.request(Method::GET, path).send().await;
         self.finish(result).await
     }
 
     pub async fn post<T: DeserializeOwned>(&self, path: &str) -> Result<T, ApiClientError> {
         let result = self
-            .client
-            .post(self.url(path))
+            .request(Method::POST, path)
             .header("X-Swing-Dashboard", "1")
             .send()
             .await;
@@ -126,8 +143,7 @@ impl ApiClient {
         body: &B,
     ) -> Result<T, ApiClientError> {
         let result = self
-            .client
-            .post(self.url(path))
+            .request(Method::POST, path)
             .header("X-Swing-Dashboard", "1")
             .json(body)
             .send()
@@ -178,7 +194,7 @@ mod tests {
         let addr = listener.local_addr().unwrap();
         drop(listener);
 
-        let client = ApiClient::new(addr);
+        let client = ApiClient::new(addr, None);
         let err = client.get::<Pong>("/ping").await.unwrap_err();
         assert!(matches!(err, ApiClientError::Unreachable(a) if a == addr));
         assert_eq!(
@@ -192,7 +208,7 @@ mod tests {
         let router = axum::Router::new().route("/ping", get(ready));
         let addr = spawn(router).await;
 
-        let client = ApiClient::new(addr);
+        let client = ApiClient::new(addr, None);
         let pong = client.get::<Pong>("/ping").await.unwrap();
         assert_eq!(pong, Pong { pong: true });
     }
@@ -202,7 +218,7 @@ mod tests {
         let router = axum::Router::new().route("/ping", get(not_ready));
         let addr = spawn(router).await;
 
-        let client = ApiClient::new(addr);
+        let client = ApiClient::new(addr, None);
         let err = client.get::<Pong>("/ping").await.unwrap_err();
         match err {
             ApiClientError::Http { status, message } => {
@@ -211,6 +227,30 @@ mod tests {
             }
             other => panic!("expected Http error, got {other:?}"),
         }
+    }
+
+    async fn echo_authorization(headers: axum::http::HeaderMap) -> String {
+        headers
+            .get("authorization")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or_default()
+            .to_string()
+    }
+
+    #[tokio::test]
+    async fn token_is_sent_as_bearer_on_get_and_post() {
+        let router = axum::Router::new().route(
+            "/auth",
+            get(|h| async move { Json(echo_authorization(h).await) })
+                .post(|h| async move { Json(echo_authorization(h).await) }),
+        );
+        let addr = spawn(router).await;
+
+        let client = ApiClient::new(addr, Some("tok".to_string()));
+        assert_eq!(client.get::<String>("/auth").await.unwrap(), "Bearer tok");
+        assert_eq!(client.post::<String>("/auth").await.unwrap(), "Bearer tok");
+        let anonymous = ApiClient::new(addr, None);
+        assert_eq!(anonymous.get::<String>("/auth").await.unwrap(), "");
     }
 
     #[tokio::test]
@@ -223,7 +263,7 @@ mod tests {
         });
 
         let unspecified = SocketAddr::from(([0, 0, 0, 0], port));
-        let client = ApiClient::new(unspecified);
+        let client = ApiClient::new(unspecified, None);
         assert_eq!(client.addr(), SocketAddr::from(([127, 0, 0, 1], port)));
         let pong = client.get::<Pong>("/ping").await.unwrap();
         assert_eq!(pong, Pong { pong: true });

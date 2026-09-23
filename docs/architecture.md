@@ -56,13 +56,15 @@ swing/
     up.rs            `swing up` supervisor（Kubo の起動・監視、agent の起動・再起動、バックオフ）。詳細は architecture/up.md
     kubo.rs          Kubo バイナリの検出・init・`ipfs config` 適用・子プロセスの起動と終了・ヘルス待ち・kubo.pid と孤児回収。詳細は architecture/up.md
     lock.rs          多重起動防止のインスタンスロック（swing.lock）。詳細は architecture/up.md
+    auth.rs          ダッシュボードのトークンファイル（dashboard.token）、HMAC 署名のセッション値、使い捨てログインコード。詳細は architecture/dashboard.md
+    login.rs         `swing dashboard open`・`swing dashboard rotate-token`。詳細は architecture/cli.md
     gateway.rs       内蔵 gateway（axum）。Host 名での振り分けと Kubo gateway へのプロキシ。詳細は architecture/gateway.md
     service.rs       `swing service install/uninstall/status/stop`（systemd / launchd / タスクスケジューラ）。詳細は architecture/service.md
     settings.rs      全設定キーのカタログ（SETTINGS。キー・TOML フィールド・環境変数・種類・例・編集可否・英日の説明）、`swing.example.toml`/`.env.example` の生成（config example / env-example）、ダッシュボードから編集できる設定キーのホワイトリスト（カタログの editable）、`PUT /api/config`（update）・`POST /api/setup`（setup）の読み書き（toml_edit）。詳細は architecture/dashboard.md
     stop.rs          `swing stop`（動いている `swing up` のダッシュボード API 経由。API に到達できなければ「動いていない」として終了する）。詳細は architecture/up.md, architecture/service.md
     shutdown.rs      `cancel_on_signal`（SIGINT/SIGTERM → CancellationToken、force-exit watchdog）、`ExitRequest`/`Exit`（ダッシュボードからの停止・再起動要求と exit code）。up/agent 共通
-    dashboard/       `swing up` 常駐の Web ダッシュボード兼制御 API（mod.rs, guard.rs, api.rs, dto.rs, assets.rs）。詳細は architecture/dashboard.md
-    api_client.rs    ダッシュボード API を呼ぶ CLI 共通クライアント（`ApiClient`）。`status`・`mirror add`・`mirror remove`・`stop` が使う。詳細は architecture/dashboard/http-api.md
+    dashboard/       `swing up` 常駐の Web ダッシュボード兼制御 API（mod.rs, guard.rs, api.rs, session.rs, dto.rs, assets.rs）。詳細は architecture/dashboard.md
+    api_client.rs    ダッシュボード API を呼ぶ CLI 共通クライアント（`ApiClient`。`<state_dir>/dashboard.token` を Bearer トークンとして送る）。`status`・`mirror add`・`mirror remove`・`stop`・`dashboard open`・`dashboard rotate-token` が使う。詳細は architecture/dashboard/http-api.md
   web/               ダッシュボードのフロント（index.html, style.css, ES modules（setup.js を含む）, 画像・フォントなどの静的アセット一式）。ビルド工程なしで include_str!/include_bytes! によりバイナリへ埋め込む。desktop-page.html / desktop-page.css / desktop-banner.gif（Desktop 画面のリンク集ページ）だけは設定で差し替えられる。詳細は architecture/dashboard.md
   tests/
     kubo_integration.rs          Kubo 連携の統合テスト（#[ignore]）
@@ -74,7 +76,7 @@ swing/
 
 `mirror.rs`・`health.rs`・`replicas.rs`・`webring.rs`・`publish.rs`・`nostr.rs` は、relay/Kubo とやり取りして値を返す `collect_*` 系の関数と、それを表示する CLI 側の薄い関数とに分かれている。ダッシュボードの API ハンドラは同じ `collect_*` 関数を呼び、DTO に変換する。
 
-`swing sites` / `replicas` / `webring` / `mirror list` / `publish` はこの `collect_*` 関数を CLI から直接呼ぶ（relay だけで完結する読み取りと、ローカルディレクトリを直接 Kubo に流し込む publish は動いている `swing up` を前提にしないため）。一方 `swing status` と `swing mirror add` / `mirror remove` は `collect_*` を直接呼ばず、`api_client::ApiClient` でダッシュボードの `/api/status` `/api/mirror/add` `/api/mirror/remove` を叩き、返ってきた DTO をそのまま印字する（`src/health.rs::print_status_dto`、`src/mirror.rs::print_mirror_change_dto`）。`swing stop` も同様に `/api/shutdown` `/api/restart` を叩く。これらは `swing up` が動いていないと使えず、API に接続できなければ `status` / `mirror add` / `mirror remove` はエラー終了、`stop` は `not running` を出して正常終了する（[`architecture/cli.md`](architecture/cli.md)）。
+`swing sites` / `replicas` / `webring` / `mirror list` / `publish` はこの `collect_*` 関数を CLI から直接呼ぶ（relay だけで完結する読み取りと、ローカルディレクトリを直接 Kubo に流し込む publish は動いている `swing up` を前提にしないため）。一方 `swing status` と `swing mirror add` / `mirror remove` は `collect_*` を直接呼ばず、`api_client::ApiClient` でダッシュボードの `/api/status` `/api/mirror/add` `/api/mirror/remove` を叩き、返ってきた DTO をそのまま印字する（`src/health.rs::print_status_dto`、`src/mirror.rs::print_mirror_change_dto`）。`swing stop` も同様に `/api/shutdown` `/api/restart` を、`swing dashboard open` は `/api/login-code` を、`swing dashboard rotate-token` は `/api/token/rotate` を叩く。これらは `swing up` が動いていないと使えず、API に接続できなければ `status` / `mirror add` / `mirror remove` はエラー終了、`stop` は `not running` を出して正常終了する（[`architecture/cli.md`](architecture/cli.md)）。
 
 ## CLI
 
@@ -85,6 +87,8 @@ swing service install   [--config <path>] [--system] [--no-start]
 swing service uninstall [--system]
 swing service stop      [--system]
 swing service status    [--system]
+swing dashboard open         [--config <path>] [--no-browser]
+swing dashboard rotate-token [--config <path>]
 swing publish [--config <path>] --site <d-tag> [--url <URL>] [--nip05 <off|warn|require>] [--title <TEXT>] [-m, --message <TEXT>] <DIR>
 swing mirror list                      [--config <path>]
 swing mirror add <key>...              [--config <path>]

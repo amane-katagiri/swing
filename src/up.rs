@@ -8,6 +8,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::{error, info, warn};
 
 use crate::agent;
+use crate::auth;
 use crate::config::{Config, IpfsApi};
 use crate::dashboard;
 use crate::kubo;
@@ -74,22 +75,24 @@ pub async fn run(config: Config, token: CancellationToken) -> Result<Exit> {
         Err(_) => None,
     };
 
+    let dashboard_token = auth::load_or_create_token(&config.agent.state_dir)
+        .context("preparing the dashboard token")?;
     let dashboard_state = Arc::new(dashboard::AppState::new(
         Arc::new(config.clone()),
         Arc::clone(&notify),
         exit.clone(),
         keys.clone(),
+        dashboard_token,
     )?);
 
     let addr = config.dashboard.listen;
     let listener = tokio::net::TcpListener::bind(addr)
         .await
         .with_context(|| format!("binding dashboard listener on {addr}"))?;
-    if !addr.ip().is_loopback() || !config.dashboard.allowed_hosts.is_empty() {
+    if !addr.ip().is_loopback() {
         warn!(
             %addr,
-            allowed_hosts = ?config.dashboard.allowed_hosts,
-            "dashboard has no authentication; binding beyond loopback or widening allowed_hosts exposes full mirror and publish control to anyone who can reach it"
+            "dashboard is served over plain HTTP beyond loopback; without a TLS-terminating HTTP reverse proxy in front, login codes and session cookies travel in cleartext"
         );
     }
 

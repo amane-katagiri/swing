@@ -25,6 +25,7 @@ const WEBRING_JS: &str = include_str!("../../web/webring.js");
 const PUBLISH_JS: &str = include_str!("../../web/publish.js");
 const SETTINGS_JS: &str = include_str!("../../web/settings.js");
 const SETUP_JS: &str = include_str!("../../web/setup.js");
+const LOGIN_JS: &str = include_str!("../../web/login.js");
 const DESKTOP_JS: &str = include_str!("../../web/desktop.js");
 const DESKTOP_PAGE_HTML: &str = include_str!("../../web/desktop-page.html");
 const DESKTOP_PAGE_CSS: &str = include_str!("../../web/desktop-page.css");
@@ -119,6 +120,10 @@ pub async fn settings_js() -> Response {
 
 pub async fn setup_js() -> Response {
     asset("text/javascript; charset=utf-8", SETUP_JS)
+}
+
+pub async fn login_js() -> Response {
+    asset("text/javascript; charset=utf-8", LOGIN_JS)
 }
 
 pub async fn desktop_js() -> Response {

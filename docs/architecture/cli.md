@@ -8,7 +8,7 @@
 - 「Follow Set」は kind 30000、`d = mirror_set` のうち、作者ごとに NIP-01 の置き換え規則で最新のもの。`created_at` が現在時刻より 900 秒（`nostr::MAX_FUTURE_SKEW`）を超えて先のものは、それが relay から取れた最新であっても無いものとして扱う（`RelayClient::fetch_follow_set` / `fetch_follow_sets`）。「サイトごとの最新のサイトイベント」（sites・replicas・webring で使う `nostr::select_latest`）も同じ基準で、先すぎる `created_at` のイベントは選ばない。
 - `up`・`publish`・`service install`/`uninstall` 以外は読み取り専用で、`state.json` も MFS も OS のファイルも変えない（`mirror add` / `remove` は Follow Set を relay に送る。`stop`／`service stop` は動いているプロセスに停止・再起動を要求するだけで、ファイルは変えない）。`service install`/`uninstall` は OS のサービス定義ファイル（systemd unit / launchd plist / タスクスケジューラのタスク）を書く・消す。
 - `up` は処理を始める前に `<[agent].state_dir>/swing.lock` のインスタンスロックを取る（[`up.md#多重起動の防止lockrs`](up.md#多重起動の防止lockrs)）。同じ `state_dir` に対して既に動いていれば、起動側のエラーで即座に終了する。
-- `status`・`mirror add`・`mirror remove`・`stop`／`service stop` は relay/Kubo に直接つながず、動いている `swing up` のダッシュボード API（`[dashboard].listen`、既定 `http://127.0.0.1:8082`）を `src/api_client.rs::ApiClient` 経由で叩く。API が `[dashboard].listen` を未指定アドレス（`0.0.0.0` / `::`）で待ち受けていても、クライアントは接続先と `Host` ヘッダをループバックの同じポートへ正規化する。API に接続できなければ `status`・`mirror add`・`mirror remove` は `swing up is not running (cannot connect to <addr>)` でエラー終了し（非ゼロ終了）、`stop`／`service stop` は `not running` を出して正常終了（終了コード 0）する。`sites`・`replicas`・`webring`・`mirror list`・`publish` はこの API を経由せず relay/Kubo に直接つなぐので、`swing up` が動いていなくても使える。
+- `status`・`mirror add`・`mirror remove`・`stop`／`service stop`・`dashboard open`・`dashboard rotate-token` は relay/Kubo に直接つながず、動いている `swing up` のダッシュボード API（`[dashboard].listen`、既定 `http://127.0.0.1:8082`）を `src/api_client.rs::ApiClient` 経由で叩く。`<[agent].state_dir>/dashboard.token` を読んで `Authorization: Bearer` で送るので、`swing up` と同じ設定（同じ `state_dir`）を読めて、そのファイルを読めるユーザーで実行する必要がある。API が `[dashboard].listen` を未指定アドレス（`0.0.0.0` / `::`）で待ち受けていても、クライアントは接続先と `Host` ヘッダをループバックの同じポートへ正規化する。API に接続できなければ `status`・`mirror add`・`mirror remove` は `swing up is not running (cannot connect to <addr>)` でエラー終了し（非ゼロ終了）、`stop`／`service stop` は `not running` を出して正常終了（終了コード 0）する。`sites`・`replicas`・`webring`・`mirror list`・`publish` はこの API を経由せず relay/Kubo に直接つなぐので、`swing up` が動いていなくても使える。
 - `[nostr].secret_key`（`SWING_NOSTR_SECRET_KEY`）は必須ではなくなった。`config::Config::require_secret_key()` を呼ぶコマンド（`sites`・`replicas`・`webring`・`mirror list`・`publish`）は鍵が無ければエラー終了するが、`status`・`mirror add`・`mirror remove`・`stop`／`service stop` はダッシュボード API 経由で鍵を直接使わないので鍵が無くても動く。ただし鍵が無い `swing up` はセットアップモードで動いており（[`up.md#セットアップモード鍵未設定`](up.md#セットアップモード鍵未設定)）、そこでは `status`・`mirror add`・`mirror remove` は 503 `agent is not configured` を返す。
 
 ## up
@@ -20,6 +20,13 @@
 動いている `swing up` インスタンスに正常終了（グレースフルシャットダウン）を要求する（[`up.md#終了要求と-exit-codeshutdownexitrequest-shutdownexit`](up.md#終了要求と-exit-codeshutdownexitrequest-shutdownexit)、[`service.md#swing-stopstoprs`](service.md#swing-stopstoprs)）。`--config`（省略時は `SWING_CONFIG` または `./swing.toml`）・`--restart`（止めるのではなく再起動を要求する）・`--timeout <秒>`（既定 60。この秒数だけ停止を待ち、超えたらエラー）を取る。
 
 実装（`src/stop.rs`）はダッシュボード API だけを使う。まず `POST /api/shutdown`（`--restart` なら `/api/restart`）を叩く。API に接続できなければ（`swing up` 自体が動いていない）`not running` を出して正常終了する。呼び出しが通れば `GET /api/overview` を 500ms 間隔でポーリングし、接続できなくなった時点（プロセスが終了した時点）で `stopped` を出して正常終了する。`--timeout` はこのポーリングの上限で、超えたらエラー終了する。
+
+## dashboard open / rotate-token
+
+実装は `src/login.rs`。認証の仕組みは [`dashboard.md#認証srcauthrs-srcdashboardsessionrs`](dashboard.md#認証srcauthrs-srcdashboardsessionrs)。
+
+- `dashboard open [--config] [--no-browser]`: `POST /api/login-code` で使い捨てのログインコードをもらい、`<[dashboard].public_url>/login?code=<code>`（未設定なら `http://<接続先>`）とコード（`login code (single use, valid for 5 minutes): ...`）を標準出力に出す。`--no-browser` が無ければ続けて OS の既定ブラウザで URL を開く（Linux は `xdg-open`、macOS は `open`、Windows は `rundll32 url.dll,FileProtocolHandler`）。開けなければ標準エラーに案内を出すだけで正常終了する。`[dashboard].ui = false` ならエラー終了する。`swing up` が動いていなければ `swing up is not running (...)` でエラー終了する。`public_url` が未設定のときの接続先は `ApiClient` と同じく未指定アドレスをループバックに直したもの。コンテナ内で実行したときのように、ブラウザから見えるアドレスとずれる場合は `public_url` を設定するか、出力されたコードをログイン画面に貼る。
+- `dashboard rotate-token [--config]`: `POST /api/token/rotate` でトークンを作り直す（ブラウザのセッションはすべて無効になる）。`swing up` が動いていなければ `<state_dir>/dashboard.token` を直接書き換える。
 
 ## service install / uninstall / status / stop
 

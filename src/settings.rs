@@ -459,6 +459,19 @@ pub const SETTINGS: &[Setting] = &[
         },
     },
     Setting {
+        key: "dashboard.public_url",
+        section: "dashboard",
+        field: "public_url",
+        env: "SWING_DASHBOARD_PUBLIC_URL",
+        kind: Kind::String,
+        example: Example::Commented("\"http://127.0.0.1:8082\""),
+        editable: false,
+        description: Text {
+            en: "Base URL a browser uses to reach the dashboard, for the login link printed by swing dashboard open; unset uses the listen address.",
+            ja: "ブラウザからダッシュボードを開く URL（swing dashboard open が出すログインリンクの頭に使う）。未設定なら待ち受けアドレス",
+        },
+    },
+    Setting {
         key: "dashboard.gateway",
         section: "dashboard",
         field: "gateway",

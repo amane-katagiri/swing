@@ -7,8 +7,11 @@ use axum::response::{IntoResponse, Response};
 use std::sync::Arc;
 
 use super::AppState;
+use crate::auth;
 
 const DASHBOARD_MARKER_HEADER: &str = "x-swing-dashboard";
+const SESSION_COOKIE_PREFIX: &str = "swing_session";
+const UNAUTHENTICATED_API_PATHS: &[&str] = &["/api/login"];
 
 fn split_host_port(host_header: &str) -> &str {
     if let Some(rest) = host_header.strip_prefix('[') {
@@ -21,6 +24,48 @@ fn split_host_port(host_header: &str) -> &str {
         Some((host, port)) if !port.is_empty() && port.bytes().all(|b| b.is_ascii_digit()) => host,
         _ => host_header,
     }
+}
+
+fn host_port(host_header: &str) -> Option<&str> {
+    let host_header = host_header.trim();
+    let rest = match host_header.strip_prefix('[') {
+        Some(rest) => rest.split_once(']')?.1.strip_prefix(':')?,
+        None => host_header.rsplit_once(':')?.1,
+    };
+    (!rest.is_empty() && rest.bytes().all(|b| b.is_ascii_digit())).then_some(rest)
+}
+
+// Cookies ignore the port, so two instances on one host would otherwise overwrite each
+// other's session.
+pub fn session_cookie_name(host_header: &str) -> String {
+    match host_port(host_header) {
+        Some(port) => format!("{SESSION_COOKIE_PREFIX}_{port}"),
+        None => SESSION_COOKIE_PREFIX.to_string(),
+    }
+}
+
+fn cookie_values<'a>(headers: &'a HeaderMap, name: &'a str) -> impl Iterator<Item = &'a str> {
+    headers
+        .get_all(header::COOKIE)
+        .iter()
+        .filter_map(|v| v.to_str().ok())
+        .flat_map(|v| v.split(';'))
+        .filter_map(move |pair| {
+            let (k, v) = pair.trim().split_once('=')?;
+            (k == name).then_some(v)
+        })
+}
+
+pub fn authorized(headers: &HeaderMap, host_header: &str, token: &str) -> bool {
+    let bearer = headers
+        .get(header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.strip_prefix("Bearer "));
+    if let Some(presented) = bearer {
+        return auth::token_matches(token, presented.trim());
+    }
+    let name = session_cookie_name(host_header);
+    cookie_values(headers, &name).any(|v| auth::verify_session(token, auth::DASHBOARD_SESSION, v))
 }
 
 pub fn extract_host(host_header: &str) -> String {
@@ -119,6 +164,18 @@ pub async fn security_middleware(
         }
     }
 
+    if is_api
+        && !UNAUTHENTICATED_API_PATHS.contains(&req.uri().path())
+        && !authorized(req.headers(), &host_header, &state.token())
+    {
+        let mut resp = error_response(
+            StatusCode::UNAUTHORIZED,
+            "missing or invalid dashboard token or session",
+        );
+        apply_security_headers(resp.headers_mut(), is_api);
+        return resp;
+    }
+
     let mut response = next.run(req).await;
     apply_security_headers(response.headers_mut(), is_api);
     response
@@ -161,6 +218,41 @@ mod tests {
     fn host_allowed_rejects_unknown_hosts() {
         assert!(!host_allowed("evil.example", &[]));
         assert!(!host_allowed("evil.example:8082", &[]));
+    }
+
+    #[test]
+    fn session_cookie_name_includes_the_port() {
+        assert_eq!(session_cookie_name("127.0.0.1:8082"), "swing_session_8082");
+        assert_eq!(session_cookie_name("[::1]:18082"), "swing_session_18082");
+        assert_eq!(session_cookie_name("localhost"), "swing_session");
+        assert_eq!(session_cookie_name("[::1]"), "swing_session");
+    }
+
+    fn headers(pairs: &[(HeaderName, &str)]) -> HeaderMap {
+        let mut h = HeaderMap::new();
+        for (k, v) in pairs {
+            h.append(k.clone(), HeaderValue::from_str(v).unwrap());
+        }
+        h
+    }
+
+    #[test]
+    fn authorized_accepts_bearer_token() {
+        let h = headers(&[(header::AUTHORIZATION, "Bearer tok")]);
+        assert!(authorized(&h, "127.0.0.1:8082", "tok"));
+        let h = headers(&[(header::AUTHORIZATION, "Bearer nope")]);
+        assert!(!authorized(&h, "127.0.0.1:8082", "tok"));
+        assert!(!authorized(&HeaderMap::new(), "127.0.0.1:8082", "tok"));
+    }
+
+    #[test]
+    fn authorized_accepts_session_cookie_for_this_port_only() {
+        let session = auth::new_session("tok", auth::DASHBOARD_SESSION);
+        let cookie = format!("theme=dark; swing_session_8082={session}");
+        let h = headers(&[(header::COOKIE, &cookie)]);
+        assert!(authorized(&h, "127.0.0.1:8082", "tok"));
+        assert!(!authorized(&h, "127.0.0.1:18082", "tok"));
+        assert!(!authorized(&h, "127.0.0.1:8082", "rotated"));
     }
 
     #[test]

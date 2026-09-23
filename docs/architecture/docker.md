@@ -24,6 +24,8 @@
 
 `mirror` サービスはコンテナ内で `SWING_DASHBOARD_LISTEN=${SWING_DASHBOARD_LISTEN:-0.0.0.0:8082}` を待ち受ける。`.env` に `SWING_DASHBOARD_LISTEN` を書けばそれが使われる。`config::parse_dashboard_listen` は `SocketAddr` としてパースするだけで `off` は受け付けない（`[gateway].listen` など他の listen 系キーとは違い、ダッシュボード自体を無効にする設定は無い）。Web UI の配信だけを止めたいなら `SWING_DASHBOARD_UI=false`（`/api/*` は残る）。ホストにどう公開するかは別の変数 `SWING_DASHBOARD_BIND`（既定 `127.0.0.1:8082`）で決める。`SWING_KUBO_GATEWAY_BIND` と同じ流儀で、**`SWING_DASHBOARD_BIND` は compose 専用の変数展開にしか使われず、Rust 側（`swing` バイナリ）はこの名前を読まない**。
 
+ログインは `docker compose exec mirror swing dashboard open --no-browser` で出た URL を開くか、コードをログイン画面に貼る。URL はコンテナ内の待ち受けポート（既定 8082）で作るので、`SWING_DASHBOARD_BIND` でホスト側のポートやアドレスを変えた場合は `.env` に `SWING_DASHBOARD_PUBLIC_URL`（例 `http://127.0.0.1:18082`）を書いて合わせる。compose は `SWING_DASHBOARD_BIND` から自動では作らない（`0.0.0.0:8082` のような bind 用のアドレスはブラウザから開く URL にならないため）。トークンは `swing-data` volume の `/data/dashboard.token` に置かれる。
+
 ダッシュボードの Publish 画面はブラウザから直接フォルダをアップロードする方式（`POST /api/publish/upload`。上限は `SWING_DASHBOARD_MAX_UPLOAD`、既定 2GB）だけを使うため、`mirror` コンテナに volume をマウントする必要はない。詳しくは [`dashboard.md`](dashboard/http-api.md#post-apipublishupload) を参照。CLI の `swing publish` をコンテナで使う場合は `docker compose run --rm -v "$PWD/public:/site" mirror publish ...` のような一時マウントでよい。
 
 ## Kubo の設定

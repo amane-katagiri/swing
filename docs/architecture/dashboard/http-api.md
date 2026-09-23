@@ -6,10 +6,11 @@
 
 - すべて JSON。公開鍵は `pubkey`（小文字 hex）と `npub` を併記する。時刻は epoch 秒の整数。無い値は `null`。
 - エラーは `{ "error": "<メッセージ>" }` とステータスコード。入力不正は 400、relay や Kubo が未準備（agent がまだ接続・確定していない）なら 503 `{"error": "agent is not ready"}`、鍵が未設定（セットアップモード。下記）なら同じ 503 で `{"error": "agent is not configured"}`、relay や Kubo・Nostr 発行の失敗は 502、publish の多重実行は 409。JSON の構文エラー・必須フィールド欠落・`Content-Type` 不一致はすべて 400（422 は publish の NIP-05 `require` 失敗専用。ボディが大きすぎる場合だけ 413）。`POST /api/publish/upload` だけ `multipart/form-data` を受ける。
+- `POST /api/login` 以外の `/api/*` は認証が要る。`Authorization: Bearer <token>` かセッション cookie が無い・合わなければ 401 `{"error": "missing or invalid dashboard token or session"}`（ガードが返す。[`../dashboard.md#認証srcauthrs-srcdashboardsessionrs`](../dashboard.md#認証srcauthrs-srcdashboardsessionrs)）。
 - `keys`（mirror add/remove）・`root`（webring）・`key`（replicas）は 1 リクエストあたり最大 100 件、超えると 400。
 - relay を引く API（sites・mirror・webring・replicas）はサーバ側でキャッシュせず、同時実行数の制限やレート制限も無い。
 - API は `swing up` プロセスの寿命でずっと動く（[`../dashboard.md`](../dashboard.md#概要)）。relay・ipfs を使うエンドポイント（`/api/sites`・`/api/status`・`/api/mirror`・`/api/mirror/add`・`/api/mirror/remove`・`/api/webring`・`/api/replicas`・`/api/publish/sites`・`/api/publish/upload`）は agent が relay 接続と Kubo の URL 確定を終えるまで 503 を返す。鍵が未設定（セットアップモード。[`../up.md#セットアップモード鍵未設定`](../up.md#セットアップモード鍵未設定)）の間はこれらが常に 503 `agent is not configured` を返す（`dashboard::api::not_ready` が `AppState::setup_mode()` を見て `NotReady` と `NotConfigured` を切り替える）。`/api/overview`・`/api/config`・`/api/shutdown`・`/api/restart` は agent の準備状態に関わらず常に応答する。`/api/setup` はセットアップモードの間だけ `200`、それ以外は `409`（下記）。
-- CLI の `swing status`・`swing mirror add`・`swing mirror remove`・`swing stop` はこの API のクライアント（`src/api_client.rs::ApiClient`）で、それぞれ `/api/status`・`/api/mirror/add`・`/api/mirror/remove`・`/api/shutdown`（`--restart` なら `/api/restart`）を叩く。`swing sites`・`replicas`・`webring`・`mirror list`・`publish` はこの API を経由せず relay/Kubo に直接つなぐ（[`../cli.md`](../cli.md)）。
+- CLI の `swing status`・`swing mirror add`・`swing mirror remove`・`swing stop`・`swing dashboard open`・`swing dashboard rotate-token` はこの API のクライアント（`src/api_client.rs::ApiClient`。`<state_dir>/dashboard.token` を Bearer トークンとして送る）で、それぞれ `/api/status`・`/api/mirror/add`・`/api/mirror/remove`・`/api/shutdown`（`--restart` なら `/api/restart`）・`/api/login-code`・`/api/token/rotate` を叩く。`swing sites`・`replicas`・`webring`・`mirror list`・`publish` はこの API を経由せず relay/Kubo に直接つなぐ（[`../cli.md`](../cli.md)）。
 
 ## 既知の性質
 
@@ -226,3 +227,19 @@ Follow Set が無ければ `title: null`、`members: []`。
 ```
 
 `restart` はプロセスを終了させない。`ExitRequest.restart()` → 最上位トークンの cancel → `run_managed`／`run_unmanaged`（と `agent::run_until`）がグレースフルに終わる → `up::run` が `Exit::Restart` を返す → `main.rs` のループが設定を読み直して同じプロセス・同じ PID のまま `up::run` を呼び直す。以前あった「exit code 3 で終了し、サービスマネージャの再起動ポリシー任せにする」経路は無くなった（[`up.md`](../up.md#終了要求と-exit-codeshutdownexitrequest-shutdownexit)）。`AppState.exit` は常に存在する（`Option` ではない）。
+
+## POST /api/login-code
+
+使い捨てのログインコードを発行する（`swing dashboard open` が使う）。ボディは不要。コードは 1 回だけ使え、5 分で期限が切れる。発行済みのコードはプロセスのメモリにだけ持ち、再起動で消える。
+
+```json
+{ "code": "cc2455ac565b74586b0628e1d7bda4c3", "expires_in": 300 }
+```
+
+## POST /api/login
+
+認証なしで受け付ける唯一の API。ボディは `{"code": "<ログインコード>"}`（前後の空白は無視、大文字小文字は区別しない）。ガードは他の書き込み系と同じ（`X-Swing-Dashboard: 1` と Origin 検証）。コードが有効なら消費して `200 {"ok": true}` とセッション cookie（`Set-Cookie: swing_session_<port>=...`）を返す。無効・期限切れ・使用済みなら 401 `{"error": "invalid or expired login code"}`。同じ交換をブラウザのリンクから行う `GET /login?code=` は [`../dashboard.md#認証srcauthrs-srcdashboardsessionrs`](../dashboard.md#認証srcauthrs-srcdashboardsessionrs)。
+
+## POST /api/token/rotate
+
+`<state_dir>/dashboard.token` を新しい乱数で書き換え、メモリ上のトークンも差し替える。既存のセッション cookie と未使用のログインコードはすべて無効になる。呼んだ CLI は古いトークンのままなので、次の呼び出しではファイルを読み直す。成功で `200 {"ok": true}`、ファイルが書けなければ 500。
