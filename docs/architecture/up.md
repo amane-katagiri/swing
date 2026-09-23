@@ -32,7 +32,7 @@
 
 - `<state_dir>/swing.lock` を作成（無ければ）・読み書きで開き、`std::fs::File::try_lock()`（advisory lock、OS が管理し、プロセスが `kill -9` で消えても自動的に外れる）を取る。
 - 取れたら中身を空にして自分の PID（`std::process::id()`）を書く。
-- 既に別のプロセスが取っていれば（`TryLockError::WouldBlock`）、ファイルの中身（相手の PID）を読んで `another swing instance is already running on <state_dir> (pid N)` でエラーにする（PID が読めなければ `(pid N)` を省く）。
+- 既に別のプロセスが取っていれば（`TryLockError::WouldBlock`）、ファイルの中身（相手の PID）を読んで `another swing instance is already running on <state_dir> (pid N)` でエラーにする（PID が読めなければ `(pid N)` を省く。Windows ではロックがファイル全体への強制ロックで、ロック中の相手のファイルを読めないため、常に省かれる）。
 - `InstanceLock` を drop してもロックファイル自体は消さない（消すと、別プロセスが開いた直後にこちらが消すレースがあり得るため）。ファイルは残り続け、次回の `acquire` はロックが外れていれば中身を上書きして取り直す。
 
 ## Kubo バイナリの検出（`kubo::locate_binary`）

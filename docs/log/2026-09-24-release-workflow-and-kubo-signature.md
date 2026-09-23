@@ -36,3 +36,11 @@ osxcross で SDK を入れる手はあるが、SDK の取り出しに macOS か 
 
 - `actionlint`（`rhysd/actionlint` のコンテナ、shellcheck 込み）で指摘なし。
 - ワークフロー自体は GitHub で動かしていない（push していない）。
+
+## GitHub での初回実行
+
+リポジトリを `amane-katagiri/swing` に移し（Actions の無料枠を Pro アカウントのものにするため）、手動実行した（run 35905155995）。Linux 2 つと `x86_64-apple-darwin` はビルドまで通った。`aarch64-apple-darwin` と Windows は clippy まで通り、コンパイルの問題は無かった。落ちたのはテストだけで、どれも Linux では出ない差分だった。
+
+- macOS `config::tests::missing_config_file_without_explicit_path_is_not_an_error`: 一時ディレクトリの `/var/folders/...` は `/private/var/...` へのシンボリックリンクで、`current_dir()` は解決後のパスを返す。期待値を `set_current_dir` 後の `current_dir()` から作るようにした。`canonicalize` にしなかったのは、Windows だと `\\?\` 付きのパスになって合わなくなるため。
+- Windows `settings::tests::{env_example,swing_example_toml}_matches_generator`: ランナーの git が `core.autocrlf=true` のせいで checkout 時に CRLF にしていた。`.gitattributes` でこの 2 ファイルを `eol=lf` に固定した。リポジトリ全体に指定しなかったのは、バイト単位で比べるのがこの 2 ファイルだけだから。
+- Windows `lock::tests::second_acquire_fails_with_first_pid_then_succeeds_after_drop`: Windows の `try_lock`（`LockFileEx`）はファイル全体への強制ロックなので、2 つ目のハンドルから `read_to_string` すると失敗し、エラーから PID が抜ける。もともと「読めなければ省く」作りなので、PID が入っているかのアサートは Unix だけにした。Windows でも PID を見せたいなら、PID をロックとは別のファイルに書く必要がある。

@@ -77,8 +77,8 @@ mod tests {
         let first = acquire(dir.path()).unwrap();
 
         let err = acquire(dir.path()).unwrap_err().to_string();
-        let pid = std::process::id().to_string();
-        assert!(err.contains(&pid), "{err}");
+        #[cfg(unix)]
+        assert!(err.contains(&std::process::id().to_string()), "{err}");
         assert!(err.contains("already running"), "{err}");
 
         drop(first);

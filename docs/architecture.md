@@ -243,3 +243,4 @@ Windows 向けのクロスビルド（WSL / Linux から）: `cargo install carg
 - 成果物は `swing-<ref>-<target>.tar.gz`（Windows は `.zip`）で、中身は `swing`（`swing.exe`）・`LICENSE`・`README.md`。Kubo は同梱しない。
 - タグのときは、タグ名と `Cargo.toml` の `version` が一致しないと失敗する（`v0.1.0` と `0.1.0`）。全 target が通ると `SHA256SUMS` を付けた**ドラフト**のリリースを作る。公開は GitHub 上で手動で行う。
 - 手動実行のときはリリースを作らず、Actions の artifact として残すだけ。
+- `.env.example` と `swing.example.toml` は、テストで生成結果とバイト単位で比べるため、`.gitattributes` で LF に固定している（Windows のランナーで checkout 時に CRLF にされないように）。

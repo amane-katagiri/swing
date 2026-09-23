@@ -2164,11 +2164,12 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let orig = env::current_dir().unwrap();
         env::set_current_dir(dir.path()).unwrap();
+        let cwd = env::current_dir().unwrap();
         let result = load_file(None);
         env::set_current_dir(orig).unwrap();
         let (file, path, exists) = result.unwrap();
         assert!(!exists);
-        assert_eq!(path, dir.path().join("swing.toml"));
+        assert_eq!(path, cwd.join("swing.toml"));
         assert!(file.nostr.secret_key.is_none());
     }
 
