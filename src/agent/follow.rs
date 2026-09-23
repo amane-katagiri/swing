@@ -46,7 +46,16 @@ pub(super) async fn refresh_follow_set<C, N, R>(
         choice
     };
     let Some(choice) = choice else {
-        warn!(mirror_set = %config.nostr.mirror_set, "no follow set found yet; will retry");
+        let stored_accounts = agent.state.lock().await.accounts().len();
+        if stored_accounts > 0 {
+            warn!(
+                mirror_set = %config.nostr.mirror_set,
+                stored_accounts,
+                "no follow set found yet; keeping stored sites until one is (did the key or mirror_set change?)"
+            );
+        } else {
+            warn!(mirror_set = %config.nostr.mirror_set, "no follow set found yet; will retry");
+        }
         return;
     };
     if choice.republish {

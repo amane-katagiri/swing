@@ -59,7 +59,7 @@
 
 - Follow Set の対象者ごとに、サイトごとの最新のサイトイベントを 1 行（`d`、`cid`、`url`、`size`、`created_at`、NIP-05 検証結果、`replicas`、`[stored]` / `[not stored]`）表示する。`title` タグが有効なら次の行に `    title: ` として、`content` が空でなければ続けて `    message: ` として、それぞれ制御文字を空白に置き換え、前後の空白を削り、200 文字を超える分を `…` に置き換えて表示する。検証結果と保存状況は `state.json` から読む。`replicas` は [replicas](#replicas) と同じ集計の最新版のレプリカ数で、`replicas::format_replica_counts` により `3` または `3 (+12 unverified)`（未検証の報告者がいるとき）の形になる（[「レプリカ報告の信頼度」](../architecture.md#レプリカ報告の信頼度replicastier)）。信頼度の判定には Follow Set の対象全員分をまとめて 1 回だけ取得する。レプリカ報告の取得に失敗したら `(fetching replica reports failed: ...)` を表示して `-` にする。
   - `size` 列: そのイベントの `cid` と一致する `VersionRecord`（保存時に `dag/stat` で測って `state.json` に記録した値。改めて Kubo は呼ばない）があればその値をそのまま数値で出す。無ければイベントの自己申告の `size` タグを括弧書き（例 `(12345)`）で出す。どちらも無ければ `-`。括弧書きは `[not stored]` と対で「申告のみで未確認」を表す（ラベルは付けない）。
-- 続けて、state に版があるのに Follow Set にいない pubkey を `Unfollowed but still stored` 見出しの下に `[unfollowed]` 付きで、サイトごとに state の最新版を 1 行（`url` は `-`）表示する。見出しには `remove_on_unfollow` に応じて、次の poll で消えるか残しているかを添える。Follow Set が見つからなくても表示する。
+- 続けて、state に版があるのに Follow Set にいない pubkey を `Unfollowed but still stored` 見出しの下に `[unfollowed]` 付きで、サイトごとに state の最新版を 1 行（`url` は `-`）表示する。見出しには `remove_on_unfollow` に応じて、次の poll で消えるか残しているかを添える。Follow Set が見つからなくても表示し、そのとき `remove_on_unfollow = true` なら「Follow Set が見つかるまで agent は消さない（鍵か `mirror_set` を変えたなら、戻せば残り、新しいセットに誰かを足せば消える）」という見出しにする（[agent の unfollow](agent.md#unfollow)）。
 - 表示する対象は [取得と表示の上限](../architecture.md#取得と表示の上限nostrbudget) の対象になる: Follow Set の `p` は先頭 500 件まで（超えたら warn を出す）、1 作者あたりの `d` は `d` の昇順で先頭 50 件まで。
 
 ## replicas

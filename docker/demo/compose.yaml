@@ -32,6 +32,7 @@ services:
       - docker/demo/demo.env
     environment:
       SWING_IPFS_API: http://ipfs:5001
+      SWING_KUBO_MANAGED: "false"
       SWING_STATE_DIR: /tmp
       FAKETIME_DONT_FAKE_MONOTONIC: "1"
     networks: [isolated]

@@ -154,7 +154,7 @@ NIP-05 の検証結果はバッジで `OK`（`verified`）/ `NG`（`mismatch`）
 
 サイズの表示（`util.js` の `formatSiteSize`、カードのメタ行・テーブルの Size 列の両方で使う）: `stored_size`（`state.json` に記録済みの実測値。保存時の `dag/stat` の結果で、この表示のために Kubo を呼び直すことはしない）があればそれをそのまま `formatBytes` で出す。無ければ `size`（イベントの自己申告）を `(12.3 MB)` のように括弧書きで出す。ラベルは付けない。「未確認の自己申告である」ことは同じ行の保存状態バッジ（`[not stored]`）がすでに示しているため。どちらも無ければ `–`。版どうしで共有するブロックを差し引いた重複排除済みの合計はここには出ず、Storage check（`/api/status` の `sites[].actual`）だけが持つ。
 
-`Unfollowed but still stored` セクションも同じ並び順ロジックを共有する。「Stored only」チェックボックスの状態は `localStorage["swing:sites:stored-only"]`。
+`Unfollowed but still stored` セクションも同じ並び順ロジックを共有する。セクションの注記は `unfollowed.remove_on_unfollow` が `false` なら `unfollowedKeepNote`、`true` で `follow_set.found` が `true` なら `unfollowedRemoveNote`（次の更新で消える）、`false` なら `unfollowedNoFollowSetNote`（Follow Set が見つかるまで消えない。[agent の unfollow](../agent.md#unfollow)）。「Stored only」チェックボックスの状態は `localStorage["swing:sites:stored-only"]`。
 
 ## Publish 画面
 

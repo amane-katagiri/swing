@@ -30,14 +30,15 @@ docker/demo/demo.sh up                      # 付けずに実行し直せば隔�
 
 - 鍵は `docker/demo/personas.env`（git 管理外）に保存し、`seed` をやり直しても同じ参加者を使う。入れ直したいときは `down` から。
 - 各コマンドは `SWING_STATE_DIR=/tmp` で実行するので、agent の `state.json` には触れない。
+- `swing mirror add` は動いている `swing up` の API にしか話しかけないので、自分の分は `mirror` コンテナの中で実行し、他の参加者の分は `seed` コンテナの中で使い捨ての `swing up` を立ててから実行して `swing stop` で止める。使い捨ての `swing up` は `SWING_MFS_ROOT=/swing-seed`（mirror の MFS には触れない）・`SWING_MAX_UPDATE_SIZE=0`（何も保存しないのでレプリカ報告も出さない）で動かす。
 - 自分（`self`、`my-garden`）から見た深さ（`swing webring --depth 5` の結果）:
 
 | 深さ | 参加者（サイト） | Follow Set |
 |---|---|---|
 | 0 | self（`my-garden`） | alice, bob, carol |
 | 1 | alice（`alice.example`、2 版）, bob（`bob-zine`）, carol（`carol.example`, `carol-photos`） | alice → self, dave／bob → carol, eve／carol → self, frank |
-| 2 | dave（`dave-wiki`）, eve（`eve.example`）, frank（`frank-recipes`）, heidi（サイト無し） | dave → grace／eve → bob, heidi／frank → ivan／heidi → alice |
-| 3 | grace（`grace.example`）, ivan（`ivan-lab`） | grace → judy／ivan → frank |
+| 2 | dave（`dave-wiki`）, eve（`eve.example`）, frank（`frank-recipes`） | dave → grace／eve → bob, heidi／frank → ivan |
+| 3 | grace（`grace.example`）, ivan（`ivan-lab`）, heidi（サイト無し） | grace → judy／ivan → frank／heidi → alice |
 | 4 | judy（`judy.example`） | judy → grace, mallory |
 | 5 | mallory（`mallory-archive`） | なし |
 

@@ -66,7 +66,7 @@ relay から取得した版と `state.follow_set` の版を比べて使う方を
 
 ## unfollow
 
-Follow Set が決まった tick で行う（決まらない tick では何もしない）。Follow Set の更新はこれより先に反映する。
+Follow Set が決まった tick で行う。Follow Set の更新はこれより先に反映する。決まらない tick では何もせず、state に版か検証結果のあるアカウントが 1 つでもあれば `warn!(mirror_set, stored_accounts, "no follow set found yet; keeping stored sites until one is (did the key or mirror_set change?)")` を出す（無ければ `no follow set found yet; will retry`）。state に保存した Follow Set は今の鍵と `mirror_set` のものしか使わないので、鍵か `mirror_set` を変えて起動すると、新しい Follow Set ができるまで以前のアカウントは消えずに残る。
 
 - `remove_on_unfollow = true`: `state.sites` か `state.verifications` にエントリがあり、今の Follow Set にいない pubkey を state から消して保存し、`<mfs_root>/agent/<pubkey hex>` を消す。state と比べるので、agent の停止中に外した相手や、設定を `true` に変える前に外した相手も消える。
 - `false`: 外れた相手の保存済みの版を残す。新しい版は取らない。保持期間の適用と容量の集計は続き、最新版は残る。起動時の突き合わせで壊れていた版は取り直さずに消える。

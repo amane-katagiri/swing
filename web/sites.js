@@ -373,7 +373,11 @@ export const SitesView = {
     const unfollowed = data.unfollowed;
     if (unfollowed && unfollowed.accounts.length > 0) {
       sitesEls.unfollowedSection.hidden = false;
-      sitesEls.unfollowedNote.textContent = unfollowed.remove_on_unfollow ? t('unfollowedRemoveNote') : t('unfollowedKeepNote');
+      let note = 'unfollowedKeepNote';
+      if (unfollowed.remove_on_unfollow) {
+        note = data.follow_set && data.follow_set.found ? 'unfollowedRemoveNote' : 'unfollowedNoFollowSetNote';
+      }
+      sitesEls.unfollowedNote.textContent = t(note);
       sitesEls.unfollowedContent.replaceChildren();
       for (const a of sortAccounts(unfollowed.accounts, sortMode)) {
         const elm = buildAccountElement(a, { removable: false, filterVal, storedOnly, siteDefaults: { stored: true } });

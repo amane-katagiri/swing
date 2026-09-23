@@ -40,6 +40,18 @@ run_as() {
   fi
 }
 
+retry() {
+  i=0
+  until out=$("$@" 2>&1); do
+    i=$((i + 1))
+    if [ "$i" -ge 3 ]; then
+      printf '%s\n' "$out" >&2
+      exit 1
+    fi
+    sleep 2
+  done
+}
+
 make_site() {
   dir="$work/$1"
   mkdir -p "$dir"
@@ -80,8 +92,25 @@ follow() {
       keys="$keys $(public_of "$name")"
     fi
   done
-  # shellcheck disable=SC2086
-  run_as "$who" +0 mirror add $keys
+  if [ "$who" = self ]; then
+    # shellcheck disable=SC2086
+    retry compose exec -T mirror swing mirror add $keys
+  else
+    # mirror add only talks to a running swing up, so each persona gets a throwaway one that stores nothing and keeps off the mirror's MFS root.
+    # shellcheck disable=SC2016,SC2086
+    retry compose run --rm --no-deps -T --entrypoint sh \
+      -e SWING_NOSTR_SECRET_KEY="$(secret_of "$who")" \
+      -e SWING_MFS_ROOT=/swing-seed \
+      -e SWING_MAX_UPDATE_SIZE=0 \
+      seed -c 'swing up > /tmp/up.log 2>&1 &
+        i=0
+        until swing mirror add "$@" > /tmp/add.log 2>&1; do
+          i=$((i + 1))
+          [ "$i" -lt 60 ] || { cat /tmp/up.log /tmp/add.log; exit 1; }
+          sleep 0.5
+        done
+        swing stop > /dev/null' sh $keys
+  fi
   echo "  $who -> $*"
 }
 

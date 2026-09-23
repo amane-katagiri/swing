@@ -717,7 +717,11 @@ fn print_sites(view: &SitesView) -> Result<()> {
         return Ok(());
     }
     println!();
-    if view.remove_on_unfollow {
+    if view.remove_on_unfollow && !view.follow_set_found {
+        println!(
+            "Unfollowed but still stored (no follow set found, so the agent keeps them until one is; if you changed the key or mirror_set, change it back to keep them or add someone to the new set to remove them):"
+        );
+    } else if view.remove_on_unfollow {
         println!("Unfollowed but still stored (the agent removes them on its next poll):");
     } else {
         println!(
