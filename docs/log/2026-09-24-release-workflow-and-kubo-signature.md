@@ -44,3 +44,5 @@ osxcross で SDK を入れる手はあるが、SDK の取り出しに macOS か 
 - macOS `config::tests::missing_config_file_without_explicit_path_is_not_an_error`: 一時ディレクトリの `/var/folders/...` は `/private/var/...` へのシンボリックリンクで、`current_dir()` は解決後のパスを返す。期待値を `set_current_dir` 後の `current_dir()` から作るようにした。`canonicalize` にしなかったのは、Windows だと `\\?\` 付きのパスになって合わなくなるため。
 - Windows `settings::tests::{env_example,swing_example_toml}_matches_generator`: ランナーの git が `core.autocrlf=true` のせいで checkout 時に CRLF にしていた。`.gitattributes` でこの 2 ファイルを `eol=lf` に固定した。リポジトリ全体に指定しなかったのは、バイト単位で比べるのがこの 2 ファイルだけだから。
 - Windows `lock::tests::second_acquire_fails_with_first_pid_then_succeeds_after_drop`: Windows の `try_lock`（`LockFileEx`）はファイル全体への強制ロックなので、2 つ目のハンドルから `read_to_string` すると失敗し、エラーから PID が抜ける。もともと「読めなければ省く」作りなので、PID が入っているかのアサートは Unix だけにした。Windows でも PID を見せたいなら、PID をロックとは別のファイルに書く必要がある。
+
+修正後の再実行（run 35906492605）で 5 target とも fmt / clippy / test とビルドが通った。これで macOS のコンパイル確認も済んだ。かかった時間はだいたい、Linux が 2〜3 分、macOS が 2〜6 分、Windows が 17 分（キャッシュが無い初回）。
