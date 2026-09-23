@@ -95,7 +95,7 @@ plist の主なキー（`launchd_plist`）: `ProgramArguments` = `[<exe>, "up", 
 - `<Triggers><LogonTrigger>`: 現在ユーザー（`USERDOMAIN\USERNAME`、ドメインが空ならユーザー名のみ）でログオン時に起動。
 - `<Principal><LogonType>InteractiveToken</LogonType><RunLevel>LeastPrivilege</RunLevel>`: ログオン中のユーザーのセッションで動かす。`S4U` は登録に管理者への昇格が要る（非昇格の `schtasks /Create` が「アクセスが拒否されました」で失敗する）ため使わない。ユーザーのセッションで動くので、Kubo の 4001 inbound に対する Windows ファイアウォールのダイアログもユーザーに出る。ログオフすると止まる。
 - `<Settings>`: `MultipleInstancesPolicy = IgnoreNew`、`StartWhenAvailable = true`、`ExecutionTimeLimit = PT0S`（無制限）、`DisallowStartIfOnBatteries = false`、`StopIfGoingOnBatteries = false`、`Hidden = true`。
-- `<Actions><Exec>`: `Command` = `%SystemRoot%\System32\conhost.exe`、`Arguments` = `--headless "<exe>" up --config "<config>" --log-file "<log>"`、`WorkingDirectory` = `<workdir>`。`swing.exe` はコンソールサブシステムなので、`InteractiveToken` でそのまま起動するとコンソールウィンドウが開く。`conhost.exe --headless` 経由にしてウィンドウを出さない（`--headless` は Windows 10 1903 以降の conhost の非公開オプション）。
+- `<Actions><Exec>`: `Command` = `%SystemRoot%\System32\conhost.exe`、`Arguments` = `--headless "<exe>" up --config "<config>" --log-file "<log>" --exit-with-parent`、`WorkingDirectory` = `<workdir>`。`swing.exe` はコンソールサブシステムなので、`InteractiveToken` でそのまま起動するとコンソールウィンドウが開く。`conhost.exe --headless` 経由にしてウィンドウを出さない（`--headless` は Windows 10 1903 以降の conhost の非公開オプション）。タスクスケジューラの `schtasks /End`（画面の「終了」も同じ）が終わらせるのはタスクのプロセスである conhost だけで、子の swing は残る。そのため `--exit-with-parent` を付け、swing が親（conhost）の終了を待って、Ctrl+C を受けたときと同じグレースフルシャットダウンに入るようにしている（[`up.md`](up.md) の `shutdown.rs`）。
 
 タスクの XML には環境変数を書けないため、ログ出力先は `up` のコマンドライン引数 `--log-file` で渡す（下記）。
 

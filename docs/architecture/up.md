@@ -19,9 +19,10 @@
 
 ## shutdown（shutdown.rs）
 
-`cancel_on_signal() -> Result<CancellationToken>` が唯一の公開関数。`up::run(config)` がこれで作ったトークンを使う。
+`cancel_on_signal() -> Result<CancellationToken>` がシグナル監視の入口。`main.rs` が `swing up` のループに入る前に 1 回だけ呼び、`up::run(config, token)` にはその `child_token()` を毎回渡す。Windows ではもう 1 つ `cancel_when_parent_exits(token)` があり、`swing up --exit-with-parent`（隠しオプション、Windows のみ。タスクスケジューラ登録が付ける。[`service.md`](service.md)）のときに同じトークンに対して呼ぶ。
 
 - SIGINT（`tokio::signal::ctrl_c`）を待つ。unix ではさらに SIGTERM（`tokio::signal::unix::signal(SignalKind::terminate())`）も待つ。どちらか先に届いた方で進む。
+- `cancel_when_parent_exits` は、自分の親プロセス（`CreateToolhelp32Snapshot` で自分の `th32ParentProcessID` を引く）を `OpenProcess(PROCESS_SYNCHRONIZE)` で開き、専用の OS スレッドで `WaitForSingleObject` して、親が終わったら `signal = "parent exited"` で下と同じ処理に入る。親を開けなければ `swing up` 自体がエラーで終わる。
 - 受信したら `info!(signal, "shutdown requested")` を出して `token.cancel()` する。
 - 続けて `FORCE_EXIT_GRACE_PERIOD`（10 秒）待ち、まだプロセスが生きていれば（＝グレースフルシャットダウンが終わらず main の runtime が畳まれていなければ）`error!` を出して `std::process::exit(1)` する。正常終了時はプロセスごと終わるのでこのコードには到達しない。
 

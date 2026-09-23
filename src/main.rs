@@ -36,6 +36,9 @@ enum Command {
             help = "Append logs to this file instead of stderr"
         )]
         log_file: Option<PathBuf>,
+        #[cfg(windows)]
+        #[arg(long, hide = true)]
+        exit_with_parent: bool,
     },
     #[command(
         about = "Stop a running `swing up` instance gracefully, via its dashboard API (POST /api/shutdown or /api/restart)"
@@ -270,8 +273,17 @@ fn main() -> Result<()> {
 
 async fn run(cli: Cli) -> Result<()> {
     match cli.command {
-        Command::Up { config, .. } => {
+        Command::Up {
+            config,
+            #[cfg(windows)]
+            exit_with_parent,
+            ..
+        } => {
             let signal = shutdown::cancel_on_signal()?;
+            #[cfg(windows)]
+            if exit_with_parent {
+                shutdown::cancel_when_parent_exits(signal.clone())?;
+            }
             loop {
                 let cfg = config::Config::load(config.as_deref())?;
                 match up::run(cfg, signal.child_token()).await? {

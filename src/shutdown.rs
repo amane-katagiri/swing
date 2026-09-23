@@ -81,6 +81,95 @@ fn spawn_watcher(token: CancellationToken) -> Result<()> {
     Ok(())
 }
 
+/// Task Scheduler's `/End` only terminates `conhost.exe --headless`, the task's
+/// own process, and leaves swing running as its orphaned child.
+#[cfg(windows)]
+pub fn cancel_when_parent_exits(token: CancellationToken) -> Result<()> {
+    let parent = parent_process::open()?;
+    let runtime = tokio::runtime::Handle::current();
+    std::thread::spawn(move || {
+        parent.wait();
+        runtime.spawn(on_signal(token, "parent exited"));
+    });
+    Ok(())
+}
+
+#[cfg(windows)]
+mod parent_process {
+    use anyhow::{Result, bail};
+    use windows_sys::Win32::Foundation::{CloseHandle, HANDLE, INVALID_HANDLE_VALUE};
+    use windows_sys::Win32::System::Diagnostics::ToolHelp::{
+        CreateToolhelp32Snapshot, PROCESSENTRY32W, Process32FirstW, Process32NextW,
+        TH32CS_SNAPPROCESS,
+    };
+    use windows_sys::Win32::System::Threading::{
+        GetCurrentProcessId, INFINITE, OpenProcess, PROCESS_SYNCHRONIZE, WaitForSingleObject,
+    };
+
+    pub struct Parent(HANDLE);
+
+    unsafe impl Send for Parent {}
+
+    impl Parent {
+        pub fn wait(&self) {
+            unsafe {
+                WaitForSingleObject(self.0, INFINITE);
+            }
+        }
+    }
+
+    impl Drop for Parent {
+        fn drop(&mut self) {
+            unsafe {
+                CloseHandle(self.0);
+            }
+        }
+    }
+
+    pub fn open() -> Result<Parent> {
+        let pid = parent_pid()?;
+        let handle = unsafe { OpenProcess(PROCESS_SYNCHRONIZE, 0, pid) };
+        if handle.is_null() {
+            bail!(
+                "opening parent process {pid}: {}",
+                std::io::Error::last_os_error()
+            );
+        }
+        Ok(Parent(handle))
+    }
+
+    fn parent_pid() -> Result<u32> {
+        unsafe {
+            let snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+            if snapshot == INVALID_HANDLE_VALUE {
+                bail!(
+                    "taking a process snapshot: {}",
+                    std::io::Error::last_os_error()
+                );
+            }
+            let me = GetCurrentProcessId();
+            let mut entry = PROCESSENTRY32W {
+                dwSize: std::mem::size_of::<PROCESSENTRY32W>() as u32,
+                ..Default::default()
+            };
+            let mut found = None;
+            let mut ok = Process32FirstW(snapshot, &mut entry);
+            while ok != 0 {
+                if entry.th32ProcessID == me {
+                    found = Some(entry.th32ParentProcessID);
+                    break;
+                }
+                ok = Process32NextW(snapshot, &mut entry);
+            }
+            CloseHandle(snapshot);
+            match found {
+                Some(pid) => Ok(pid),
+                None => bail!("own process {me} not found in the process snapshot"),
+            }
+        }
+    }
+}
+
 async fn on_signal(token: CancellationToken, signal: &'static str) {
     info!(signal, "shutdown requested");
     token.cancel();

@@ -129,7 +129,7 @@ pub fn schtasks_xml(exe: &Path, config: &Path, workdir: &Path, log: &Path, user:
     let user_str = xml_escape(user);
     // S4U needs elevation to register; InteractiveToken would open a console window without conhost --headless.
     let arguments = format!(
-        "--headless {} up --config {} --log-file {}",
+        "--headless {} up --config {} --log-file {} --exit-with-parent",
         quote_schtasks_arg(&exe.to_string_lossy()),
         quote_schtasks_arg(&config.to_string_lossy()),
         quote_schtasks_arg(&log.to_string_lossy()),
@@ -811,7 +811,7 @@ mod tests {
         ));
         assert!(xml.contains("<WorkingDirectory>C:\\Users\\u</WorkingDirectory>"));
         assert!(xml.contains("&quot;C:\\Users\\u\\swing.toml&quot;"));
-        assert!(xml.contains("&quot;C:\\Users\\u\\swing.log&quot;"));
+        assert!(xml.contains("&quot;C:\\Users\\u\\swing.log&quot; --exit-with-parent</Arguments>"));
     }
 
     #[test]

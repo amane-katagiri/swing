@@ -35,10 +35,14 @@ WSL から `cargo xwin build --release --target x86_64-pc-windows-msvc` で作�
 
 ## まだ確かめていないこと
 
-- `schtasks /End` で swing と Kubo が落ちるか。
-- `Stop-Process -Force` などで swing を強制終了したときに、Kubo が Job Object で道連れになるか。
 - Follow Set があるときにミラーの pin が最後まで終わること。
 
 ## 追記
 
 - タスク経由で起動した swing を `swing service stop` で止め、swing と Kubo の両方が終了することを実機で確認した。
+- `Stop-Process -Name swing -Force` で swing を強制終了すると、Kubo（`ipfs`）も Job Object の `KILL_ON_JOB_CLOSE` で道連れに終了することを実機で確認した。
+- `schtasks /End /TN swing` は「正しく中断されました」と出るが、swing と Kubo は残った。`/End` が終わらせるのはタスクのプロセス（`conhost.exe --headless`）だけで、子の swing には何も届かない。S4U で swing を直接起動していた頃には無かった問題で、`service stop`・`uninstall` の予備（グレースフルな停止に失敗したときの `/End`）とタスクスケジューラの画面の「終了」が効かなくなっていた。
+  - 対策に、`swing up` に Windows 専用の隠しオプション `--exit-with-parent` を足してタスクの引数に付けた。swing が親（conhost）を `PROCESS_SYNCHRONIZE` で開いて OS スレッドで終了を待ち、終わったら Ctrl+C と同じ経路でグレースフルに止まる。`/End` で Kubo も RPC シャットダウンを経て止まるようになる。
+  - 見送った案: 予備の停止を `/End` ではなく `swing.lock` の PID への `taskkill /PID <pid> /T /F` に変える案。swing 自身のコマンドは直るが、画面の「終了」や手で打った `/End` では止まらないままになる。
+  - 常に（端末から起動したときも）親を見張る案は採らなかった。端末から起動した swing はコンソールを閉じれば止まり、起動元が先に終わるランチャーなどから起動した場合に巻き込まれて止まるのを避けるため、タスク経由のときだけ付ける。
+  - `--exit-with-parent` を付けたタスクを登録し直して `schtasks /End /TN swing` すると、swing と Kubo の両方が終了することを実機で確認した（`swing.log` の `signal="parent exited"` は見ていない）。
