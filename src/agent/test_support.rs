@@ -5,8 +5,8 @@ use std::time::Duration;
 use nostr_sdk::prelude::*;
 
 use crate::config::{
-    AgentConfig, Config, DashboardConfig, DashboardListen, IpfsConfig, Nip05Mode, NostrConfig,
-    PolicyConfig, PublishConfig,
+    AgentConfig, Config, DashboardConfig, GatewayConfig, IpfsApi, IpfsConfig, KuboConfig, Listen,
+    Nip05Mode, NostrConfig, PolicyConfig, PublishConfig,
 };
 use crate::ipfs::{FetchLimits, Fetched, KuboStore, MfsEntry};
 use crate::nip05::{Nip05Verify, VerificationResult};
@@ -224,7 +224,7 @@ pub(super) fn test_config(policy: PolicyConfig) -> Config {
             replica_event_kind: 35981,
         },
         ipfs: IpfsConfig {
-            api: "http://127.0.0.1:5001".to_string(),
+            api: IpfsApi::Url("http://127.0.0.1:5001".to_string()),
             mfs_root: "/swing".to_string(),
         },
         policy,
@@ -241,7 +241,7 @@ pub(super) fn test_config(policy: PolicyConfig) -> Config {
             keep_versions: 5,
         },
         dashboard: DashboardConfig {
-            listen: DashboardListen::Off,
+            listen: Listen::Off,
             allowed_hosts: Vec::new(),
             gateway: None,
             custom_css: None,
@@ -249,6 +249,20 @@ pub(super) fn test_config(policy: PolicyConfig) -> Config {
             desktop_page_css: None,
             desktop_banner: None,
             max_upload: 2 * (1u64 << 30),
+        },
+        kubo: KuboConfig {
+            managed: true,
+            binary: None,
+            repo: std::path::PathBuf::from("./data/kubo"),
+            storage_max: 1_000_000,
+            provide_strategy: "pinned+mfs".to_string(),
+            gateway_listen: ([127, 0, 0, 1], 8080).into(),
+            swarm_port: None,
+        },
+        gateway: GatewayConfig {
+            listen: Listen::Off,
+            hosts: Vec::new(),
+            upstream: "http://127.0.0.1:8080".to_string(),
         },
         config_path: None,
     }

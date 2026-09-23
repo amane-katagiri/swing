@@ -775,6 +775,14 @@ textarea.swing-input {
   font-style: italic;
 }
 
+.swing-status[data-kind="ok"] {
+  color: var(--swing-ok);
+  background: var(--swing-ok-soft);
+  border: 1px solid var(--swing-ok);
+  border-radius: var(--swing-radius);
+  padding: var(--swing-space-3);
+}
+
 .swing-badge {
   display: inline-block;
   font-size: 0.75rem;
@@ -1398,4 +1406,13 @@ pre.swing-pre {
 .swing-css-actions {
   display: flex;
   gap: var(--swing-space-2);
+}
+
+.swing-process-actions {
+  display: flex;
+  gap: var(--swing-space-2);
+}
+
+.swing-process-actions + .swing-status {
+  margin-top: var(--swing-space-3);
 }

@@ -376,7 +376,7 @@ fn print_status(report: &StatusReport) {
 }
 
 pub async fn status(config: &Config) -> Result<()> {
-    let ipfs = IpfsClient::new(config.ipfs.api.clone());
+    let ipfs = IpfsClient::new(config.ipfs_api_url()?);
     let report = collect_status(&ipfs, config).await?;
     print_status(&report);
     if report.problems > 0 {

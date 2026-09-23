@@ -1,9 +1,10 @@
 use std::path::PathBuf;
 use std::time::Duration;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
-use swing::{agent, config, health, key, mirror, publish, replicas, webring};
+use swing::shutdown::Exit;
+use swing::{config, health, key, mirror, publish, replicas, service, stop, up, webring};
 use tracing_subscriber::EnvFilter;
 
 // Not #[tokio::main]: shutdown_timeout keeps a stuck blocking thread from holding the process open.
@@ -22,10 +23,41 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
-    #[command(about = "Run the mirror agent: follow the mirror set and store sites in Kubo MFS")]
-    Agent {
+    #[command(
+        about = "Run Kubo (if managed) and the mirror agent under one supervisor; restarts either when it fails"
+    )]
+    Up {
         #[arg(long, help = "Config file (default: $SWING_CONFIG or ./swing.toml)")]
         config: Option<PathBuf>,
+        #[arg(
+            long,
+            value_name = "PATH",
+            help = "Append logs to this file instead of stderr"
+        )]
+        log_file: Option<PathBuf>,
+    },
+    #[command(about = "Stop a running `swing up` instance gracefully")]
+    Stop {
+        #[arg(long, help = "Config file (default: $SWING_CONFIG or ./swing.toml)")]
+        config: Option<PathBuf>,
+        #[arg(
+            long,
+            help = "Ask it to restart instead of staying stopped (needs [dashboard].listen)"
+        )]
+        restart: bool,
+        #[arg(
+            long,
+            default_value_t = 60,
+            help = "Seconds to wait for it to stop before giving up"
+        )]
+        timeout: u64,
+    },
+    #[command(
+        about = "Register swing up as a login/system service (systemd user unit, launchd agent, or Task Scheduler)"
+    )]
+    Service {
+        #[command(subcommand)]
+        action: ServiceCommand,
     },
     #[command(about = "Add a static site to IPFS and announce its CID on Nostr")]
     Publish {
@@ -111,6 +143,46 @@ enum KeyCommand {
 }
 
 #[derive(Subcommand)]
+enum ServiceCommand {
+    #[command(about = "Register swing up as a login/system service")]
+    Install {
+        #[arg(long, help = "Config file (default: $SWING_CONFIG or ./swing.toml)")]
+        config: Option<PathBuf>,
+        #[arg(
+            long,
+            help = "Register a systemd system unit instead of a user unit (Linux only)"
+        )]
+        system: bool,
+        #[arg(long, help = "Register without starting it now")]
+        no_start: bool,
+    },
+    #[command(about = "Remove the service registration")]
+    Uninstall {
+        #[arg(
+            long,
+            help = "Register a systemd system unit instead of a user unit (Linux only)"
+        )]
+        system: bool,
+    },
+    #[command(about = "Stop the registered service (does not remove the registration)")]
+    Stop {
+        #[arg(
+            long,
+            help = "Target the systemd system unit instead of the user unit (Linux only)"
+        )]
+        system: bool,
+    },
+    #[command(about = "Show the service status")]
+    Status {
+        #[arg(
+            long,
+            help = "Register a systemd system unit instead of a user unit (Linux only)"
+        )]
+        system: bool,
+    },
+}
+
+#[derive(Subcommand)]
 enum MirrorCommand {
     #[command(about = "List pubkeys in the mirror set")]
     List {
@@ -133,28 +205,80 @@ enum MirrorCommand {
     },
 }
 
-fn init_tracing() {
+fn init_tracing(log_file: Option<&PathBuf>) -> Result<()> {
     let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
-    tracing_subscriber::fmt().with_env_filter(filter).init();
+    match log_file {
+        Some(path) => {
+            let file = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(path)
+                .with_context(|| format!("opening log file {}", path.display()))?;
+            tracing_subscriber::fmt()
+                .with_env_filter(filter)
+                .with_ansi(false)
+                .with_writer(file)
+                .init();
+        }
+        None => {
+            tracing_subscriber::fmt().with_env_filter(filter).init();
+        }
+    }
+    Ok(())
 }
 
 fn main() -> Result<()> {
-    init_tracing();
     let cli = Cli::parse();
+    let log_file = match &cli.command {
+        Command::Up { log_file, .. } => log_file.as_ref(),
+        _ => None,
+    };
+    init_tracing(log_file)?;
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()?;
     let result = runtime.block_on(run(cli));
     runtime.shutdown_timeout(RUNTIME_SHUTDOWN_TIMEOUT);
-    result
+    match result? {
+        Exit::Stop => Ok(()),
+        Exit::Restart => std::process::exit(3),
+    }
 }
 
-async fn run(cli: Cli) -> Result<()> {
+async fn run(cli: Cli) -> Result<Exit> {
     match cli.command {
-        Command::Agent { config } => {
+        Command::Up { config, .. } => {
             let cfg = config::Config::load(config.as_deref())?;
-            agent::run(cfg).await
+            up::run(cfg).await
         }
+        other => {
+            run_other(other).await?;
+            Ok(Exit::Stop)
+        }
+    }
+}
+
+async fn run_other(command: Command) -> Result<()> {
+    match command {
+        Command::Up { .. } => unreachable!("handled in run"),
+        Command::Stop {
+            config,
+            restart,
+            timeout,
+        } => {
+            let cfg = config::Config::load(config.as_deref())?;
+            stop::run(&cfg, restart, Duration::from_secs(timeout)).await
+        }
+        Command::Service { action } => match action {
+            ServiceCommand::Install {
+                config,
+                system,
+                no_start,
+            } => service::install(config.as_deref(), system, no_start),
+            ServiceCommand::Uninstall { system } => service::uninstall(system).await,
+            ServiceCommand::Stop { system } => service::stop(system).await,
+            ServiceCommand::Status { system } => service::status(system),
+        },
         Command::Publish {
             config,
             site,

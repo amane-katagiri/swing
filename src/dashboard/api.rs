@@ -406,3 +406,21 @@ pub async fn publish_sites(
 pub async fn config(State(state): State<Arc<AppState>>) -> Json<dto::ConfigDto> {
     Json(dto::config_dto(&state.config))
 }
+
+pub async fn shutdown(State(state): State<Arc<AppState>>) -> Response {
+    let Some(exit) = state.exit.as_ref() else {
+        return ApiError::Internal("shutdown is not available".to_string()).into_response();
+    };
+    let body = Json(serde_json::json!({ "ok": true, "action": "stop" }));
+    exit.stop();
+    (StatusCode::ACCEPTED, body).into_response()
+}
+
+pub async fn restart(State(state): State<Arc<AppState>>) -> Response {
+    let Some(exit) = state.exit.as_ref() else {
+        return ApiError::Internal("restart is not available".to_string()).into_response();
+    };
+    let body = Json(serde_json::json!({ "ok": true, "action": "restart" }));
+    exit.restart();
+    (StatusCode::ACCEPTED, body).into_response()
+}

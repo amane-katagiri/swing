@@ -5,7 +5,7 @@ mod store;
 #[cfg(test)]
 mod test_support;
 
-pub use lifecycle::run;
+pub use lifecycle::run_until;
 
 use std::collections::{BTreeMap, HashSet};
 use std::path::PathBuf;

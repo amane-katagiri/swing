@@ -319,7 +319,7 @@ pub async fn run(
     println!();
     println!("IPFS");
 
-    let ipfs = IpfsClient::new(config.ipfs.api.clone());
+    let ipfs = IpfsClient::new(config.ipfs_api_url()?);
     let layout = MfsLayout::new(config.ipfs.mfs_root.clone());
     let created_at = Timestamp::now();
     let stage = add_and_measure(&ipfs, &layout, &pubkey_hex, &d, created_at.as_secs(), dir).await?;

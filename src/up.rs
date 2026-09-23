@@ -1,0 +1,286 @@
+use std::time::{Duration, Instant};
+
+use anyhow::Result;
+use tokio_util::sync::CancellationToken;
+use tracing::{error, info, warn};
+
+use crate::agent;
+use crate::config::{Config, IpfsApi};
+use crate::kubo;
+use crate::lock;
+use crate::shutdown;
+use crate::shutdown::Exit;
+
+const UNMANAGED_HEALTH_TIMEOUT: Duration = Duration::from_secs(30);
+const MANAGED_HEALTH_TIMEOUT: Duration = Duration::from_secs(120);
+const DAEMON_STOP_GRACE: Duration = Duration::from_secs(30);
+const AGENT_STOP_TIMEOUT: Duration = Duration::from_secs(15);
+
+struct Backoff {
+    delay: Duration,
+}
+
+impl Backoff {
+    const MIN: Duration = Duration::from_secs(1);
+    const MAX: Duration = Duration::from_secs(60);
+
+    fn new() -> Self {
+        Self { delay: Self::MIN }
+    }
+
+    fn next_delay(&mut self, ran_for: Duration) -> Duration {
+        if ran_for >= Self::MAX {
+            self.delay = Self::MIN;
+        }
+        let delay = self.delay;
+        self.delay = (self.delay * 2).min(Self::MAX);
+        delay
+    }
+
+    async fn wait(&mut self, ran_for: Duration, token: &CancellationToken) {
+        let delay = self.next_delay(ran_for);
+        tokio::select! {
+            _ = tokio::time::sleep(delay) => {}
+            _ = token.cancelled() => {}
+        }
+    }
+}
+
+async fn stop_daemon(daemon: kubo::Daemon, config: &Config, grace: Duration) -> Result<()> {
+    let result = daemon.stop(grace).await;
+    if let Err(e) = kubo::remove_pid_file(&config.agent.state_dir) {
+        warn!(error = %e, "failed to remove kubo.pid");
+    }
+    result
+}
+
+pub async fn run(config: Config) -> Result<Exit> {
+    let _lock = lock::acquire(&config.agent.state_dir)?;
+    let token = shutdown::cancel_on_signal()?;
+    if config.kubo.managed {
+        run_managed(config, token).await
+    } else {
+        run_unmanaged(config, token).await
+    }
+}
+
+async fn run_unmanaged(config: Config, token: CancellationToken) -> Result<Exit> {
+    let mut backoff = Backoff::new();
+    loop {
+        let api_url = config.ipfs_api_url()?;
+        let health = tokio::select! {
+            res = kubo::wait_healthy(&api_url, UNMANAGED_HEALTH_TIMEOUT) => Some(res),
+            _ = token.cancelled() => None,
+        };
+        let Some(health) = health else {
+            return Ok(Exit::Stop);
+        };
+        if let Err(e) = health {
+            warn!(error = %e, "external Kubo is not healthy yet");
+            backoff.wait(Duration::ZERO, &token).await;
+            continue;
+        }
+        info!(api = %api_url, "external Kubo is ready");
+
+        let started = Instant::now();
+        match agent::run_until(config.clone(), token.child_token()).await {
+            Ok(exit) => return Ok(exit),
+            Err(e) => {
+                warn!(error = %e, "agent exited with an error; restarting");
+                backoff.wait(started.elapsed(), &token).await;
+            }
+        }
+    }
+}
+
+async fn run_managed(config: Config, token: CancellationToken) -> Result<Exit> {
+    let bin = kubo::locate_binary(config.kubo.binary.as_deref())?;
+    let installed_version = kubo::version(&bin).await?;
+    if installed_version != kubo::KUBO_VERSION {
+        warn!(
+            installed = %installed_version,
+            expected = %kubo::KUBO_VERSION,
+            "Kubo version does not match the version swing was tested with"
+        );
+    }
+
+    kubo::recover_orphan(&config.agent.state_dir, &config.kubo.repo).await?;
+
+    let mut backoff = Backoff::new();
+
+    'daemon: loop {
+        if token.is_cancelled() {
+            return Ok(Exit::Stop);
+        }
+
+        match kubo::ensure_repo(&bin, &config.kubo.repo).await {
+            Ok(true) => info!(repo = %config.kubo.repo.display(), "initialised Kubo repo"),
+            Ok(false) => {}
+            Err(e) => {
+                warn!(error = %e, "failed to prepare Kubo repo");
+                backoff.wait(Duration::ZERO, &token).await;
+                continue 'daemon;
+            }
+        }
+
+        let api_port = match kubo::pick_free_port() {
+            Ok(p) => p,
+            Err(e) => {
+                warn!(error = %e, "failed to pick a free port for the Kubo API");
+                backoff.wait(Duration::ZERO, &token).await;
+                continue 'daemon;
+            }
+        };
+        let settings = kubo::KuboSettings {
+            storage_max: config.kubo.storage_max,
+            provide_strategy: config.kubo.provide_strategy.clone(),
+            api_port,
+            gateway: config.kubo.gateway_listen,
+            swarm_port: config.kubo.swarm_port,
+            public_gateway_hosts: config.gateway.hosts.clone(),
+        };
+        if let Err(e) = kubo::apply_config(&bin, &config.kubo.repo, &settings).await {
+            warn!(error = %e, "failed to configure Kubo");
+            backoff.wait(Duration::ZERO, &token).await;
+            continue 'daemon;
+        }
+
+        let api_url = format!("http://127.0.0.1:{api_port}");
+        let mut daemon = match kubo::Daemon::spawn(&bin, &config.kubo.repo, api_url.clone()).await {
+            Ok(d) => d,
+            Err(e) => {
+                warn!(error = %e, "failed to spawn the Kubo daemon");
+                backoff.wait(Duration::ZERO, &token).await;
+                continue 'daemon;
+            }
+        };
+        if let Some(pid) = daemon.pid()
+            && let Err(e) = kubo::write_pid_file(&config.agent.state_dir, pid)
+        {
+            warn!(error = %e, "failed to write kubo.pid");
+        }
+
+        let health = tokio::select! {
+            res = kubo::wait_healthy(&api_url, MANAGED_HEALTH_TIMEOUT) => Some(res),
+            _ = token.cancelled() => None,
+        };
+        let health = match health {
+            None => {
+                let _ = stop_daemon(daemon, &config, DAEMON_STOP_GRACE).await;
+                return Ok(Exit::Stop);
+            }
+            Some(h) => h,
+        };
+        if let Err(e) = health {
+            warn!(error = %e, "Kubo did not become healthy");
+            if matches!(daemon.try_wait(), Ok(Some(_))) && daemon.saw_repo_lock_error() {
+                warn!(
+                    repo = %config.kubo.repo.display(),
+                    "another ipfs daemon seems to hold the Kubo repo lock; stop it or point [kubo].repo elsewhere"
+                );
+            }
+            let _ = stop_daemon(daemon, &config, DAEMON_STOP_GRACE).await;
+            backoff.wait(Duration::ZERO, &token).await;
+            continue 'daemon;
+        }
+
+        info!(api = %api_url, "kubo is ready");
+        let mut managed_config = config.clone();
+        managed_config.ipfs.api = IpfsApi::Url(api_url);
+
+        let mut agent_token = token.child_token();
+        let mut agent_handle = tokio::spawn(agent::run_until(
+            managed_config.clone(),
+            agent_token.clone(),
+        ));
+        let mut agent_started = Instant::now();
+        let daemon_started = Instant::now();
+
+        loop {
+            tokio::select! {
+                status = daemon.wait() => {
+                    match status {
+                        Ok(status) => error!(%status, "kubo daemon exited unexpectedly"),
+                        Err(e) => error!(error = %e, "waiting for the kubo daemon failed"),
+                    }
+                    agent_token.cancel();
+                    if tokio::time::timeout(AGENT_STOP_TIMEOUT, &mut agent_handle).await.is_err() {
+                        warn!(timeout = ?AGENT_STOP_TIMEOUT, "agent did not stop in time after kubo exited");
+                        agent_handle.abort();
+                    }
+                    if let Err(e) = kubo::remove_pid_file(&config.agent.state_dir) {
+                        warn!(error = %e, "failed to remove kubo.pid");
+                    }
+                    backoff.wait(daemon_started.elapsed(), &token).await;
+                    continue 'daemon;
+                }
+                result = &mut agent_handle => {
+                    let ran_for = agent_started.elapsed();
+                    match result {
+                        Ok(Ok(exit)) => {
+                            agent_token.cancel();
+                            let _ = stop_daemon(daemon, &config, DAEMON_STOP_GRACE).await;
+                            return Ok(exit);
+                        }
+                        Ok(Err(e)) => warn!(error = %e, "agent exited with an error; restarting agent"),
+                        Err(e) => error!(error = %e, "agent task panicked; restarting agent"),
+                    }
+                    backoff.wait(ran_for, &token).await;
+                    if token.is_cancelled() {
+                        let _ = stop_daemon(daemon, &config, DAEMON_STOP_GRACE).await;
+                        return Ok(Exit::Stop);
+                    }
+                    agent_token = token.child_token();
+                    agent_started = Instant::now();
+                    agent_handle = tokio::spawn(agent::run_until(
+                        managed_config.clone(),
+                        agent_token.clone(),
+                    ));
+                }
+                _ = token.cancelled() => {
+                    agent_token.cancel();
+                    if tokio::time::timeout(AGENT_STOP_TIMEOUT, &mut agent_handle).await.is_err() {
+                        warn!(timeout = ?AGENT_STOP_TIMEOUT, "agent did not stop in time during shutdown");
+                        agent_handle.abort();
+                    }
+                    stop_daemon(daemon, &config, DAEMON_STOP_GRACE).await?;
+                    return Ok(Exit::Stop);
+                }
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn backoff_doubles_and_caps() {
+        let mut b = Backoff::new();
+        let seq: Vec<u64> = (0..8)
+            .map(|_| b.next_delay(Duration::ZERO).as_secs())
+            .collect();
+        assert_eq!(seq, vec![1, 2, 4, 8, 16, 32, 60, 60]);
+    }
+
+    #[test]
+    fn backoff_resets_after_a_long_run() {
+        let mut b = Backoff::new();
+        for _ in 0..5 {
+            b.next_delay(Duration::ZERO);
+        }
+        assert_eq!(b.delay, Duration::from_secs(32));
+        let delay = b.next_delay(Duration::from_secs(120));
+        assert_eq!(delay, Duration::from_secs(1));
+        assert_eq!(b.delay, Duration::from_secs(2));
+    }
+
+    #[test]
+    fn backoff_boundary_run_of_exactly_max_resets() {
+        let mut b = Backoff::new();
+        b.next_delay(Duration::ZERO);
+        let delay = b.next_delay(Duration::from_secs(60));
+        assert_eq!(delay, Duration::from_secs(1));
+    }
+}

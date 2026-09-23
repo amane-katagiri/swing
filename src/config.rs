@@ -81,6 +81,26 @@ pub struct PublishFile {
 
 #[derive(Debug, Clone, Deserialize, Default)]
 #[serde(default)]
+pub struct KuboFile {
+    pub managed: Option<bool>,
+    pub binary: Option<String>,
+    pub repo: Option<String>,
+    pub storage_max: Option<String>,
+    pub provide_strategy: Option<String>,
+    pub gateway_listen: Option<String>,
+    pub swarm_port: Option<u16>,
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(default)]
+pub struct GatewayFile {
+    pub listen: Option<String>,
+    pub hosts: Option<Vec<String>>,
+    pub upstream: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(default)]
 pub struct DashboardFile {
     pub listen: Option<String>,
     pub allowed_hosts: Option<Vec<String>>,
@@ -101,6 +121,8 @@ pub struct ConfigFile {
     pub agent: AgentFile,
     pub publish: PublishFile,
     pub dashboard: DashboardFile,
+    pub kubo: KuboFile,
+    pub gateway: GatewayFile,
 }
 
 #[derive(Clone)]
@@ -141,10 +163,37 @@ pub struct NostrConfig {
     pub replica_event_kind: u16,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum IpfsApi {
+    Url(String),
+    Managed,
+}
+
 #[derive(Debug, Clone)]
 pub struct IpfsConfig {
-    pub api: String,
+    pub api: IpfsApi,
     pub mfs_root: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct KuboConfig {
+    pub managed: bool,
+    pub binary: Option<PathBuf>,
+    pub repo: PathBuf,
+    pub storage_max: u64,
+    pub provide_strategy: String,
+    pub gateway_listen: SocketAddr,
+    pub swarm_port: Option<u16>,
+}
+
+pub fn is_valid_gateway_host(host: &str) -> bool {
+    !host.is_empty()
+        && !host.starts_with('.')
+        && !host.ends_with('.')
+        && !host.contains("..")
+        && host
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '.' || c == '-')
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -179,25 +228,32 @@ pub struct PublishConfig {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum DashboardListen {
+pub enum Listen {
     Off,
     Addr(SocketAddr),
 }
 
-pub fn parse_dashboard_listen(input: &str) -> Result<DashboardListen> {
+pub fn parse_listen(input: &str) -> Result<Listen> {
     let trimmed = input.trim();
     if trimmed.eq_ignore_ascii_case("off") {
-        return Ok(DashboardListen::Off);
+        return Ok(Listen::Off);
     }
     trimmed
         .parse::<SocketAddr>()
-        .map(DashboardListen::Addr)
-        .with_context(|| format!("invalid dashboard listen address: {trimmed}"))
+        .map(Listen::Addr)
+        .with_context(|| format!("invalid listen address: {trimmed}"))
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GatewayConfig {
+    pub listen: Listen,
+    pub hosts: Vec<String>,
+    pub upstream: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DashboardConfig {
-    pub listen: DashboardListen,
+    pub listen: Listen,
     pub allowed_hosts: Vec<String>,
     pub gateway: Option<String>,
     pub custom_css: Option<PathBuf>,
@@ -215,10 +271,12 @@ pub struct Config {
     pub agent: AgentConfig,
     pub publish: PublishConfig,
     pub dashboard: DashboardConfig,
+    pub kubo: KuboConfig,
+    pub gateway: GatewayConfig,
     pub config_path: Option<PathBuf>,
 }
 
-fn resolve_config_path(cli_path: Option<&Path>) -> Option<PathBuf> {
+pub fn resolve_config_path(cli_path: Option<&Path>) -> Option<PathBuf> {
     if let Some(p) = cli_path {
         return Some(p.to_path_buf());
     }
@@ -413,9 +471,24 @@ fn build_config(file: ConfigFile, get_env: impl Fn(&str) -> Option<String>) -> R
         35981,
     )?;
 
-    let ipfs_api = get_env("SWING_IPFS_API")
-        .or(file.ipfs.api)
-        .unwrap_or_else(|| "http://127.0.0.1:5001".to_string());
+    let kubo_managed = resolve_typed(
+        &get_env,
+        "SWING_KUBO_MANAGED",
+        file.kubo.managed,
+        parse_bool,
+        "invalid SWING_KUBO_MANAGED",
+        true,
+    )?;
+
+    let ipfs_api_file = get_env("SWING_IPFS_API").or(file.ipfs.api);
+    if kubo_managed && ipfs_api_file.is_some() {
+        bail!("[ipfs].api conflicts with [kubo].managed = true");
+    }
+    let ipfs_api = if kubo_managed {
+        IpfsApi::Managed
+    } else {
+        IpfsApi::Url(ipfs_api_file.unwrap_or_else(|| "http://127.0.0.1:5001".to_string()))
+    };
 
     let mfs_root = resolve(
         &get_env,
@@ -628,10 +701,10 @@ fn build_config(file: ConfigFile, get_env: impl Fn(&str) -> Option<String>) -> R
         &get_env,
         "SWING_DASHBOARD_LISTEN",
         file.dashboard.listen,
-        parse_dashboard_listen,
+        parse_listen,
         "invalid SWING_DASHBOARD_LISTEN",
         "invalid [dashboard].listen",
-        DashboardListen::Addr(([127, 0, 0, 1], 8082).into()),
+        Listen::Addr(([127, 0, 0, 1], 8082).into()),
     )?;
 
     let dashboard_allowed_hosts = match get_env("SWING_DASHBOARD_ALLOWED_HOSTS") {
@@ -686,6 +759,108 @@ fn build_config(file: ConfigFile, get_env: impl Fn(&str) -> Option<String>) -> R
         bail!("dashboard max_upload must be greater than 0");
     }
 
+    let kubo_repo_default = PathBuf::from(&state_dir).join("kubo");
+    let kubo_repo = resolve(
+        &get_env,
+        "SWING_KUBO_REPO",
+        file.kubo.repo,
+        |v| Ok(PathBuf::from(v.trim())),
+        "invalid SWING_KUBO_REPO",
+        "invalid [kubo].repo",
+        kubo_repo_default,
+    )?;
+
+    let kubo_binary = match get_env("SWING_KUBO_BINARY") {
+        Some(v) => Some(PathBuf::from(v)),
+        None => file.kubo.binary.map(PathBuf::from),
+    };
+
+    let kubo_storage_max = resolve(
+        &get_env,
+        "SWING_KUBO_STORAGE_MAX",
+        file.kubo.storage_max,
+        parse_size,
+        "invalid SWING_KUBO_STORAGE_MAX",
+        "invalid [kubo].storage_max",
+        max_total_storage,
+    )?;
+
+    let kubo_provide_strategy = get_env("SWING_KUBO_PROVIDE_STRATEGY")
+        .or(file.kubo.provide_strategy)
+        .unwrap_or_else(|| "pinned+mfs".to_string());
+    if kubo_provide_strategy.trim().is_empty() {
+        bail!("[kubo].provide_strategy must not be empty");
+    }
+
+    let kubo_gateway_listen = resolve(
+        &get_env,
+        "SWING_KUBO_GATEWAY_LISTEN",
+        file.kubo.gateway_listen,
+        |v| {
+            v.trim()
+                .parse::<SocketAddr>()
+                .with_context(|| format!("invalid gateway listen address: {v}"))
+        },
+        "invalid SWING_KUBO_GATEWAY_LISTEN",
+        "invalid [kubo].gateway_listen",
+        SocketAddr::from(([127, 0, 0, 1], 8080)),
+    )?;
+
+    let kubo_swarm_port = match get_env("SWING_KUBO_SWARM_PORT") {
+        Some(v) => Some(
+            v.trim()
+                .parse::<u16>()
+                .context("invalid SWING_KUBO_SWARM_PORT: expected u16")?,
+        ),
+        None => file.kubo.swarm_port,
+    };
+    if kubo_swarm_port == Some(0) {
+        bail!("[kubo].swarm_port must be between 1 and 65535");
+    }
+
+    let gateway_listen = resolve(
+        &get_env,
+        "SWING_GATEWAY_LISTEN",
+        file.gateway.listen,
+        parse_listen,
+        "invalid SWING_GATEWAY_LISTEN",
+        "invalid [gateway].listen",
+        Listen::Off,
+    )?;
+
+    let gateway_hosts: Vec<String> = match get_env("SWING_GATEWAY_HOSTS") {
+        Some(v) => v
+            .split(',')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect(),
+        None => file
+            .gateway
+            .hosts
+            .unwrap_or_default()
+            .into_iter()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect(),
+    };
+    for host in &gateway_hosts {
+        if !is_valid_gateway_host(host) {
+            bail!("invalid [gateway].hosts entry: {host}");
+        }
+    }
+    if !matches!(gateway_listen, Listen::Off) && gateway_hosts.is_empty() {
+        bail!("[gateway].hosts must not be empty when [gateway].listen is enabled");
+    }
+
+    let gateway_upstream_default = if kubo_managed {
+        format!("http://{kubo_gateway_listen}")
+    } else {
+        "http://127.0.0.1:8080".to_string()
+    };
+    let gateway_upstream = get_env("SWING_GATEWAY_UPSTREAM")
+        .or(file.gateway.upstream)
+        .unwrap_or(gateway_upstream_default);
+
     Ok(Config {
         nostr: NostrConfig {
             secret_key: secret_key.into(),
@@ -733,11 +908,32 @@ fn build_config(file: ConfigFile, get_env: impl Fn(&str) -> Option<String>) -> R
             desktop_banner: dashboard_desktop_banner,
             max_upload: dashboard_max_upload,
         },
+        kubo: KuboConfig {
+            managed: kubo_managed,
+            binary: kubo_binary,
+            repo: kubo_repo,
+            storage_max: kubo_storage_max,
+            provide_strategy: kubo_provide_strategy,
+            gateway_listen: kubo_gateway_listen,
+            swarm_port: kubo_swarm_port,
+        },
+        gateway: GatewayConfig {
+            listen: gateway_listen,
+            hosts: gateway_hosts,
+            upstream: gateway_upstream,
+        },
         config_path: None,
     })
 }
 
 impl Config {
+    pub fn ipfs_api_url(&self) -> Result<String> {
+        match &self.ipfs.api {
+            IpfsApi::Url(url) => Ok(url.clone()),
+            IpfsApi::Managed => crate::kubo::api_url_from_repo(&self.kubo.repo),
+        }
+    }
+
     pub fn load(cli_path: Option<&Path>) -> Result<Self> {
         let (file, config_path) = load_file(cli_path)?;
         let mut config = build_config(file, env_var)?;
@@ -947,7 +1143,7 @@ mod tests {
         assert_eq!(cfg.nostr.mirror_set, "swing");
         assert_eq!(cfg.nostr.site_event_kind, 35980);
         assert_eq!(cfg.nostr.replica_event_kind, 35981);
-        assert_eq!(cfg.ipfs.api, "http://127.0.0.1:5001");
+        assert_eq!(cfg.ipfs.api, IpfsApi::Managed);
         assert_eq!(cfg.policy.max_total_storage, 100 * (1u64 << 30));
         assert_eq!(cfg.policy.max_per_site, 10 * (1u64 << 30));
         assert_eq!(cfg.policy.max_per_account, 20 * (1u64 << 30));
@@ -966,6 +1162,19 @@ mod tests {
         assert_eq!(cfg.agent.report_ttl, Duration::from_secs(3 * 86_400));
         assert_eq!(cfg.ipfs.mfs_root, "/swing");
         assert_eq!(cfg.publish.keep_versions, 5);
+        assert!(cfg.kubo.managed);
+        assert_eq!(cfg.kubo.binary, None);
+        assert_eq!(cfg.kubo.repo, PathBuf::from("./data").join("kubo"));
+        assert_eq!(cfg.kubo.storage_max, 100 * (1u64 << 30));
+        assert_eq!(cfg.kubo.provide_strategy, "pinned+mfs");
+        assert_eq!(
+            cfg.kubo.gateway_listen,
+            SocketAddr::from(([127, 0, 0, 1], 8080))
+        );
+        assert_eq!(cfg.kubo.swarm_port, None);
+        assert_eq!(cfg.gateway.listen, Listen::Off);
+        assert!(cfg.gateway.hosts.is_empty());
+        assert_eq!(cfg.gateway.upstream, "http://127.0.0.1:8080");
     }
 
     #[test]
@@ -1093,7 +1302,7 @@ mod tests {
         let cfg = build_config(minimal_file(), |_| None).unwrap();
         assert_eq!(
             cfg.dashboard.listen,
-            DashboardListen::Addr(([127, 0, 0, 1], 8082).into())
+            Listen::Addr(([127, 0, 0, 1], 8082).into())
         );
         assert!(cfg.dashboard.allowed_hosts.is_empty());
         assert_eq!(
@@ -1146,7 +1355,7 @@ mod tests {
             _ => None,
         })
         .unwrap();
-        assert_eq!(cfg.dashboard.listen, DashboardListen::Off);
+        assert_eq!(cfg.dashboard.listen, Listen::Off);
     }
 
     #[test]
@@ -1192,7 +1401,7 @@ mod tests {
         .unwrap();
         assert_eq!(
             cfg.dashboard.listen,
-            DashboardListen::Addr(([0, 0, 0, 0], 8082).into())
+            Listen::Addr(([0, 0, 0, 0], 8082).into())
         );
         assert_eq!(
             cfg.dashboard.allowed_hosts,
@@ -1267,5 +1476,309 @@ mod tests {
         })
         .unwrap();
         assert_eq!(cfg.policy.max_total_storage, 20 * (1u64 << 30));
+    }
+
+    #[test]
+    fn is_valid_gateway_host_rules() {
+        for good in ["example.com", "blog.example.net", "a.b-c.de", "localhost"] {
+            assert!(is_valid_gateway_host(good), "{good:?} should be valid");
+        }
+        for bad in [
+            "",
+            ".example.com",
+            "example.com.",
+            "exa..mple.com",
+            "EXAMPLE.com",
+            "exa mple.com",
+            "exa_mple.com",
+            "example.com/path",
+        ] {
+            assert!(!is_valid_gateway_host(bad), "{bad:?} should be invalid");
+        }
+    }
+
+    #[test]
+    fn managed_kubo_rejects_explicit_ipfs_api_from_file() {
+        let file = ConfigFile {
+            ipfs: IpfsFile {
+                api: Some("http://127.0.0.1:5001".into()),
+                ..Default::default()
+            },
+            ..minimal_file()
+        };
+        let err = build_config(file, |_| None).unwrap_err();
+        assert!(err.to_string().contains("[ipfs].api conflicts"));
+    }
+
+    #[test]
+    fn managed_kubo_rejects_explicit_ipfs_api_from_env() {
+        let err = build_config(minimal_file(), |k| match k {
+            "SWING_IPFS_API" => Some("http://127.0.0.1:5001".into()),
+            _ => None,
+        })
+        .unwrap_err();
+        assert!(err.to_string().contains("[ipfs].api conflicts"));
+    }
+
+    #[test]
+    fn unmanaged_kubo_uses_ipfs_api() {
+        let cfg = build_config(minimal_file(), |k| match k {
+            "SWING_KUBO_MANAGED" => Some("false".into()),
+            "SWING_IPFS_API" => Some("http://127.0.0.1:15001".into()),
+            _ => None,
+        })
+        .unwrap();
+        assert_eq!(
+            cfg.ipfs.api,
+            IpfsApi::Url("http://127.0.0.1:15001".to_string())
+        );
+        assert!(!cfg.kubo.managed);
+    }
+
+    #[test]
+    fn unmanaged_kubo_defaults_ipfs_api() {
+        let cfg = build_config(minimal_file(), |k| match k {
+            "SWING_KUBO_MANAGED" => Some("false".into()),
+            _ => None,
+        })
+        .unwrap();
+        assert_eq!(
+            cfg.ipfs.api,
+            IpfsApi::Url("http://127.0.0.1:5001".to_string())
+        );
+    }
+
+    #[test]
+    fn kubo_repo_defaults_under_state_dir() {
+        let cfg = build_config(minimal_file(), |k| match k {
+            "SWING_STATE_DIR" => Some("/var/lib/swing".into()),
+            _ => None,
+        })
+        .unwrap();
+        assert_eq!(cfg.kubo.repo, PathBuf::from("/var/lib/swing/kubo"));
+    }
+
+    #[test]
+    fn kubo_repo_env_overrides_default() {
+        let cfg = build_config(minimal_file(), |k| match k {
+            "SWING_KUBO_REPO" => Some("/data/kubo-repo".into()),
+            _ => None,
+        })
+        .unwrap();
+        assert_eq!(cfg.kubo.repo, PathBuf::from("/data/kubo-repo"));
+    }
+
+    #[test]
+    fn kubo_binary_env_overrides_file() {
+        let file = ConfigFile {
+            kubo: KuboFile {
+                binary: Some("/opt/kubo/ipfs".into()),
+                ..Default::default()
+            },
+            ..minimal_file()
+        };
+        let cfg = build_config(file, |k| match k {
+            "SWING_KUBO_BINARY" => Some("/usr/local/bin/ipfs".into()),
+            _ => None,
+        })
+        .unwrap();
+        assert_eq!(cfg.kubo.binary, Some(PathBuf::from("/usr/local/bin/ipfs")));
+    }
+
+    #[test]
+    fn kubo_storage_max_defaults_to_max_total_storage() {
+        let cfg = build_config(minimal_file(), |k| match k {
+            "SWING_MAX_TOTAL_STORAGE" => Some("50GB".into()),
+            _ => None,
+        })
+        .unwrap();
+        assert_eq!(cfg.kubo.storage_max, 50 * (1u64 << 30));
+    }
+
+    #[test]
+    fn kubo_storage_max_can_differ_from_max_total_storage() {
+        let cfg = build_config(minimal_file(), |k| match k {
+            "SWING_MAX_TOTAL_STORAGE" => Some("50GB".into()),
+            "SWING_KUBO_STORAGE_MAX" => Some("80GB".into()),
+            _ => None,
+        })
+        .unwrap();
+        assert_eq!(cfg.policy.max_total_storage, 50 * (1u64 << 30));
+        assert_eq!(cfg.kubo.storage_max, 80 * (1u64 << 30));
+    }
+
+    #[test]
+    fn kubo_provide_strategy_empty_is_rejected() {
+        let file = ConfigFile {
+            kubo: KuboFile {
+                provide_strategy: Some(String::new()),
+                ..Default::default()
+            },
+            ..minimal_file()
+        };
+        let err = build_config(file, |_| None).unwrap_err();
+        assert!(err.to_string().contains("provide_strategy"));
+    }
+
+    #[test]
+    fn kubo_gateway_listen_env_overrides_file() {
+        let file = ConfigFile {
+            kubo: KuboFile {
+                gateway_listen: Some("127.0.0.1:9090".into()),
+                ..Default::default()
+            },
+            ..minimal_file()
+        };
+        let cfg = build_config(file, |k| match k {
+            "SWING_KUBO_GATEWAY_LISTEN" => Some("127.0.0.1:8181".into()),
+            _ => None,
+        })
+        .unwrap();
+        assert_eq!(
+            cfg.kubo.gateway_listen,
+            SocketAddr::from(([127, 0, 0, 1], 8181))
+        );
+    }
+
+    #[test]
+    fn kubo_gateway_listen_rejects_garbage() {
+        let err = build_config(minimal_file(), |k| match k {
+            "SWING_KUBO_GATEWAY_LISTEN" => Some("not-an-address".into()),
+            _ => None,
+        })
+        .unwrap_err();
+        assert!(err.to_string().contains("SWING_KUBO_GATEWAY_LISTEN"));
+    }
+
+    #[test]
+    fn kubo_swarm_port_defaults_to_unset() {
+        let cfg = build_config(minimal_file(), |_| None).unwrap();
+        assert_eq!(cfg.kubo.swarm_port, None);
+    }
+
+    #[test]
+    fn kubo_swarm_port_zero_is_rejected() {
+        let err = build_config(minimal_file(), |k| match k {
+            "SWING_KUBO_SWARM_PORT" => Some("0".into()),
+            _ => None,
+        })
+        .unwrap_err();
+        assert!(err.to_string().contains("swarm_port"));
+    }
+
+    #[test]
+    fn kubo_swarm_port_in_range_is_accepted() {
+        let cfg = build_config(minimal_file(), |k| match k {
+            "SWING_KUBO_SWARM_PORT" => Some("4001".into()),
+            _ => None,
+        })
+        .unwrap();
+        assert_eq!(cfg.kubo.swarm_port, Some(4001));
+    }
+
+    #[test]
+    fn gateway_listen_enabled_requires_hosts() {
+        let err = build_config(minimal_file(), |k| match k {
+            "SWING_GATEWAY_LISTEN" => Some("127.0.0.1:8081".into()),
+            _ => None,
+        })
+        .unwrap_err();
+        assert!(err.to_string().contains("[gateway].hosts"));
+    }
+
+    #[test]
+    fn gateway_listen_enabled_with_hosts_is_accepted() {
+        let cfg = build_config(minimal_file(), |k| match k {
+            "SWING_GATEWAY_LISTEN" => Some("127.0.0.1:8081".into()),
+            "SWING_GATEWAY_HOSTS" => Some("example.com".into()),
+            _ => None,
+        })
+        .unwrap();
+        assert_eq!(
+            cfg.gateway.listen,
+            Listen::Addr(([127, 0, 0, 1], 8081).into())
+        );
+        assert_eq!(cfg.gateway.hosts, vec!["example.com".to_string()]);
+    }
+
+    #[test]
+    fn gateway_hosts_rejects_invalid_hostnames() {
+        let err = build_config(minimal_file(), |k| match k {
+            "SWING_GATEWAY_HOSTS" => Some("Example.com".into()),
+            _ => None,
+        })
+        .unwrap_err();
+        assert!(err.to_string().contains("invalid [gateway].hosts entry"));
+    }
+
+    #[test]
+    fn gateway_hosts_env_overrides_file_and_trims_entries() {
+        let file = ConfigFile {
+            gateway: GatewayFile {
+                hosts: Some(vec!["from-file.example".into()]),
+                ..Default::default()
+            },
+            ..minimal_file()
+        };
+        let cfg = build_config(file, |k| match k {
+            "SWING_GATEWAY_HOSTS" => Some(" a.example , b.example ".into()),
+            _ => None,
+        })
+        .unwrap();
+        assert_eq!(
+            cfg.gateway.hosts,
+            vec!["a.example".to_string(), "b.example".to_string()]
+        );
+    }
+
+    #[test]
+    fn gateway_upstream_defaults_to_managed_kubo_gateway_listen() {
+        let cfg = build_config(minimal_file(), |_| None).unwrap();
+        assert!(cfg.kubo.managed);
+        assert_eq!(cfg.gateway.upstream, "http://127.0.0.1:8080");
+
+        let cfg = build_config(minimal_file(), |k| match k {
+            "SWING_KUBO_GATEWAY_LISTEN" => Some("127.0.0.1:9999".into()),
+            _ => None,
+        })
+        .unwrap();
+        assert_eq!(cfg.gateway.upstream, "http://127.0.0.1:9999");
+    }
+
+    #[test]
+    fn gateway_upstream_defaults_to_localhost_when_unmanaged() {
+        let cfg = build_config(minimal_file(), |k| match k {
+            "SWING_KUBO_MANAGED" => Some("false".into()),
+            _ => None,
+        })
+        .unwrap();
+        assert_eq!(cfg.gateway.upstream, "http://127.0.0.1:8080");
+    }
+
+    #[test]
+    fn gateway_upstream_env_overrides_default() {
+        let cfg = build_config(minimal_file(), |k| match k {
+            "SWING_GATEWAY_UPSTREAM" => Some("http://ipfs:8080".into()),
+            _ => None,
+        })
+        .unwrap();
+        assert_eq!(cfg.gateway.upstream, "http://ipfs:8080");
+    }
+
+    #[test]
+    fn parse_listen_off_and_addr() {
+        assert_eq!(parse_listen("off").unwrap(), Listen::Off);
+        assert_eq!(parse_listen("OFF").unwrap(), Listen::Off);
+        assert_eq!(
+            parse_listen("127.0.0.1:8081").unwrap(),
+            Listen::Addr(([127, 0, 0, 1], 8081).into())
+        );
+        assert!(parse_listen("not-an-address").is_err());
+    }
+
+    #[test]
+    fn resolve_config_path_prefers_cli_over_env_and_default() {
+        let cli = PathBuf::from("/tmp/from-cli.toml");
+        assert_eq!(resolve_config_path(Some(&cli)), Some(cli));
     }
 }

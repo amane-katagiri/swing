@@ -3,36 +3,39 @@ use std::sync::Arc;
 use anyhow::{Context, Result};
 use futures_util::StreamExt;
 use nostr_sdk::prelude::*;
-use tokio::signal::unix::{SignalKind, signal};
 use tokio::sync::Notify;
 use tokio::task::JoinSet;
+use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
 
-use crate::config::{Config, DashboardListen};
+use crate::config::{Config, Listen};
 use crate::dashboard;
+use crate::gateway;
 use crate::ipfs::IpfsClient;
 use crate::nip05::HttpNip05Verifier;
 use crate::nostr::{self, RelayClient};
+use crate::shutdown::{Exit, ExitRequest};
 use crate::state::State;
 
 use super::Agent;
 
 const DASHBOARD_SHUTDOWN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
-const FORCE_EXIT_GRACE_PERIOD: std::time::Duration = std::time::Duration::from_secs(10);
+const GATEWAY_SHUTDOWN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 
-pub async fn run(config: Config) -> Result<()> {
+pub async fn run_until(config: Config, shutdown: CancellationToken) -> Result<Exit> {
+    let exit = ExitRequest::new(shutdown.clone());
     let relay =
         Arc::new(RelayClient::connect(&config.nostr.secret_key, &config.nostr.relays).await?);
     info!(relays = ?relay.relays(), "connected to relays");
 
-    let ipfs = IpfsClient::new(config.ipfs.api.clone());
+    let ipfs = IpfsClient::new(config.ipfs_api_url()?);
     let state_path = config.agent.state_dir.join("state.json");
     let state = State::load(&state_path).await?;
     info!(path = %state_path.display(), sites = state.sites.len(), "loaded state");
 
     let dashboard_listener = match &config.dashboard.listen {
-        DashboardListen::Off => None,
-        DashboardListen::Addr(addr) => {
+        Listen::Off => None,
+        Listen::Addr(addr) => {
             let listener = tokio::net::TcpListener::bind(addr)
                 .await
                 .with_context(|| format!("binding dashboard listener on {addr}"))?;
@@ -47,11 +50,24 @@ pub async fn run(config: Config) -> Result<()> {
         }
     };
 
+    let gateway_listener = match &config.gateway.listen {
+        Listen::Off => None,
+        Listen::Addr(addr) => {
+            let listener = tokio::net::TcpListener::bind(addr)
+                .await
+                .with_context(|| format!("binding gateway listener on {addr}"))?;
+            info!(%addr, hosts = ?config.gateway.hosts, upstream = %config.gateway.upstream, "gateway will listen");
+            Some(listener)
+        }
+    };
+
     let site_event_kind = config.nostr.site_event_kind;
     let mut poll_timer = tokio::time::interval(config.agent.poll_interval);
     poll_timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     let notify = Arc::new(Notify::new());
     let dashboard_config = config.clone();
+    let gateway_hosts = config.gateway.hosts.clone();
+    let gateway_upstream = config.gateway.upstream.clone();
     let agent = Arc::new(Agent::new(
         config,
         ipfs,
@@ -60,32 +76,11 @@ pub async fn run(config: Config) -> Result<()> {
         state,
         state_path,
     ));
-    let mut sigint = signal(SignalKind::interrupt()).context("registering SIGINT handler")?;
-    let mut sigterm = signal(SignalKind::terminate()).context("registering SIGTERM handler")?;
-
-    // Independent of the main loop so it still fires when that loop is stuck.
-    let mut watchdog_sigint =
-        signal(SignalKind::interrupt()).context("registering watchdog SIGINT handler")?;
-    let mut watchdog_sigterm =
-        signal(SignalKind::terminate()).context("registering watchdog SIGTERM handler")?;
-    tokio::spawn(async move {
-        tokio::select! {
-            _ = watchdog_sigint.recv() => {}
-            _ = watchdog_sigterm.recv() => {}
-        }
-        tokio::time::sleep(FORCE_EXIT_GRACE_PERIOD).await;
-        error!(
-            grace_period = ?FORCE_EXIT_GRACE_PERIOD,
-            "graceful shutdown did not finish within the grace period; forcing exit"
-        );
-        std::process::exit(1);
-    });
-
     // A select! arm body is not polled against the other arms, so a signal arriving during it would wait for the body to finish.
-    if let Some(signal) = race_with_shutdown(agent.reconcile(), &mut sigint, &mut sigterm).await {
-        info!(signal, "shutdown requested during startup reconciliation");
+    if race_with_shutdown(agent.reconcile(), &shutdown).await {
+        info!("shutdown requested during startup reconciliation");
         relay.client.shutdown().await;
-        return Ok(());
+        return Ok(exit.exit());
     }
 
     let mut dashboard_shutdown = None;
@@ -98,12 +93,24 @@ pub async fn run(config: Config) -> Result<()> {
             Some(Arc::clone(&relay)),
             Arc::new(dashboard_config),
             Arc::clone(&notify),
+            Some(exit.clone()),
         )?);
         let (tx, rx) = tokio::sync::oneshot::channel();
         dashboard_shutdown = Some(tx);
         dashboard_task = Some(tokio::spawn(async move {
             if let Err(e) = dashboard::serve(listener, dashboard_state, rx).await {
                 error!(error = %e, "dashboard server stopped");
+            }
+        }));
+    }
+
+    let gateway_token = shutdown.child_token();
+    let mut gateway_task = None;
+    if let Some(listener) = gateway_listener {
+        let token = gateway_token.clone();
+        gateway_task = Some(tokio::spawn(async move {
+            if let Err(e) = gateway::serve(listener, gateway_hosts, gateway_upstream, token).await {
+                error!(error = %e, "gateway server stopped");
             }
         }));
     }
@@ -138,17 +145,19 @@ pub async fn run(config: Config) -> Result<()> {
                 }
             }
             _ = poll_timer.tick() => {
-                if let Some(signal) = race_with_shutdown(super::poll_once(&relay, &agent, &mut tasks), &mut sigint, &mut sigterm).await {
-                    info!(signal, "shutdown requested during poll");
+                if race_with_shutdown(super::poll_once(&relay, &agent, &mut tasks), &shutdown).await {
+                    info!("shutdown requested during poll");
                     shutdown_dashboard(&mut dashboard_shutdown, &mut dashboard_task).await;
+                    shutdown_gateway(&gateway_token, &mut gateway_task).await;
                     relay.client.shutdown().await;
                     break;
                 }
             }
             _ = notify.notified() => {
-                if let Some(signal) = race_with_shutdown(super::poll_once(&relay, &agent, &mut tasks), &mut sigint, &mut sigterm).await {
-                    info!(signal, "shutdown requested during poll");
+                if race_with_shutdown(super::poll_once(&relay, &agent, &mut tasks), &shutdown).await {
+                    info!("shutdown requested during poll");
                     shutdown_dashboard(&mut dashboard_shutdown, &mut dashboard_task).await;
+                    shutdown_gateway(&gateway_token, &mut gateway_task).await;
                     relay.client.shutdown().await;
                     break;
                 }
@@ -165,32 +174,32 @@ pub async fn run(config: Config) -> Result<()> {
                 }
                 dashboard_task = None;
             }
-            _ = sigint.recv() => {
-                info!(signal = "SIGINT", "shutdown requested");
-                shutdown_dashboard(&mut dashboard_shutdown, &mut dashboard_task).await;
-                relay.client.shutdown().await;
-                break;
+            joined = async { gateway_task.as_mut().unwrap().await }, if gateway_task.is_some() => {
+                match joined {
+                    Ok(()) => error!("gateway server task exited unexpectedly"),
+                    Err(e) => error!(error = %e, "gateway server task panicked"),
+                }
+                gateway_task = None;
             }
-            _ = sigterm.recv() => {
-                info!(signal = "SIGTERM", "shutdown requested");
+            _ = shutdown.cancelled() => {
+                info!("shutdown requested");
                 shutdown_dashboard(&mut dashboard_shutdown, &mut dashboard_task).await;
+                shutdown_gateway(&gateway_token, &mut gateway_task).await;
                 relay.client.shutdown().await;
                 break;
             }
         }
     }
-    Ok(())
+    Ok(exit.exit())
 }
 
 async fn race_with_shutdown<F: std::future::Future<Output = ()>>(
     fut: F,
-    sigint: &mut tokio::signal::unix::Signal,
-    sigterm: &mut tokio::signal::unix::Signal,
-) -> Option<&'static str> {
+    shutdown: &CancellationToken,
+) -> bool {
     tokio::select! {
-        _ = fut => None,
-        _ = sigint.recv() => Some("SIGINT"),
-        _ = sigterm.recv() => Some("SIGTERM"),
+        _ = fut => false,
+        _ = shutdown.cancelled() => true,
     }
 }
 
@@ -208,6 +217,23 @@ async fn shutdown_dashboard(
             Err(_) => warn!(
                 timeout = ?DASHBOARD_SHUTDOWN_TIMEOUT,
                 "dashboard server did not shut down in time; leaving it behind"
+            ),
+        }
+    }
+}
+
+async fn shutdown_gateway(
+    gateway_token: &CancellationToken,
+    gateway_task: &mut Option<tokio::task::JoinHandle<()>>,
+) {
+    gateway_token.cancel();
+    if let Some(task) = gateway_task.take() {
+        match tokio::time::timeout(GATEWAY_SHUTDOWN_TIMEOUT, task).await {
+            Ok(Ok(())) => {}
+            Ok(Err(e)) => error!(error = %e, "gateway server task panicked during shutdown"),
+            Err(_) => warn!(
+                timeout = ?GATEWAY_SHUTDOWN_TIMEOUT,
+                "gateway server did not shut down in time; leaving it behind"
             ),
         }
     }

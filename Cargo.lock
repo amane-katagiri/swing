@@ -1824,17 +1824,20 @@ dependencies = [
  "cid",
  "clap",
  "futures-util",
+ "libc",
  "nostr-sdk",
  "reqwest",
  "serde",
  "serde_json",
  "tempfile",
  "tokio",
+ "tokio-util",
  "toml",
  "tower",
  "tower-http",
  "tracing",
  "tracing-subscriber",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

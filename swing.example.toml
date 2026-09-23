@@ -7,7 +7,7 @@ site_event_kind = 35980             # SWING_SITE_EVENT_KIND
 replica_event_kind = 35981          # SWING_REPLICA_EVENT_KIND
 
 [ipfs]
-api = "http://127.0.0.1:5001"       # SWING_IPFS_API
+#api = "http://127.0.0.1:5001"      # SWING_IPFS_API（[kubo].managed = false のときだけ使う。既定 http://127.0.0.1:5001。managed = true で指定するとエラー）
 mfs_root = "/swing"                 # SWING_MFS_ROOT
 
 [policy]
@@ -42,3 +42,17 @@ gateway = "http://localhost:8080"   # SWING_DASHBOARD_GATEWAY（空文字でリ�
 #desktop_page_css = "/path/to/links.css"  # SWING_DASHBOARD_DESKTOP_PAGE_CSS（そのページ専用の CSS）
 #desktop_banner = "/path/to/banner.gif"   # SWING_DASHBOARD_DESKTOP_BANNER（88×31 バナー。png/gif/jpeg/webp/svg）
 max_upload = "2GB"                  # SWING_DASHBOARD_MAX_UPLOAD（POST /api/publish/upload のボディ上限。0 はエラー）
+
+[kubo]
+managed = true                      # SWING_KUBO_MANAGED（true: swing up が Kubo を子プロセスとして動かす。false: 外部の Kubo（[ipfs].api）を使う）
+#binary = "/usr/local/bin/ipfs"     # SWING_KUBO_BINARY（既定: swing 実行ファイルと同じディレクトリの ipfs(.exe)、無ければ PATH の ipfs）
+#repo = "./data/kubo"               # SWING_KUBO_REPO（IPFS_PATH。既定: [agent].state_dir/kubo）
+#storage_max = "100GB"              # SWING_KUBO_STORAGE_MAX（Datastore.StorageMax。既定: [policy].max_total_storage と同じ値）
+provide_strategy = "pinned+mfs"     # SWING_KUBO_PROVIDE_STRATEGY（Provide.Strategy）
+gateway_listen = "127.0.0.1:8080"   # SWING_KUBO_GATEWAY_LISTEN（Addresses.Gateway）
+#swarm_port = 4001                  # SWING_KUBO_SWARM_PORT（Addresses.Swarm のポート。未設定なら Kubo の既定のまま触らない）
+
+[gateway]
+listen = "off"                      # SWING_GATEWAY_LISTEN（例 "127.0.0.1:8081"。"off" で無効）
+hosts = []                          # SWING_GATEWAY_HOSTS（カンマ区切り。DNSLink で配信するホスト名。managed なら Kubo の Gateway.PublicGateways にも入れる）
+#upstream = "http://127.0.0.1:8080" # SWING_GATEWAY_UPSTREAM（プロキシ先の Kubo gateway。既定: managed なら http://<[kubo].gateway_listen>、そうでなければ http://127.0.0.1:8080）

@@ -664,10 +664,17 @@ fn nip05_mode_str(mode: config::Nip05Mode) -> &'static str {
     }
 }
 
-fn dashboard_listen_str(listen: &config::DashboardListen) -> String {
+fn listen_str(listen: &config::Listen) -> String {
     match listen {
-        config::DashboardListen::Off => "off".to_string(),
-        config::DashboardListen::Addr(addr) => addr.to_string(),
+        config::Listen::Off => "off".to_string(),
+        config::Listen::Addr(addr) => addr.to_string(),
+    }
+}
+
+fn ipfs_api_str(api: &config::IpfsApi) -> String {
+    match api {
+        config::IpfsApi::Url(url) => url.clone(),
+        config::IpfsApi::Managed => "managed".to_string(),
     }
 }
 
@@ -715,7 +722,7 @@ pub fn config_dto(config: &config::Config) -> ConfigDto {
             ConfigItemDto::new(
                 "api",
                 "SWING_IPFS_API",
-                ConfigValue::Str(config.ipfs.api.clone()),
+                ConfigValue::Str(ipfs_api_str(&config.ipfs.api)),
             ),
             ConfigItemDto::new(
                 "mfs_root",
@@ -854,7 +861,7 @@ pub fn config_dto(config: &config::Config) -> ConfigDto {
             ConfigItemDto::new(
                 "listen",
                 "SWING_DASHBOARD_LISTEN",
-                ConfigValue::Str(dashboard_listen_str(&config.dashboard.listen)),
+                ConfigValue::Str(listen_str(&config.dashboard.listen)),
             ),
             ConfigItemDto::new(
                 "allowed_hosts",
@@ -923,9 +930,87 @@ pub fn config_dto(config: &config::Config) -> ConfigDto {
         ],
     };
 
+    let kubo = ConfigSectionDto {
+        name: "kubo".to_string(),
+        items: vec![
+            ConfigItemDto::new(
+                "managed",
+                "SWING_KUBO_MANAGED",
+                ConfigValue::Bool(config.kubo.managed),
+            ),
+            ConfigItemDto::new(
+                "binary",
+                "SWING_KUBO_BINARY",
+                ConfigValue::Str(
+                    config
+                        .kubo
+                        .binary
+                        .as_ref()
+                        .map(|p| p.display().to_string())
+                        .unwrap_or_default(),
+                ),
+            ),
+            ConfigItemDto::new(
+                "repo",
+                "SWING_KUBO_REPO",
+                ConfigValue::Str(config.kubo.repo.display().to_string()),
+            ),
+            ConfigItemDto::new(
+                "storage_max",
+                "SWING_KUBO_STORAGE_MAX",
+                ConfigValue::Num(config.kubo.storage_max),
+            )
+            .with_display(format_bytes(config.kubo.storage_max)),
+            ConfigItemDto::new(
+                "provide_strategy",
+                "SWING_KUBO_PROVIDE_STRATEGY",
+                ConfigValue::Str(config.kubo.provide_strategy.clone()),
+            ),
+            ConfigItemDto::new(
+                "gateway_listen",
+                "SWING_KUBO_GATEWAY_LISTEN",
+                ConfigValue::Str(config.kubo.gateway_listen.to_string()),
+            ),
+            ConfigItemDto::new(
+                "swarm_port",
+                "SWING_KUBO_SWARM_PORT",
+                ConfigValue::Str(
+                    config
+                        .kubo
+                        .swarm_port
+                        .map(|p| p.to_string())
+                        .unwrap_or_else(|| "-".to_string()),
+                ),
+            ),
+        ],
+    };
+
+    let gateway = ConfigSectionDto {
+        name: "gateway".to_string(),
+        items: vec![
+            ConfigItemDto::new(
+                "listen",
+                "SWING_GATEWAY_LISTEN",
+                ConfigValue::Str(listen_str(&config.gateway.listen)),
+            ),
+            ConfigItemDto::new(
+                "hosts",
+                "SWING_GATEWAY_HOSTS",
+                ConfigValue::List(config.gateway.hosts.clone()),
+            ),
+            ConfigItemDto::new(
+                "upstream",
+                "SWING_GATEWAY_UPSTREAM",
+                ConfigValue::Str(config.gateway.upstream.clone()),
+            ),
+        ],
+    };
+
     ConfigDto {
         config_path: config.config_path.as_ref().map(|p| p.display().to_string()),
-        sections: vec![nostr, ipfs, policy, agent, publish, dashboard],
+        sections: vec![
+            nostr, ipfs, policy, agent, publish, dashboard, kubo, gateway,
+        ],
     }
 }
 

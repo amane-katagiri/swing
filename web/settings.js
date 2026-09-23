@@ -1,6 +1,6 @@
 import { storage } from './storage.js';
 import { t } from './i18n.js';
-import { cache, el, apiFetch, setStatus, clearStatus, describeError, createLoadGuard } from './util.js';
+import { cache, el, apiFetch, setStatus, clearStatus, describeError, createLoadGuard, setBusy } from './util.js';
 
 const settingsEls = {
   status: document.getElementById('settings-config-status'),
@@ -10,6 +10,9 @@ const settingsEls = {
   userCssInput: document.getElementById('user-css-input'),
   userCssApply: document.getElementById('user-css-apply'),
   userCssReset: document.getElementById('user-css-reset'),
+  processStop: document.getElementById('process-stop'),
+  processRestart: document.getElementById('process-restart'),
+  processStatus: document.getElementById('process-status'),
 };
 
 function formatRawConfigValue(v) {
@@ -88,6 +91,33 @@ export const SettingsView = {
       settingsEls.userCssInput.value = '';
       storage.remove('swing:user-css');
       userCssEl.textContent = '';
+    });
+
+    settingsEls.processStop.addEventListener('click', async () => {
+      if (!window.confirm(t('processStopConfirm'))) return;
+      clearStatus(settingsEls.processStatus);
+      setBusy(settingsEls.processStop, true);
+      try {
+        await apiFetch('/api/shutdown', { method: 'POST' });
+        setStatus(settingsEls.processStatus, 'ok', t('processStopResult'));
+      } catch (err) {
+        setStatus(settingsEls.processStatus, 'error', describeError(err));
+      } finally {
+        setBusy(settingsEls.processStop, false);
+      }
+    });
+    settingsEls.processRestart.addEventListener('click', async () => {
+      if (!window.confirm(t('processRestartConfirm'))) return;
+      clearStatus(settingsEls.processStatus);
+      setBusy(settingsEls.processRestart, true);
+      try {
+        await apiFetch('/api/restart', { method: 'POST' });
+        setStatus(settingsEls.processStatus, 'ok', t('processRestartResult'));
+      } catch (err) {
+        setStatus(settingsEls.processStatus, 'error', describeError(err));
+      } finally {
+        setBusy(settingsEls.processRestart, false);
+      }
     });
   },
   onShow() {

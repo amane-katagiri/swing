@@ -192,6 +192,13 @@ const MESSAGES = {
     customCssLabel: 'Custom CSS',
     apply: 'Apply',
     reset: 'Reset',
+    processHeading: 'Process',
+    processStop: 'Stop',
+    processRestart: 'Restart',
+    processStopConfirm: 'Stop the swing process now?',
+    processRestartConfirm: 'Restart the swing process now?',
+    processStopResult: 'Stop requested. If this runs as a service, it may or may not come back depending on how it is set up.',
+    processRestartResult: 'Restart requested.',
   },
   ja: {
     unknownError: '不明なエラーが発生しました。',
@@ -384,6 +391,13 @@ const MESSAGES = {
     customCssLabel: 'カスタムCSS',
     apply: '適用',
     reset: 'リセット',
+    processHeading: 'プロセス',
+    processStop: '停止',
+    processRestart: '再起動',
+    processStopConfirm: 'swingプロセスを今すぐ停止しますか？',
+    processRestartConfirm: 'swingプロセスを今すぐ再起動しますか？',
+    processStopResult: '停止コマンドを送信しました。サービスの設定によって再起動される場合があります。',
+    processRestartResult: '再起動コマンドを送信しました。',
   },
 };
 
