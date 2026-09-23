@@ -55,9 +55,9 @@ TimeoutStopSec=60
 WantedBy=default.target        # --system なら multi-user.target
 ```
 
-`ExecStart`/`WorkingDirectory` の各パスは二重引用符で囲み、`\`・`"` をエスケープする（`quote_systemd_arg`）。
+`ExecStart` の各パスは二重引用符で囲み、`%` を `%%`（systemd の指定子）、`$` を `$$`（環境変数の展開）にし、`\`・`"` をエスケープする（`quote_systemd_arg`）。`WorkingDirectory` は引用符を受け付けない（「path is not absolute」で unit が読み込めなくなる）ので、囲まずに `%` だけ `%%` にする（空白はそのままでよい）。
 
-- `install`: unit を書き出し → `systemctl [--user] daemon-reload` → `systemctl [--user] enable [--now] swing`（`--no-start` なら `--now` を付けない）。`--system` でなければ続けて `loginctl enable-linger` を試み、失敗したら「ログアウト中も動かし続けるには自分で実行して」という warn を出す（インストール自体は失敗にしない）。
+- `install`: unit を書き出し → `systemctl [--user] daemon-reload` → `systemctl [--user] enable [--now] swing`（`--no-start` なら `--now` を付けない）。`--system` でなければ続けて `loginctl enable-linger <uid>` を試み（引数なしだと呼び出し元の logind セッションが対象になり、WSL のシェルなどセッションが無い環境では「No such device or address」で失敗するため UID を渡す）、失敗したら「ログアウト中も動かし続けるには自分で実行して」という warn を出す（インストール自体は失敗にしない）。
 - `uninstall`: `systemctl [--user] disable --now swing`（失敗は「未登録だったかもしれない」旨の注記のみ）→ unit ファイル削除 → `systemctl [--user] daemon-reload`。
 - `stop`: `systemctl [--user] stop swing`。unit の `ExecStart` はプロセスに SIGTERM を送る（`KillSignal=SIGTERM`。[`up.md`](up.md#終了要求と-exit-codeshutdownexitrequest-shutdownexit) の停止シーケンスに入る）のを `systemd` が待つだけで、登録は残る（`enable` はそのまま。次のログイン/`systemctl start swing`で再び動く）。`Restart=on-failure` なので、正常終了（exit code 0）扱いの `stop`（`systemctl stop` は SIGTERM 送出後 `TimeoutStopSec=60` まで待ってから `exit 0` で終わったとみなす）では自動再起動しない。
 - `status`: unit ファイルが無ければ `not installed` と出して終わる。あれば `systemctl [--user] status swing --no-pager` をそのまま実行し、標準入出力をそのまま引き継ぐ（終了コードは呼び出し元に伝播しない）。

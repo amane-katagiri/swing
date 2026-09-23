@@ -47,3 +47,17 @@ WSL から `cargo xwin build --release --target x86_64-pc-windows-msvc` で作�
   - 常に（端末から起動したときも）親を見張る案は採らなかった。端末から起動した swing はコンソールを閉じれば止まり、起動元が先に終わるランチャーなどから起動した場合に巻き込まれて止まるのを避けるため、タスク経由のときだけ付ける。
   - `--exit-with-parent` を付けたタスクを登録し直して `schtasks /End /TN swing` すると、swing と Kubo の両方が終了することを実機で確認した（`swing.log` の `signal="parent exited"` は見ていない）。
 - `ipfs.exe` のファイアウォール許可ルールを消してからタスク経由で起動し直し、タスクで起動したタイミングで Windows ファイアウォールのダイアログが出ることを実機で確認した（`InteractiveToken` でユーザーのセッションで動いているため）。
+
+## 追記: Linux（systemd）
+
+WSL2（systemd 有効）で、鍵を置かない使い捨ての設定（`[dashboard] listen = "127.0.0.1:18182"`、`[agent] state_dir = "./data"`）でセットアップモードの `swing up` を systemd のユーザーユニットとして登録して確かめた。セットアップモードはダッシュボードだけで Kubo も relay も使わないので、外部に通信しない。
+
+- 最初の `swing service install` で unit が読み込めなかった（`WorkingDirectory= path is not absolute`）。`WorkingDirectory` も `ExecStart` と同じく二重引用符で囲んでいたのが原因で、systemd はこの設定の引用符を受け付けない。`WorkingDirectory` は囲まないようにした。あわせて、パスに入った `%`（指定子）と `$`（`ExecStart` の環境変数展開）もエスケープするようにした。
+- `loginctl enable-linger` が「No such device or address」で失敗して警告が出た（linger はもともと有効だった）。引数なしだと呼び出し元の logind セッションが対象になるためで、UID を渡すようにしたら通った。
+- 直したあと、空白と `%` を含むディレクトリ（`sp ace 100%`）に置いた swing で次を確認した。
+  - `service install` で起動し、ダッシュボードが 200 を返す。
+  - `kill -9` すると 5 秒後に systemd が別の PID で起動し直す（`NRestarts=1`）。
+  - `swing stop --restart` では PID が変わらずに再起動する。再起動のあとに SIGTERM を送っても `shutdown requested` は 1 回だけ出た（Ctrl+C の監視の重複の修正を Linux でも確認）。
+  - `service stop` と `swing stop` のどちらでも `inactive`・`Result=success`・exit code 0 で止まり、再起動されない。
+  - `service uninstall` で unit と `default.target.wants` のリンクが消える。
+- Kubo を管理する通常のモードを systemd 経由で動かすのは、このマシンに `ipfs` が無いので確かめていない。

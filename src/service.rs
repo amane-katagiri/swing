@@ -31,8 +31,15 @@ fn require_system_supported(system: bool) -> Result<()> {
     Ok(())
 }
 
+fn escape_systemd_specifiers(value: &str) -> String {
+    value.replace('%', "%%")
+}
+
 fn quote_systemd_arg(arg: &str) -> String {
-    let escaped = arg.replace('\\', "\\\\").replace('"', "\\\"");
+    let escaped = escape_systemd_specifiers(arg)
+        .replace('$', "$$")
+        .replace('\\', "\\\\")
+        .replace('"', "\\\"");
     format!("\"{escaped}\"")
 }
 
@@ -63,7 +70,7 @@ TimeoutStopSec=60\n\
 \n\
 [Install]\n\
 WantedBy={wanted_by}\n",
-        workdir = quote_systemd_arg(&workdir.to_string_lossy()),
+        workdir = escape_systemd_specifiers(&workdir.to_string_lossy()),
     )
 }
 
@@ -277,7 +284,10 @@ mod linux {
         );
 
         if !system {
-            let linger = Command::new("loginctl").args(["enable-linger"]).output();
+            let uid = unsafe { libc::getuid() }.to_string();
+            let linger = Command::new("loginctl")
+                .args(["enable-linger", &uid])
+                .output();
             match linger {
                 Ok(out) if out.status.success() => {
                     println!("Enabled linger so swing keeps running while logged out.");
@@ -703,7 +713,7 @@ mod tests {
                 "ExecStart=\"/home/u/.cargo/bin/swing\" up --config \"/home/u/swing.toml\""
             )
         );
-        assert!(unit.contains("WorkingDirectory=\"/home/u\""));
+        assert!(unit.contains("WorkingDirectory=/home/u\n"));
         assert!(unit.contains("Restart=on-failure"));
         assert!(unit.contains("RestartSec=5"));
         assert!(unit.contains("KillSignal=SIGTERM"));
@@ -733,13 +743,26 @@ mod tests {
         );
         assert!(unit.contains("\"/home/u/my apps/swing\""));
         assert!(unit.contains("\"/home/u/my dir/swing.toml\""));
-        assert!(unit.contains("WorkingDirectory=\"/home/u/my dir\""));
+        assert!(unit.contains("WorkingDirectory=/home/u/my dir\n"));
     }
 
     #[test]
     fn systemd_unit_escapes_quotes_and_backslashes() {
         let quoted = quote_systemd_arg("a\"b\\c");
         assert_eq!(quoted, "\"a\\\"b\\\\c\"");
+    }
+
+    #[test]
+    fn systemd_unit_escapes_specifiers_and_variables() {
+        let unit = systemd_unit(
+            Path::new("/home/u/$HOME/swing"),
+            Path::new("/home/u/100%/swing.toml"),
+            Path::new("/home/u/100%"),
+            false,
+        );
+        assert!(unit.contains("\"/home/u/$$HOME/swing\""));
+        assert!(unit.contains("\"/home/u/100%%/swing.toml\""));
+        assert!(unit.contains("WorkingDirectory=/home/u/100%%\n"));
     }
 
     #[test]
