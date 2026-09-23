@@ -5,8 +5,10 @@ use std::path::PathBuf;
 use anyhow::{Result, bail};
 use nostr_sdk::prelude::PublicKey;
 
+use crate::api_client::ApiClient;
 use crate::config::Config;
-use crate::ipfs::{IpfsClient, KuboStore, MfsEntry};
+use crate::dashboard::dto::StatusDto;
+use crate::ipfs::{KuboStore, MfsEntry};
 use crate::mfs::MfsLayout;
 use crate::state::{self, State};
 
@@ -324,63 +326,78 @@ fn bytes_or_unknown(size: Option<u64>) -> String {
     size.map_or_else(|| "unknown".to_string(), |n| n.to_string())
 }
 
-fn print_status(report: &StatusReport) {
-    println!("Stored versions ({}):", report.state_path.display());
-    if report.lines.is_empty() {
+// Machine-readable tokens from the dashboard API (dashboard/dto.rs) restated
+// as the short human labels the CLI has always printed in brackets.
+fn health_label(token: &str) -> &str {
+    match token {
+        "cid_mismatch" => "cid mismatch",
+        "check_failed" => "check failed",
+        other => other,
+    }
+}
+
+fn print_status_dto(state_path: &std::path::Path, dto: &StatusDto) {
+    println!("Stored versions ({}):", state_path.display());
+    if dto.versions.is_empty() {
         println!("  (none)");
     }
-    for line in &report.lines {
-        match line {
-            StatusLine::InvalidKey { key, cid } => {
-                println!("  {key} cid={cid} [invalid site key]");
-            }
-            StatusLine::Version(v) => {
-                let detail = match &v.health {
-                    VersionHealth::Ok => String::new(),
-                    other => format!(": {other}"),
-                };
-                println!(
-                    "  {} cid={} size={} [{}]{detail}",
-                    v.path,
-                    v.cid,
-                    v.size,
-                    v.health.label()
-                );
-            }
+    for v in &dto.versions {
+        if v.health == "invalid_key" {
+            let key = v.detail.as_deref().unwrap_or("?");
+            let cid = v.cid.as_deref().unwrap_or("?");
+            println!("  {key} cid={cid} [invalid site key]");
+            continue;
         }
+        let detail = match &v.detail {
+            Some(d) => format!(": {d}"),
+            None => String::new(),
+        };
+        println!(
+            "  {} cid={} size={} [{}]{detail}",
+            v.path.as_deref().unwrap_or(""),
+            v.cid.as_deref().unwrap_or(""),
+            v.size.unwrap_or(0),
+            health_label(&v.health),
+        );
     }
 
     println!();
     println!("Actual size (blocks the versions share are counted once):");
-    if report.sites.is_empty() {
+    if dto.sites.is_empty() {
         println!("  (none)");
     }
-    for site in &report.sites {
+    for site in &dto.sites {
         println!("  {} {}", site.path, bytes_or_unknown(site.actual));
     }
-    if !report.sites.is_empty() {
-        println!("  total {}", bytes_or_unknown(report.actual_bytes()));
+    if !dto.sites.is_empty() {
+        println!("  total {}", bytes_or_unknown(dto.actual_bytes));
     }
 
     println!();
     println!("Not in state (the agent removes them on its next sweep):");
-    if report.garbage.paths.is_empty() && report.garbage.unlisted.is_empty() {
+    if dto.garbage.is_empty() {
         println!("  (none)");
     }
-    for path in &report.garbage.paths {
-        println!("  {path}");
-    }
-    for (path, error) in &report.garbage.unlisted {
-        println!("  {path} [list failed]: {error}");
+    for g in &dto.garbage {
+        if g.list_failed {
+            let reason = g.list_failed_reason.as_deref().unwrap_or("unknown error");
+            println!("  {} [list failed]: {reason}", g.path);
+        } else {
+            println!("  {}", g.path);
+        }
     }
 }
 
 pub async fn status(config: &Config) -> Result<()> {
-    let ipfs = IpfsClient::new(config.ipfs_api_url()?);
-    let report = collect_status(&ipfs, config).await?;
-    print_status(&report);
-    if report.problems > 0 {
-        bail!("{} problem(s) found", report.problems);
+    let client = ApiClient::new(config.dashboard.listen);
+    let dto = client
+        .get::<StatusDto>("/api/status")
+        .await
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
+    let state_path = config.agent.state_dir.join("state.json");
+    print_status_dto(&state_path, &dto);
+    if dto.problems > 0 {
+        bail!("{} problem(s) found", dto.problems);
     }
     Ok(())
 }

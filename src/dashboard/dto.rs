@@ -1,5 +1,5 @@
 use nostr_sdk::prelude::PublicKey;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::config;
 use crate::health;
@@ -8,7 +8,7 @@ use crate::nostr;
 use crate::replicas;
 use crate::webring;
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct PubkeyDto {
     pub pubkey: String,
     pub npub: String,
@@ -23,7 +23,7 @@ impl PubkeyDto {
     }
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct RelayResultDto {
     pub relay: String,
     pub ok: bool,
@@ -167,7 +167,7 @@ pub fn sites_dto(view: &mirror::SitesView, gateway: Option<&str>) -> SitesDto {
     }
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct VersionStatusDto {
     pub pubkey: Option<String>,
     pub npub: Option<String>,
@@ -222,13 +222,14 @@ fn invalid_key_status_dto(key: &str, cid: &str) -> VersionStatusDto {
     }
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct GarbageDto {
     pub path: String,
     pub list_failed: bool,
+    pub list_failed_reason: Option<String>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct SiteSizeDto {
     pub pubkey: String,
     pub npub: String,
@@ -237,7 +238,7 @@ pub struct SiteSizeDto {
     pub actual: Option<u64>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct StatusDto {
     pub versions: Vec<VersionStatusDto>,
     pub sites: Vec<SiteSizeDto>,
@@ -254,12 +255,20 @@ pub fn status_dto(report: &health::StatusReport) -> StatusDto {
         .map(|p| GarbageDto {
             path: p.clone(),
             list_failed: false,
+            list_failed_reason: None,
         })
         .collect();
-    garbage.extend(report.garbage.unlisted.iter().map(|(p, _)| GarbageDto {
-        path: p.clone(),
-        list_failed: true,
-    }));
+    garbage.extend(
+        report
+            .garbage
+            .unlisted
+            .iter()
+            .map(|(p, reason)| GarbageDto {
+                path: p.clone(),
+                list_failed: true,
+                list_failed_reason: Some(reason.clone()),
+            }),
+    );
     let versions = report
         .lines
         .iter()
@@ -310,13 +319,15 @@ pub fn mirror_list_dto(view: &mirror::MirrorListView) -> MirrorListDto {
     }
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct MirrorChangeDto {
     pub changed: Vec<PubkeyDto>,
     pub unchanged: Vec<PubkeyDto>,
     pub published: bool,
     pub relays: Vec<RelayResultDto>,
     pub members: Vec<PubkeyDto>,
+    pub note: Option<String>,
+    pub follow_set_found: bool,
 }
 
 pub fn mirror_change_dto(change: &mirror::MirrorChange) -> MirrorChangeDto {
@@ -326,6 +337,8 @@ pub fn mirror_change_dto(change: &mirror::MirrorChange) -> MirrorChangeDto {
         published: change.published,
         relays: relay_results_dto(&change.relay_results),
         members: change.set.pubkeys().iter().map(PubkeyDto::new).collect(),
+        note: change.note.map(str::to_string),
+        follow_set_found: change.follow_set_found,
     }
 }
 
@@ -861,7 +874,12 @@ pub fn config_dto(config: &config::Config) -> ConfigDto {
             ConfigItemDto::new(
                 "listen",
                 "SWING_DASHBOARD_LISTEN",
-                ConfigValue::Str(listen_str(&config.dashboard.listen)),
+                ConfigValue::Str(config.dashboard.listen.to_string()),
+            ),
+            ConfigItemDto::new(
+                "ui",
+                "SWING_DASHBOARD_UI",
+                ConfigValue::Bool(config.dashboard.ui),
             ),
             ConfigItemDto::new(
                 "allowed_hosts",

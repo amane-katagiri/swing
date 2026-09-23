@@ -13,7 +13,7 @@
 | [`architecture/gateway.md`](architecture/gateway.md) | 内蔵 gateway（`gateway.rs`）: Host 振り分けと Kubo gateway へのプロキシ |
 | [`architecture/service.md`](architecture/service.md) | `swing service install / uninstall / status / stop`（systemd / launchd / タスクスケジューラ）、`swing stop`（`stop.rs`） |
 | [`architecture/docker.md`](architecture/docker.md) | Dockerfile、compose、外部 Kubo コンテナの設定 |
-| [`architecture/dashboard.md`](architecture/dashboard.md) | `swing up` 内蔵の Web ダッシュボード（起動と終了、設定、ガード、静的ファイル） |
+| [`architecture/dashboard.md`](architecture/dashboard.md) | `swing up` の寿命で常時動く Web ダッシュボード兼制御 API（起動と終了、設定、ガード、静的ファイル、agent 未準備時の扱い） |
 | [`architecture/dashboard/http-api.md`](architecture/dashboard/http-api.md) | ダッシュボードの HTTP API |
 | [`architecture/dashboard/web.md`](architecture/dashboard/web.md) | ダッシュボードの画面と CSS カスタマイズ |
 
@@ -58,9 +58,10 @@ swing/
     lock.rs          多重起動防止のインスタンスロック（swing.lock）。詳細は architecture/up.md
     gateway.rs       内蔵 gateway（axum）。Host 名での振り分けと Kubo gateway へのプロキシ。詳細は architecture/gateway.md
     service.rs       `swing service install/uninstall/status/stop`（systemd / launchd / タスクスケジューラ）。詳細は architecture/service.md
-    stop.rs          `swing stop`（ダッシュボード API 経由、無ければ unix は SIGTERM）。詳細は architecture/up.md, architecture/service.md
+    stop.rs          `swing stop`（動いている `swing up` のダッシュボード API 経由。API に到達できなければ「動いていない」として終了する）。詳細は architecture/up.md, architecture/service.md
     shutdown.rs      `cancel_on_signal`（SIGINT/SIGTERM → CancellationToken、force-exit watchdog）、`ExitRequest`/`Exit`（ダッシュボードからの停止・再起動要求と exit code）。up/agent 共通
-    dashboard/       agent 内蔵の Web ダッシュボード（mod.rs, guard.rs, api.rs, dto.rs, assets.rs）。詳細は architecture/dashboard.md
+    dashboard/       `swing up` 常駐の Web ダッシュボード兼制御 API（mod.rs, guard.rs, api.rs, dto.rs, assets.rs）。詳細は architecture/dashboard.md
+    api_client.rs    ダッシュボード API を呼ぶ CLI 共通クライアント（`ApiClient`）。`status`・`mirror add`・`mirror remove`・`stop` が使う。詳細は architecture/dashboard/http-api.md
   web/               ダッシュボードのフロント（index.html, style.css, ES modules, 画像・フォントなどの静的アセット一式）。ビルド工程なしで include_str!/include_bytes! によりバイナリへ埋め込む。desktop-page.html / desktop-page.css / desktop-banner.gif（Desktop 画面のリンク集ページ）だけは設定で差し替えられる。詳細は architecture/dashboard.md
   tests/
     kubo_integration.rs          Kubo 連携の統合テスト（#[ignore]）
@@ -71,6 +72,8 @@ swing/
 ```
 
 `mirror.rs`・`health.rs`・`replicas.rs`・`webring.rs`・`publish.rs`・`nostr.rs` は、relay/Kubo とやり取りして値を返す `collect_*` 系の関数と、それを表示する CLI 側の薄い関数とに分かれている。ダッシュボードの API ハンドラは同じ `collect_*` 関数を呼び、DTO に変換する。
+
+`swing sites` / `replicas` / `webring` / `mirror list` / `publish` はこの `collect_*` 関数を CLI から直接呼ぶ（relay だけで完結する読み取りと、ローカルディレクトリを直接 Kubo に流し込む publish は動いている `swing up` を前提にしないため）。一方 `swing status` と `swing mirror add` / `mirror remove` は `collect_*` を直接呼ばず、`api_client::ApiClient` でダッシュボードの `/api/status` `/api/mirror/add` `/api/mirror/remove` を叩き、返ってきた DTO をそのまま印字する（`src/health.rs::print_status_dto`、`src/mirror.rs::print_mirror_change_dto`）。`swing stop` も同様に `/api/shutdown` `/api/restart` を叩く。これらは `swing up` が動いていないと使えず、API に接続できなければ `status` / `mirror add` / `mirror remove` はエラー終了、`stop` は `not running` を出して正常終了する（[`architecture/cli.md`](architecture/cli.md)）。
 
 ## CLI
 
@@ -144,7 +147,8 @@ nip05 = "warn"                      # SWING_PUBLISH_NIP05（--nip05 が優先）
 keep_versions = 5                   # SWING_PUBLISH_KEEP_VERSIONS
 
 [dashboard]
-listen = "127.0.0.1:8082"           # SWING_DASHBOARD_LISTEN（"off" で無効）
+listen = "127.0.0.1:8082"           # SWING_DASHBOARD_LISTEN（`swing up` が動いている間ずっと待ち受ける）
+ui = true                           # SWING_DASHBOARD_UI（false で静的な Web UI を配信せず、/api/* の制御 API だけ残す）
 allowed_hosts = []                  # SWING_DASHBOARD_ALLOWED_HOSTS（カンマ区切り、ポート抜き）
 gateway = "http://localhost:8080"   # SWING_DASHBOARD_GATEWAY（空文字でリンクを出さない）
 #custom_css = "/path/to/custom.css" # SWING_DASHBOARD_CUSTOM_CSS

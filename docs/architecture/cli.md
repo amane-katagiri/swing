@@ -8,6 +8,7 @@
 - 「Follow Set」は kind 30000、`d = mirror_set` のうち、作者ごとに NIP-01 の置き換え規則で最新のもの。`created_at` が現在時刻より 900 秒（`nostr::MAX_FUTURE_SKEW`）を超えて先のものは、それが relay から取れた最新であっても無いものとして扱う（`RelayClient::fetch_follow_set` / `fetch_follow_sets`）。「サイトごとの最新のサイトイベント」（sites・replicas・webring で使う `nostr::select_latest`）も同じ基準で、先すぎる `created_at` のイベントは選ばない。
 - `up`・`publish`・`service install`/`uninstall` 以外は読み取り専用で、`state.json` も MFS も OS のファイルも変えない（`mirror add` / `remove` は Follow Set を relay に送る。`stop`／`service stop` は動いているプロセスに停止・再起動を要求するだけで、ファイルは変えない）。`service install`/`uninstall` は OS のサービス定義ファイル（systemd unit / launchd plist / タスクスケジューラのタスク）を書く・消す。
 - `up` は処理を始める前に `<[agent].state_dir>/swing.lock` のインスタンスロックを取る（[`up.md#多重起動の防止lockrs`](up.md#多重起動の防止lockrs)）。同じ `state_dir` に対して既に動いていれば、起動側のエラーで即座に終了する。
+- `status`・`mirror add`・`mirror remove`・`stop`／`service stop` は relay/Kubo に直接つながず、動いている `swing up` のダッシュボード API（`[dashboard].listen`、既定 `http://127.0.0.1:8082`）を `src/api_client.rs::ApiClient` 経由で叩く。API が `[dashboard].listen` を未指定アドレス（`0.0.0.0` / `::`）で待ち受けていても、クライアントは接続先と `Host` ヘッダをループバックの同じポートへ正規化する。API に接続できなければ `status`・`mirror add`・`mirror remove` は `swing up is not running (cannot connect to <addr>)` でエラー終了し（非ゼロ終了）、`stop`／`service stop` は `not running` を出して正常終了（終了コード 0）する。`sites`・`replicas`・`webring`・`mirror list`・`publish` はこの API を経由せず relay/Kubo に直接つなぐので、`swing up` が動いていなくても使える。
 
 ## up
 
@@ -15,7 +16,9 @@
 
 ## stop
 
-動いている `swing up` インスタンスに正常終了（グレースフルシャットダウン）を要求する（[`up.md#終了要求と-exit-codeshutdownexitrequest-shutdownexit`](up.md#終了要求と-exit-codeshutdownexitrequest-shutdownexit)、[`service.md#swing-stopstoprs`](service.md#swing-stopstoprs)）。`--config`（省略時は `SWING_CONFIG` または `./swing.toml`）・`--restart`（止めるのではなく再起動を要求する。ダッシュボードが必要）・`--timeout <秒>`（既定 60。この秒数だけ停止を待ち、超えたらエラー）を取る。動いていなければ `not running` と出して正常終了する。
+動いている `swing up` インスタンスに正常終了（グレースフルシャットダウン）を要求する（[`up.md#終了要求と-exit-codeshutdownexitrequest-shutdownexit`](up.md#終了要求と-exit-codeshutdownexitrequest-shutdownexit)、[`service.md#swing-stopstoprs`](service.md#swing-stopstoprs)）。`--config`（省略時は `SWING_CONFIG` または `./swing.toml`）・`--restart`（止めるのではなく再起動を要求する）・`--timeout <秒>`（既定 60。この秒数だけ停止を待ち、超えたらエラー）を取る。
+
+実装（`src/stop.rs`）はダッシュボード API だけを使う。まず `POST /api/shutdown`（`--restart` なら `/api/restart`）を叩く。API に接続できなければ（`swing up` 自体が動いていない）`not running` を出して正常終了する。呼び出しが通れば `GET /api/overview` を 500ms 間隔でポーリングし、接続できなくなった時点（プロセスが終了した時点）で `stopped` を出して正常終了する。`--timeout` はこのポーリングの上限で、超えたらエラー終了する。
 
 ## service install / uninstall / status / stop
 
@@ -50,6 +53,7 @@
 - `add` は結果の `p` タグ数が `nostr::budget::MAX_FOLLOW_SET_ENTRIES`（500）を超えるならエラーで終了し、publish しない（黙って切り詰めない）。
 - `list` は npub と hex を併記する。
 - relay の Follow Set と `state.json` の `follow_set` を比べて新しい方を使う（検証条件は [agent の Follow Set の選び方](agent.md#follow-set-の選び方) と同じ）。保存済みの方を使ったときは `(relays returned an older follow set; ...)` か `(follow set not found on relays; ...)` を表示する。state.json は読むだけ。`sites` も同じ。
+- `list` は relay に直接つなぎ（`mirror::collect_mirror_list`）、`swing up` が動いていなくても使える。`add` / `remove` は動いている `swing up` のダッシュボード API を経由する（`POST /api/mirror/add` / `/api/mirror/remove`、body は `{"keys": [...]}`）。実際の Follow Set 操作は agent が保持する relay 接続（`dashboard::AppState`）で行われ、CLI プロセス自身は relay につながない。`remove` で Follow Set がそもそも見つからない場合は `(no follow set found); no changes` とだけ表示して終わる（`add` に同じ制限は無い。無い状態からの新規作成を許すため）。API に接続できない場合の挙動は上の共通節を参照。
 
 ## sites
 
@@ -71,14 +75,14 @@ state は読まない。
 
 ## status
 
-relay には接続せず、`state.json` と Kubo だけを見る。
+relay には接続せず、動いている `swing up` のダッシュボード API（`GET /api/status`）を叩く。API 側（`health::collect_status`）が `state.json` と Kubo だけを見て組み立てた結果を DTO（`dashboard::dto::StatusDto`）として返し、CLI（`src/health.rs::print_status_dto`）はそれをそのまま印字する。`swing up` が動いていない、または agent 未準備（Kubo の URL が未確定）なら失敗する（上の共通節を参照）。
 
 - `state.json` の版ごとに、版のパス・`cid`・`size`（state に記録された版ごとのサイズ）と判定を 1 行表示する。判定は [起動時の突き合わせ](agent.md#起動時の突き合わせ) と同じ検査で、`[ok]` / `[missing]`（パスが無い）/ `[cid mismatch]` / `[incomplete]`（ブロックが欠けている）/ `[check failed]`（`files/stat` 自体が失敗）のいずれか。`ok` 以外は理由を添える。
 - 続けて `Actual size` 見出しの下に、サイトごとの実容量（そのサイトの全版をまとめた `dag/stat` の `TotalSize`。版どうしで共有しているブロックは 1 回だけ数える）と合計を表示する。測れなかったサイトは `unknown` にし、合計も `unknown` にする。
-- 続けて `Not in state` 見出しの下に、[sweep](agent.md#sweep) が消す MFS のパスを表示する。ディレクトリごと消えるものはそのディレクトリだけを出す。一覧に失敗したディレクトリは `[list failed]` 付きで出す。
+- 続けて `Not in state` 見出しの下に、[sweep](agent.md#sweep) が消す MFS のパスを表示する。ディレクトリごと消えるものはそのディレクトリだけを出す。一覧に失敗したディレクトリは `[list failed]: <理由>` 付きで出す（理由は DTO の `GarbageDto::list_failed_reason`）。
 - `ok` 以外の版と `Not in state` の項目が 1 つでもあれば、件数を表示して 0 以外で終了する。
 - agent の実行中は、保存途中の版（MFS に置いた後、state を保存する前）が `Not in state` に出ることがある。
-- サイト単位で DAG をたどるので、保存量に比例して時間がかかる。
+- サイト単位で DAG をたどるので、保存量に比例して時間がかかる。API 呼び出しはダッシュボードのリクエストタイムアウト（120 秒、`src/dashboard/mod.rs::REQUEST_TIMEOUT`）と `ApiClient` 側のタイムアウト（125 秒）の範囲で待つ。
 
 ## webring
 

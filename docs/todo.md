@@ -9,7 +9,7 @@
 | 中 | 取得に失敗した CID を覚えて指数バックオフで再試行する。今は poll ごとに同じ CID の取得を試み、そのたびに最大 `SWING_FETCH_IDLE_TIMEOUT` の間、並行枠を 1 つ使う | レビュー（DoS） |
 | 低 | レプリカ報告 1 件が持てる `cid` タグの数に上限が無い。誰でも 1 件の報告に大量の `cid` タグを詰め込める（サイトイベント・レプリカ報告・Follow Set の取得件数、1 作者が持つ `d` の数、Follow Set 1 件の `p` タグ数、`webring::crawl` のノード総数には [取得と表示の上限](log/2026-09-23-fetch-and-display-budgets.md) で上限を入れた） | レビュー（DoS） |
 | 低 | `/api/sites`・`/api/replicas`・`/api/webring` の GET はサーバ側でキャッシュせず、同時実行数の制限もレート制限も無い。`keys`/`root`/`key` を 100 件に制限したのはリクエスト 1 回あたりの入力サイズを抑えるだけで、relay を引く GET 自体は何度リクエストしても毎回 relay に取得しに行く | レビュー（DoS） |
-| 中 | ダッシュボードの認証トークン。今は Host 検証・書き込み系の CSRF 対策（`X-Swing-Dashboard` ヘッダ・Origin 検証）だけで、閲覧そのものへの認証は無い。既定の bind 先（`127.0.0.1`）から出さない前提で見送った | レビュー |
+| 中 | ダッシュボードの認証トークン。今は Host 検証・書き込み系の CSRF 対策（`X-Swing-Dashboard` ヘッダ・Origin 検証）だけで、閲覧そのものへの認証は無い。API は `swing up` の寿命でずっと有効で、CLI の一部（`status`/`mirror add`/`mirror remove`/`stop`）も依存するが、既定の bind 先（`127.0.0.1`）から出さない前提で見送っている | レビュー |
 | 低 | `/api/status` が重い。サイト単位で DAG をたどるため保存量に比例して時間がかかるが、進捗表示もタイムアウトも無い（フロントはボタンを押したときだけ呼ぶ運用でしのいでいる） | レビュー |
 | 低 | 容量の上限判定を実容量（版どうしの共有を数えない値）で行う。今は版ごとの `dag/stat` の和で判定していて、差分更新のサイトを実際より大きく見積もる。evict の途中経過ごとに測り直す必要があるので、`policy::decide` に suffix union の表を渡すなど、純粋関数のまま保てる形にする | [実容量の表示](log/2026-09-22-actual-storage-size.md) |
 | 低 | `SWING_DASHBOARD_GATEWAY` を環境変数で空文字にできない（他の環境変数と同じく空文字は「未設定」として扱われ、既定値に戻る）。TOML の `gateway = ""` でなら無効にできる | レビュー |
@@ -37,4 +37,3 @@
 | 低 | 上り（bitswap）の抑制。SWING からは観測も制御もできない。`swing up`（[配布方式の実装](log/2026-09-23-distribution-implementation.md)）で Kubo を子プロセスにする構成なら一時停止が上りにも効くが、compose では agent を止めても外部の `ipfs` コンテナは配り続ける（`SWING_KUBO_MANAGED=false` のため）。間接的な緩和として `Swarm.ConnMgr.HighWater` と `Reprovider.Interval` を `001-swing-config.sh` / `kubo::apply_config` 相当に足す余地がある。前提として Kubo v0.43.1 にバイトレートの帯域制限が無いことの確認が要る | [間欠運用と通信量](log/2026-09-23-intermittent-operation-and-traffic-limits.md) |
 | 低 | README に「常時起動しない場合に何が起きるか」（レプリカ報告が `report_ttl` で expire する、ミラーが 0 人だと自分のサイトが読めなくなる）を書く。README と architecture のどちらに置くかは未決 | [間欠運用と通信量](log/2026-09-23-intermittent-operation-and-traffic-limits.md) |
 | 低 | Windows: SCM サービスとしての登録（`service install --system` 相当、UAC 1 回、`windows-service` クレート）で OS シャットダウン時の graceful stop を得る | [グレースフルな停止](log/2026-09-23-graceful-stop.md) |
-| 低 | CLI の読み取り系サブコマンド（sites / replicas / status / webring / mirror list）と mirror add/remove を、動いている agent のダッシュボード API（`/api/*`）のクライアントとして動く形に寄せる。今は各サブコマンドが自前で relay に接続し state.json を読むので、agent と二重に relay を引き、`swing stop` だけが API 経由になっている。API を「ダッシュボード」ではなく制御 API として位置づけ直し、`[dashboard].listen = off` のときだけ今の直接実行にフォールバックする案 | [グレースフルな停止](log/2026-09-23-graceful-stop.md) |

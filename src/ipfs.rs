@@ -44,6 +44,7 @@ pub trait KuboStore {
     fn is_directory(&self, cid: &str) -> impl Future<Output = Result<bool>> + Send;
 }
 
+#[derive(Clone)]
 pub struct IpfsClient {
     http: reqwest::Client,
     api: String,

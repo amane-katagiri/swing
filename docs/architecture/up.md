@@ -2,12 +2,14 @@
 
 [`../architecture.md`](../architecture.md) の一部。設定キーは [`../architecture.md#設定と環境変数`](../architecture.md#設定と環境変数)、内蔵 gateway は [`gateway.md`](gateway.md)、OS への常駐登録は [`service.md`](service.md)。
 
-`swing up` は `[kubo].managed` に応じて 2 通りに分かれる。
+`swing up`（`up::run`）は起動順が固定されている: `swing.lock` の取得（[多重起動の防止](#多重起動の防止lockrs)）→ シグナルハンドラの設定（`shutdown::cancel_on_signal()`、下記）→ `<state_dir>/upload/` の掃除（`dashboard::cleanup_upload_dir`）→ ダッシュボードの `AppState` 作成・`TcpListener::bind`・`dashboard::serve` の起動 → `[kubo].managed` に応じた Kubo / agent の起動ループ。ダッシュボードはこの時点で bind・応答を始めるが、relay・Kubo を使うエンドポイントは agent が起動して `AppState::set_ready` を呼ぶまで 503 を返す（[`dashboard.md`](dashboard.md#起動)）。
+
+Kubo / agent のループは `[kubo].managed` に応じて 2 通りに分かれる。
 
 - `managed = true`: Kubo を子プロセスとして起動・設定・監視し、その上で `agent::run_until`（[`agent.md`](agent.md)）を動かす。
 - `managed = false`: 外部の Kubo（`[ipfs].api`）のヘルスを待ってから `agent::run_until` を動かす。
 
-どちらも `shutdown::cancel_on_signal()`（下記）で作った `CancellationToken` の下で動く。
+どちらも `shutdown::cancel_on_signal()`（下記）で作った `CancellationToken` の下で動き、Kubo・agent いずれかが落ちても `up::run` 自身は動き続けて再起動する（ダッシュボードの API サーバも `up::run` のプロセスの寿命でずっと動き続ける）。ダッシュボードのサーバタスク自体は `up::run` が `dashboard_shutdown_tx`／`dashboard_task` として直接持ち、Kubo・agent のループとは別に、`up::run` 全体の終了時（下記）に最大 5 秒待って止める。
 
 ## shutdown（shutdown.rs）
 
@@ -139,11 +141,11 @@ loop {
 
 1. `ensure_repo` → `pick_free_port` → `apply_config` → `Daemon::spawn` → `wait_healthy("http://127.0.0.1:<api_port>", 120s)`。
    - いずれかの手順が失敗したら（`wait_healthy` が失敗した場合は daemon を `stop` してから）バックオフして 1 からやり直す。
-2. `config.ipfs.api` を `IpfsApi::Url(api_url)` に差し替えたコピーで `agent::run_until` を子トークンとともに `tokio::spawn` する。
+2. `config.ipfs.api` を `IpfsApi::Url(api_url)` に差し替えたコピーで `agent::run_until`（共有の `Arc<dashboard::AppState>` と `Arc<Notify>` を渡す）を子トークンとともに `tokio::spawn` する。`agent::run_until` は `Result<()>` を返すだけで、終了要求の種別（stop/restart）は持たない（下記「終了要求と exit code」）。
 3. `tokio::select!` で次のいずれかを待つ:
    - **Kubo が exit** → `error!` を出し、agent を cancel して最大 15 秒（`AGENT_STOP_TIMEOUT`）待つ（超えたら `abort()`）。バックオフして 1 からやり直す（Kubo・agent の両方を再起動）。
    - **agent が Err（または panic）** → `warn!`／`error!` を出し、バックオフしてから **agent だけ**を同じ Kubo に対して再起動する（Kubo はそのまま）。
-   - **agent が Ok**（`shutdown::Exit`。cancel による正常終了）、または**親トークンが cancel** → agent を cancel/待ち、`Daemon::stop(30s)` して `swing up` 全体を終了する。agent が返した `Exit`（`Exit::Stop` か `Exit::Restart` か）をそのまま `up::run` の戻り値にする（親トークンの cancel、つまり SIGINT/SIGTERM や `swing stop` 経由の場合は誰も `ExitRequest::restart()` を呼んでいないので常に `Exit::Stop`）。
+   - **agent が Ok**（cancel による正常終了）、または**親トークンが cancel** → agent を cancel/待ち、`Daemon::stop(30s)` して `run_managed` 自体は `Ok(())` を返す（`swing up` 全体の exit code は `up::run` が別途持つ `ExitRequest` から決める。下記）。
 
 ### バックオフ（`Backoff`）
 
@@ -153,9 +155,9 @@ loop {
 
 `swing up` は `Result<shutdown::Exit>`（`Exit::Stop` | `Exit::Restart`）を返し、`main.rs` がそれをプロセスの exit code に変換する: `Exit::Stop` → 0、`Exit::Restart` → ランタイムを畳んだ (`shutdown_timeout`) 後に `std::process::exit(3)`。エラー終了（`Err`）はこれまでどおり anyhow 由来の非 0（通常 1）。
 
-`agent::run_until` は自分に渡された `CancellationToken` から `ExitRequest::new(token.clone())` を 1 つ作り（ダッシュボードが無効でも作る）、ダッシュボードが有効なら `dashboard::AppState.exit` にクローンを渡す。ダッシュボード API の `POST /api/shutdown`／`POST /api/restart`（[`dashboard/http-api.md`](dashboard/http-api.md)）はこの `ExitRequest` の `stop()`／`restart()` を呼ぶだけ（`restart()` は内部の `AtomicBool` を立ててから同じトークンを cancel する）。`run_until` はループを抜ける際に `ExitRequest::restart_requested()` を見て `Exit::Restart`／`Exit::Stop` を返す。トークンが SIGINT/SIGTERM や `swing up` の親トークン経由で cancel された場合は誰も `restart()` を呼んでいないので常に `Exit::Stop` になる。
+`ExitRequest` は `up::run` が唯一のオーナーで、`shutdown::cancel_on_signal()` で作った最上位の `CancellationToken` から `ExitRequest::new(token.clone())` として 1 つ作り、`dashboard::AppState`（常に有効。`Option` ではない）にクローンを渡す。ダッシュボード API の `POST /api/shutdown`／`POST /api/restart`（[`dashboard/http-api.md`](dashboard/http-api.md)）はこの `ExitRequest` の `stop()`／`restart()` を呼ぶだけ（`restart()` は内部の `AtomicBool` を立ててから同じトークンを cancel する。`stop()` はトークンを cancel するだけ）。このトークンは Kubo・`agent::run_until` が使う子トークンの親でもあるので、`stop()`／`restart()` は SIGINT/SIGTERM を受けたときと同じ経路でグレースフルシャットダウンを開始させる。`up::run` はループ（`run_managed`／`run_unmanaged`。いずれも `Result<()>` を返すだけで stop/restart の区別を持たない）が終わった後、`exit.exit()`（`restart_requested()` を見て `Exit::Restart`／`Exit::Stop` を組み立てる）を戻り値にする。SIGINT/SIGTERM 経由（誰も `restart()` を呼んでいない）の場合は常に `Exit::Stop` になる。
 
-`swing up`（managed）は agent の `Exit` をそのまま持ち上げる（上記「managed」のループ参照）ので、ダッシュボードから `restart` を要求すると: agent 内の `ExitRequest.restart()` → agent 自身のトークン（`up::run_managed` が `token.child_token()` で作った子）を cancel → `run_until` が `Exit::Restart` を返す → `swing up` が Kubo を `Daemon::stop` でグレースフルに止めてから `Exit::Restart` を返す → `main.rs` が exit code 3 で終了する。
+`swing up`（managed）が Kubo をグレースフルに止めてから終了するのは、`run_managed` が `token.cancelled()` を検知したときに `Daemon::stop(30s)` を呼んでから `Ok(())` を返すため（上記「managed」のループ参照）。ダッシュボードから `restart` を要求すると: `POST /api/restart` → `ExitRequest.restart()` → 最上位トークンを cancel → `run_managed`／`run_unmanaged` と `agent::run_until` がグレースフルに終了 → `up::run` が `exit.exit()` で `Exit::Restart` を返す → `main.rs` が exit code 3 で終了する。
 
 ### 各サービスマネージャの反応
 

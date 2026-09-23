@@ -105,8 +105,15 @@ pub async fn desktop_js() -> Response {
     asset("text/javascript; charset=utf-8", DESKTOP_JS)
 }
 
+fn desktop(state: &AppState) -> &DesktopAssets {
+    state
+        .desktop
+        .as_ref()
+        .expect("desktop asset routes are only mounted when [dashboard].ui is enabled")
+}
+
 pub async fn desktop_page(State(state): State<Arc<AppState>>) -> Response {
-    bytes_asset("text/html; charset=utf-8", state.desktop.page.clone())
+    bytes_asset("text/html; charset=utf-8", desktop(&state).page.clone())
 }
 
 pub async fn desktop_frame_css() -> Response {
@@ -114,13 +121,13 @@ pub async fn desktop_frame_css() -> Response {
 }
 
 pub async fn desktop_page_css(State(state): State<Arc<AppState>>) -> Response {
-    bytes_asset("text/css; charset=utf-8", state.desktop.page_css.clone())
+    bytes_asset("text/css; charset=utf-8", desktop(&state).page_css.clone())
 }
 
 pub async fn desktop_banner(State(state): State<Arc<AppState>>) -> Response {
     bytes_asset(
-        state.desktop.banner_content_type,
-        state.desktop.banner.clone(),
+        desktop(&state).banner_content_type,
+        desktop(&state).banner.clone(),
     )
 }
 

@@ -21,14 +21,12 @@ swing service status    [--system]
 swing stop [--config <path>] [--restart] [--timeout <secs>, 既定 60]
 ```
 
-`swing service stop` とは別に、`swing up` を OS のサービス登録に関わらず直接止められる CLI（[`up.md#終了要求と-exit-codeshutdownexitrequest-shutdownexit`](up.md#終了要求と-exit-codeshutdownexitrequest-shutdownexit)）。手順（`stop::run`）:
+`swing service stop` とは別に、`swing up` を OS のサービス登録に関わらず直接止められる CLI（[`up.md#終了要求と-exit-codeshutdownexitrequest-shutdownexit`](up.md#終了要求と-exit-codeshutdownexitrequest-shutdownexit)）。動いている `swing up` のダッシュボード API を使う（手順は `stop::run`）:
 
-1. まず `lock::acquire(state_dir)` を試す。取れれば（＝動いていない）`not running` と出してすぐ成功終了する（取れたロックはその場で drop して解放する）。
-2. `[dashboard].listen` がアドレスなら `POST http://<addr>/api/shutdown`（`--restart` なら `/api/restart`）を `X-Swing-Dashboard: 1` と `Host: <addr>` ヘッダ付きでリクエストタイムアウト 5 秒で送る。接続できない／タイムアウトした場合だけ次のフォールバックに進む（2xx 以外のレスポンスはフォールバックせず、そのままエラーにする。ダッシュボードは動いているのに拒否された＝設定の問題である可能性が高いため）。
-3. ダッシュボードが `off`、またはステップ 2 が接続できなかった場合のフォールバック: unix は `<state_dir>/swing.lock` から PID を読んで SIGTERM を送る（`--restart` と併用するとエラー。「dashboard が無いと再起動は要求できない」旨）。Windows はグレースフルに止める手段が無いので常にエラー（「the dashboard is off or not reachable; enable [dashboard].listen or end the process from Task Scheduler」）。
-4. 500ms 間隔で `lock::acquire` が取れるようになるまで（＝プロセスが終了するまで）ポーリングし、取れたら `stopped` と出して成功終了。`--timeout` 秒を超えたらエラー（「swing did not stop within N s」）。
+1. `POST http://<[dashboard].listen>/api/shutdown`（`--restart` なら `/api/restart`）を `ApiClient`（`src/api_client.rs`）経由で叩く。API に接続できなければ（＝ `swing up` が動いていない）`not running` と出してすぐ成功終了する。2xx 以外のレスポンスはそのままエラーにする。
+2. 呼び出しが通ったら `GET /api/overview` を 500ms 間隔でポーリングし、接続できなくなった時点（プロセスが終了した時点）で `stopped` と出して成功終了する。`--timeout` 秒（既定 60）を超えたらエラー（「swing did not stop within N s」）。
 
-`swing service stop`（Windows のみ）はこの `stop::run` をそのまま使う（上記「Windows（タスクスケジューラ）」参照）。この CLI をダッシュボード API の薄いクライアントにしたのは、他の読み取り系サブコマンド（`sites`/`replicas`/`status`/`webring`/`mirror`）を将来同じ方向（agent の API を叩くクライアントに寄せる）に揃えるための最初の一歩でもある（[`../todo.md`](../todo.md)、[`../log/2026-09-23-graceful-stop.md`](../log/2026-09-23-graceful-stop.md)）。トレードオフとして、Windows で `[dashboard].listen = off` にしているとグレースフルな停止手段が無くなる。
+`swing service stop`（Windows のみ）はこの `stop::run` をそのまま使う（上記「Windows（タスクスケジューラ）」参照）。
 
 ## Linux（systemd）
 
@@ -103,7 +101,7 @@ plist の主なキー（`launchd_plist`）: `ProgramArguments` = `[<exe>, "up", 
 
 - `install`: XML を一時ファイルに書き、`schtasks /Create /TN swing /XML <tmpfile> /F` で登録してから一時ファイルを削除する。`--no-start` でなければ `schtasks /Run /TN swing` で即時起動する。
 - `uninstall`: まず `stop`（下記）と同じグレースフルな停止を試みる（失敗しても無視して続ける）。続けて `schtasks /End /TN swing`（失敗は無視、既にグレースフルに止まっていれば no-op）→ `schtasks /Delete /TN swing /F`。
-- `stop`: `swing stop`（[`up.md`](up.md#終了要求と-exit-codeshutdownexitrequest-shutdownexit)）と同じロジックを、設定ファイルを `service.rs` の既存のパス解決（`resolve_service_paths`。`--config` は取らず、`install` と同じ規則で探す）で見つけて 60 秒のタイムアウトで呼ぶ（ダッシュボード経由の POST、無ければエラー。Windows にはユニックスの SIGTERM フォールバックが無い）。失敗したら warn を出して `schtasks /End /TN swing`（強制終了）にフォールバックする。タスクの登録自体は残る（`RestartOnFailure` はコード 3（再起動)/0（そのまま） で up.md のとおりに分かれる。`/End` によるフォールバックは強制終了なので exit code の区別が無く、次のログオン時トリガーまで再起動しない）。
+- `stop`: `swing stop`（[`up.md`](up.md#終了要求と-exit-codeshutdownexitrequest-shutdownexit)）と同じロジック（`stop::run`、上記「`swing stop`」）を、設定ファイルを `service.rs` の既存のパス解決（`resolve_service_paths`。`--config` は取らず、`install` と同じ規則で探す）で見つけて 60 秒のタイムアウトで呼ぶ（ダッシュボード API 経由）。失敗したら warn を出して `schtasks /End /TN swing`（強制終了）にフォールバックする。タスクの登録自体は残る（`RestartOnFailure` はコード 3（再起動)/0（そのまま） で up.md のとおりに分かれる。`/End` によるフォールバックは強制終了なので exit code の区別が無く、次のログオン時トリガーまで再起動しない）。
 - `status`: `schtasks /Query /TN swing /FO LIST /V` を実行し、標準出力をそのまま表示する。失敗（未登録など）なら `not installed` と出す。
 
 ## `swing up --log-file <path>`

@@ -5,9 +5,11 @@
 ## 共通
 
 - すべて JSON。公開鍵は `pubkey`（小文字 hex）と `npub` を併記する。時刻は epoch 秒の整数。無い値は `null`。
-- エラーは `{ "error": "<メッセージ>" }` とステータスコード。入力不正は 400、relay 未接続は 500、relay や Kubo・Nostr 発行の失敗は 502、publish の多重実行は 409。JSON の構文エラー・必須フィールド欠落・`Content-Type` 不一致はすべて 400（422 は publish の NIP-05 `require` 失敗専用。ボディが大きすぎる場合だけ 413）。`POST /api/publish/upload` だけ `multipart/form-data` を受ける。
+- エラーは `{ "error": "<メッセージ>" }` とステータスコード。入力不正は 400、relay や Kubo が未準備（agent がまだ接続・確定していない）なら 503 `{"error": "agent is not ready"}`、relay や Kubo・Nostr 発行の失敗は 502、publish の多重実行は 409。JSON の構文エラー・必須フィールド欠落・`Content-Type` 不一致はすべて 400（422 は publish の NIP-05 `require` 失敗専用。ボディが大きすぎる場合だけ 413）。`POST /api/publish/upload` だけ `multipart/form-data` を受ける。
 - `keys`（mirror add/remove）・`root`（webring）・`key`（replicas）は 1 リクエストあたり最大 100 件、超えると 400。
 - relay を引く API（sites・mirror・webring・replicas）はサーバ側でキャッシュせず、同時実行数の制限やレート制限も無い。
+- API は `swing up` プロセスの寿命でずっと動く（[`../dashboard.md`](../dashboard.md#概要)）。relay・ipfs を使うエンドポイント（`/api/sites`・`/api/status`・`/api/mirror`・`/api/mirror/add`・`/api/mirror/remove`・`/api/webring`・`/api/replicas`・`/api/publish/sites`・`/api/publish/upload`）は agent が relay 接続と Kubo の URL 確定を終えるまで 503 を返す。`/api/overview`・`/api/config`・`/api/shutdown`・`/api/restart` は agent の準備状態に関わらず常に応答する。
+- CLI の `swing status`・`swing mirror add`・`swing mirror remove`・`swing stop` はこの API のクライアント（`src/api_client.rs::ApiClient`）で、それぞれ `/api/status`・`/api/mirror/add`・`/api/mirror/remove`・`/api/shutdown`（`--restart` なら `/api/restart`）を叩く。`swing sites`・`replicas`・`webring`・`mirror list`・`publish` はこの API を経由せず relay/Kubo に直接つなぐ（[`../cli.md`](../cli.md)）。
 
 ## 既知の性質
 
@@ -50,12 +52,14 @@
     { "pubkey": null, "npub": null, "d": null, "path": null, "cid": "bafy…", "size": null, "created_at": null, "health": "invalid_key", "detail": "<state.json の生のキー>" } ],
   "sites": [ { "pubkey": "…", "npub": "…", "d": "example.com", "path": "/swing/…", "actual": 123 } ],
   "actual_bytes": 123,
-  "garbage": [ { "path": "/swing/…", "list_failed": false } ], "problems": 0 }
+  "garbage": [ { "path": "/swing/…", "list_failed": false, "list_failed_reason": null } ], "problems": 0 }
 ```
 
 `sites` はサイトごとの実容量。`actual` はそのサイトの全版をまとめた `dag/stat` の `TotalSize` で、版どうしで共有しているブロックは 1 回だけ数える。測れなかったサイトは `null`。`actual_bytes` は `actual` の合計で、`null` のサイトが 1 つでもあれば `null`。
 
 `health` は `ok`/`missing`/`cid_mismatch`/`incomplete`/`check_failed`/`invalid_key`（CLI の判定を snake_case で返す）。`ok` 以外は `detail` に理由が入る。`invalid_key` は `state.json` のキーが `<pubkey hex>:<d>` の形式として不正だった場合で、`pubkey`・`npub`・`d`・`path`・`size`・`created_at` は `null`、`cid` だけ分かれば入り、`detail` に元のキー文字列が入る。問題があっても HTTP は常に 200（`problems` の件数で分かる）。
+
+`garbage[].list_failed_reason`: 一覧に失敗したディレクトリ（`list_failed: true`）だけ理由の文字列が入る。`list_failed: false` なら常に `null`。CLI（`swing status`）は `[list failed]: <理由>` として表示する。
 
 ## GET /api/mirror
 
@@ -70,12 +74,13 @@ Follow Set が無ければ `title: null`、`members: []`。
 リクエスト: `{ "keys": ["npub1…", "hex…", "nprofile1…"] }`。空、100 件超、パース不能のいずれかで 400。
 
 ```json
-{ "changed": [ { "pubkey": "…", "npub": "…" } ], "unchanged": [ { "pubkey": "…", "npub": "…" } ], "published": true, "relays": [ { "relay": "wss://…", "ok": true, "error": null } ], "members": [ { "pubkey": "…", "npub": "…" } ] }
+{ "changed": [ { "pubkey": "…", "npub": "…" } ], "unchanged": [ { "pubkey": "…", "npub": "…" } ], "published": true, "relays": [ { "relay": "wss://…", "ok": true, "error": null } ], "members": [ { "pubkey": "…", "npub": "…" } ], "note": null, "follow_set_found": true }
 ```
 
 - `changed`: 実際に追加・削除したもの。`unchanged`: 既に追加済み／もともと未登録で no-op だったもの。
 - 変更が無ければ `published: false`、`relays: []`。`published: true` なのにどの relay にも受理されなければ 502。
 - 成功（1 relay 以上が accept）したら agent に即時 refresh を促す。
+- `note`: relay から取れた Follow Set より `state.json` に保存済みの版を使った場合の注記（`(relays returned an older follow set; ...)` / `(follow set not found on relays; ...)`）。括弧付きの文字列そのまま、無ければ `null`。`follow_set_found`: 操作前に Follow Set が見つかっていたか。CLI の `swing mirror remove` は Follow Set が無ければ（`follow_set_found: false`）`(no follow set found); no changes` とだけ表示して他のフィールドを見ない（[`../cli.md#mirror-list--add--remove`](../cli.md#mirror-list--add--remove)）。`add` はこの分岐を使わない（無い状態からの新規作成を許すため）。
 
 ## GET /api/webring?root=\<key\>&depth=\<N\>
 
@@ -159,6 +164,7 @@ Follow Set が無ければ `title: null`、`members: []`。
 - `kubo.binary`/`kubo.repo` はパスを文字列で返す（`binary` が未設定なら空文字）。`kubo.swarm_port` は未設定なら文字列 `"-"`（他のセクションと違い、数値でなく文字列で返る）。
 - `value` は文字列・真偽・数値・文字列配列のいずれか（常に生の値）。容量・時間の項目は読みやすい文字列を `display` に添える: 容量は 1024 基数の最大単位に割り切れれば整数（`"100 GB"`）、割り切れなければ小数第 1 位まで、KB 未満はバイト表記。時間は日/時/分のどれかで割り切れれば大きい単位優先（`"5m"`）、割り切れなければ秒。個数系（`keep_versions` など）には `display` が付かず、無い項目はフィールドごと出ない。
 - `config_path` は実際に読んだ設定ファイルのパス。環境変数だけで動いているなら `null`。
+- `dashboard` セクションに `ui`（真偽値、`SWING_DASHBOARD_UI`）が入る。`listen` は常に `SocketAddr` の文字列。
 
 ## POST /api/shutdown, POST /api/restart
 
@@ -173,4 +179,4 @@ Follow Set が無ければ `title: null`、`members: []`。
 { "ok": true, "action": "restart" }
 ```
 
-`swing up` に対して `restart` を要求しても、プロセス自身は exit code 3 で終了するだけで、それを見て再起動するかどうかはサービスマネージャ側の設定次第（[`up.md`](../up.md#各サービスマネージャの反応)）。ダッシュボードが無効（`AppState.exit` が `None`。通常は起きない。ダッシュボードが動いていればこのルートに来る時点で必ず `Some`）ならエラー扱い（500）。
+`swing up` に対して `restart` を要求しても、プロセス自身は exit code 3 で終了するだけで、それを見て再起動するかどうかはサービスマネージャ側の設定次第（[`up.md`](../up.md#各サービスマネージャの反応)）。`AppState.exit` は常に存在する（`Option` ではない）。

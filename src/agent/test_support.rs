@@ -241,7 +241,8 @@ pub(super) fn test_config(policy: PolicyConfig) -> Config {
             keep_versions: 5,
         },
         dashboard: DashboardConfig {
-            listen: Listen::Off,
+            listen: ([127, 0, 0, 1], 8082).into(),
+            ui: true,
             allowed_hosts: Vec::new(),
             gateway: None,
             custom_css: None,

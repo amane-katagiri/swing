@@ -25,7 +25,7 @@ const MAX_KEYS: usize = 100;
 pub enum ApiError {
     BadRequest(String),
     PayloadTooLarge(String),
-    RelayUnavailable,
+    NotReady,
     Upstream(String),
     Conflict(String),
     Internal(String),
@@ -36,9 +36,9 @@ impl IntoResponse for ApiError {
         let (status, message) = match self {
             ApiError::BadRequest(msg) => (StatusCode::BAD_REQUEST, msg),
             ApiError::PayloadTooLarge(msg) => (StatusCode::PAYLOAD_TOO_LARGE, msg),
-            ApiError::RelayUnavailable => (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "relay is not available".to_string(),
+            ApiError::NotReady => (
+                StatusCode::SERVICE_UNAVAILABLE,
+                "agent is not ready".to_string(),
             ),
             ApiError::Upstream(msg) => (StatusCode::BAD_GATEWAY, msg),
             ApiError::Conflict(msg) => (StatusCode::CONFLICT, msg),
@@ -94,8 +94,8 @@ pub async fn overview(
 }
 
 pub async fn sites(State(state): State<Arc<AppState>>) -> Result<Json<dto::SitesDto>, ApiError> {
-    let relay = state.relay.as_ref().ok_or(ApiError::RelayUnavailable)?;
-    let view = mirror::collect_sites(relay, &state.config)
+    let relay = state.relay().await.ok_or(ApiError::NotReady)?;
+    let view = mirror::collect_sites(&relay, &state.config)
         .await
         .map_err(upstream)?;
     Ok(Json(dto::sites_dto(
@@ -105,7 +105,8 @@ pub async fn sites(State(state): State<Arc<AppState>>) -> Result<Json<dto::Sites
 }
 
 pub async fn status(State(state): State<Arc<AppState>>) -> Result<Json<dto::StatusDto>, ApiError> {
-    let report = health::collect_status(&state.ipfs, &state.config)
+    let ipfs = state.ipfs().await.ok_or(ApiError::NotReady)?;
+    let report = health::collect_status(&ipfs, &state.config)
         .await
         .map_err(upstream)?;
     Ok(Json(dto::status_dto(&report)))
@@ -114,8 +115,8 @@ pub async fn status(State(state): State<Arc<AppState>>) -> Result<Json<dto::Stat
 pub async fn mirror_list(
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<dto::MirrorListDto>, ApiError> {
-    let relay = state.relay.as_ref().ok_or(ApiError::RelayUnavailable)?;
-    let view = mirror::collect_mirror_list(relay, &state.config)
+    let relay = state.relay().await.ok_or(ApiError::NotReady)?;
+    let view = mirror::collect_mirror_list(&relay, &state.config)
         .await
         .map_err(upstream)?;
     Ok(Json(dto::mirror_list_dto(&view)))
@@ -161,8 +162,8 @@ pub async fn mirror_add(
     AppJson(req): AppJson<MirrorKeysRequest>,
 ) -> Result<Json<dto::MirrorChangeDto>, ApiError> {
     validate_keys(&req.keys)?;
-    let relay = state.relay.as_ref().ok_or(ApiError::RelayUnavailable)?;
-    let change = mirror::apply_add(relay, &state.config, &req.keys)
+    let relay = state.relay().await.ok_or(ApiError::NotReady)?;
+    let change = mirror::apply_add(&relay, &state.config, &req.keys)
         .await
         .map_err(upstream)?;
     finish_mirror_change(&state, change)
@@ -173,8 +174,8 @@ pub async fn mirror_remove(
     AppJson(req): AppJson<MirrorKeysRequest>,
 ) -> Result<Json<dto::MirrorChangeDto>, ApiError> {
     validate_keys(&req.keys)?;
-    let relay = state.relay.as_ref().ok_or(ApiError::RelayUnavailable)?;
-    let change = mirror::apply_remove(relay, &state.config, &req.keys)
+    let relay = state.relay().await.ok_or(ApiError::NotReady)?;
+    let change = mirror::apply_remove(&relay, &state.config, &req.keys)
         .await
         .map_err(upstream)?;
     finish_mirror_change(&state, change)
@@ -217,8 +218,8 @@ pub async fn webring(
             .map_err(|e| ApiError::BadRequest(format!("{e:#}")))?
     };
 
-    let relay = state.relay.as_ref().ok_or(ApiError::RelayUnavailable)?;
-    let view = webring::collect(relay, &state.config, &roots, depth)
+    let relay = state.relay().await.ok_or(ApiError::NotReady)?;
+    let view = webring::collect(&relay, &state.config, &roots, depth)
         .await
         .map_err(upstream)?;
     Ok(Json(dto::webring_dto(&view)))
@@ -245,8 +246,8 @@ pub async fn replicas(
             .map_err(|e| ApiError::BadRequest(format!("{e:#}")))?
     };
 
-    let relay = state.relay.as_ref().ok_or(ApiError::RelayUnavailable)?;
-    let authors_data = replicas::collect(relay, &state.config, &authors)
+    let relay = state.relay().await.ok_or(ApiError::NotReady)?;
+    let authors_data = replicas::collect(&relay, &state.config, &authors)
         .await
         .map_err(upstream)?;
     Ok(Json(dto::replicas_dto(&authors_data)))
@@ -314,10 +315,11 @@ pub(super) async fn run_publish(
         dto::nip05_off_dto()
     };
 
+    let ipfs = state.ipfs().await.ok_or(ApiError::NotReady)?;
     let layout = MfsLayout::new(state.config.ipfs.mfs_root.clone());
     let created_at = Timestamp::now();
     let stage = publish::add_and_measure(
-        &state.ipfs,
+        &ipfs,
         &layout,
         &pubkey_hex,
         &fields.site,
@@ -327,9 +329,9 @@ pub(super) async fn run_publish(
     .await
     .map_err(upstream)?;
 
-    let relay = state.relay.as_ref().ok_or(ApiError::RelayUnavailable)?;
+    let relay = state.relay().await.ok_or(ApiError::NotReady)?;
     let relay_results = publish::sign_and_send(
-        relay,
+        &relay,
         &publish::SiteAnnouncement {
             site_event_kind: state.config.nostr.site_event_kind,
             d: &fields.site,
@@ -351,12 +353,9 @@ pub(super) async fn run_publish(
     }
 
     let site_path = layout.publish_site(&pubkey_hex, &fields.site);
-    let prune = publish::prune_old_versions_collect(
-        &state.ipfs,
-        &site_path,
-        state.config.publish.keep_versions,
-    )
-    .await;
+    let prune =
+        publish::prune_old_versions_collect(&ipfs, &site_path, state.config.publish.keep_versions)
+            .await;
 
     let gateway_url = dto::gateway_url(state.config.dashboard.gateway.as_deref(), &stage.cid, true);
 
@@ -383,7 +382,7 @@ pub(super) async fn run_publish(
 pub async fn publish_sites(
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<dto::PublishSitesDto>, ApiError> {
-    let relay = state.relay.as_ref().ok_or(ApiError::RelayUnavailable)?;
+    let relay = state.relay().await.ok_or(ApiError::NotReady)?;
     let events = relay
         .fetch_site_events(state.config.nostr.site_event_kind, &[state.own_pubkey])
         .await
@@ -408,19 +407,13 @@ pub async fn config(State(state): State<Arc<AppState>>) -> Json<dto::ConfigDto> 
 }
 
 pub async fn shutdown(State(state): State<Arc<AppState>>) -> Response {
-    let Some(exit) = state.exit.as_ref() else {
-        return ApiError::Internal("shutdown is not available".to_string()).into_response();
-    };
     let body = Json(serde_json::json!({ "ok": true, "action": "stop" }));
-    exit.stop();
+    state.exit.stop();
     (StatusCode::ACCEPTED, body).into_response()
 }
 
 pub async fn restart(State(state): State<Arc<AppState>>) -> Response {
-    let Some(exit) = state.exit.as_ref() else {
-        return ApiError::Internal("restart is not available".to_string()).into_response();
-    };
     let body = Json(serde_json::json!({ "ok": true, "action": "restart" }));
-    exit.restart();
+    state.exit.restart();
     (StatusCode::ACCEPTED, body).into_response()
 }

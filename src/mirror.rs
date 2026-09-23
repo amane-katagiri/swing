@@ -2,9 +2,12 @@ use std::collections::{BTreeMap, BTreeSet, HashSet};
 
 use anyhow::{Context, Result};
 use nostr_sdk::prelude::*;
+use serde::Serialize;
 use tracing::warn;
 
+use crate::api_client::ApiClient;
 use crate::config::Config;
+use crate::dashboard::dto;
 use crate::nostr::{self, RelayClient};
 use crate::replicas::{self, SiteAddress};
 use crate::state::{self, State, VersionRecord};
@@ -313,17 +316,42 @@ pub async fn apply_remove(
     apply_change(relay, config, inputs, MirrorOp::Remove).await
 }
 
-fn print_publish_block(config: &Config, change: &MirrorChange) {
-    println!();
-    println!("Nostr");
-    nostr::print_relay_send_result_lines(&change.relay_results);
-    println!();
-    print_mirror_set(&config.nostr.mirror_set, &change.set);
+#[derive(Debug, Serialize)]
+struct MirrorKeysBody<'a> {
+    keys: &'a [String],
 }
 
-fn print_change_result(
-    config: &Config,
-    change: &MirrorChange,
+async fn api_mirror_change(
+    listen: std::net::SocketAddr,
+    path: &str,
+    inputs: &[String],
+) -> Result<dto::MirrorChangeDto> {
+    let client = ApiClient::new(listen);
+    client
+        .post_json(path, &MirrorKeysBody { keys: inputs })
+        .await
+        .map_err(|e| anyhow::anyhow!("{e}"))
+}
+
+fn print_relay_results_dto(results: &[dto::RelayResultDto]) {
+    for r in results {
+        if r.ok {
+            println!("  \u{2713} {}", r.relay);
+        } else {
+            println!("  \u{2717} {}", r.relay);
+        }
+    }
+}
+
+fn print_pubkeys_dto(pubkeys: &[dto::PubkeyDto]) {
+    println!("{} pubkey(s):", pubkeys.len());
+    for pk in pubkeys {
+        println!("  {}  {}", pk.npub, pk.pubkey);
+    }
+}
+
+fn print_mirror_change_dto(
+    change: &dto::MirrorChangeDto,
     unchanged_label: &str,
     changed_label: &str,
     requires_follow_set: bool,
@@ -332,43 +360,35 @@ fn print_change_result(
         println!("(no follow set found); no changes");
         return;
     }
-    if let Some(note) = change.note {
+    if let Some(note) = &change.note {
         println!("{note}");
     }
     for pk in &change.unchanged {
-        println!("{unchanged_label}: {} ({})", npub(pk), pk.to_hex());
+        println!("{unchanged_label}: {} ({})", pk.npub, pk.pubkey);
     }
     if change.changed.is_empty() {
         println!("no changes; not publishing");
         return;
     }
     for pk in &change.changed {
-        println!("{changed_label}: {} ({})", npub(pk), pk.to_hex());
+        println!("{changed_label}: {} ({})", pk.npub, pk.pubkey);
     }
-    print_publish_block(config, change);
-}
-
-fn print_add_result(config: &Config, change: &MirrorChange) {
-    print_change_result(config, change, "already in mirror set", "added", false);
+    println!();
+    println!("Nostr");
+    print_relay_results_dto(&change.relays);
+    println!();
+    print_pubkeys_dto(&change.members);
 }
 
 pub async fn add(config: &Config, inputs: &[String]) -> Result<()> {
-    let relay = RelayClient::connect(&config.nostr.secret_key, &config.nostr.relays).await?;
-    let change = apply_add(&relay, config, inputs).await?;
-    relay.client.shutdown().await;
-    print_add_result(config, &change);
+    let change = api_mirror_change(config.dashboard.listen, "/api/mirror/add", inputs).await?;
+    print_mirror_change_dto(&change, "already in mirror set", "added", false);
     Ok(())
 }
 
-fn print_remove_result(config: &Config, change: &MirrorChange) {
-    print_change_result(config, change, "not in mirror set", "removed", true);
-}
-
 pub async fn remove(config: &Config, inputs: &[String]) -> Result<()> {
-    let relay = RelayClient::connect(&config.nostr.secret_key, &config.nostr.relays).await?;
-    let change = apply_remove(&relay, config, inputs).await?;
-    relay.client.shutdown().await;
-    print_remove_result(config, &change);
+    let change = api_mirror_change(config.dashboard.listen, "/api/mirror/remove", inputs).await?;
+    print_mirror_change_dto(&change, "not in mirror set", "removed", true);
     Ok(())
 }
 

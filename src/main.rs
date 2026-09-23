@@ -36,7 +36,9 @@ enum Command {
         )]
         log_file: Option<PathBuf>,
     },
-    #[command(about = "Stop a running `swing up` instance gracefully")]
+    #[command(
+        about = "Stop a running `swing up` instance gracefully, via its dashboard API (POST /api/shutdown or /api/restart)"
+    )]
     Stop {
         #[arg(long, help = "Config file (default: $SWING_CONFIG or ./swing.toml)")]
         config: Option<PathBuf>,
@@ -106,7 +108,7 @@ enum Command {
         keys: Vec<String>,
     },
     #[command(
-        about = "Check stored versions against Kubo MFS and list leftover paths (exits non-zero on problems)"
+        about = "Check stored versions against Kubo MFS and list leftover paths, via a running `swing up`'s dashboard API (GET /api/status; exits non-zero on problems)"
     )]
     Status {
         #[arg(long, help = "Config file (default: $SWING_CONFIG or ./swing.toml)")]
@@ -189,14 +191,18 @@ enum MirrorCommand {
         #[arg(long, help = "Config file (default: $SWING_CONFIG or ./swing.toml)")]
         config: Option<PathBuf>,
     },
-    #[command(about = "Add pubkeys (npub, hex or nprofile) to the mirror set")]
+    #[command(
+        about = "Add pubkeys (npub, hex or nprofile) to the mirror set, via a running `swing up`'s dashboard API (POST /api/mirror/add)"
+    )]
     Add {
         #[arg(long, help = "Config file (default: $SWING_CONFIG or ./swing.toml)")]
         config: Option<PathBuf>,
         #[arg(required = true, num_args = 1.., value_name = "KEY")]
         keys: Vec<String>,
     },
-    #[command(about = "Remove pubkeys from the mirror set")]
+    #[command(
+        about = "Remove pubkeys from the mirror set, via a running `swing up`'s dashboard API (POST /api/mirror/remove)"
+    )]
     Remove {
         #[arg(long, help = "Config file (default: $SWING_CONFIG or ./swing.toml)")]
         config: Option<PathBuf>,

@@ -197,13 +197,13 @@ SWING は mirror-agent（バイナリでは `swing up`、Docker Compose では `
 - **Publish**: これまでに公開したサイトの一覧（「My sites」）から選び直したり、新しく publish したりできます。ブラウザから直接フォルダを選んでアップロードする方式なので、**Docker Compose でも volume のマウントは不要**です（既定の上限は 2GB、`SWING_DASHBOARD_MAX_UPLOAD` で変更可）。
 - **Settings**: 現在の設定を読み取り専用で表示します（秘密鍵の値は一切表示されません）。ブラウザ側のテーマ・表示言語（日本語/English）・カスタム CSS もここで設定します。
 
-ダッシュボードは既定で `127.0.0.1` だけで待ち受け、認証はありません（信頼できる利用者だけがアクセスできる前提です）。ホストでの公開先を変えたい場合や、ダッシュボード自体を無効にしたい場合は `.env` に次のように設定してください。
+ダッシュボードは既定で `127.0.0.1` だけで待ち受け、認証はありません（信頼できる利用者だけがアクセスできる前提です）。`swing status`・`swing mirror add`・`swing mirror remove`・`swing stop` はこのダッシュボードの API を経由します。ホストでの公開先を変えたい場合や、Web の管理画面だけを外して API だけ残したい場合は `.env` に次のように設定してください。
 
 ```bash
 # ホストでの公開先を変える（既定は 127.0.0.1:8082）
 SWING_DASHBOARD_BIND=0.0.0.0:8082
-# ダッシュボード自体を無効にする（Docker Compose でも直接バイナリを動かす場合でも共通）
-SWING_DASHBOARD_LISTEN=off
+# Web の管理画面だけを配信しない（Docker Compose でも直接バイナリを動かす場合でも共通。/api/* は残る）
+SWING_DASHBOARD_UI=false
 ```
 
 見た目は `--swing-*` の CSS 変数と `SWING_DASHBOARD_CUSTOM_CSS`（`/custom.css` として配信される追加スタイルシート）でカスタマイズできます。Desktop 画面のリンク集ページは、`SWING_DASHBOARD_DESKTOP_PAGE`（ページ本体の HTML）・`SWING_DASHBOARD_DESKTOP_PAGE_CSS`（そのページ専用の CSS）・`SWING_DASHBOARD_DESKTOP_BANNER`（88×31 バナー画像）で丸ごと自分のものに差し替えられます（いずれも起動時に読み込みます）。このページは同一オリジンの iframe に入っているので、ダッシュボードのスタイルは一切当たらず、こちらのスタイルも外に漏れません。ページに `desk-link-list` などの決まった `id` を置いておくと、そこにリンク一覧が描画されます（詳しくは [`docs/architecture/dashboard/web.md`](docs/architecture/dashboard/web.md)）。API の詳しい仕様やガード（Host 検証、CSRF 対策など）は [`docs/architecture/dashboard.md`](docs/architecture/dashboard.md) を参照してください。
@@ -409,7 +409,8 @@ TOML の設定ファイル（`swing.toml`）を使う場合と、環境変数だ
 | `SWING_GATEWAY_BIND` | (なし、compose の `mirror` コンテナ用) | 内蔵ゲートウェイをホストのどこに公開するか（既定 `127.0.0.1:8081`） |
 | `SWING_PUBLISH_KEEP_VERSIONS` | `publish.keep_versions` | `swing publish` が自分のノードに残す版の数（既定 `5`） |
 | `SWING_PUBLISH_NIP05` | `publish.nip05` | `swing publish` の NIP-05 検証モード（既定 `warn`。CLI の `--nip05` が優先） |
-| `SWING_DASHBOARD_LISTEN` | `dashboard.listen` | ダッシュボードの待ち受けアドレス（既定 `127.0.0.1:8082`）。`off` で無効。付属の `compose.yaml` ではコンテナ内の既定値として `0.0.0.0:8082` を使うが、`.env` で上書きできる（`off` にすればコンテナでも無効化できる） |
+| `SWING_DASHBOARD_LISTEN` | `dashboard.listen` | ダッシュボードの待ち受けアドレス（既定 `127.0.0.1:8082`）。`swing up` が動いている間ずっと待ち受ける。付属の `compose.yaml` ではコンテナ内の既定値として `0.0.0.0:8082` を使うが、`.env` で上書きできる |
+| `SWING_DASHBOARD_UI` | `dashboard.ui` | `false` で Web の管理画面（静的ファイル）を配信せず、`/api/*` の制御 API だけ残す（既定 `true`） |
 | `SWING_DASHBOARD_ALLOWED_HOSTS` | `dashboard.allowed_hosts` | Host ヘッダで追加で許可するホスト名（ポート抜き、カンマ区切り） |
 | `SWING_DASHBOARD_GATEWAY` | `dashboard.gateway` | ダッシュボードから保存済みサイトを開くリンクの IPFS Gateway（既定 `http://localhost:8080`）。環境変数では空文字にできない |
 | `SWING_DASHBOARD_CUSTOM_CSS` | `dashboard.custom_css` | ダッシュボードに読み込ませる追加 CSS ファイルのパス |

@@ -34,7 +34,8 @@ nip05 = "warn"                      # SWING_PUBLISH_NIP05（off / warn / require
 keep_versions = 5                   # SWING_PUBLISH_KEEP_VERSIONS
 
 [dashboard]
-listen = "127.0.0.1:8082"           # SWING_DASHBOARD_LISTEN（"off" で無効）
+listen = "127.0.0.1:8082"           # SWING_DASHBOARD_LISTEN（swing up の間ずっと待ち受ける）
+ui = true                           # SWING_DASHBOARD_UI（false で静的な Web UI を配信せず /api/* だけ残す）
 allowed_hosts = []                  # SWING_DASHBOARD_ALLOWED_HOSTS（カンマ区切り、ポート抜き）
 gateway = "http://localhost:8080"   # SWING_DASHBOARD_GATEWAY（空文字でリンクを出さない）
 #custom_css = "/path/to/custom.css" # SWING_DASHBOARD_CUSTOM_CSS

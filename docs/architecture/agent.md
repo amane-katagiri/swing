@@ -7,7 +7,7 @@
 | ファイル | 内容 |
 |---|---|
 | `agent/mod.rs` | `Agent` 構造体の定義、`new`、`poll_once`、メンテナンス系（`sweep`・`collect_garbage`・`reconcile`・`remove_unfollowed`）、state 保存の共通ヘルパー（`save`） |
-| `agent/lifecycle.rs` | `run_until`（プロセスのライフサイクル本体。`CancellationToken` を受け取る）、ダッシュボード・内蔵 gateway タスクの起動・終了 |
+| `agent/lifecycle.rs` | `run_until`（プロセスのライフサイクル本体。`CancellationToken`・`swing up` から渡される共有の `Arc<dashboard::AppState>`・`Arc<Notify>` を受け取る）、内蔵 gateway タスクの起動・終了、ダッシュボードへの準備完了・未準備の通知（`AppState::set_ready`/`set_not_ready`） |
 | `agent/follow.rs` | `refresh_follow_set`（Follow Set の取得・保存・再送、対象の切り替え、サイトイベントの購読・取得）、`limit_sites_per_account` |
 | `agent/store.rs` | `Agent::submit`/`drain`（キューイングと直列実行）、`apply_site_event`（「保存の順序」の中核）、NIP-05 検証、`decide`/`version_infos` |
 | `agent/replicas.rs` | レプリカ報告の差分計算・送信（`SentReport`・`ReportBook`・`Held`・`reports_to_send`・`held`・`load_sent_reports`・`sync_reports`） |
@@ -17,9 +17,9 @@
 
 ## 全体の流れ
 
-1. relay 群に接続し、state を読み、`[dashboard].listen` が `off` でなければダッシュボードの、`[gateway].listen` が `off` でなければ内蔵 gateway の `TcpListener` をそれぞれ bind する（どちらも失敗したら agent 全体がエラーで終了する）。続けて `Agent` を組み立て、起動時の突き合わせを行う。
-2. 突き合わせの完了前にシャットダウンが要求されたら、突き合わせを打ち切って即座に shutdown へ進む（ダッシュボード・gateway はまだ起動していないので、relay を切断するだけで終わる）。
-3. 突き合わせを終えたら、bind できていればダッシュボードの `AppState` を作って `dashboard::serve` を、bind できていれば `gateway::serve` を、それぞれ別タスクで起動する（ダッシュボードは起動前に `<state_dir>/upload/` を掃除する。[`dashboard/http-api.md`](dashboard/http-api.md#post-apipublishupload)）。
+1. relay 群に接続し、state を読む。`[gateway].listen` が `off` でなければ内蔵 gateway の `TcpListener` を bind する（失敗したら agent 全体がエラーで終了する）。続けて `Agent` を組み立て、起動時の突き合わせを行う。ダッシュボードの bind・起動・`<state_dir>/upload/` の掃除は `run_until` の外、`swing up` プロセス自身（`up::run`）が `run_until` の呼び出しより前に済ませている（[`dashboard.md#起動`](dashboard.md#起動)）。`run_until` はその `Arc<dashboard::AppState>` を受け取るだけ。
+2. 突き合わせの完了前にシャットダウンが要求されたら、突き合わせを打ち切って即座に shutdown へ進む（relay を切断するだけで終わる。gateway はまだ起動していない。ダッシュボードは `run_until` の外で動いているのでここでは何もしない）。
+3. 突き合わせを終えたら、`dashboard.set_ready(relay, ipfs)` を呼んで relay・Kubo を使う API のエンドポイントを使えるようにし、bind できていれば `gateway::serve` を別タスクで起動する。
 4. `poll_interval` ごとの tick（最初の tick は起動直後）、およびダッシュボードでの mirror 変更（`Notify`）で `poll_once`（次を行う）を実行する。
    1. sweep
    2. Follow Set を決める。決まらなければ警告を出して 3 と 4 を飛ばす。
@@ -37,10 +37,10 @@ relay の切断、Kubo のエラー、不正なイベントはログに出して
 
 - `cancel_on_signal`: SIGINT（`ctrl_c`）を待つ。unix ではさらに SIGTERM も待ち、どちらか先に届いた方で `token.cancel()` する。受信から `FORCE_EXIT_GRACE_PERIOD`（10 秒）たってもプロセスが終わっていなければ `std::process::exit(1)` する watchdog を兼ねる。
 - 起動時の突き合わせと `poll_once` は `race_with_shutdown` でトークンの cancel と競争させ、cancel が先に届いたら処理中の I/O を打ち切って shutdown に進む。
-- shutdown: `shutdown_dashboard`（ダッシュボードに終了を通知してサーバタスクを最大 5 秒待つ。超えたら warn を出して待つのをやめる）と `shutdown_gateway`（gateway の子トークンを cancel してサーバタスクを最大 5 秒待つ。同じく超えたら warn）を両方行ってから relay を切断し、ループを抜ける。
+- shutdown・poll 中の停止検知・relay 通知ストリーム終了のいずれでループを抜けても（正常終了でもエラーでも）、ループを抜けた後に必ず `shutdown_gateway`（gateway の子トークンを cancel してサーバタスクを最大 5 秒待つ。超えたら warn を出して待つのをやめる）→ relay 切断 → `dashboard.set_not_ready()` の順で後始末する。`dashboard.set_not_ready()` は relay・Kubo を使う API のエンドポイントを 503 に戻す。ダッシュボードのサーバタスク自体の起動・終了は `run_until` の外（`up::run`）が担当するので、agent 側のこの後始末で API サーバが止まることはない（[`dashboard.md#終了`](dashboard.md#終了)）。
 - `main.rs` はランタイムを明示的に組み立て、`run()` の後に `shutdown_timeout(10s)` で畳む（ブロッキング呼び出しで詰まったスレッドがあっても drop で止まらない）。
 
-ダッシュボードは agent のメモリ上の state を触らず、`state.json` を読み直す（[`dashboard.md`](dashboard.md)）。内蔵 gateway は agent の state や Kubo RPC を一切使わず、Kubo の gateway へ透過的にプロキシするだけ（[`gateway.md`](gateway.md)）。
+ダッシュボードは agent のメモリ上の `Mutex<State>` を触らず、`state.json` を読み直す。relay・Kubo クライアントは `AppState` の `RwLock<Option<...>>` 経由で共有し、agent が接続・確定を終えた後（`set_ready` 以降）だけ使える（[`dashboard.md`](dashboard.md)）。内蔵 gateway は agent の state や Kubo RPC を一切使わず、Kubo の gateway へ透過的にプロキシするだけ（[`gateway.md`](gateway.md)）。
 
 ## Follow Set の選び方
 

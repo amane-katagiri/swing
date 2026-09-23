@@ -1,6 +1,6 @@
 mod api;
 mod assets;
-mod dto;
+pub(crate) mod dto;
 pub mod guard;
 mod upload;
 
@@ -17,7 +17,7 @@ use axum::http::StatusCode;
 use axum::routing::{get, post};
 use nostr_sdk::prelude::{Keys, PublicKey, Timestamp};
 use tokio::net::TcpListener;
-use tokio::sync::{Mutex, Notify, oneshot};
+use tokio::sync::{Mutex, Notify, RwLock, oneshot};
 use tower_http::timeout::TimeoutLayer;
 use tracing::info;
 
@@ -30,33 +30,31 @@ const REQUEST_TIMEOUT: Duration = Duration::from_secs(120);
 const UPLOAD_TIMEOUT: Duration = Duration::from_secs(30 * 60);
 
 pub struct AppState {
-    pub relay: Option<Arc<RelayClient>>,
+    relay: RwLock<Option<Arc<RelayClient>>>,
+    ipfs: RwLock<Option<IpfsClient>>,
     pub config: Arc<Config>,
-    pub ipfs: IpfsClient,
     pub notify: Arc<Notify>,
     pub started_at: u64,
     pub publish_lock: Mutex<()>,
     pub own_pubkey: PublicKey,
-    pub desktop: DesktopAssets,
-    pub exit: Option<ExitRequest>,
+    pub desktop: Option<DesktopAssets>,
+    pub exit: ExitRequest,
 }
 
 impl AppState {
-    pub fn new(
-        relay: Option<Arc<RelayClient>>,
-        config: Arc<Config>,
-        notify: Arc<Notify>,
-        exit: Option<ExitRequest>,
-    ) -> Result<Self> {
-        let ipfs = IpfsClient::new(config.ipfs_api_url()?);
+    pub fn new(config: Arc<Config>, notify: Arc<Notify>, exit: ExitRequest) -> Result<Self> {
         let own_pubkey = Keys::parse(config.nostr.secret_key.expose_secret())
             .context("parsing configured secret key")?
             .public_key();
-        let desktop = DesktopAssets::load(&config.dashboard)?;
+        let desktop = if config.dashboard.ui {
+            Some(DesktopAssets::load(&config.dashboard)?)
+        } else {
+            None
+        };
         Ok(Self {
-            relay,
+            relay: RwLock::new(None),
+            ipfs: RwLock::new(None),
             config,
-            ipfs,
             notify,
             started_at: Timestamp::now().as_secs(),
             publish_lock: Mutex::new(()),
@@ -65,19 +63,27 @@ impl AppState {
             exit,
         })
     }
+
+    pub async fn set_ready(&self, relay: Arc<RelayClient>, ipfs: IpfsClient) {
+        *self.relay.write().await = Some(relay);
+        *self.ipfs.write().await = Some(ipfs);
+    }
+
+    pub async fn set_not_ready(&self) {
+        *self.relay.write().await = None;
+        *self.ipfs.write().await = None;
+    }
+
+    pub async fn relay(&self) -> Option<Arc<RelayClient>> {
+        self.relay.read().await.clone()
+    }
+
+    pub async fn ipfs(&self) -> Option<IpfsClient> {
+        self.ipfs.read().await.clone()
+    }
 }
 
-pub fn router(state: Arc<AppState>) -> Router {
-    let max_upload = usize::try_from(state.config.dashboard.max_upload).unwrap_or(usize::MAX);
-
-    let upload_route = Router::new()
-        .route("/api/publish/upload", post(upload::publish_upload))
-        .layer(DefaultBodyLimit::max(max_upload))
-        .layer(TimeoutLayer::with_status_code(
-            StatusCode::REQUEST_TIMEOUT,
-            UPLOAD_TIMEOUT,
-        ));
-
+fn ui_router() -> Router<Arc<AppState>> {
     Router::new()
         .route("/", get(assets::index))
         .route("/style.css", get(assets::style))
@@ -107,6 +113,20 @@ pub fn router(state: Arc<AppState>) -> Router {
             get(assets::font_pixelmplus12_bold),
         )
         .route("/custom.css", get(assets::custom_css))
+}
+
+pub fn router(state: Arc<AppState>) -> Router {
+    let max_upload = usize::try_from(state.config.dashboard.max_upload).unwrap_or(usize::MAX);
+
+    let upload_route = Router::new()
+        .route("/api/publish/upload", post(upload::publish_upload))
+        .layer(DefaultBodyLimit::max(max_upload))
+        .layer(TimeoutLayer::with_status_code(
+            StatusCode::REQUEST_TIMEOUT,
+            UPLOAD_TIMEOUT,
+        ));
+
+    let mut app: Router<Arc<AppState>> = Router::new()
         .route("/api/overview", get(api::overview))
         .route("/api/sites", get(api::sites))
         .route("/api/status", get(api::status))
@@ -118,17 +138,22 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/api/publish/sites", get(api::publish_sites))
         .route("/api/config", get(api::config))
         .route("/api/shutdown", post(api::shutdown))
-        .route("/api/restart", post(api::restart))
-        .layer(TimeoutLayer::with_status_code(
-            StatusCode::REQUEST_TIMEOUT,
-            REQUEST_TIMEOUT,
-        ))
-        .merge(upload_route)
-        .layer(axum::middleware::from_fn_with_state(
-            Arc::clone(&state),
-            guard::security_middleware,
-        ))
-        .with_state(state)
+        .route("/api/restart", post(api::restart));
+
+    if state.config.dashboard.ui {
+        app = app.merge(ui_router());
+    }
+
+    app.layer(TimeoutLayer::with_status_code(
+        StatusCode::REQUEST_TIMEOUT,
+        REQUEST_TIMEOUT,
+    ))
+    .merge(upload_route)
+    .layer(axum::middleware::from_fn_with_state(
+        Arc::clone(&state),
+        guard::security_middleware,
+    ))
+    .with_state(state)
 }
 
 pub async fn serve(
@@ -156,8 +181,10 @@ mod tests {
     use axum::body::Body;
     use axum::http::{Request, StatusCode};
     use nostr_sdk::prelude::Keys;
+    use std::net::SocketAddr;
     use std::path::PathBuf;
     use std::time::Duration;
+    use tokio_util::sync::CancellationToken;
     use tower::ServiceExt;
 
     use crate::config::{
@@ -165,7 +192,11 @@ mod tests {
         Nip05Mode, NostrConfig, PolicyConfig, PublishConfig,
     };
 
-    fn test_config(listen: Listen) -> (Config, String) {
+    fn test_exit() -> ExitRequest {
+        ExitRequest::new(CancellationToken::new())
+    }
+
+    fn test_config(ui: bool) -> (Config, String) {
         let secret_hex = Keys::generate().secret_key().to_secret_hex();
         let config = Config {
             nostr: NostrConfig {
@@ -205,7 +236,8 @@ mod tests {
                 keep_versions: 1,
             },
             dashboard: DashboardConfig {
-                listen,
+                listen: SocketAddr::from(([127, 0, 0, 1], 8082)),
+                ui,
                 allowed_hosts: Vec::new(),
                 gateway: Some("http://localhost:8080".to_string()),
                 custom_css: None,
@@ -234,8 +266,8 @@ mod tests {
     }
 
     fn test_state() -> Arc<AppState> {
-        let (config, _secret_hex) = test_config(Listen::Off);
-        Arc::new(AppState::new(None, Arc::new(config), Arc::new(Notify::new()), None).unwrap())
+        let (config, _secret_hex) = test_config(true);
+        Arc::new(AppState::new(Arc::new(config), Arc::new(Notify::new()), test_exit()).unwrap())
     }
 
     async fn call(app: Router, req: Request<Body>) -> axum::http::Response<Body> {
@@ -319,12 +351,13 @@ mod tests {
         std::fs::write(&page_css, "body { color: red }").unwrap();
         std::fs::write(&banner, b"GIF89a").unwrap();
 
-        let (mut config, _secret_hex) = test_config(Listen::Off);
+        let (mut config, _secret_hex) = test_config(true);
         config.dashboard.desktop_page = Some(page);
         config.dashboard.desktop_page_css = Some(page_css);
         config.dashboard.desktop_banner = Some(banner);
-        let state =
-            Arc::new(AppState::new(None, Arc::new(config), Arc::new(Notify::new()), None).unwrap());
+        let state = Arc::new(
+            AppState::new(Arc::new(config), Arc::new(Notify::new()), test_exit()).unwrap(),
+        );
 
         for (path, content_type, expected) in [
             (
@@ -362,9 +395,9 @@ mod tests {
     #[test]
     fn an_unreadable_desktop_page_fails_at_startup() {
         let dir = tempfile::tempdir().unwrap();
-        let (mut config, _secret_hex) = test_config(Listen::Off);
+        let (mut config, _secret_hex) = test_config(true);
         config.dashboard.desktop_page = Some(dir.path().join("missing.html"));
-        let err = match AppState::new(None, Arc::new(config), Arc::new(Notify::new()), None) {
+        let err = match AppState::new(Arc::new(config), Arc::new(Notify::new()), test_exit()) {
             Ok(_) => panic!("expected a startup error"),
             Err(err) => err,
         };
@@ -376,9 +409,9 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let banner = dir.path().join("banner.bmp");
         std::fs::write(&banner, b"BM").unwrap();
-        let (mut config, _secret_hex) = test_config(Listen::Off);
+        let (mut config, _secret_hex) = test_config(true);
         config.dashboard.desktop_banner = Some(banner);
-        let err = match AppState::new(None, Arc::new(config), Arc::new(Notify::new()), None) {
+        let err = match AppState::new(Arc::new(config), Arc::new(Notify::new()), test_exit()) {
             Ok(_) => panic!("expected a startup error"),
             Err(err) => err,
         };
@@ -399,10 +432,11 @@ mod tests {
 
     #[tokio::test]
     async fn allowed_host_from_config_is_accepted() {
-        let (mut config, _secret_hex) = test_config(Listen::Off);
+        let (mut config, _secret_hex) = test_config(true);
         config.dashboard.allowed_hosts = vec!["my.example".to_string()];
-        let state =
-            Arc::new(AppState::new(None, Arc::new(config), Arc::new(Notify::new()), None).unwrap());
+        let state = Arc::new(
+            AppState::new(Arc::new(config), Arc::new(Notify::new()), test_exit()).unwrap(),
+        );
         let app = router(state);
         let req = Request::builder()
             .uri("/api/config")
@@ -460,9 +494,10 @@ mod tests {
 
     #[tokio::test]
     async fn config_endpoint_never_exposes_the_secret_key_value() {
-        let (config, secret_hex) = test_config(Listen::Off);
-        let state =
-            Arc::new(AppState::new(None, Arc::new(config), Arc::new(Notify::new()), None).unwrap());
+        let (config, secret_hex) = test_config(true);
+        let state = Arc::new(
+            AppState::new(Arc::new(config), Arc::new(Notify::new()), test_exit()).unwrap(),
+        );
         let app = router(state);
         let req = Request::builder()
             .uri("/api/config")
@@ -492,7 +527,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn requests_without_relay_report_a_server_error_not_a_panic() {
+    async fn requests_without_relay_report_service_unavailable_not_a_panic() {
         let app = router(test_state());
         let req = Request::builder()
             .uri("/api/sites")
@@ -500,7 +535,7 @@ mod tests {
             .body(Body::empty())
             .unwrap();
         let resp = call(app, req).await;
-        assert_eq!(resp.status(), StatusCode::INTERNAL_SERVER_ERROR);
+        assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
     }
 
     async fn error_body(resp: axum::http::Response<Body>) -> serde_json::Value {
@@ -622,10 +657,10 @@ mod tests {
     }
 
     fn test_state_with(state_dir: PathBuf, max_upload: u64) -> Arc<AppState> {
-        let (mut config, _secret_hex) = test_config(Listen::Off);
+        let (mut config, _secret_hex) = test_config(true);
         config.agent.state_dir = state_dir;
         config.dashboard.max_upload = max_upload;
-        Arc::new(AppState::new(None, Arc::new(config), Arc::new(Notify::new()), None).unwrap())
+        Arc::new(AppState::new(Arc::new(config), Arc::new(Notify::new()), test_exit()).unwrap())
     }
 
     fn multipart_body(boundary: &str, parts: &[(&str, Option<&str>, &[u8])]) -> Vec<u8> {
@@ -823,7 +858,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn publish_sites_without_relay_reports_a_server_error() {
+    async fn publish_sites_without_relay_reports_service_unavailable() {
         let app = router(test_state());
         let req = Request::builder()
             .uri("/api/publish/sites")
@@ -831,14 +866,73 @@ mod tests {
             .body(Body::empty())
             .unwrap();
         let resp = call(app, req).await;
-        assert_eq!(resp.status(), StatusCode::INTERNAL_SERVER_ERROR);
+        assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
+    }
+
+    #[tokio::test]
+    async fn status_without_ipfs_reports_service_unavailable() {
+        let app = router(test_state());
+        let req = Request::builder()
+            .uri("/api/status")
+            .header("Host", "127.0.0.1:8082")
+            .body(Body::empty())
+            .unwrap();
+        let resp = call(app, req).await;
+        assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
+    }
+
+    #[tokio::test]
+    async fn set_ready_then_not_ready_flips_availability() {
+        let (config, _secret_hex) = test_config(true);
+        let secret_key = config.nostr.secret_key.expose_secret().to_string();
+        let state = Arc::new(
+            AppState::new(Arc::new(config), Arc::new(Notify::new()), test_exit()).unwrap(),
+        );
+        let relay = Arc::new(
+            crate::nostr::RelayClient::connect(&secret_key, &[])
+                .await
+                .unwrap(),
+        );
+        let ipfs = crate::ipfs::IpfsClient::new("http://127.0.0.1:5001".to_string());
+        state.set_ready(relay, ipfs).await;
+        assert!(state.relay().await.is_some());
+        assert!(state.ipfs().await.is_some());
+
+        state.set_not_ready().await;
+        assert!(state.relay().await.is_none());
+        assert!(state.ipfs().await.is_none());
+    }
+
+    #[tokio::test]
+    async fn ui_disabled_hides_static_routes_but_keeps_the_api() {
+        let (mut config, _secret_hex) = test_config(true);
+        config.dashboard.ui = false;
+        let state = Arc::new(
+            AppState::new(Arc::new(config), Arc::new(Notify::new()), test_exit()).unwrap(),
+        );
+
+        let app = router(Arc::clone(&state));
+        let req = Request::builder()
+            .uri("/")
+            .header("Host", "127.0.0.1:8082")
+            .body(Body::empty())
+            .unwrap();
+        let resp = call(app, req).await;
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+
+        let app = router(state);
+        let req = Request::builder()
+            .uri("/api/overview")
+            .header("Host", "127.0.0.1:8082")
+            .body(Body::empty())
+            .unwrap();
+        let resp = call(app, req).await;
+        assert_eq!(resp.status(), StatusCode::OK);
     }
 
     fn test_state_with_exit(exit: ExitRequest) -> Arc<AppState> {
-        let (config, _secret_hex) = test_config(Listen::Off);
-        Arc::new(
-            AppState::new(None, Arc::new(config), Arc::new(Notify::new()), Some(exit)).unwrap(),
-        )
+        let (config, _secret_hex) = test_config(true);
+        Arc::new(AppState::new(Arc::new(config), Arc::new(Notify::new()), exit).unwrap())
     }
 
     #[tokio::test]
@@ -899,19 +993,5 @@ mod tests {
         assert_eq!(json["action"], "restart");
         assert!(token.is_cancelled());
         assert!(exit.restart_requested());
-    }
-
-    #[tokio::test]
-    async fn shutdown_without_an_exit_request_is_a_server_error() {
-        let app = router(test_state());
-        let req = Request::builder()
-            .method("POST")
-            .uri("/api/shutdown")
-            .header("Host", "127.0.0.1:8082")
-            .header("x-swing-dashboard", "1")
-            .body(Body::empty())
-            .unwrap();
-        let resp = call(app, req).await;
-        assert_eq!(resp.status(), StatusCode::INTERNAL_SERVER_ERROR);
     }
 }

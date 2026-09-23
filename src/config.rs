@@ -103,6 +103,7 @@ pub struct GatewayFile {
 #[serde(default)]
 pub struct DashboardFile {
     pub listen: Option<String>,
+    pub ui: Option<bool>,
     pub allowed_hosts: Option<Vec<String>>,
     pub gateway: Option<String>,
     pub custom_css: Option<String>,
@@ -244,6 +245,13 @@ pub fn parse_listen(input: &str) -> Result<Listen> {
         .with_context(|| format!("invalid listen address: {trimmed}"))
 }
 
+pub fn parse_dashboard_listen(input: &str) -> Result<SocketAddr> {
+    let trimmed = input.trim();
+    trimmed
+        .parse::<SocketAddr>()
+        .with_context(|| format!("invalid listen address: {trimmed}"))
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GatewayConfig {
     pub listen: Listen,
@@ -253,7 +261,8 @@ pub struct GatewayConfig {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DashboardConfig {
-    pub listen: Listen,
+    pub listen: SocketAddr,
+    pub ui: bool,
     pub allowed_hosts: Vec<String>,
     pub gateway: Option<String>,
     pub custom_css: Option<PathBuf>,
@@ -701,10 +710,19 @@ fn build_config(file: ConfigFile, get_env: impl Fn(&str) -> Option<String>) -> R
         &get_env,
         "SWING_DASHBOARD_LISTEN",
         file.dashboard.listen,
-        parse_listen,
+        parse_dashboard_listen,
         "invalid SWING_DASHBOARD_LISTEN",
         "invalid [dashboard].listen",
-        Listen::Addr(([127, 0, 0, 1], 8082).into()),
+        SocketAddr::from(([127, 0, 0, 1], 8082)),
+    )?;
+
+    let dashboard_ui = resolve_typed(
+        &get_env,
+        "SWING_DASHBOARD_UI",
+        file.dashboard.ui,
+        parse_bool,
+        "invalid SWING_DASHBOARD_UI",
+        true,
     )?;
 
     let dashboard_allowed_hosts = match get_env("SWING_DASHBOARD_ALLOWED_HOSTS") {
@@ -900,6 +918,7 @@ fn build_config(file: ConfigFile, get_env: impl Fn(&str) -> Option<String>) -> R
         },
         dashboard: DashboardConfig {
             listen: dashboard_listen,
+            ui: dashboard_ui,
             allowed_hosts: dashboard_allowed_hosts,
             gateway: dashboard_gateway,
             custom_css: dashboard_custom_css,
@@ -1302,8 +1321,9 @@ mod tests {
         let cfg = build_config(minimal_file(), |_| None).unwrap();
         assert_eq!(
             cfg.dashboard.listen,
-            Listen::Addr(([127, 0, 0, 1], 8082).into())
+            SocketAddr::from(([127, 0, 0, 1], 8082))
         );
+        assert!(cfg.dashboard.ui);
         assert!(cfg.dashboard.allowed_hosts.is_empty());
         assert_eq!(
             cfg.dashboard.gateway.as_deref(),
@@ -1349,13 +1369,13 @@ mod tests {
     }
 
     #[test]
-    fn dashboard_listen_off_disables_it() {
-        let cfg = build_config(minimal_file(), |k| match k {
+    fn dashboard_listen_off_is_not_a_valid_address() {
+        let err = build_config(minimal_file(), |k| match k {
             "SWING_DASHBOARD_LISTEN" => Some("off".into()),
             _ => None,
         })
-        .unwrap();
-        assert_eq!(cfg.dashboard.listen, Listen::Off);
+        .unwrap_err();
+        assert!(err.to_string().contains("SWING_DASHBOARD_LISTEN"));
     }
 
     #[test]
@@ -1369,6 +1389,32 @@ mod tests {
     }
 
     #[test]
+    fn dashboard_ui_defaults_to_true_and_can_be_disabled() {
+        let cfg = build_config(minimal_file(), |_| None).unwrap();
+        assert!(cfg.dashboard.ui);
+
+        let cfg = build_config(minimal_file(), |k| match k {
+            "SWING_DASHBOARD_UI" => Some("false".into()),
+            _ => None,
+        })
+        .unwrap();
+        assert!(!cfg.dashboard.ui);
+    }
+
+    #[test]
+    fn dashboard_ui_file_value_is_used_when_env_unset() {
+        let file = ConfigFile {
+            dashboard: DashboardFile {
+                ui: Some(false),
+                ..Default::default()
+            },
+            ..minimal_file()
+        };
+        let cfg = build_config(file, |_| None).unwrap();
+        assert!(!cfg.dashboard.ui);
+    }
+
+    #[test]
     fn dashboard_env_overrides_file() {
         let file = ConfigFile {
             nostr: NostrFile {
@@ -1378,6 +1424,7 @@ mod tests {
             },
             dashboard: DashboardFile {
                 listen: Some("127.0.0.1:9000".into()),
+                ui: Some(false),
                 allowed_hosts: Some(vec!["example.com".into()]),
                 gateway: Some("http://gateway.example".into()),
                 custom_css: Some("/etc/swing/custom.css".into()),
@@ -1399,10 +1446,8 @@ mod tests {
             _ => None,
         })
         .unwrap();
-        assert_eq!(
-            cfg.dashboard.listen,
-            Listen::Addr(([0, 0, 0, 0], 8082).into())
-        );
+        assert_eq!(cfg.dashboard.listen, SocketAddr::from(([0, 0, 0, 0], 8082)));
+        assert!(!cfg.dashboard.ui);
         assert_eq!(
             cfg.dashboard.allowed_hosts,
             vec!["a.example".to_string(), "b.example".to_string()]

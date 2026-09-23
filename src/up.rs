@@ -1,20 +1,24 @@
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use anyhow::Result;
+use anyhow::{Context, Result};
+use tokio::sync::Notify;
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info, warn};
 
 use crate::agent;
 use crate::config::{Config, IpfsApi};
+use crate::dashboard;
 use crate::kubo;
 use crate::lock;
 use crate::shutdown;
-use crate::shutdown::Exit;
+use crate::shutdown::{Exit, ExitRequest};
 
 const UNMANAGED_HEALTH_TIMEOUT: Duration = Duration::from_secs(30);
 const MANAGED_HEALTH_TIMEOUT: Duration = Duration::from_secs(120);
 const DAEMON_STOP_GRACE: Duration = Duration::from_secs(30);
 const AGENT_STOP_TIMEOUT: Duration = Duration::from_secs(15);
+const DASHBOARD_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
 
 struct Backoff {
     delay: Duration,
@@ -57,14 +61,79 @@ async fn stop_daemon(daemon: kubo::Daemon, config: &Config, grace: Duration) -> 
 pub async fn run(config: Config) -> Result<Exit> {
     let _lock = lock::acquire(&config.agent.state_dir)?;
     let token = shutdown::cancel_on_signal()?;
-    if config.kubo.managed {
-        run_managed(config, token).await
-    } else {
-        run_unmanaged(config, token).await
+    let exit = ExitRequest::new(token.clone());
+    let notify = Arc::new(Notify::new());
+
+    dashboard::cleanup_upload_dir(&config.agent.state_dir)
+        .await
+        .context("cleaning up leftover dashboard uploads")?;
+
+    let dashboard_state = Arc::new(dashboard::AppState::new(
+        Arc::new(config.clone()),
+        Arc::clone(&notify),
+        exit.clone(),
+    )?);
+
+    let addr = config.dashboard.listen;
+    let listener = tokio::net::TcpListener::bind(addr)
+        .await
+        .with_context(|| format!("binding dashboard listener on {addr}"))?;
+    if !addr.ip().is_loopback() || !config.dashboard.allowed_hosts.is_empty() {
+        warn!(
+            %addr,
+            allowed_hosts = ?config.dashboard.allowed_hosts,
+            "dashboard has no authentication; binding beyond loopback or widening allowed_hosts exposes full mirror and publish control to anyone who can reach it"
+        );
     }
+
+    let (dashboard_shutdown_tx, dashboard_shutdown_rx) = tokio::sync::oneshot::channel();
+    let dashboard_for_serve = Arc::clone(&dashboard_state);
+    let dashboard_task = tokio::spawn(async move {
+        if let Err(e) = dashboard::serve(listener, dashboard_for_serve, dashboard_shutdown_rx).await
+        {
+            error!(error = %e, "dashboard server stopped");
+        }
+    });
+
+    let result = if config.kubo.managed {
+        run_managed(
+            config,
+            token,
+            Arc::clone(&dashboard_state),
+            Arc::clone(&notify),
+        )
+        .await
+    } else {
+        run_unmanaged(
+            config,
+            token,
+            Arc::clone(&dashboard_state),
+            Arc::clone(&notify),
+        )
+        .await
+    };
+
+    let _ = dashboard_shutdown_tx.send(());
+    if tokio::time::timeout(DASHBOARD_SHUTDOWN_TIMEOUT, dashboard_task)
+        .await
+        .is_err()
+    {
+        warn!(
+            timeout = ?DASHBOARD_SHUTDOWN_TIMEOUT,
+            "dashboard server did not shut down in time; leaving it behind"
+        );
+    }
+
+    result?;
+    Ok(exit.exit())
 }
 
-async fn run_unmanaged(config: Config, token: CancellationToken) -> Result<Exit> {
+async fn run_unmanaged(
+    config: Config,
+    token: CancellationToken,
+    dashboard: Arc<dashboard::AppState>,
+    notify: Arc<Notify>,
+) -> Result<()> {
     let mut backoff = Backoff::new();
     loop {
         let api_url = config.ipfs_api_url()?;
@@ -73,7 +142,7 @@ async fn run_unmanaged(config: Config, token: CancellationToken) -> Result<Exit>
             _ = token.cancelled() => None,
         };
         let Some(health) = health else {
-            return Ok(Exit::Stop);
+            return Ok(());
         };
         if let Err(e) = health {
             warn!(error = %e, "external Kubo is not healthy yet");
@@ -83,8 +152,15 @@ async fn run_unmanaged(config: Config, token: CancellationToken) -> Result<Exit>
         info!(api = %api_url, "external Kubo is ready");
 
         let started = Instant::now();
-        match agent::run_until(config.clone(), token.child_token()).await {
-            Ok(exit) => return Ok(exit),
+        match agent::run_until(
+            config.clone(),
+            token.child_token(),
+            Arc::clone(&dashboard),
+            Arc::clone(&notify),
+        )
+        .await
+        {
+            Ok(()) => return Ok(()),
             Err(e) => {
                 warn!(error = %e, "agent exited with an error; restarting");
                 backoff.wait(started.elapsed(), &token).await;
@@ -93,7 +169,12 @@ async fn run_unmanaged(config: Config, token: CancellationToken) -> Result<Exit>
     }
 }
 
-async fn run_managed(config: Config, token: CancellationToken) -> Result<Exit> {
+async fn run_managed(
+    config: Config,
+    token: CancellationToken,
+    dashboard: Arc<dashboard::AppState>,
+    notify: Arc<Notify>,
+) -> Result<()> {
     let bin = kubo::locate_binary(config.kubo.binary.as_deref())?;
     let installed_version = kubo::version(&bin).await?;
     if installed_version != kubo::KUBO_VERSION {
@@ -110,7 +191,7 @@ async fn run_managed(config: Config, token: CancellationToken) -> Result<Exit> {
 
     'daemon: loop {
         if token.is_cancelled() {
-            return Ok(Exit::Stop);
+            return Ok(());
         }
 
         match kubo::ensure_repo(&bin, &config.kubo.repo).await {
@@ -167,7 +248,7 @@ async fn run_managed(config: Config, token: CancellationToken) -> Result<Exit> {
         let health = match health {
             None => {
                 let _ = stop_daemon(daemon, &config, DAEMON_STOP_GRACE).await;
-                return Ok(Exit::Stop);
+                return Ok(());
             }
             Some(h) => h,
         };
@@ -192,6 +273,8 @@ async fn run_managed(config: Config, token: CancellationToken) -> Result<Exit> {
         let mut agent_handle = tokio::spawn(agent::run_until(
             managed_config.clone(),
             agent_token.clone(),
+            Arc::clone(&dashboard),
+            Arc::clone(&notify),
         ));
         let mut agent_started = Instant::now();
         let daemon_started = Instant::now();
@@ -217,10 +300,10 @@ async fn run_managed(config: Config, token: CancellationToken) -> Result<Exit> {
                 result = &mut agent_handle => {
                     let ran_for = agent_started.elapsed();
                     match result {
-                        Ok(Ok(exit)) => {
+                        Ok(Ok(())) => {
                             agent_token.cancel();
                             let _ = stop_daemon(daemon, &config, DAEMON_STOP_GRACE).await;
-                            return Ok(exit);
+                            return Ok(());
                         }
                         Ok(Err(e)) => warn!(error = %e, "agent exited with an error; restarting agent"),
                         Err(e) => error!(error = %e, "agent task panicked; restarting agent"),
@@ -228,13 +311,15 @@ async fn run_managed(config: Config, token: CancellationToken) -> Result<Exit> {
                     backoff.wait(ran_for, &token).await;
                     if token.is_cancelled() {
                         let _ = stop_daemon(daemon, &config, DAEMON_STOP_GRACE).await;
-                        return Ok(Exit::Stop);
+                        return Ok(());
                     }
                     agent_token = token.child_token();
                     agent_started = Instant::now();
                     agent_handle = tokio::spawn(agent::run_until(
                         managed_config.clone(),
                         agent_token.clone(),
+                        Arc::clone(&dashboard),
+                        Arc::clone(&notify),
                     ));
                 }
                 _ = token.cancelled() => {
@@ -244,7 +329,7 @@ async fn run_managed(config: Config, token: CancellationToken) -> Result<Exit> {
                         agent_handle.abort();
                     }
                     stop_daemon(daemon, &config, DAEMON_STOP_GRACE).await?;
-                    return Ok(Exit::Stop);
+                    return Ok(());
                 }
             }
         }

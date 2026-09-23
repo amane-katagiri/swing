@@ -1,4 +1,5 @@
 pub mod agent;
+pub mod api_client;
 pub mod config;
 pub mod dashboard;
 pub mod gateway;
