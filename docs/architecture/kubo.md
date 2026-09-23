@@ -1,6 +1,8 @@
 # Kubo と MFS（ipfs.rs, mfs.rs）
 
-[`architecture.md`](../architecture.md) の一部。
+[`architecture.md`](../architecture.md) の一部。`swing up` による Kubo の起動・設定・監視は [`up.md`](up.md)、内蔵 gateway は [`gateway.md`](gateway.md)。
+
+`[kubo].managed = true` のときは RPC アドレスが固定でない。`swing up` が起動のたびに空いているループバックポートを選んで Kubo の `Addresses.API` に設定し、Kubo が実際に listen したアドレスを `<repo>/api` に書き出す。`Config::ipfs_api_url()` はこのファイルを読んで URL を組み立てる（[`up.md#動的な-api-ポートとrepoapi`](up.md#動的な-api-ポートとrepoapi)）。以下の RPC の表は managed／unmanaged どちらの Kubo にも共通する。
 
 ## MFS の使い方
 
@@ -51,7 +53,7 @@ MFS から消したコンテンツや打ち切った取得のブロックは、K
 
 ## Kubo のバージョン
 
-compose の Kubo は検証済みの `v0.43.1` に固定している。次の挙動に依存しているので、上げると壊れうる。
+compose の Kubo イメージは検証済みの `v0.43.1` に固定している。`swing up` が管理する Kubo（`[kubo].managed = true`）も同じバージョンを想定し、`kubo::KUBO_VERSION` 定数（`up.rs`/`kubo.rs`、[`up.md#バージョン確認`](up.md#バージョン確認)）にピン留めしている。実際にインストールされた `ipfs version --number` がこれと異なる場合は `swing up` が起動時に一度だけ warn を出すだけで、起動は止めない。バージョンをピン留めした場所は 2 か所（compose のイメージタグと `KUBO_VERSION`）あり、上げるときは両方を同時に揃える。次の挙動に依存しているので、上げると壊れうる。
 
 - `file does not exist` の文面での判定（変わると、突き合わせが MFS から消えた版を取り直さず警告を出し続ける）
 - `files/rm` が失敗時も 200 を返すこと

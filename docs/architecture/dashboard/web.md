@@ -31,7 +31,7 @@ CSS は `style.css`（全画面共通）に加え、Desktop 画面のウィン�
 | Sites | [`/api/sites`](http-api.md#get-apisites) の一覧、mirror への追加・削除、`Unfollowed but still stored`、[`/api/status`](http-api.md#get-apistatus) を呼ぶ Storage check（版ごとの判定の表と、サイトごとの実容量・合計の表） | `cards`（既定）/ `table` |
 | Webring | [`/api/webring`](http-api.md#get-apiwebringrootkeydepthn) を root・depth 指定で取得。ノード選択で [`/api/replicas?key=`](http-api.md#get-apireplicaskeykey) を引き、詳細パネルからミラー操作もできる | `graph`（既定）/ `list` / `ascii` / `source`（dot・mermaid） |
 | Publish | [`/api/overview`](http-api.md#get-apioverview)・[`/api/publish/sites`](http-api.md#get-apipublishsites)（My sites）、publish フォーム（常にフォルダアップロード） | スタイル切替なし |
-| Settings | [`/api/config`](http-api.md#get-apiconfig) を読み取り専用表示。テーマ・言語・カスタム CSS の設定 | スタイル切替なし |
+| Settings | [`/api/config`](http-api.md#get-apiconfig) を読み取り専用表示。テーマ・言語・カスタム CSS の設定。プロセスの停止・再起動ボタン（下記「プロセス操作」） | スタイル切替なし |
 
 ## Desktop 画面
 
@@ -172,6 +172,15 @@ NIP-05 の検証結果はバッジで `OK`（`verified`）/ `NG`（`mismatch`）
 ### グラフ（`web/graph.js`）
 
 外部ライブラリを使わない自前の force-directed layout。ドラッグでノードを固定でき、クリックで選択して詳細パネルを開く。キーボード操作（Tab で移動、Enter/Space で選択）に対応する。パン・ホイールズーム（0.15〜4 倍）と全体表示（Fit）ができ、`prefers-reduced-motion: reduce` ではアニメーションせず同期的に 1 回だけ描画する。ノード・辺は class と `data-*` だけを持ち、色は付けない（配色は CSS 側、下記参照）。
+
+## Settings 画面のプロセス操作
+
+設定表の下に「プロセス」パネル（停止・再起動の 2 ボタン）がある。Desktop 画面には無い（そちらは変更していない）。
+
+- 停止: `window.confirm()` で確認してから [`POST /api/shutdown`](http-api.md#post-apishutdown-post-apirestart) を呼ぶ。成功したら「停止を要求しました。サービスとして動かしている場合は管理側の設定に従って再起動されるかもしれません」を状態行に出す。
+- 再起動: 同様に確認してから `POST /api/restart` を呼ぶ。成功したら「再起動を要求しました」を出す。
+- どちらも他の書き込みリクエストと同じ `apiFetch`（`X-Swing-Dashboard: 1` を自動で付ける、[`sites.js`](#構成) の mirror add/remove と同じヘルパー）を使う。ボタンは呼び出し中 `setBusy` で無効化する。失敗時は状態行にエラーメッセージを出す（`describeError`）。
+- リクエストが受理された時点でボタンの操作としては完了で、その後実際にプロセスが止まる/再起動するまで画面側では待たない（ダッシュボード自身が落ちるので、待っても意味がない）。
 
 ## 共通の UI 部品
 

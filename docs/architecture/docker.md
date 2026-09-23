@@ -6,17 +6,16 @@
 
 - builder `rust:1.97-slim-trixie`、runtime `debian:trixie-slim`（glibc を揃えるため同じコードネーム）。
 - runtime には `/usr/local/bin/swing` だけを置き、ユーザー `swing`（uid/gid 1000）で実行する。`/data` はそのユーザー所有の `VOLUME`。
-- `ENTRYPOINT ["swing"]`、`CMD ["agent"]`。
+- `ENTRYPOINT ["swing"]`、`CMD ["up"]`（[`up.md`](up.md)）。`mirror` サービスは `SWING_KUBO_MANAGED=false` を固定で渡すので、コンテナの中では Kubo を子プロセスにせず外部の `ipfs` サービスに対して動く（`swing up` の unmanaged 経路）。
 
 ## compose.yaml
 
 | サービス | 内容 |
 |---|---|
 | `ipfs` | `ipfs/kubo:v0.43.1`（[Kubo のバージョン](kubo.md#kubo-のバージョン)）。イメージ既定の `command` に `--enable-gc` を足す。volume `ipfs-data:/data/ipfs` と `./docker/kubo-init.d:/container-init.d:ro`。公開ポートは `4001/tcp`・`4001/udp` と、Gateway の `${SWING_KUBO_GATEWAY_BIND:-127.0.0.1:8080}:8080`。healthcheck は `ipfs id` |
-| `mirror` | `build: .`、`env_file: .env`。`SWING_IPFS_API=http://ipfs:5001`、`SWING_STATE_DIR=/data`、`SWING_DASHBOARD_LISTEN=${SWING_DASHBOARD_LISTEN:-0.0.0.0:8082}`、`RUST_LOG=info`。volume `swing-data:/data`。公開ポート `${SWING_DASHBOARD_BIND:-127.0.0.1:8082}:8082`。`ipfs` が healthy になるのを待つ |
-| `gateway` | profile `gateway` のときだけ起動する。`caddy:2.11.4-alpine`。`./docker/caddy:/etc/caddy:ro`、`${SWING_GATEWAY_BIND:-127.0.0.1:8081}:80`。`ipfs` が healthy になるのを待つ |
+| `mirror` | `build: .`、`env_file: .env`。`SWING_IPFS_API=http://ipfs:5001`、`SWING_STATE_DIR=/data`、`SWING_DASHBOARD_LISTEN=${SWING_DASHBOARD_LISTEN:-0.0.0.0:8082}`、`SWING_KUBO_MANAGED=false`、`SWING_GATEWAY_LISTEN=${SWING_GATEWAY_LISTEN:-off}`、`SWING_GATEWAY_UPSTREAM=http://ipfs:8080`、`RUST_LOG=info`。volume `swing-data:/data`。公開ポート `${SWING_DASHBOARD_BIND:-127.0.0.1:8082}:8082` と `${SWING_GATEWAY_BIND:-127.0.0.1:8081}:8081`。`ipfs` が healthy になるのを待つ |
 
-3 サービスとも `restart: unless-stopped`。
+2 サービスとも `restart: unless-stopped`。Caddy による専用の `gateway` サービス（旧 `gateway` プロファイル、`docker/caddy/`）は廃止した。内蔵 gateway（[`gateway.md`](gateway.md)）が `mirror` コンテナの中で同じ役割を果たす。`SWING_GATEWAY_LISTEN` の既定は `off` なので、有効にする場合は `.env` で `SWING_GATEWAY_LISTEN=0.0.0.0:8081`（コンテナ内バインド）と `SWING_GATEWAY_HOSTS` を設定する。ホスト側の 8081 ポート自体は `[gateway].listen` の設定に関わらず常に compose がマッピングする（`SWING_GATEWAY_BIND` で変更・変えなければ `127.0.0.1:8081` に固定で公開される。gateway を使わない構成でもポートだけは空いている、という compose 側のトレードオフ）。
 
 外部ネットワークに出ないデモ用の重ね合わせ（`docker/demo/`）は [`docker/demo/README.md`](../../docker/demo/README.md) を参照。`.env` は mirror の `env_file` と、compose の変数展開の両方に使われる。
 
@@ -40,6 +39,8 @@
 
 `Provide.Strategy` に `mfs` か `all` を含めないと、MFS にしか無いサイトが DHT に告知されない。知らない値を与えると daemon が起動しない。
 
+この設定内容（`Datastore.StorageMax`・`Provide.Strategy`・`Gateway.NoFetch`・`Gateway.NoDNSLink`・`Gateway.PublicGateways`）は、`swing up` が `[kubo].managed = true` で Kubo を子プロセスとして起動する際にも `kubo::apply_config` が同じ値を適用する（シェルスクリプトと Rust の実装を両方持つのは、compose の外部 Kubo コンテナと `swing up` の管理下 Kubo という 2 つの起動経路があるため）。設定するキーの一覧と意味は [`up.md#適用する-kubo-設定kuboapply_config`](up.md#適用する-kubo-設定kuboapply_config) を参照（そちらが正本）。
+
 ## Gateway
 
 Kubo の Gateway は `NoFetch` なので、ローカルにあるブロックだけを返す。ブロックが無いときの応答（Kubo 0.43.1 / boxo 0.43.0）:
@@ -54,11 +55,6 @@ Kubo の Gateway は `NoFetch` なので、ローカルにあるブロックだ�
 
 オフラインでは boxo の fetcher が「ブロックが無い」を `traversal.SkipMe` に置き換え、Gateway がそれを not found と判定しないので 500 になる。サブドメインと DNSLink はルートでも `_redirects` を探すためにサブパスを辿るので 500 になる。
 
-| 入口 | 受け付けるもの |
-|---|---|
-| `127.0.0.1:8080`（Kubo 直接） | すべて。`localhost` ではサブドメイン Gateway（`/ipfs/<cid>` は `<cid>.ipfs.localhost` へリダイレクト）、`127.0.0.1` ではパス Gateway |
-| `127.0.0.1:8081`（`gateway` の Caddy） | `SWING_GATEWAY_HOSTS` の `Host` だけ。それ以外は Caddy が 404 を返す |
+`127.0.0.1:8080`（Kubo 直接）はすべてのパスを受け付ける（`localhost` ではサブドメイン Gateway（`/ipfs/<cid>` は `<cid>.ipfs.localhost` へリダイレクト）、`127.0.0.1` ではパス Gateway）。`SWING_GATEWAY_HOSTS` はカンマ区切りのホスト名（小文字英数字・`-`・`.`）。起動スクリプトが各ホストを `{"Paths": [], "UseSubdomains": false, "NoDNSLink": false}` で `Gateway.PublicGateways` に入れる。これらのホストでは DNSLink（`_dnslink.<host>`）の内容だけを返し、`/ipfs/`・`/ipns/`・`/routing/v1` は 404。不正な名前があると `ipfs` は起動しない。
 
-- `SWING_GATEWAY_HOSTS` はカンマ区切りのホスト名（小文字英数字・`-`・`.`）。起動スクリプトが各ホストを `{"Paths": [], "UseSubdomains": false, "NoDNSLink": false}` で `PublicGateways` に入れる。これらのホストでは DNSLink（`_dnslink.<host>`）の内容だけを返し、`/ipfs/`・`/ipns/`・`/routing/v1` は 404。不正な名前があると `ipfs` は起動しない。
-- Caddy は HTTP だけで待ち受け、TLS は前段（Cloudflare Tunnel など）に任せる。`entrypoint.sh` が `SWING_GATEWAY_HOSTS` を空白区切りにして `host` マッチャに渡す。空なら起動しない。
-- Kubo は `Host` と `X-Forwarded-Host` をそのまま信じるので、Kubo の 8080 を外に出してはいけない。Caddy は受け取った `X-Forwarded-*` を捨てて付け直す。
+Kubo は `Host` と `X-Forwarded-Host` をそのまま信じるので、Kubo の 8080 を外に出してはいけない。compose では内蔵 gateway（[`gateway.md`](gateway.md)。`mirror` コンテナの中で `SWING_GATEWAY_UPSTREAM=http://ipfs:8080` としてこの Kubo にプロキシする）を前段に置き、ホスト名での振り分けと `X-Forwarded-*` の付け直しをそちらに任せる。内蔵 gateway 自体の Host 判定・転送するヘッダー・404/502 の挙動は [`gateway.md`](gateway.md) を参照。

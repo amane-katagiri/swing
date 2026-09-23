@@ -6,11 +6,20 @@
 
 - `<key>` は npub / hex / nprofile を受け付ける。
 - 「Follow Set」は kind 30000、`d = mirror_set` のうち、作者ごとに NIP-01 の置き換え規則で最新のもの。`created_at` が現在時刻より 900 秒（`nostr::MAX_FUTURE_SKEW`）を超えて先のものは、それが relay から取れた最新であっても無いものとして扱う（`RelayClient::fetch_follow_set` / `fetch_follow_sets`）。「サイトごとの最新のサイトイベント」（sites・replicas・webring で使う `nostr::select_latest`）も同じ基準で、先すぎる `created_at` のイベントは選ばない。
-- `agent` と `publish` 以外は読み取り専用で、`state.json` も MFS も変えない（`mirror add` / `remove` は Follow Set を relay に送る）。
+- `up`・`publish`・`service install`/`uninstall` 以外は読み取り専用で、`state.json` も MFS も OS のファイルも変えない（`mirror add` / `remove` は Follow Set を relay に送る。`stop`／`service stop` は動いているプロセスに停止・再起動を要求するだけで、ファイルは変えない）。`service install`/`uninstall` は OS のサービス定義ファイル（systemd unit / launchd plist / タスクスケジューラのタスク）を書く・消す。
+- `up` は処理を始める前に `<[agent].state_dir>/swing.lock` のインスタンスロックを取る（[`up.md#多重起動の防止lockrs`](up.md#多重起動の防止lockrs)）。同じ `state_dir` に対して既に動いていれば、起動側のエラーで即座に終了する。
 
-## agent
+## up
 
-Follow Set の対象者のサイトを MFS に保存・削除し続ける常駐プロセス（[`agent.md`](agent.md)）。`[dashboard].listen` が `off` でなければ、同じプロセスで[ダッシュボード](dashboard.md)も立ち上がる。
+`[kubo].managed` に応じて Kubo（子プロセス）と mirror-agent の中身を 1 プロセスの supervisor として動かす。mirror-agent はこの `up` だけが起動でき、単体で動かすサブコマンドは無い。Kubo・agent いずれかが落ちても自動で再起動する（[`up.md`](up.md)）。`--log-file <path>` を指定すると、標準エラーの代わりにそのファイルへ追記でログを出す。
+
+## stop
+
+動いている `swing up` インスタンスに正常終了（グレースフルシャットダウン）を要求する（[`up.md#終了要求と-exit-codeshutdownexitrequest-shutdownexit`](up.md#終了要求と-exit-codeshutdownexitrequest-shutdownexit)、[`service.md#swing-stopstoprs`](service.md#swing-stopstoprs)）。`--config`（省略時は `SWING_CONFIG` または `./swing.toml`）・`--restart`（止めるのではなく再起動を要求する。ダッシュボードが必要）・`--timeout <秒>`（既定 60。この秒数だけ停止を待ち、超えたらエラー）を取る。動いていなければ `not running` と出して正常終了する。
+
+## service install / uninstall / status / stop
+
+`swing up` を OS のログイン/システムサービスとして登録する（systemd user unit・launchd LaunchAgent・Windows タスクスケジューラ、[`service.md`](service.md)）。`install` は `--config`（省略時は `SWING_CONFIG` または `./swing.toml`。どちらも無ければエラー）・`--system`（Linux のみ）・`--no-start`（登録だけで起動しない）を取る。`uninstall`/`status`/`stop` は `--system` のみ。`stop` は登録を残したままプロセスだけ止める。OS ごとの実体（`systemctl stop` / `launchctl kill` / Windows は `swing stop` と同じ API 経由）は [`service.md`](service.md) の各 OS の節を参照。上の `stop`（`swing stop`）とは別で、こちらはサービス機構を通す。`uninstall` はどの OS でも止めてから登録を消す。Linux（`systemctl disable --now`）と macOS（`launchctl bootout`）はサービス機構が SIGTERM を送るのでそれ自体がグレースフル、Windows は `schtasks /End` が強制終了なので、その前に `swing stop` と同じ手順で止めてから `/End` → `/Delete` する。
 
 ## publish
 

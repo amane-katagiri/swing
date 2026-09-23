@@ -1,0 +1,114 @@
+# swing service（service.rs）
+
+[`../architecture.md`](../architecture.md) の一部。`swing up` そのものは [`up.md`](up.md)。
+
+```
+swing service install   [--config <path>] [--system] [--no-start]
+swing service uninstall [--system]
+swing service stop      [--system]
+swing service status    [--system]
+```
+
+登録するコマンドは常に `<exe> up --config <config>`（`<exe>` は `current_exe()` の絶対パス）。設定ファイルは `config::resolve_config_path`（`pub`）で決め、見つからなければ「service install needs a config file (swing.toml): pass --config or set SWING_CONFIG」でエラー（環境変数だけで動かす構成は非対応）。パスは `canonicalize` して絶対パスにする。作業ディレクトリは設定ファイルの親ディレクトリ（相対な `state_dir = "./data"` がそのまま使えるように、登録するユニット/plist/タスクの working directory をそこに合わせる）。
+
+`--system` は Linux でのみ有効。他 OS で指定するとエラー（「--system is only supported on Linux」）。`--no-start` は登録だけ行い起動しない（`install` のみ）。
+
+生成する unit / plist / XML の文字列はそれぞれ純粋関数（`systemd_unit`・`launchd_plist`・`schtasks_xml`）で作り、ユニットテストで検証している。OS 依存の実行部分（ファイル書き込み・`systemctl`/`launchctl`/`schtasks` の呼び出し）だけ `cfg(target_os = ...)` で分岐し、対象 3 OS 以外では `install`/`uninstall`/`status`/`stop` すべて「service management is not supported on this OS」でエラーになる（コンパイル自体は全 OS で通る）。`service::uninstall`/`service::stop` は（Windows がグレースフルな停止で非同期処理を要するため）`async fn`（他は同期のまま）。
+
+## `swing stop`（`stop.rs`）
+
+```
+swing stop [--config <path>] [--restart] [--timeout <secs>, 既定 60]
+```
+
+`swing service stop` とは別に、`swing up` を OS のサービス登録に関わらず直接止められる CLI（[`up.md#終了要求と-exit-codeshutdownexitrequest-shutdownexit`](up.md#終了要求と-exit-codeshutdownexitrequest-shutdownexit)）。手順（`stop::run`）:
+
+1. まず `lock::acquire(state_dir)` を試す。取れれば（＝動いていない）`not running` と出してすぐ成功終了する（取れたロックはその場で drop して解放する）。
+2. `[dashboard].listen` がアドレスなら `POST http://<addr>/api/shutdown`（`--restart` なら `/api/restart`）を `X-Swing-Dashboard: 1` と `Host: <addr>` ヘッダ付きでリクエストタイムアウト 5 秒で送る。接続できない／タイムアウトした場合だけ次のフォールバックに進む（2xx 以外のレスポンスはフォールバックせず、そのままエラーにする。ダッシュボードは動いているのに拒否された＝設定の問題である可能性が高いため）。
+3. ダッシュボードが `off`、またはステップ 2 が接続できなかった場合のフォールバック: unix は `<state_dir>/swing.lock` から PID を読んで SIGTERM を送る（`--restart` と併用するとエラー。「dashboard が無いと再起動は要求できない」旨）。Windows はグレースフルに止める手段が無いので常にエラー（「the dashboard is off or not reachable; enable [dashboard].listen or end the process from Task Scheduler」）。
+4. 500ms 間隔で `lock::acquire` が取れるようになるまで（＝プロセスが終了するまで）ポーリングし、取れたら `stopped` と出して成功終了。`--timeout` 秒を超えたらエラー（「swing did not stop within N s」）。
+
+`swing service stop`（Windows のみ）はこの `stop::run` をそのまま使う（上記「Windows（タスクスケジューラ）」参照）。この CLI をダッシュボード API の薄いクライアントにしたのは、他の読み取り系サブコマンド（`sites`/`replicas`/`status`/`webring`/`mirror`）を将来同じ方向（agent の API を叩くクライアントに寄せる）に揃えるための最初の一歩でもある（[`../todo.md`](../todo.md)、[`../log/2026-09-23-graceful-stop.md`](../log/2026-09-23-graceful-stop.md)）。トレードオフとして、Windows で `[dashboard].listen = off` にしているとグレースフルな停止手段が無くなる。
+
+## Linux（systemd）
+
+| 項目 | 値 |
+|---|---|
+| unit パス（user） | `$XDG_CONFIG_HOME/systemd/user/swing.service`（既定 `~/.config/systemd/user/swing.service`） |
+| unit パス（`--system`） | `/etc/systemd/system/swing.service` |
+
+unit の内容（`systemd_unit`）:
+
+```ini
+[Unit]
+Description=SWING mirror agent
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+ExecStart=<exe> up --config <config>
+WorkingDirectory=<workdir>
+Restart=on-failure
+RestartSec=5
+KillSignal=SIGTERM
+TimeoutStopSec=60
+
+[Install]
+WantedBy=default.target        # --system なら multi-user.target
+```
+
+`ExecStart`/`WorkingDirectory` の各パスは二重引用符で囲み、`\`・`"` をエスケープする（`quote_systemd_arg`）。
+
+- `install`: unit を書き出し → `systemctl [--user] daemon-reload` → `systemctl [--user] enable [--now] swing`（`--no-start` なら `--now` を付けない）。`--system` でなければ続けて `loginctl enable-linger` を試み、失敗したら「ログアウト中も動かし続けるには自分で実行して」という warn を出す（インストール自体は失敗にしない）。
+- `uninstall`: `systemctl [--user] disable --now swing`（失敗は「未登録だったかもしれない」旨の注記のみ）→ unit ファイル削除 → `systemctl [--user] daemon-reload`。
+- `stop`: `systemctl [--user] stop swing`。unit の `ExecStart` はプロセスに SIGTERM を送る（`KillSignal=SIGTERM`。[`up.md`](up.md#終了要求と-exit-codeshutdownexitrequest-shutdownexit) の停止シーケンスに入る）のを `systemd` が待つだけで、登録は残る（`enable` はそのまま。次のログイン/`systemctl start swing`で再び動く）。`Restart=on-failure` なので、正常終了（exit code 0）扱いの `stop`（`systemctl stop` は SIGTERM 送出後 `TimeoutStopSec=60` まで待ってから `exit 0` で終わったとみなす）では自動再起動しない。
+- `status`: unit ファイルが無ければ `not installed` と出して終わる。あれば `systemctl [--user] status swing --no-pager` をそのまま実行し、標準入出力をそのまま引き継ぐ（終了コードは呼び出し元に伝播しない）。
+- ログは journal（`journalctl [--user] -u swing -f`）。
+
+## macOS（launchd）
+
+| 項目 | 値 |
+|---|---|
+| plist パス | `~/Library/LaunchAgents/jp.ne.ama.swing.plist` |
+| ログ | `~/Library/Logs/swing.log`（stdout/stderr 共通） |
+| `Label` | `jp.ne.ama.swing` |
+
+`--system` は非対応（macOS には渡せない。`require_system_supported` が Linux 以外での `--system` を拒否する）。
+
+plist の主なキー（`launchd_plist`）: `ProgramArguments` = `[<exe>, "up", "--config", <config>]`、`WorkingDirectory`、`RunAtLoad = true`、`KeepAlive = { SuccessfulExit = false }`（非 0 で終わったときだけ再起動する。systemd の `Restart=on-failure` と同じ意味）、`StandardOutPath`/`StandardErrorPath` = ログパス、`EnvironmentVariables.PATH = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"`（Homebrew の bin を含める）。パス・値は XML エスケープする。
+
+- `install`: 既に `launchctl print gui/<uid>/jp.ne.ama.swing` が成功する（＝ロード済み）なら先に `bootout` してから、plist を書き出す。`--no-start` でなければ `launchctl bootstrap gui/<uid> <plist>` でロードする。
+- `uninstall`: `launchctl bootout gui/<uid>/jp.ne.ama.swing`（失敗は無視）→ plist ファイル削除。
+- `stop`: `launchctl kill SIGTERM gui/<uid>/jp.ne.ama.swing`（bootout ではなくプロセスに直接 SIGTERM を送るだけ。[`up.md`](up.md#終了要求と-exit-codeshutdownexitrequest-shutdownexit) の停止シーケンスに入る）。`swing up` は exit 0 で終わるので `KeepAlive = { SuccessfulExit = false }` により止まったままになる（次のログインで `RunAtLoad` により再び起動する）。手で再開するなら `launchctl kickstart -k gui/<uid>/jp.ne.ama.swing`。ログインをまたいで止め続けるなら `launchctl disable gui/<uid>/jp.ne.ama.swing` してから `bootout`（戻すときは `enable` → `service install`）。
+- `status`: plist が無ければ `not installed`。あれば `launchctl print gui/<uid>/jp.ne.ama.swing` をそのまま実行。
+- `uid` は `libc::getuid()`。
+
+## Windows（タスクスケジューラ）
+
+| 項目 | 値 |
+|---|---|
+| タスク名 | `swing` |
+| ログ | `<workdir>/swing.log`（`up --log-file <path>` で渡す。下記） |
+
+`--system` は非対応。`sc.exe` のサービス登録は管理者権限と UAC が要るため使わず、タスクスケジューラの「ログオン時トリガー + 失敗時再実行」で代替する（[配布方式の設計](../log/2026-09-21-distribution-design.md)）。
+
+タスク XML（`schtasks_xml`。UTF-16 宣言だが本文は ASCII 範囲で問題ない）の主な設定:
+
+- `<Triggers><LogonTrigger>`: 現在ユーザー（`USERDOMAIN\USERNAME`、ドメインが空ならユーザー名のみ）でログオン時に起動。
+- `<Principal><LogonType>S4U</LogonType><RunLevel>LeastPrivilege</RunLevel>`: パスワード無しでログオンする S4U を使う。`InteractiveToken` にするとログオン時にコンソールウィンドウが出てしまうため、コンソールを出さずに常駐させる目的で S4U を選んでいる（実機でのサービス起動・ネットワーク到達性は未確認。[`../log/2026-09-23-distribution-implementation.md`](../log/2026-09-23-distribution-implementation.md) の「未確認」を参照）。
+- `<Settings>`: `MultipleInstancesPolicy = IgnoreNew`、`StartWhenAvailable = true`、`ExecutionTimeLimit = PT0S`（無制限）、`RestartOnFailure`（`Interval = PT1M`、`Count = 999`）、`DisallowStartIfOnBatteries = false`、`StopIfGoingOnBatteries = false`、`Hidden = true`。
+- `<Actions><Exec>`: `Command` = `<exe>`、`Arguments` = `up --config "<config>" --log-file "<log>"`、`WorkingDirectory` = `<workdir>`。
+
+タスクの XML には環境変数を書けないため、ログ出力先は `up` のコマンドライン引数 `--log-file` で渡す（下記）。
+
+- `install`: XML を一時ファイルに書き、`schtasks /Create /TN swing /XML <tmpfile> /F` で登録してから一時ファイルを削除する。`--no-start` でなければ `schtasks /Run /TN swing` で即時起動する。
+- `uninstall`: まず `stop`（下記）と同じグレースフルな停止を試みる（失敗しても無視して続ける）。続けて `schtasks /End /TN swing`（失敗は無視、既にグレースフルに止まっていれば no-op）→ `schtasks /Delete /TN swing /F`。
+- `stop`: `swing stop`（[`up.md`](up.md#終了要求と-exit-codeshutdownexitrequest-shutdownexit)）と同じロジックを、設定ファイルを `service.rs` の既存のパス解決（`resolve_service_paths`。`--config` は取らず、`install` と同じ規則で探す）で見つけて 60 秒のタイムアウトで呼ぶ（ダッシュボード経由の POST、無ければエラー。Windows にはユニックスの SIGTERM フォールバックが無い）。失敗したら warn を出して `schtasks /End /TN swing`（強制終了）にフォールバックする。タスクの登録自体は残る（`RestartOnFailure` はコード 3（再起動)/0（そのまま） で up.md のとおりに分かれる。`/End` によるフォールバックは強制終了なので exit code の区別が無く、次のログオン時トリガーまで再起動しない）。
+- `status`: `schtasks /Query /TN swing /FO LIST /V` を実行し、標準出力をそのまま表示する。失敗（未登録など）なら `not installed` と出す。
+
+## `swing up --log-file <path>`
+
+`Command::Up` の任意オプション。指定すると `main.rs` の `init_tracing` が `tracing-subscriber` の出力先をそのファイル（追記オープン、ANSI 無効）に切り替える。標準エラーには出なくなる。
+
+- Linux（systemd）・macOS（launchd の `StandardOutPath`/`StandardErrorPath`）は OS 側がログをファイルにリダイレクトする仕組みを持つため、`service::install` はこのオプションを付けない。
+- Windows だけ、`service::install` が生成するタスクの `Arguments` に `--log-file <workdir>/swing.log` を含める（タスクスケジューラにはログリダイレクトの仕組みが無いため）。

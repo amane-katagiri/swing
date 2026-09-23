@@ -1,0 +1,179 @@
+# swing up と Kubo の管理（up.rs, kubo.rs, shutdown.rs）
+
+[`../architecture.md`](../architecture.md) の一部。設定キーは [`../architecture.md#設定と環境変数`](../architecture.md#設定と環境変数)、内蔵 gateway は [`gateway.md`](gateway.md)、OS への常駐登録は [`service.md`](service.md)。
+
+`swing up` は `[kubo].managed` に応じて 2 通りに分かれる。
+
+- `managed = true`: Kubo を子プロセスとして起動・設定・監視し、その上で `agent::run_until`（[`agent.md`](agent.md)）を動かす。
+- `managed = false`: 外部の Kubo（`[ipfs].api`）のヘルスを待ってから `agent::run_until` を動かす。
+
+どちらも `shutdown::cancel_on_signal()`（下記）で作った `CancellationToken` の下で動く。
+
+## shutdown（shutdown.rs）
+
+`cancel_on_signal() -> Result<CancellationToken>` が唯一の公開関数。`up::run(config)` がこれで作ったトークンを使う。
+
+- SIGINT（`tokio::signal::ctrl_c`）を待つ。unix ではさらに SIGTERM（`tokio::signal::unix::signal(SignalKind::terminate())`）も待つ。どちらか先に届いた方で進む。
+- 受信したら `info!(signal, "shutdown requested")` を出して `token.cancel()` する。
+- 続けて `FORCE_EXIT_GRACE_PERIOD`（10 秒）待ち、まだプロセスが生きていれば（＝グレースフルシャットダウンが終わらず main の runtime が畳まれていなければ）`error!` を出して `std::process::exit(1)` する。正常終了時はプロセスごと終わるのでこのコードには到達しない。
+
+## 多重起動の防止（lock.rs）
+
+`lock::acquire(state_dir) -> Result<InstanceLock>` が唯一の公開関数。`up::run` が処理を始める前に最初に呼ぶ。
+
+- `<state_dir>/swing.lock` を作成（無ければ）・読み書きで開き、`std::fs::File::try_lock()`（advisory lock、OS が管理し、プロセスが `kill -9` で消えても自動的に外れる）を取る。
+- 取れたら中身を空にして自分の PID（`std::process::id()`）を書く。
+- 既に別のプロセスが取っていれば（`TryLockError::WouldBlock`）、ファイルの中身（相手の PID）を読んで `another swing instance is already running on <state_dir> (pid N)` でエラーにする（PID が読めなければ `(pid N)` を省く）。
+- `InstanceLock` を drop してもロックファイル自体は消さない（消すと、別プロセスが開いた直後にこちらが消すレースがあり得るため）。ファイルは残り続け、次回の `acquire` はロックが外れていれば中身を上書きして取り直す。
+
+## Kubo バイナリの検出（`kubo::locate_binary`）
+
+優先順位:
+
+1. `[kubo].binary` が指定されていればそのパス。存在しなければエラー。
+2. `swing` 実行ファイル（`current_exe()`）と同じディレクトリの `ipfs`（Windows は `ipfs.exe`）。
+3. `PATH` 上の `ipfs`（Windows も `PATHEXT` は見ず `ipfs.exe` 固定）。
+4. どれも無ければエラー（`Kubo binary not found: ...`）。
+
+## バージョン確認
+
+`kubo::KUBO_VERSION = "0.43.1"`（compose の Kubo イメージと同じ、[`kubo.md#kubo-のバージョン`](kubo.md#kubo-のバージョン)）。`swing up` は起動時に一度だけ `ipfs version --number` を実行し、`KUBO_VERSION` と異なれば `warn!` するだけで続行する（エラーにしない）。実行できない（バイナリが壊れている等）場合は `version()` 自体が失敗し、`swing up` はエラー終了する。
+
+## リポジトリの初期化（`kubo::ensure_repo`）
+
+`<repo>/config` が無ければ `IPFS_PATH=<repo>` で `ipfs init` を実行する（あれば何もしない）。呼び出し元にリポジトリを新規作成したかどうかを bool で返す。`<repo>` ディレクトリ自体は無ければ先に作る。
+
+## 適用する Kubo 設定（`kubo::apply_config`）
+
+`swing up` は Kubo を起動するたびに `IPFS_PATH=<repo>` で次の `ipfs config` を順に実行する（`docker/kubo-init.d/001-swing-config.sh` の設定を移植したもので、内容はそちらと同じ。[`docker.md#kubo-の設定`](docker.md#kubo-の設定)）。
+
+| キー | 値 | 備考 |
+|---|---|---|
+| `Datastore.StorageMax` | `[kubo].storage_max`（10 進バイト数の文字列、例 `"107374182400"`） | |
+| `Provide.Strategy` | `[kubo].provide_strategy` | |
+| `Gateway.NoFetch` | `true` | 毎回 `--json` で設定 |
+| `Gateway.NoDNSLink` | `true` | 毎回 `--json` で設定 |
+| `Gateway.PublicGateways` | `[gateway].hosts` を `{"<host>": {"Paths": [], "UseSubdomains": false, "NoDNSLink": false}}` に変換したもの | hosts が空なら `{}` |
+| `Addresses.API` | `["/ip4/127.0.0.1/tcp/<api_port>"]` | `api_port` は起動のたびに動的に選ぶ（下記） |
+| `Addresses.Gateway` | `[kubo].gateway_listen` を multiaddr にしたもの（`/ip4/.../tcp/...` か `/ip6/.../tcp/...`） | |
+| `Addresses.Swarm` | `[kubo].swarm_port` が `Some` のときだけ、Kubo の既定の Swarm リスト 8 本のポートをすべてこの値に置き換えたもの | `None` なら触らない（Kubo の既定のまま） |
+
+`ipfs config` の実行が失敗したら stderr を含めてエラーにする。
+
+## 動的な API ポートと `<repo>/api`
+
+`kubo::pick_free_port()` が `127.0.0.1:0` を bind してすぐ解放し、空いている TCP ポートを 1 つ返す。`swing up` は Kubo を起動するたびにこれで API ポートを選び、`Addresses.API` に設定する。Kubo は起動時に実際に listen したアドレスを `<repo>/api` に multiaddr（例 `/ip4/127.0.0.1/tcp/54321`）で書き出す。
+
+- `kubo::api_url_from_repo(repo)`: `<repo>/api` を読んで `multiaddr_to_http_url` で HTTP URL に変換する。ファイルが無ければ「Kubo is not running（`swing up` を起動するか、`[kubo].managed = false` にして `[ipfs].api` で外部の Kubo を指すよう案内する）」という趣旨のエラーにする。
+- `kubo::multiaddr_to_http_url(addr)`: `/ip4/<ip>/tcp/<port>` → `http://<ip>:<port>`、`/ip6/<ip>/tcp/<port>` → `http://[<ip>]:<port>`（`[::1]` のように角括弧を付ける）。`/dns4`・`/dns6`・`/dns` も同様にホスト名をそのまま使う。それ以外のプロトコルや `tcp` 以外はエラー。
+- `Config::ipfs_api_url()`（[`../architecture.md`](../architecture.md#設定と環境変数)）は `[ipfs].api` が `Url` ならそのまま返し、`Managed` なら `api_url_from_repo(&config.kubo.repo)` を呼ぶ。`swing status` など他のサブコマンドはこれを経由して、`swing up` が管理している Kubo の実際のポートを見つける。
+
+`kubo::wait_healthy` はこのファイルを読まない。起動直後はまだ `<repo>/api` が存在しないため、`swing up` は選んだポート番号から直接 `http://127.0.0.1:<api_port>` を組み立ててヘルスチェックする。
+
+## デーモンの起動（`kubo::Daemon::spawn`）
+
+```
+<bin> daemon --migrate=true --enable-gc --agent-version-suffix=swing
+```
+
+`Daemon::spawn(bin, repo, api_url)` は起動する Kubo の API URL（`Addresses.API` に設定したものと同じ、`http://127.0.0.1:<api_port>`）を受け取って `Daemon` に持たせる。`Daemon::stop`（下記）がこれを使って RPC シャットダウンを呼ぶ。
+
+- `IPFS_PATH=<repo>`。stdin は `/dev/null` 相当、stdout/stderr は pipe。
+- Linux（`cfg(target_os = "linux")`）のみ、`pre_exec` で `PR_SET_PDEATHSIG(SIGTERM)` を設定する。swing プロセスが SIGKILL 等で消えても、Linux では子の Kubo に SIGTERM が届く。
+- Windows（`cfg(windows)`）のみ、Job Object を作って `SetInformationJobObject`（`JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`）で「最後のハンドルが閉じたら中のプロセスを道連れに kill する」設定にし、`AssignProcessToJobObject` で子プロセスを割り当てる。Job Object の HANDLE は `Daemon` が持ち、`Drop` で `CloseHandle` する（swing が `TerminateProcess` 相当で消えれば、OS がハンドルを閉じて Kubo も一緒に落ちる。Linux の `PR_SET_PDEATHSIG` の Windows での相当品）。**この経路は未検証**（[`../../docs/architecture.md`](../architecture.md) の実行環境では Windows SDK が無く `cargo check --target x86_64-pc-windows-msvc` すら通らないため、API シグネチャを `windows-sys` のソースで確認しただけ）。macOS にはこの種の機構が無く、`kill_on_drop(true)` と次回起動時の孤児回収に頼る。
+- 標準出力・標準エラーは 1 行ごとに `tracing::info!`（stdout）/ `tracing::warn!`（読み取りエラー時）で `target: "kubo"`、`stream = "stdout" | "stderr"` フィールド付きで転送する（Kubo 自身のログレベルは反映せず、行の内容をそのまま info として流す）。標準エラーの行に `"lock"` が含まれていたら `Daemon` 内の `Arc<AtomicBool>` を立てる（`Daemon::saw_repo_lock_error()`）。Kubo は他のデーモンが同じ repo の lock を持っているとき、この語を含むメッセージ（`someone else has the lock` 等）を標準エラーに出すため。
+
+## ヘルス待ち（`kubo::wait_healthy`）
+
+`POST <api_url>/api/v0/id` を 1 秒間隔で叩き、2xx が返れば成功。1 回ごとのリクエストタイムアウトは 5 秒。指定した `timeout` を超えたらエラー。
+
+- unmanaged: 30 秒（`UNMANAGED_HEALTH_TIMEOUT`）。
+- managed: 120 秒（`MANAGED_HEALTH_TIMEOUT`）。
+
+待機中も `CancellationToken` の cancel に即座に応答する（`tokio::select!` で `wait_healthy` と `token.cancelled()` を競走させる）。
+
+## 停止（`Daemon::stop(grace)`）
+
+Kubo 自身に「行儀よく終わる」機会を与えるため、まず Kubo の RPC（`ipfs shutdown` と同じ）を叩き、それでも `grace` 以内に終わらなければ段階的に強制する 3 段構え（全 OS 共通の 1 段目 + OS 依存の 2〜3 段目）:
+
+1. `POST <api_url>/api/v0/shutdown` をリクエストタイムアウト 5 秒で送る。Kubo は自分で終了処理を始めてから接続を切る（またはエラーを返す）ことがあるため、レスポンスの成功・失敗・接続エラーのどれであっても「シャットダウンを要求した」ものとして次に進む（リトライしない）。
+2. 子プロセスの終了を `grace` 秒まで待つ。終了すればここで成功。
+3. まだ生きていれば: unix は SIGTERM を送って 10 秒待ち、それでも終わらなければ `kill()`（SIGKILL）。Windows（`cfg(unix)` に入らない経路）は SIGTERM に相当するものが無いため、待たずに直接 `kill()`。
+
+各段階の成否は `tracing::debug!` に出す（1 段目で終われば SIGTERM/kill には進まない）。
+
+`swing up` は `DAEMON_STOP_GRACE = 30s` を渡す。`swing stop`（[`service.md`](service.md#swing-stopstoprs)）が呼ぶ経路もこの `Daemon::stop` を通るので、CLI からの停止も同じ 3 段構えになる。
+
+## `kubo.pid` と孤児 Kubo の回収（managed のみ）
+
+`swing up` を SIGKILL 等で強制終了すると、`Daemon` の drop も `Daemon::stop` も走らないため、子の Kubo が残り得る（Linux は `PR_SET_PDEATHSIG` で大抵は道連れになるが保証ではない。Windows の Job Object は未検証、macOS には対抗手段が無い）。残った Kubo は同じ repo の lock を握ったままなので、次の `swing up` がそこに気づかずポートだけ変えて起動しようとしても `ipfs config`/起動が repo lock で失敗し続けうる。
+
+- `kubo::write_pid_file(state_dir, pid)` / `read_pid_file(state_dir)` / `remove_pid_file(state_dir)`: `<state_dir>/kubo.pid` に子の PID（10 進）を読み書きする薄いヘルパー。`run_managed` が `Daemon::spawn` 成功直後に書き、`Daemon::stop` が完了したら（通常のシャットダウンでも、agent 再起動に伴う経路でも）消す。Kubo が自分で落ちた（`daemon.wait()` が先に返った）場合も、`stop` を呼ばずに直接消す。
+- `kubo::recover_orphan(state_dir, repo) -> Result<()>`: `run_managed` が起動時に 1 回、[多重起動の防止](#多重起動の防止lockrs) のロックを取った直後・デーモンループに入る前に呼ぶ（ロックが取れている＝他の swing は生きていないので、この repo に対する Kubo がもしいればそれは孤児か無関係の別プロセスのどちらかでしかない）。
+  1. `kubo.pid` が無ければ何もせず終了。
+  2. あれば、その PID が生きていて `ipfs` プロセスかどうかを確かめる（unix: `ps -p <pid> -o comm=` の出力に `ipfs` を含むか。windows: `tasklist /FI "PID eq <pid>" /FO CSV /NH` の出力に `ipfs` を含むか）。生きていない・`ipfs` でなければ `warn!("stale kubo.pid")` を出してファイルを消すだけで終わる。
+  3. 生きていて `ipfs` なら `warn!("terminating orphaned Kubo left by a previous swing")` を出し、終了を試みる: unix は SIGTERM → 500ms 間隔で最大 30 秒待ち → まだいれば SIGKILL → 最大 10 秒待つ（それでも終わらなければエラーで `swing up` 自体を止める）。windows は `taskkill /PID <pid> /T /F`（この経路にはグレースフルな段階が無い）→ 最大 10 秒待つ。生存確認は unix が `kill(pid, 0)`（`ESRCH` の判定は `raw_os_error()` を見る。`io::ErrorKind::NotFound` に必ずしもマップされないため）、windows は上と同じ `tasklist` チェック。終わったら `kubo.pid` を消す。
+  - `recover_orphan` が失敗すると `run_managed` はそのままエラーを返し、`swing up` は起動せずに終了する（バックオフして黙って再試行しない。repo lock を握ったままの孤児がいるのに新しい Kubo を起動しても意味が無いため）。
+
+### repo lock のヒント
+
+`recover_orphan` が拾えるのは自分が書いた `kubo.pid` だけで、`swing up` の管理下に無い Kubo（手動で起動した、別の swing 管理下にある等）が同じ repo を使っていた場合は検出できない。この場合 `apply_config`/`Daemon::spawn` 後の起動が失敗し続ける。`Daemon` が標準エラーで [`"lock"` を含む行を見た](#デーモンの起動kubodaemonspawn) ことを覚えているので、`wait_healthy` が失敗した直後に daemon が既に exit していて（`Daemon::try_wait()`）かつ `saw_repo_lock_error()` が true なら、`warn!("another ipfs daemon seems to hold the Kubo repo lock; stop it or point [kubo].repo elsewhere")` を追加で出してから通常のバックオフに入る。
+
+## `swing up` のループ（up.rs）
+
+`up::run(config)` は `config.kubo.managed` で `run_unmanaged` / `run_managed` に分かれる。
+
+### unmanaged
+
+```
+loop {
+    wait_healthy(config.ipfs_api_url(), 30s)   // cancel されたら即終了
+    agent::run_until(config, token.child_token())
+    // Ok(()) なら終了。Err ならバックオフして最初から
+}
+```
+
+### managed
+
+起動時に 1 回だけ `locate_binary` + `version`（不一致は warn）、続けて [`recover_orphan`](#kubopid-と孤児-kubo-の回収managed-のみ)。以後ループ:
+
+1. `ensure_repo` → `pick_free_port` → `apply_config` → `Daemon::spawn` → `wait_healthy("http://127.0.0.1:<api_port>", 120s)`。
+   - いずれかの手順が失敗したら（`wait_healthy` が失敗した場合は daemon を `stop` してから）バックオフして 1 からやり直す。
+2. `config.ipfs.api` を `IpfsApi::Url(api_url)` に差し替えたコピーで `agent::run_until` を子トークンとともに `tokio::spawn` する。
+3. `tokio::select!` で次のいずれかを待つ:
+   - **Kubo が exit** → `error!` を出し、agent を cancel して最大 15 秒（`AGENT_STOP_TIMEOUT`）待つ（超えたら `abort()`）。バックオフして 1 からやり直す（Kubo・agent の両方を再起動）。
+   - **agent が Err（または panic）** → `warn!`／`error!` を出し、バックオフしてから **agent だけ**を同じ Kubo に対して再起動する（Kubo はそのまま）。
+   - **agent が Ok**（`shutdown::Exit`。cancel による正常終了）、または**親トークンが cancel** → agent を cancel/待ち、`Daemon::stop(30s)` して `swing up` 全体を終了する。agent が返した `Exit`（`Exit::Stop` か `Exit::Restart` か）をそのまま `up::run` の戻り値にする（親トークンの cancel、つまり SIGINT/SIGTERM や `swing stop` 経由の場合は誰も `ExitRequest::restart()` を呼んでいないので常に `Exit::Stop`）。
+
+### バックオフ（`Backoff`）
+
+1 秒から開始し、リトライのたびに倍にして最大 60 秒で頭打ち（`1, 2, 4, 8, 16, 32, 60, 60, ...`）。直前に起動していた期間（Kubo なら daemon の生存時間、agent なら `run_until` の実行時間）が 60 秒以上あれば、次の遅延は 1 秒にリセットする。待機中も cancel に即応する。
+
+## 終了要求と exit code（`shutdown::ExitRequest`, `shutdown::Exit`）
+
+`swing up` は `Result<shutdown::Exit>`（`Exit::Stop` | `Exit::Restart`）を返し、`main.rs` がそれをプロセスの exit code に変換する: `Exit::Stop` → 0、`Exit::Restart` → ランタイムを畳んだ (`shutdown_timeout`) 後に `std::process::exit(3)`。エラー終了（`Err`）はこれまでどおり anyhow 由来の非 0（通常 1）。
+
+`agent::run_until` は自分に渡された `CancellationToken` から `ExitRequest::new(token.clone())` を 1 つ作り（ダッシュボードが無効でも作る）、ダッシュボードが有効なら `dashboard::AppState.exit` にクローンを渡す。ダッシュボード API の `POST /api/shutdown`／`POST /api/restart`（[`dashboard/http-api.md`](dashboard/http-api.md)）はこの `ExitRequest` の `stop()`／`restart()` を呼ぶだけ（`restart()` は内部の `AtomicBool` を立ててから同じトークンを cancel する）。`run_until` はループを抜ける際に `ExitRequest::restart_requested()` を見て `Exit::Restart`／`Exit::Stop` を返す。トークンが SIGINT/SIGTERM や `swing up` の親トークン経由で cancel された場合は誰も `restart()` を呼んでいないので常に `Exit::Stop` になる。
+
+`swing up`（managed）は agent の `Exit` をそのまま持ち上げる（上記「managed」のループ参照）ので、ダッシュボードから `restart` を要求すると: agent 内の `ExitRequest.restart()` → agent 自身のトークン（`up::run_managed` が `token.child_token()` で作った子）を cancel → `run_until` が `Exit::Restart` を返す → `swing up` が Kubo を `Daemon::stop` でグレースフルに止めてから `Exit::Restart` を返す → `main.rs` が exit code 3 で終了する。
+
+### 各サービスマネージャの反応
+
+| マネージャ | `Exit::Stop`（code 0） | `Exit::Restart`（code 3） |
+|---|---|---|
+| systemd（`Restart=on-failure`） | 0 は失敗扱いではないので再起動しない。停止したままになる | 3 は失敗扱いなので `RestartSec=5` 後に再起動する |
+| launchd（`KeepAlive = { SuccessfulExit = false }`） | 0 は成功終了なので再起動しない。次のログインまで停止したまま（再開は `launchctl kickstart -k`） | 3 は非 0 なので再起動する。シグナルで死んだ場合も再起動する |
+| Windows タスクスケジューラ（`RestartOnFailure`） | systemd と同様、0 は成功終了なので再起動しない | 3 は失敗扱いなので `Interval = PT1M` 後に再起動する |
+| compose（`restart: unless-stopped`） | 終了コードに関わらず再起動する（`unless-stopped` は `docker stop` で明示的に止めない限り常に再起動） | 同上、再起動する |
+
+### Windows の制約
+
+Windows にはタスクスケジューラのプロセスへ「OS シャットダウン/ログオフ」を通知する標準的な仕組みが無い（SCM サービスなら `SERVICE_CONTROL_SHUTDOWN` が届くが、swing は UAC を避けるためタスクスケジューラ登録にしている。[`service.md`](service.md)）。そのため OS シャットダウンやログオフでは `swing up` に何の通知も来ず、プロセスは（Job Object に割り当てられた Kubo ごと）ただ kill される。これは `swing stop` によるグレースフルな停止とは別の経路で、今回のグレースフルストップの対象外（受け入れている制約。[`../log/2026-09-23-graceful-stop.md`](../log/2026-09-23-graceful-stop.md)）。実害が小さい理由:
+
+- Kubo は Job Object の `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` により道連れで終了するので、孤児化して repo lock を握ったまま残ることはない（次回起動時の `recover_orphan` にも頼らずに済む）。
+- `state.json` は一時ファイルに書いてから `rename` する形（tmp + rename）で保存しており、書き込み途中の kill で壊れたファイルが残ることはない（[`architecture.md`](../architecture.md) の `state::State::save`）。
+- Kubo 自身のデータストアも突然の kill に対して壊れない前提で作られている（badger/flatfs いずれも書き込み中断からの復旧を想定した実装）。
+
+## Dockerfile / compose との関係
+
+`Dockerfile` の `CMD` は `["up"]`。compose の `mirror` サービスは `SWING_KUBO_MANAGED=false` を固定で渡し、外部の `ipfs` コンテナ（`docker/kubo-init.d/001-swing-config.sh` で設定）を使う。詳細は [`docker.md`](docker.md)。

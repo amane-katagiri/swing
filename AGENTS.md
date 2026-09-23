@@ -31,4 +31,5 @@ SWING（Nostr + IPFS 個人サイト相互ミラー）のリポジトリで作�
 - `cargo fmt` / `cargo clippy --all-targets -- -D warnings` / `cargo test` を通す。
 - テストで公開 relay や公開 IPFS に接続しない。統合テストはローカルの Kubo / relay に限定し `#[ignore]` にする。
 - 環境変数は `SWING_` 接頭辞で統一する。
+- ダッシュボードに要素を足すときは、既存のクラス（`swing-panel`・`swing-btn`・`swing-status` など）と余白トークン（`--swing-space-*`）だけで組み、隣接する要素との余白を必ず確認する。状態表示は既存のもの（例: `#publish-status`）と同じ置き方にする。`swing-status` は上の余白を持たないので、ボタン列などの直後に置くなら余白を足す。見た目の変更はデモ環境（`docker/demo/demo.sh up`）で実際に表示してから報告する。
 - 後方互換性のための処置（古い形式の state.json や設定を読むための `#[serde(default)]`・フォールバック・移行コードなど）は、入れる前に要否を確認する。確認せずに入れた場合は、何のための処置かを結果報告ではっきり伝える。

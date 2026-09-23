@@ -9,8 +9,11 @@
 | [`architecture/agent.md`](architecture/agent.md) | mirror-agent の動作、ポリシー判定、レプリカ報告の送信、`state.json` |
 | [`architecture/nip05.md`](architecture/nip05.md) | NIP-05 検証（agent と publish で共通） |
 | [`architecture/kubo.md`](architecture/kubo.md) | MFS の使い方、Kubo RPC、Kubo のバージョン |
-| [`architecture/docker.md`](architecture/docker.md) | Dockerfile、compose、Gateway |
-| [`architecture/dashboard.md`](architecture/dashboard.md) | `swing agent` 内蔵の Web ダッシュボード（起動と終了、設定、ガード、静的ファイル） |
+| [`architecture/up.md`](architecture/up.md) | `swing up`（supervisor）と Kubo の起動・設定・終了（`kubo.rs`） |
+| [`architecture/gateway.md`](architecture/gateway.md) | 内蔵 gateway（`gateway.rs`）: Host 振り分けと Kubo gateway へのプロキシ |
+| [`architecture/service.md`](architecture/service.md) | `swing service install / uninstall / status / stop`（systemd / launchd / タスクスケジューラ）、`swing stop`（`stop.rs`） |
+| [`architecture/docker.md`](architecture/docker.md) | Dockerfile、compose、外部 Kubo コンテナの設定 |
+| [`architecture/dashboard.md`](architecture/dashboard.md) | `swing up` 内蔵の Web ダッシュボード（起動と終了、設定、ガード、静的ファイル） |
 | [`architecture/dashboard/http-api.md`](architecture/dashboard/http-api.md) | ダッシュボードの HTTP API |
 | [`architecture/dashboard/web.md`](architecture/dashboard/web.md) | ダッシュボードの画面と CSS カスタマイズ |
 
@@ -50,13 +53,19 @@ swing/
     replicas.rs      レプリカ報告の集計、replicas サブコマンド
     webring.rs       Follow Set のたどり方とグラフの組み立て・出力、webring サブコマンド
     nip05.rs         NIP-05 検証
+    up.rs            `swing up` supervisor（Kubo の起動・監視、agent の起動・再起動、バックオフ）。詳細は architecture/up.md
+    kubo.rs          Kubo バイナリの検出・init・`ipfs config` 適用・子プロセスの起動と終了・ヘルス待ち・kubo.pid と孤児回収。詳細は architecture/up.md
+    lock.rs          多重起動防止のインスタンスロック（swing.lock）。詳細は architecture/up.md
+    gateway.rs       内蔵 gateway（axum）。Host 名での振り分けと Kubo gateway へのプロキシ。詳細は architecture/gateway.md
+    service.rs       `swing service install/uninstall/status/stop`（systemd / launchd / タスクスケジューラ）。詳細は architecture/service.md
+    stop.rs          `swing stop`（ダッシュボード API 経由、無ければ unix は SIGTERM）。詳細は architecture/up.md, architecture/service.md
+    shutdown.rs      `cancel_on_signal`（SIGINT/SIGTERM → CancellationToken、force-exit watchdog）、`ExitRequest`/`Exit`（ダッシュボードからの停止・再起動要求と exit code）。up/agent 共通
     dashboard/       agent 内蔵の Web ダッシュボード（mod.rs, guard.rs, api.rs, dto.rs, assets.rs）。詳細は architecture/dashboard.md
   web/               ダッシュボードのフロント（index.html, style.css, ES modules, 画像・フォントなどの静的アセット一式）。ビルド工程なしで include_str!/include_bytes! によりバイナリへ埋め込む。desktop-page.html / desktop-page.css / desktop-banner.gif（Desktop 画面のリンク集ページ）だけは設定で差し替えられる。詳細は architecture/dashboard.md
   tests/
     kubo_integration.rs          Kubo 連携の統合テスト（#[ignore]）
     nostr_relay_integration.rs   relay 連携の統合テスト（#[ignore]）
-  docker/kubo-init.d/  Kubo コンテナの起動スクリプト
-  docker/caddy/        gateway プロファイルの Caddy 設定
+  docker/kubo-init.d/  Kubo コンテナの起動スクリプト（外部 Kubo の設定。compose 専用）
   Dockerfile, compose.yaml, .env.example, swing.example.toml
   docs/                役割は AGENTS.md を参照
 ```
@@ -66,7 +75,12 @@ swing/
 ## CLI
 
 ```
-swing agent   [--config <path>]
+swing up      [--config <path>] [--log-file <path>]
+swing stop    [--config <path>] [--restart] [--timeout <secs>]
+swing service install   [--config <path>] [--system] [--no-start]
+swing service uninstall [--system]
+swing service stop      [--system]
+swing service status    [--system]
 swing publish [--config <path>] --site <d-tag> [--url <URL>] [--nip05 <off|warn|require>] [--title <TEXT>] [-m, --message <TEXT>] <DIR>
 swing mirror list                      [--config <path>]
 swing mirror add <key>...              [--config <path>]
@@ -77,6 +91,8 @@ swing status                           [--config <path>]
 swing webring [<key>...] [--depth <N>] [--format <text|dot|mermaid>] [--config <path>]
 swing key generate
 ```
+
+`swing up` は Kubo（`[kubo].managed = true` なら）と mirror-agent の中身を 1 プロセスの supervisor として動かす（[`architecture/up.md`](architecture/up.md)）。`managed = false` なら既に動いている Kubo（外部のもの）を待ってから同じことをする。mirror-agent を単体で起動するサブコマンドは無く、常に `swing up` を経由する。`swing service` は `swing up` を OS の常駐に登録する（[`architecture/service.md`](architecture/service.md)）。`swing stop`／`swing service stop` は動いている `swing up` にグレースフルな停止・再起動を要求する（[`architecture/up.md#終了要求と-exit-codeshutdownexitrequest-shutdownexit`](architecture/up.md#終了要求と-exit-codeshutdownexitrequest-shutdownexit)）。
 
 設定ファイルは次の順に探す。1 か 2 で指定したファイルが無ければエラー終了。3 が無ければ環境変数だけで動く。
 
@@ -101,7 +117,7 @@ site_event_kind = 35980             # SWING_SITE_EVENT_KIND
 replica_event_kind = 35981          # SWING_REPLICA_EVENT_KIND
 
 [ipfs]
-api = "http://127.0.0.1:5001"       # SWING_IPFS_API
+#api = "http://127.0.0.1:5001"      # SWING_IPFS_API（[kubo].managed = false のときだけ使う。既定 http://127.0.0.1:5001。managed = true で指定するとエラー）
 mfs_root = "/swing"                 # SWING_MFS_ROOT
 
 [policy]
@@ -136,7 +152,23 @@ gateway = "http://localhost:8080"   # SWING_DASHBOARD_GATEWAY（空文字でリ�
 #desktop_page_css = "/path/to/links.css"  # SWING_DASHBOARD_DESKTOP_PAGE_CSS（そのページ専用の CSS）
 #desktop_banner = "/path/to/banner.gif"   # SWING_DASHBOARD_DESKTOP_BANNER（88×31 バナー。png/gif/jpeg/webp/svg）
 max_upload = "2GB"                  # SWING_DASHBOARD_MAX_UPLOAD（POST /api/publish/upload のボディ上限。0 はエラー）
+
+[kubo]
+managed = true                      # SWING_KUBO_MANAGED（true: swing up が Kubo を子プロセスとして動かす。false: 外部の Kubo（[ipfs].api）を使う）
+#binary = "/usr/local/bin/ipfs"     # SWING_KUBO_BINARY（既定: swing 実行ファイルと同じディレクトリの ipfs(.exe)、無ければ PATH の ipfs）
+#repo = "./data/kubo"               # SWING_KUBO_REPO（IPFS_PATH。既定: [agent].state_dir/kubo）
+#storage_max = "100GB"              # SWING_KUBO_STORAGE_MAX（Datastore.StorageMax。既定: [policy].max_total_storage と同じ値）
+provide_strategy = "pinned+mfs"     # SWING_KUBO_PROVIDE_STRATEGY（Provide.Strategy）
+gateway_listen = "127.0.0.1:8080"   # SWING_KUBO_GATEWAY_LISTEN（Addresses.Gateway）
+#swarm_port = 4001                  # SWING_KUBO_SWARM_PORT（Addresses.Swarm のポート。未設定なら Kubo の既定のまま触らない）
+
+[gateway]
+listen = "off"                      # SWING_GATEWAY_LISTEN（例 "127.0.0.1:8081"。"off" で無効）
+hosts = []                          # SWING_GATEWAY_HOSTS（カンマ区切り。DNSLink で配信するホスト名。managed なら Kubo の Gateway.PublicGateways にも入れる）
+#upstream = "http://127.0.0.1:8080" # SWING_GATEWAY_UPSTREAM（プロキシ先の Kubo gateway。既定: managed なら http://<[kubo].gateway_listen>、そうでなければ http://127.0.0.1:8080）
 ```
+
+Kubo の起動・設定は [`architecture/up.md`](architecture/up.md#適用する-kubo-設定kuboapply_config)、内蔵 gateway の動作は [`architecture/gateway.md`](architecture/gateway.md) を参照。`Config::ipfs_api_url()` は `[ipfs].api` が `Url` ならそのまま返し、`Managed` なら `<[kubo].repo>/api` から動的なポートを読んで返す（Kubo が動いていなければエラー）。
 
 TOML キーの無い環境変数:
 
@@ -153,6 +185,12 @@ TOML キーの無い環境変数:
 - `poll_interval`、`concurrency`、`max_sites_per_account`、`[publish].keep_versions`、`SWING_FETCH_TIMEOUT`、`SWING_FETCH_IDLE_TIMEOUT` は 0 だとエラー。
 - `report_ttl` の半分が `poll_interval` 以下ならエラー。
 - `mfs_root` は `/` で始まる絶対パス。`/` そのもの、空の要素、`.`、`..` を含むとエラー。末尾の `/` は取り除く。
+- `[kubo].managed = true` のときに `[ipfs].api`（TOML または `SWING_IPFS_API`）が指定されているとエラー（`[ipfs].api conflicts with [kubo].managed = true`）。
+- `[gateway].listen` が `off` 以外で `[gateway].hosts` が空ならエラー。
+- `[gateway].hosts` の各要素は前後の空白を除いた後、空でなく、`a-z 0-9 . -` のみで構成され、`.` で始まらず・終わらず、`..` を含まないこと（`config::is_valid_gateway_host`。`docker/kubo-init.d/001-swing-config.sh` の `SWING_GATEWAY_HOSTS` 検証と同じ規則）。違反はエラー。
+- `[kubo].provide_strategy` は空文字ならエラー。値そのものの妥当性は Kubo 起動時の判定に任せる。
+- `[kubo].storage_max` は容量パーサ、`[kubo].gateway_listen` は `SocketAddr`、`[kubo].swarm_port` は 1..=65535（`0` はエラー）としてパースする。
+- `[kubo].binary` の実在確認は `config` では行わない（`kubo::locate_binary` が `swing up` 起動時に行う）。
 
 値の形式:
 
@@ -226,3 +264,5 @@ docker run -d --rm -p 127.0.0.1:18080:8080 scsibug/nostr-rs-relay
 # SWING_TEST_RELAY（既定 ws://127.0.0.1:18080）。サイトイベント・レプリカ報告・Follow Set の送受信と #p での Follow Set の取得
 cargo test --test nostr_relay_integration -- --ignored --test-threads=1
 ```
+
+Windows 向けのクロスビルド（WSL / Linux から）: `cargo install cargo-xwin` と `lld-link`（Homebrew なら `brew install lld`）を用意して `cargo xwin clippy --target x86_64-pc-windows-msvc --all-targets -- -D warnings` / `cargo xwin build --release --target x86_64-pc-windows-msvc`。macOS 向けは SDK を自動取得できないため実機か CI でビルドする。

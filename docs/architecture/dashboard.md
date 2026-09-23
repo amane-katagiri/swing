@@ -7,7 +7,7 @@
 
 ## 概要
 
-`swing agent` のプロセス内で HTTP サーバー（axum 0.8）を立てる、ブラウザ向けの管理画面。専用のサブコマンドは無く、`[dashboard].listen` が `off` でなければ agent 起動時に自動で立ち上がる。
+`swing up` のプロセス内で HTTP サーバー（axum 0.8）を立てる、ブラウザ向けの管理画面。専用のサブコマンドは無く、`[dashboard].listen` が `off` でなければ agent 起動時に自動で立ち上がる。
 
 - relay 接続は agent が使っているものと同じ `Arc<RelayClient>` を共有する。
 - 保存状態は agent の `Mutex<State>` には触れず、CLI の各サブコマンドと同じく `state.json` をディスクから読み直す（`mirror::collect_sites`・`health::collect_status` など）。
@@ -16,14 +16,14 @@
 
 ### 起動
 
-`agent::run` の中で行う。全体のライフサイクル（reconcile・SIGINT/SIGTERM・watchdog）は [`agent.md`](agent.md#全体の流れ) を参照。
+`agent::run_until` の中で行う（トークンは `swing up` が `shutdown::cancel_on_signal()` で作って渡す）。全体のライフサイクル（reconcile・シグナル・watchdog）は [`agent.md`](agent.md#全体の流れ) を参照。
 
 1. relay 接続・state 読み込みの後、`[dashboard].listen` が `Off` でなければ `TcpListener::bind` する。bind に失敗すると agent の起動自体がエラーで終了する。bind したアドレスがループバック（`127.0.0.1`/`::1`）以外、または `allowed_hosts` が空でなければ、認証が無いことを `tracing::warn` で警告する。
 2. 起動時の突き合わせ（`reconcile`）の後、bind できていれば `<state_dir>/upload/` を掃除（`dashboard::cleanup_upload_dir`）してから `dashboard::AppState` を作り、`dashboard::serve` を別タスクとして `tokio::spawn` する。`AppState::new` 自体の失敗（秘密鍵パース）も agent の起動失敗として伝播する。
 
 ### 終了
 
-SIGINT・SIGTERM のどちらでも同じように終了する。シグナルの受け方・`race_with_shutdown`・watchdog の詳細は [`agent.md`](agent.md#シグナルと終了) を参照。ダッシュボード固有の部分:
+シャットダウンの要求元（SIGINT/SIGTERM、または `swing up` が渡す `CancellationToken`）によらず同じように終了する。シグナルの受け方・`race_with_shutdown`・watchdog の詳細は [`agent.md`](agent.md#シグナルと終了) を参照。ダッシュボード固有の部分:
 
 - `agent::shutdown_dashboard` はダッシュボードの `oneshot::Sender` に送った後、サーバタスクの `JoinHandle` を最大 5 秒待つ。超えたら warn ログを出して待つのをやめ、relay を切断してループを抜ける。
 - ダッシュボードのサーバタスクが（panic などで）シャットダウン開始前に終了した場合は error ログを出すだけで、agent 本体は止めない（relay 通知・poll・mirror 保存は続く）。
