@@ -109,8 +109,7 @@ fn load_document(current: &Config) -> Result<DocumentMut> {
 
 fn write_atomic(path: &Path, contents: &str) -> Result<()> {
     if let Some(dir) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
-        std::fs::create_dir_all(dir)
-            .with_context(|| format!("creating directory {}", dir.display()))?;
+        crate::auth::create_private_dir_all(dir)?;
     }
     crate::auth::write_private_file(path, contents)
 }
@@ -273,6 +272,29 @@ mod tests {
         }
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn missing_parent_directory_is_created_as_0700() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        let parent = dir.path().join("nested");
+        let path = parent.join("swing.toml");
+        let cfg = config_at(
+            "[nostr]\nsecret_key = \"k\"\nrelays = [\"wss://r\"]\n",
+            |_| None,
+            path.clone(),
+            false,
+        );
+        let mut items = BTreeMap::new();
+        items.insert(
+            "nostr.mirror_set".to_string(),
+            InputValue::Str("newset".to_string()),
+        );
+        update(&cfg, &items).unwrap();
+        let mode = std::fs::metadata(&parent).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o700);
+    }
 
     #[cfg(unix)]
     #[test]

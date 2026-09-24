@@ -1,6 +1,7 @@
 use serde::Serialize;
 
 use crate::config;
+use crate::format::{format_bytes, format_duration_secs};
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(untagged)]
@@ -232,39 +233,6 @@ fn config_value(
     }
 }
 
-const BYTE_UNITS: [(u64, &str); 4] = [
-    (1u64 << 40, "TB"),
-    (1u64 << 30, "GB"),
-    (1u64 << 20, "MB"),
-    (1u64 << 10, "KB"),
-];
-
-pub fn format_bytes(n: u64) -> String {
-    for &(factor, unit) in &BYTE_UNITS {
-        if n < factor {
-            continue;
-        }
-        if n.is_multiple_of(factor) {
-            return format!("{} {unit}", n / factor);
-        }
-        if (u128::from(n) * 10).is_multiple_of(u128::from(factor)) {
-            return format!("{:.1} {unit}", n as f64 / factor as f64);
-        }
-    }
-    format!("{n} B")
-}
-
-const DURATION_UNITS: [(u64, &str); 3] = [(86_400, "d"), (3_600, "h"), (60, "m")];
-
-pub fn format_duration_secs(secs: u64) -> String {
-    for &(factor, unit) in &DURATION_UNITS {
-        if secs != 0 && secs.is_multiple_of(factor) {
-            return format!("{}{unit}", secs / factor);
-        }
-    }
-    format!("{secs}s")
-}
-
 #[derive(Debug, Serialize)]
 pub struct ConfigSectionDto {
     pub name: String,
@@ -391,8 +359,8 @@ mod tests {
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o400)).unwrap();
         let cfg = test_config_at(path.clone(), true);
         if std::fs::OpenOptions::new().append(true).open(&path).is_ok() {
-            // Running as root (or on a filesystem that ignores permission bits):
-            // the read-only bit doesn't block writes, so there's nothing to assert.
+            // Root, or a filesystem that ignores 0o400, can still open this; skip rather than
+            // fail the test under those runners.
             return;
         }
         assert!(!is_config_writable(&cfg));

@@ -19,8 +19,7 @@ impl InstanceLock {
 }
 
 pub fn acquire(state_dir: &Path) -> Result<InstanceLock> {
-    std::fs::create_dir_all(state_dir)
-        .with_context(|| format!("creating state dir {}", state_dir.display()))?;
+    crate::auth::create_private_dir_all(state_dir)?;
     let path = state_dir.join("swing.lock");
     let mut file = OpenOptions::new()
         .read(true)
@@ -101,5 +100,16 @@ mod tests {
         let lock = acquire(&state_dir).unwrap();
         assert_eq!(lock.path(), state_dir.join("swing.lock"));
         assert!(lock.path().is_file());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn acquire_creates_state_dir_as_0700() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let state_dir = dir.path().join("nested").join("state");
+        let _lock = acquire(&state_dir).unwrap();
+        let mode = std::fs::metadata(&state_dir).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o700);
     }
 }

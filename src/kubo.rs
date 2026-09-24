@@ -70,6 +70,10 @@ pub fn locate_binary(explicit: Option<&Path>) -> Result<PathBuf> {
     {
         let candidate = dir.join(exe_name);
         if candidate.is_file() {
+            tracing::info!(
+                path = %candidate.display(),
+                "using Kubo binary found next to the swing executable"
+            );
             return Ok(candidate);
         }
     }
@@ -78,6 +82,10 @@ pub fn locate_binary(explicit: Option<&Path>) -> Result<PathBuf> {
         for dir in std::env::split_paths(&path_var) {
             let candidate = dir.join(exe_name);
             if candidate.is_file() {
+                tracing::info!(
+                    path = %candidate.display(),
+                    "using Kubo binary found on PATH"
+                );
                 return Ok(candidate);
             }
         }

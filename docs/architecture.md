@@ -47,6 +47,7 @@ swing/
     ipfs.rs          Kubo RPC クライアント
     mfs.rs           MFS 上のパスの組み立て
     key.rs           key generate
+    format.rs        バイト数・秒数の表示用フォーマット（format_bytes / format_duration_secs）
     policy.rs        保存ポリシー判定（純粋関数）
     state.rs         state.json の永続化
     agent/           mirror-agent ループ。詳細は architecture/agent.md
@@ -203,10 +204,12 @@ kind 35980・35981・30000 は誰でも捨て鍵で出せるので、relay か�
 
 relay への `Filter::limit`（`nostr::capped_limit(count, per)` = `min(count * per, MAX_RELAY_FETCH_LIMIT)`）:
 
+- `fetch_follow_set`: `1 * 2`（1 作者・1 mirror_set の単一の置き換え可能イベントだが、relay が古い版を返す場合に備えて 2 倍）
 - `fetch_site_events`: `authors.len() * MAX_SITES_PER_AUTHOR_LISTED`
 - `fetch_replica_reports`: `sites.len() * MAX_REPORTS_PER_SITE`
 - `fetch_follow_sets`: `authors.len() * 2`（1 作者につき有効な Follow Set は置き換え規則で 1 件のはずだが、relay が古い版を返す場合に備えて 2 倍）
 - `fetch_follow_set_authors_referencing`: `targets.len() * 100`
+- `ReportRelay::fetch_own_reports`: `MAX_SITES_PER_AUTHOR_LISTED * 2`（自分が持つレプリカ報告は 1 サイト 1 件の置き換え可能イベントで、1 作者が一覧できるサイト数は他所と同じ `MAX_SITES_PER_AUTHOR_LISTED` が上限なので、それに古い版への 2 倍を掛ける）
 
 `limit` は relay ごとの REQ に付くヒントであり、nostr-sdk は接続中の relay それぞれに同じフィルタを送るので、複数 relay を使う構成では合計の取得件数が `limit` の relay 数倍になり得る。また `fetch_replica_reports` の `limit` は複数サイトの座標をまとめて 1 つのフィルタに入れているため、1 サイトがレプリカ報告で埋め尽くされていると、relay 側の `limit` 適用で同じ問い合わせに混ざる他のサイトの報告が押し出されることがある。座標の数（≒ 問い合わせに含める作者数 × `MAX_SITES_PER_AUTHOR_LISTED`）を絞ることでしか被害の範囲は抑えられない（ダッシュボードは `key`/`root` を 1 リクエストあたり 100 件までに絞っている）。
 

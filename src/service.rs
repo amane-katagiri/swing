@@ -736,15 +736,27 @@ mod windows {
         workdir.join("swing.log")
     }
 
+    // A predictable name in a shared temp dir lets another local user pre-create or symlink the
+    // path; create_new() with a random suffix closes that race.
+    fn write_service_file_new(path: &Path, content: impl AsRef<[u8]>) -> Result<()> {
+        use std::io::Write;
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(path)
+            .with_context(|| format!("creating {}", path.display()))?;
+        file.write_all(content.as_ref())
+            .with_context(|| format!("writing {}", path.display()))
+    }
+
     pub fn install(exe: &Path, config: &Path, workdir: &Path, no_start: bool) -> Result<()> {
         let user = current_user()?;
         let log = log_path(workdir);
         let xml = schtasks_xml(exe, config, workdir, &log, &user);
 
         let tmp_dir = std::env::temp_dir();
-        let tmp_path = tmp_dir.join(format!("swing-task-{}.xml", std::process::id()));
-        std::fs::write(&tmp_path, xml)
-            .with_context(|| format!("writing {}", tmp_path.display()))?;
+        let tmp_path = tmp_dir.join(format!("swing-task-{}.xml", crate::auth::random_hex(8)));
+        write_service_file_new(&tmp_path, xml)?;
 
         let result = run_command({
             let mut cmd = schtasks();

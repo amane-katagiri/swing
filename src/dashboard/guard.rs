@@ -13,32 +13,33 @@ const DASHBOARD_MARKER_HEADER: &str = "x-swing-dashboard";
 const SESSION_COOKIE_PREFIX: &str = "swing_session";
 const UNAUTHENTICATED_API_PATHS: &[&str] = &["/api/login"];
 
-fn split_host_port(host_header: &str) -> &str {
+fn is_port(s: &str) -> bool {
+    !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit())
+}
+
+fn split_host_port(host_header: &str) -> (&str, Option<&str>) {
+    let host_header = host_header.trim();
     if let Some(rest) = host_header.strip_prefix('[') {
-        return match rest.find(']') {
-            Some(end) => &rest[..end],
-            None => host_header,
+        return match rest.split_once(']') {
+            Some((host, "")) => (host, None),
+            // Anything after `]` that isn't `:<digits>` makes the header malformed; fall back to
+            // the raw header so it can't coincidentally match a real host like `::1`.
+            Some((host, after)) => match after.strip_prefix(':').filter(|p| is_port(p)) {
+                Some(port) => (host, Some(port)),
+                None => (host_header, None),
+            },
+            None => (host_header, None),
         };
     }
     match host_header.rsplit_once(':') {
-        Some((host, port)) if !port.is_empty() && port.bytes().all(|b| b.is_ascii_digit()) => host,
-        _ => host_header,
+        Some((host, port)) if is_port(port) => (host, Some(port)),
+        _ => (host_header, None),
     }
 }
 
-fn host_port(host_header: &str) -> Option<&str> {
-    let host_header = host_header.trim();
-    let rest = match host_header.strip_prefix('[') {
-        Some(rest) => rest.split_once(']')?.1.strip_prefix(':')?,
-        None => host_header.rsplit_once(':')?.1,
-    };
-    (!rest.is_empty() && rest.bytes().all(|b| b.is_ascii_digit())).then_some(rest)
-}
-
-// Cookies ignore the port, so two instances on one host would otherwise overwrite each
-// other's session.
+// Cookies ignore the port, so instances on one host would otherwise overwrite each other's session.
 pub fn session_cookie_name(host_header: &str) -> String {
-    match host_port(host_header) {
+    match split_host_port(host_header).1 {
         Some(port) => format!("{SESSION_COOKIE_PREFIX}_{port}"),
         None => SESSION_COOKIE_PREFIX.to_string(),
     }
@@ -69,7 +70,7 @@ pub fn authorized(headers: &HeaderMap, host_header: &str, token: &str) -> bool {
 }
 
 pub fn extract_host(host_header: &str) -> String {
-    split_host_port(host_header.trim()).to_ascii_lowercase()
+    split_host_port(host_header).0.to_ascii_lowercase()
 }
 
 pub fn host_allowed(host_header: &str, allowed_hosts: &[String]) -> bool {
@@ -88,8 +89,10 @@ pub fn origin_matches_host(origin_header: &str, host_header: &str) -> bool {
     authority.eq_ignore_ascii_case(host_header.trim())
 }
 
-fn error_response(status: StatusCode, message: &str) -> Response {
-    (status, Json(serde_json::json!({ "error": message }))).into_response()
+fn guarded_error(status: StatusCode, message: &str, is_api: bool) -> Response {
+    let mut resp = (status, Json(serde_json::json!({ "error": message }))).into_response();
+    apply_security_headers(resp.headers_mut(), is_api);
+    resp
 }
 
 fn apply_security_headers(headers: &mut HeaderMap, is_api: bool) {
@@ -129,15 +132,11 @@ pub async fn security_middleware(
         .and_then(|v| v.to_str().ok())
         .map(str::to_string)
     else {
-        let mut resp = error_response(StatusCode::FORBIDDEN, "missing Host header");
-        apply_security_headers(resp.headers_mut(), is_api);
-        return resp;
+        return guarded_error(StatusCode::FORBIDDEN, "missing Host header", is_api);
     };
 
     if !host_allowed(&host_header, &state.config.dashboard.allowed_hosts) {
-        let mut resp = error_response(StatusCode::FORBIDDEN, "host not allowed");
-        apply_security_headers(resp.headers_mut(), is_api);
-        return resp;
+        return guarded_error(StatusCode::FORBIDDEN, "host not allowed", is_api);
     }
 
     if req.method() != Method::GET && req.method() != Method::HEAD {
@@ -147,10 +146,11 @@ pub async fn security_middleware(
             .and_then(|v| v.to_str().ok())
             == Some("1");
         if !has_marker {
-            let mut resp =
-                error_response(StatusCode::FORBIDDEN, "missing X-Swing-Dashboard header");
-            apply_security_headers(resp.headers_mut(), is_api);
-            return resp;
+            return guarded_error(
+                StatusCode::FORBIDDEN,
+                "missing X-Swing-Dashboard header",
+                is_api,
+            );
         }
         if let Some(origin) = req
             .headers()
@@ -158,9 +158,7 @@ pub async fn security_middleware(
             .and_then(|v| v.to_str().ok())
             && !origin_matches_host(origin, &host_header)
         {
-            let mut resp = error_response(StatusCode::FORBIDDEN, "origin does not match host");
-            apply_security_headers(resp.headers_mut(), is_api);
-            return resp;
+            return guarded_error(StatusCode::FORBIDDEN, "origin does not match host", is_api);
         }
     }
 
@@ -168,12 +166,11 @@ pub async fn security_middleware(
         && !UNAUTHENTICATED_API_PATHS.contains(&req.uri().path())
         && !authorized(req.headers(), &host_header, &state.token())
     {
-        let mut resp = error_response(
+        return guarded_error(
             StatusCode::UNAUTHORIZED,
             "missing or invalid dashboard token or session",
+            is_api,
         );
-        apply_security_headers(resp.headers_mut(), is_api);
-        return resp;
     }
 
     let mut response = next.run(req).await;
@@ -199,6 +196,38 @@ mod tests {
     }
 
     #[test]
+    fn extract_host_handles_edge_cases() {
+        assert_eq!(extract_host("localhost"), "localhost");
+        assert_eq!(extract_host("[::1"), "[::1");
+        assert_eq!(
+            extract_host("evil.com:8082@localhost"),
+            "evil.com:8082@localhost"
+        );
+    }
+
+    #[test]
+    fn extract_host_rejects_junk_after_the_bracketed_host() {
+        assert_ne!(extract_host("[::1]xyz"), "::1");
+        assert_ne!(extract_host("[::1]:8082xyz"), "::1");
+        assert_ne!(extract_host("[::1]:"), "::1");
+        assert_ne!(extract_host("[::1]:abc"), "::1");
+        assert_eq!(extract_host("[::1]:8082"), "::1");
+        assert_eq!(extract_host("[::1]"), "::1");
+    }
+
+    #[test]
+    fn host_allowed_rejects_bracketed_host_with_trailing_junk() {
+        assert!(!host_allowed("[::1]xyz", &[]));
+        assert!(!host_allowed("[::1]:8082xyz", &[]));
+    }
+
+    #[test]
+    fn extract_host_rejects_non_digit_ports() {
+        assert_ne!(extract_host("localhost:abc"), "localhost");
+        assert!(!host_allowed("localhost:abc", &[]));
+    }
+
+    #[test]
     fn host_allowed_accepts_loopback_forms() {
         assert!(host_allowed("localhost:8082", &[]));
         assert!(host_allowed("127.0.0.1:8082", &[]));
@@ -218,6 +247,11 @@ mod tests {
     fn host_allowed_rejects_unknown_hosts() {
         assert!(!host_allowed("evil.example", &[]));
         assert!(!host_allowed("evil.example:8082", &[]));
+    }
+
+    #[test]
+    fn host_allowed_rejects_junk_disguised_as_localhost() {
+        assert!(!host_allowed("evil.com:8082@localhost", &[]));
     }
 
     #[test]

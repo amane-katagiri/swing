@@ -85,7 +85,9 @@ impl RelayClient {
         let filter = Filter::new()
             .kind(Kind::Custom(30000))
             .author(self.public_key())
-            .identifier(mirror_set);
+            .identifier(mirror_set)
+            // 2x: a relay may hand back a stale duplicate of this single replaceable event.
+            .limit(capped_limit(1, 2));
         let events = self.fetch(filter, "fetching follow set").await?;
         let now = Timestamp::now().as_secs();
         // Defense in depth against a relay that ignores the filter.
@@ -244,9 +246,13 @@ impl ReportRelay for RelayClient {
     }
 
     async fn fetch_own_reports(&self, report_kind: u16) -> Result<Vec<Event>> {
+        // One addressable report per site this account hosts; a single author can't list more
+        // sites than MAX_SITES_PER_AUTHOR_LISTED elsewhere, so reuse that with the same 2x margin
+        // for stale duplicates of a replaceable event.
         let filter = Filter::new()
             .kind(Kind::Custom(report_kind))
-            .author(RelayClient::public_key(self));
+            .author(RelayClient::public_key(self))
+            .limit(capped_limit(budget::MAX_SITES_PER_AUTHOR_LISTED, 2));
         self.fetch(filter, "fetching own replica reports").await
     }
 

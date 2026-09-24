@@ -657,7 +657,7 @@ pub fn publish_sites_dto(
     }
 }
 
-pub(crate) use super::config_dto::{ConfigDto, config_dto, format_bytes, format_duration_secs};
+pub(crate) use super::config_dto::{ConfigDto, config_dto};
 
 #[cfg(test)]
 mod tests {

@@ -120,6 +120,7 @@ Follow Set が無ければ `title: null`、`members: []`。
 
 - パスは非空、`/` で始まらない、`\` や制御文字を含まない
 - 長さ `MAX_PATH_LEN`（4096 バイト）以下、セグメント数 `MAX_PATH_SEGMENTS`（32）以下、各セグメントは非空かつ `.`/`..` でない
+- 各セグメントは `.` や半角スペースで終わらない、Windows の予約デバイス名（`CON`・`PRN`・`AUX`・`NUL`・`COM1`〜`9`・`LPT1`〜`9`、大小文字無視、拡張子付き `nul.txt` も含む）でない（プラットフォームを問わず拒否。Windows 上でチェックアウトしたときに壊れないようにするため）
 - 同じパスの重複、`file` 0 個、`site` 無し、はいずれも 400
 - `file` パートの総数は `MAX_UPLOAD_FILES`（10,000）まで
 
@@ -127,7 +128,7 @@ Follow Set が無ければ `title: null`、`members: []`。
 
 同時に実行できる publish は 1 本だけ（`AppState.publish_lock`）。実行中にもう 1 本来たら 409。
 
-処理: (1) `<state_dir>/upload/` 配下に一時ディレクトリを作り、各 `file` パートをストリーミングで書き込む。(2) `api::run_publish`（NIP-05 検証 → Kubo に add して MFS に置く → サイトイベントを署名して送信 → 古い版を `[publish].keep_versions` 個まで残して削除、処理順は CLI の `swing publish`（[`architecture/cli.md#publish`](../cli.md#publish)）と同じ）を、展開先ディレクトリをサイトのディレクトリとして呼ぶ。削除に失敗した版は `prune_error` に理由が入るだけでレスポンス全体は成功扱い。(3) 成功でも失敗でも展開先ディレクトリを削除する（`<state_dir>/upload/` 自体は agent 起動時に丸ごと掃除される）。(4) ボディが `[dashboard].max_upload` を超えたら 413（ストリーミング中に超えた場合も打ち切る）。
+処理: (1) `<state_dir>/upload/` 配下に一時ディレクトリを作り、各 `file` パートをストリーミングで書き込む。展開先ディレクトリとその中の各ディレクトリは unix では `0o700`、書き込むファイルは `0o600` で作成する（umask 任せにしない。Windows では no-op）。(2) `api::run_publish`（NIP-05 検証 → Kubo に add して MFS に置く → サイトイベントを署名して送信 → 古い版を `[publish].keep_versions` 個まで残して削除、処理順は CLI の `swing publish`（[`architecture/cli.md#publish`](../cli.md#publish)）と同じ）を、展開先ディレクトリをサイトのディレクトリとして呼ぶ。削除に失敗した版は `prune_error` に理由が入るだけでレスポンス全体は成功扱い。(3) 成功でも失敗でも展開先ディレクトリを削除する。ハンドラの途中（`handle_upload` の `.await` 中）でリクエストが打ち切られる場合（下記「タイムアウト」の 30 分超過、またはクライアントの切断）も、展開先ディレクトリの所有権を持つガード（`upload::UploadDirGuard`）の `Drop` がその場で（同期的に）削除するので残らない。取りこぼした分は `<state_dir>/upload/` ごと agent 起動時にも掃除される。(4) ボディが `[dashboard].max_upload` を超えたら 413（ストリーミング中に超えた場合も打ち切る）。
 
 ```json
 { "site": "example.com", "url": "…", "title": "…", "message": "note", "nip05": { "status": "verified", "detail": null },

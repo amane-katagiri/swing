@@ -53,8 +53,7 @@ impl RemoteSignerFile {
     }
 
     pub fn save(&self, state_dir: &Path) -> Result<()> {
-        std::fs::create_dir_all(state_dir)
-            .with_context(|| format!("creating state dir {}", state_dir.display()))?;
+        crate::auth::create_private_dir_all(state_dir)?;
         let json = serde_json::to_string_pretty(self).context("serializing the remote signer")?;
         crate::auth::write_private_file(&remote_signer_path(state_dir), &format!("{json}\n"))
     }
@@ -141,9 +140,7 @@ impl Signer {
     }
 }
 
-// Requests go straight to the signer without a `connect`: after a nostrconnect://
-// pairing the signer already knows this app, and signers such as Primal refuse a
-// second `connect` carrying the pairing secret.
+// No `connect` is sent: the pairing already told the signer about this app, and signers such as Primal refuse a second `connect` carrying the pairing secret.
 #[derive(Debug)]
 pub struct RemoteSigner {
     client: Client,
@@ -513,8 +510,7 @@ async fn pair(
     })
 }
 
-// Signs a throwaway event of the report kind through a fresh connection, which is
-// also exactly how the agent reconnects after a restart.
+// A fresh connection, so this also exercises how the agent reconnects after a restart.
 async fn probe(file: &RemoteSignerFile, request: &PairingRequest) -> Result<()> {
     let remote = RemoteSigner::from_file(file, request.probe_timeout)?;
     let builder = EventBuilder::new(Kind::Custom(request.probe_kind), "")
@@ -599,6 +595,17 @@ mod tests {
         }
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn remote_signer_file_save_creates_state_dir_as_0700() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let state_dir = dir.path().join("nested").join("state");
+        saved_file().save(&state_dir).unwrap();
+        let mode = std::fs::metadata(&state_dir).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o700);
+    }
+
     fn config_in(dir: &Path, secret_key: Option<&str>) -> Config {
         let toml = format!(
             "[nostr]\n{}[agent]\nstate_dir = {:?}\n",
@@ -667,8 +674,7 @@ mod tests {
         assert!(check_signed(&altered, user.public_key(), id).is_err());
     }
 
-    // Refuses `connect` like Primal does for an app it already knows, so the tests
-    // fail if SWING ever sends one.
+    // Refuses `connect` like Primal does for an app it already knows, so the tests fail if SWING ever sends one.
     struct TestSigner {
         sign: bool,
     }

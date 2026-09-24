@@ -38,11 +38,28 @@ pub fn load_or_create_token(state_dir: &Path) -> Result<String> {
 }
 
 pub fn write_new_token(state_dir: &Path) -> Result<String> {
-    std::fs::create_dir_all(state_dir)
-        .with_context(|| format!("creating state dir {}", state_dir.display()))?;
+    create_private_dir_all(state_dir)?;
     let token = random_hex(TOKEN_BYTES);
     write_private_file(&token_path(state_dir), &format!("{token}\n"))?;
     Ok(token)
+}
+
+/// Creates `path` (and any missing parents) like `create_dir_all`, but directories this call
+/// actually creates are `0o700` on unix. A directory that already exists is left untouched.
+pub(crate) fn create_private_dir_all(path: &Path) -> Result<()> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::DirBuilderExt;
+        std::fs::DirBuilder::new()
+            .recursive(true)
+            .mode(0o700)
+            .create(path)
+            .with_context(|| format!("creating {}", path.display()))
+    }
+    #[cfg(not(unix))]
+    {
+        std::fs::create_dir_all(path).with_context(|| format!("creating {}", path.display()))
+    }
 }
 
 pub(crate) fn write_private_file(path: &Path, contents: &str) -> Result<()> {
@@ -138,8 +155,7 @@ fn parse_hex(s: &str) -> Option<Vec<u8>> {
         .collect()
 }
 
-// Compares MACs of both sides so the comparison time does not depend on how much of the
-// presented token matches.
+// Compares MACs so timing doesn't depend on how much of the presented token matches.
 pub fn token_matches(expected: &str, presented: &str) -> bool {
     let mac = session_mac(expected, "bearer", 0);
     let presented_tag = session_mac(presented, "bearer", 0).finalize().into_bytes();
@@ -282,5 +298,31 @@ mod tests {
             .permissions()
             .mode();
         assert_eq!(mode & 0o777, 0o600);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn create_private_dir_all_creates_new_dirs_as_0700() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let nested = dir.path().join("a").join("b");
+        create_private_dir_all(&nested).unwrap();
+        for p in [dir.path().join("a"), nested] {
+            let mode = std::fs::metadata(&p).unwrap().permissions().mode();
+            assert_eq!(mode & 0o777, 0o700, "{}", p.display());
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn create_private_dir_all_leaves_a_preexisting_dir_untouched() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let existing = dir.path().join("state");
+        std::fs::create_dir(&existing).unwrap();
+        std::fs::set_permissions(&existing, std::fs::Permissions::from_mode(0o755)).unwrap();
+        create_private_dir_all(&existing).unwrap();
+        let mode = std::fs::metadata(&existing).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o755);
     }
 }

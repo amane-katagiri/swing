@@ -70,7 +70,7 @@ HTTP サーバー（axum 0.8）で、ダッシュボードのブラウザ向け�
 
 ## 認証（`src/auth.rs`, `src/dashboard/session.rs`）
 
-- トークン: `<state_dir>/dashboard.token` に 32 バイトの乱数を hex（64 文字）で 1 行置く。`swing up` が起動時に `auth::load_or_create_token` で読み、無ければ作る（再起動しても同じトークンを使い続ける）。書き込み（`auth::write_new_token`）は同じディレクトリの `dashboard.token.tmp` に書いて `sync_all` してから rename する。Unix ではパーミッション `0600` で作る。Windows は `state_dir` の ACL を継承する。メモリ上の値は `AppState` の `std::sync::RwLock<String>` に持つ（`AppState::token` / `set_token`）。
+- トークン: `<state_dir>/dashboard.token` に 32 バイトの乱数を hex（64 文字）で 1 行置く。`swing up` が起動時に `auth::load_or_create_token` で読み、無ければ作る（再起動しても同じトークンを使い続ける）。書き込み（`auth::write_new_token`）は同じディレクトリの `dashboard.token.tmp` に書いて `sync_all` してから rename する。Unix ではパーミッション `0600` で作る。Windows は `state_dir` の ACL を継承する。メモリ上の値は `AppState` の `std::sync::RwLock<String>` に持つ（`AppState::token` / `set_token`）。`state_dir` 自体を swing が新規作成するとき（`auth::create_private_dir_all`。`auth::write_new_token`・`lock::acquire`・`signer::RemoteSignerFile::save` が共有する）は Unix なら `0700` で作る。すでにあるディレクトリはユーザーが作ったものとみなし、パーミッションは変更しない。
 - CLI: `api_client::ApiClient::for_config` がトークンファイルを読み、すべてのリクエストに `Authorization: Bearer <token>` を付ける（ファイルが無ければ付けない）。
 - ブラウザ: 永続トークンはブラウザに渡さない。`swing dashboard open` が Bearer で `POST /api/login-code` を叩いて使い捨てのログインコード（16 バイトの乱数を hex で 32 文字、有効 5 分、1 回限り、`auth::LoginCodes`、メモリにだけ持つ）をもらい、`http://<listen>/login?code=<code>` を開く。`GET /login` はコードが有効なら（`LoginCodes::redeem` で消費）セッション cookie を付けて `303 /`、無効なら `303 /#/login/invalid`、`code` が無ければ `303 /#/login` を返す。ログイン画面に貼ったコードは `POST /api/login` `{"code": "..."}` で同じように交換する（成功で 200 と `Set-Cookie`、失敗で 401）。
 - セッション cookie: 名前は `swing_session_<port>`（`Host` ヘッダのポート。ポートが無ければ `swing_session`。cookie はポートを区別しないので、同じホストの別インスタンスどうしで上書きし合わないようにしている）。値は `<発行時刻（epoch 秒）>.<HMAC-SHA256 の hex>`。HMAC の鍵はトークン、メッセージは用途ラベル `dashboard-session`・`\0`・発行時刻の 10 進表記（`auth::sign_session`）。属性は `HttpOnly; SameSite=Strict; Path=/; Max-Age=2592000`。リクエストの `X-Forwarded-Proto` の先頭の値が `https`（大文字小文字は無視）か、`[dashboard].public_url` が `https://` で始まるときは `Secure` も付ける（`session::served_over_https`）。`X-Forwarded-Proto` は偽装できるが、cookie はリクエストした本人にしか返らないので、偽装しても本人の cookie が厳しく（または緩く）なるだけで他人には影響しない。
@@ -99,7 +99,7 @@ HTTP サーバー（axum 0.8）で、ダッシュボードのブラウザ向け�
 `tower_http::timeout::TimeoutLayer` を `router()` に掛けている。タイムアウトすると空ボディの `408 Request Timeout` を返す。
 
 - `POST /api/publish/upload` 以外の全ルート: 120 秒。
-- `POST /api/publish/upload`: 30 分。
+- `POST /api/publish/upload`: 30 分。タイムアウト（またはクライアントの切断）はハンドラの `Future` を `.await` の途中で drop するので、`upload::handle_upload` 後段の「後片付け」コードは実行されない。展開先の一時ディレクトリ（`<state_dir>/upload/<id>/`）はそのために `upload::UploadDirGuard`（所有権を持つガード）で包んであり、`Drop` が同期的に `remove_dir_all` する（詳細は [`dashboard/http-api.md#post-apipublishupload`](dashboard/http-api.md#post-apipublishupload)）。
 - ヘッダー読み取り自体のタイムアウトは設定していない（`axum::serve` を使っている都合）。
 
 ## 静的ファイルの配信（`src/dashboard/assets.rs`）
@@ -148,7 +148,7 @@ HTTP サーバー（axum 0.8）で、ダッシュボードのブラウザ向け�
 
 このリストは、これがダッシュボードの書き込み範囲を決める安全境界であることに変わりはないが、実体は `settings::SETTINGS` の `editable` フィールドであり、`settings::find`・`settings::is_editable`・`settings::raw_value` はすべてこのカタログを引く（[`dashboard/http-api.md#get-apiconfig`](dashboard/http-api.md#get-apiconfig)）。カタログに載っていても `source: "env"`（環境変数由来）なら `editable: false` になり、`PUT`/`POST /api/setup` はそのキーを含む要求全体を 400 で拒否する（`settings::check_not_env_sourced`。1 つでも env 由来のキーが混ざっていれば、他のキーも含めて丸ごと拒否し、部分的な適用はしない）。`nostr.secret_key` はカタログ上 `editable: false` なので `PUT /api/config` からは絶対に書けず、`POST /api/setup` だけが書ける（下記）。
 
-書き込みは `settings::update`（`PUT /api/config`）と `settings::setup`（`POST /api/setup`）の 2 つだけで、どちらも同じ手順を踏む: 既存のファイルを `toml_edit::DocumentMut` として読む（無ければ空文書）→ 渡された項目だけを書き換える（`toml_edit` なのでコメントや他のキーはそのまま残る）→ `config::build_config_from_str` で組み立て直して妥当性を確認する（失敗したらファイルには一切触れない）→ tmp ファイルに書いて `rename`（atomic）。ファイルが元からあればその権限を引き継ぎ、新規作成なら unix で `0600`。`config_path` は常に具体的なパスを持つ（`config::resolve_config_path` が `--config`／`SWING_CONFIG`／`<カレントディレクトリ>/swing.toml` のいずれかを必ず返すため。ファイルが無くても良く、その場合の書き込みは新規作成になる）。
+書き込みは `settings::update`（`PUT /api/config`）と `settings::setup`（`POST /api/setup`）の 2 つだけで、どちらも同じ手順を踏む: 既存のファイルを `toml_edit::DocumentMut` として読む（無ければ空文書）→ 渡された項目だけを書き換える（`toml_edit` なのでコメントや他のキーはそのまま残る）→ `config::build_config_from_str` で組み立て直して妥当性を確認する（失敗したらファイルには一切触れない）→ 親ディレクトリが無ければ `auth::create_private_dir_all` で作る（unix なら `0700`。上記「認証」の `state_dir` 作成と同じ実装で、すでにあるディレクトリのパーミッションは変更しない）→ `auth::write_private_file`（上記「認証」の `dashboard.token` や [`signer.md`](signer.md) の `remote-signer.json` と同じ実装）で tmp ファイルに書いて `rename`（atomic）。既存ファイルの権限は引き継がず、unix では既存・新規を問わず常に `0600` にする。`config_path` は常に具体的なパスを持つ（`config::resolve_config_path` が `--config`／`SWING_CONFIG`／`<カレントディレクトリ>/swing.toml` のいずれかを必ず返すため。ファイルが無くても良く、その場合の書き込みは新規作成になる）。
 
 書き込み成功後の状態は 2 つに分かれる:
 

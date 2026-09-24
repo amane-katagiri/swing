@@ -110,8 +110,6 @@ impl AppState {
             .map(Pairing::state)
     }
 
-    // Reflects the file on disk once it's been edited, so the settings UI can show what a
-    // restart will pick up even before the running process reloads it.
     pub async fn display_config(&self) -> Arc<Config> {
         self.display_config.read().await.clone()
     }
