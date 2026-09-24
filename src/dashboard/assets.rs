@@ -28,6 +28,8 @@ const SETUP_JS: &str = include_str!("../../web/setup.js");
 const PAIRING_JS: &str = include_str!("../../web/pairing.js");
 const LOGIN_JS: &str = include_str!("../../web/login.js");
 const DESKTOP_JS: &str = include_str!("../../web/desktop.js");
+const DESKTOP_WINDOW_JS: &str = include_str!("../../web/desktop-window.js");
+const DESKTOP_ICONS_SVG: &str = include_str!("../../web/desktop-icons.svg");
 const DESKTOP_PAGE_HTML: &str = include_str!("../../web/desktop-page.html");
 const DESKTOP_PAGE_CSS: &str = include_str!("../../web/desktop-page.css");
 const DESKTOP_FRAME_CSS: &str = include_str!("../../web/desktop-frame.css");
@@ -135,6 +137,14 @@ pub async fn desktop_js() -> Response {
     asset("text/javascript; charset=utf-8", DESKTOP_JS)
 }
 
+pub async fn desktop_window_js() -> Response {
+    asset("text/javascript; charset=utf-8", DESKTOP_WINDOW_JS)
+}
+
+pub async fn desktop_icons_svg() -> Response {
+    asset("image/svg+xml", DESKTOP_ICONS_SVG)
+}
+
 fn desktop(state: &AppState) -> &DesktopAssets {
     state
         .desktop
@@ -184,8 +194,6 @@ pub async fn custom_css(State(state): State<Arc<AppState>>) -> Response {
         .into_response()
 }
 
-/// The link page, its stylesheet and its banner, each either the bundled
-/// default or the file named in `[dashboard]`, read once at startup.
 pub struct DesktopAssets {
     pub page: Bytes,
     pub page_css: Bytes,
@@ -237,5 +245,197 @@ fn image_content_type(path: &Path) -> Result<&'static str> {
             "unsupported banner image {} (expected .png, .gif, .jpg, .jpeg, .webp, or .svg)",
             path.display()
         ),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::super::router;
+    use super::super::test_support::*;
+    use axum::body::Body;
+    use axum::http::{Request, StatusCode};
+
+    #[tokio::test]
+    async fn every_imported_module_is_served() {
+        let web = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("web");
+        let mut modules = std::collections::BTreeSet::new();
+        for entry in std::fs::read_dir(&web).unwrap() {
+            let path = entry.unwrap().path();
+            if path.extension().is_some_and(|e| e == "js") {
+                let source = std::fs::read_to_string(&path).unwrap();
+                for part in source.split("from './").skip(1) {
+                    modules.insert(part.split('\'').next().unwrap().to_string());
+                }
+            }
+        }
+        assert!(modules.contains("pairing.js"));
+        for module in modules {
+            let req = Request::builder()
+                .uri(format!("/{module}"))
+                .header("Host", "127.0.0.1:8082")
+                .body(Body::empty())
+                .unwrap();
+            let resp = call(router(test_state()), req).await;
+            assert_eq!(resp.status(), StatusCode::OK, "{module}");
+        }
+    }
+
+    #[tokio::test]
+    async fn index_is_served_as_html_with_security_headers() {
+        let app = router(test_state());
+        let req = Request::builder()
+            .uri("/")
+            .header("Host", "127.0.0.1:8082")
+            .body(Body::empty())
+            .unwrap();
+        let resp = call(app, req).await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        assert_eq!(
+            resp.headers().get("content-type").unwrap(),
+            "text/html; charset=utf-8"
+        );
+        assert_eq!(
+            resp.headers().get("x-content-type-options").unwrap(),
+            "nosniff"
+        );
+        assert!(resp.headers().get("content-security-policy").is_some());
+        assert_eq!(
+            resp.headers().get("referrer-policy").unwrap(),
+            "no-referrer"
+        );
+        assert_eq!(resp.headers().get("x-frame-options").unwrap(), "SAMEORIGIN");
+    }
+
+    #[tokio::test]
+    async fn style_and_scripts_have_expected_content_types() {
+        for (path, expected) in [
+            ("/favicon.svg", "image/svg+xml"),
+            ("/favicon-32.png", "image/png"),
+            ("/apple-touch-icon.png", "image/png"),
+            ("/style.css", "text/css; charset=utf-8"),
+            ("/desktop.css", "text/css; charset=utf-8"),
+            ("/boot.js", "text/javascript; charset=utf-8"),
+            ("/app.js", "text/javascript; charset=utf-8"),
+            ("/graph.js", "text/javascript; charset=utf-8"),
+            ("/storage.js", "text/javascript; charset=utf-8"),
+            ("/i18n.js", "text/javascript; charset=utf-8"),
+            ("/util.js", "text/javascript; charset=utf-8"),
+            ("/ui.js", "text/javascript; charset=utf-8"),
+            ("/sites.js", "text/javascript; charset=utf-8"),
+            ("/webring.js", "text/javascript; charset=utf-8"),
+            ("/publish.js", "text/javascript; charset=utf-8"),
+            ("/settings.js", "text/javascript; charset=utf-8"),
+            ("/desktop.js", "text/javascript; charset=utf-8"),
+            ("/desktop-window.js", "text/javascript; charset=utf-8"),
+            ("/desktop-icons.svg", "image/svg+xml"),
+            ("/desktop-page.html", "text/html; charset=utf-8"),
+            ("/desktop-page.css", "text/css; charset=utf-8"),
+            ("/desktop-frame.css", "text/css; charset=utf-8"),
+            ("/desktop-banner", "image/gif"),
+            ("/fonts/pixelmplus12-regular.woff2", "font/woff2"),
+            ("/fonts/pixelmplus12-bold.woff2", "font/woff2"),
+            ("/custom.css", "text/css; charset=utf-8"),
+        ] {
+            let app = router(test_state());
+            let req = Request::builder()
+                .uri(path)
+                .header("Host", "127.0.0.1:8082")
+                .body(Body::empty())
+                .unwrap();
+            let resp = call(app, req).await;
+            assert_eq!(resp.status(), StatusCode::OK, "{path}");
+            assert_eq!(
+                resp.headers().get("content-type").unwrap(),
+                expected,
+                "{path}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn desktop_page_assets_come_from_the_configured_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let page = dir.path().join("page.html");
+        let page_css = dir.path().join("page.css");
+        let banner = dir.path().join("banner.gif");
+        std::fs::write(&page, "<!doctype html><title>mine</title>").unwrap();
+        std::fs::write(&page_css, "body { color: red }").unwrap();
+        std::fs::write(&banner, b"GIF89a").unwrap();
+
+        let (mut config, secret_hex) = test_config(true);
+        config.dashboard.desktop_page = Some(page);
+        config.dashboard.desktop_page_css = Some(page_css);
+        config.dashboard.desktop_banner = Some(banner);
+        let state = build_state(config, test_exit(), test_keys(&secret_hex), TEST_TOKEN);
+
+        for (path, content_type, expected) in [
+            (
+                "/desktop-page.html",
+                "text/html; charset=utf-8",
+                &b"<!doctype html><title>mine</title>"[..],
+            ),
+            (
+                "/desktop-page.css",
+                "text/css; charset=utf-8",
+                b"body { color: red }",
+            ),
+            ("/desktop-banner", "image/gif", b"GIF89a"),
+        ] {
+            let app = router(std::sync::Arc::clone(&state));
+            let req = Request::builder()
+                .uri(path)
+                .header("Host", "127.0.0.1:8082")
+                .body(Body::empty())
+                .unwrap();
+            let resp = call(app, req).await;
+            assert_eq!(resp.status(), StatusCode::OK, "{path}");
+            assert_eq!(
+                resp.headers().get("content-type").unwrap(),
+                content_type,
+                "{path}"
+            );
+            let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+                .await
+                .unwrap();
+            assert_eq!(body.as_ref(), expected, "{path}");
+        }
+    }
+
+    #[test]
+    fn an_unreadable_desktop_page_fails_at_startup() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut config, secret_hex) = test_config(true);
+        config.dashboard.desktop_page = Some(dir.path().join("missing.html"));
+        let err = match super::super::AppState::new(
+            std::sync::Arc::new(config),
+            std::sync::Arc::new(tokio::sync::Notify::new()),
+            test_exit(),
+            test_keys(&secret_hex),
+            TEST_TOKEN.to_string(),
+        ) {
+            Ok(_) => panic!("expected a startup error"),
+            Err(err) => err,
+        };
+        assert!(err.to_string().contains("missing.html"));
+    }
+
+    #[test]
+    fn a_banner_with_an_unknown_extension_fails_at_startup() {
+        let dir = tempfile::tempdir().unwrap();
+        let banner = dir.path().join("banner.bmp");
+        std::fs::write(&banner, b"BM").unwrap();
+        let (mut config, secret_hex) = test_config(true);
+        config.dashboard.desktop_banner = Some(banner);
+        let err = match super::super::AppState::new(
+            std::sync::Arc::new(config),
+            std::sync::Arc::new(tokio::sync::Notify::new()),
+            test_exit(),
+            test_keys(&secret_hex),
+            TEST_TOKEN.to_string(),
+        ) {
+            Ok(_) => panic!("expected a startup error"),
+            Err(err) => err,
+        };
+        assert!(err.to_string().contains("banner.bmp"));
     }
 }

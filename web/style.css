@@ -477,12 +477,7 @@ body[data-nav="collapsed"] .swing-nav-toggle .swing-nav-icon {
   }
 }
 
-/* Buttons and inputs
-   Size system: .swing-btn (form submit / primary actions) < .swing-btn-small
-   (heading-right and per-row operations) and .swing-copy-btn (inline copy,
-   independent of -small) are text buttons; .swing-icon-btn is the icon-only
-   square. All four set their own font-family so they never inherit a
-   surrounding mono/serif context. */
+/* Each button/input variant sets its own font-family so none inherit a surrounding mono/serif context. */
 
 .swing-btn {
   position: relative;

@@ -227,32 +227,23 @@ export const SettingsView = {
       userCssEl.textContent = '';
     });
 
-    settingsEls.processStop.addEventListener('click', async () => {
-      if (!window.confirm(t('processStopConfirm'))) return;
+    async function runProcessAction(button, confirmKey, path, okKey) {
+      if (!window.confirm(t(confirmKey))) return;
       clearStatus(settingsEls.processStatus);
-      setBusy(settingsEls.processStop, true);
+      setBusy(button, true);
       try {
-        await apiFetch('/api/shutdown', { method: 'POST' });
-        setStatus(settingsEls.processStatus, 'ok', t('processStopResult'));
+        await apiFetch(path, { method: 'POST' });
+        setStatus(settingsEls.processStatus, 'ok', t(okKey));
       } catch (err) {
         setStatus(settingsEls.processStatus, 'error', describeError(err));
       } finally {
-        setBusy(settingsEls.processStop, false);
+        setBusy(button, false);
       }
-    });
-    settingsEls.processRestart.addEventListener('click', async () => {
-      if (!window.confirm(t('processRestartConfirm'))) return;
-      clearStatus(settingsEls.processStatus);
-      setBusy(settingsEls.processRestart, true);
-      try {
-        await apiFetch('/api/restart', { method: 'POST' });
-        setStatus(settingsEls.processStatus, 'ok', t('processRestartResult'));
-      } catch (err) {
-        setStatus(settingsEls.processStatus, 'error', describeError(err));
-      } finally {
-        setBusy(settingsEls.processRestart, false);
-      }
-    });
+    }
+    settingsEls.processStop.addEventListener('click', () =>
+      runProcessAction(settingsEls.processStop, 'processStopConfirm', '/api/shutdown', 'processStopResult'));
+    settingsEls.processRestart.addEventListener('click', () =>
+      runProcessAction(settingsEls.processRestart, 'processRestartConfirm', '/api/restart', 'processRestartResult'));
   },
   onShow() {
     if (cache.config) renderConfig(cache.config);

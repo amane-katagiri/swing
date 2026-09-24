@@ -14,9 +14,9 @@ import {
   setBusy,
   setFormDisabled,
   createLoadGuard,
-  sanitizeMessage,
+  pollUntil,
 } from './util.js';
-import { appendLinksAndMessage, renderRelayResults } from './ui.js';
+import { appendLinksAndMessage, renderRelayResults, buildSiteNameRow } from './ui.js';
 import { createPairing } from './pairing.js';
 
 const publishEls = {
@@ -44,7 +44,6 @@ const publishEls = {
 let publishing = false;
 let reconnectPairing = null;
 let reconnectSaving = false;
-const MAX_RESTART_POLLS = 120;
 const publishLoadGuard = createLoadGuard();
 const mySitesLoadGuard = createLoadGuard();
 
@@ -124,13 +123,7 @@ function hideProgress() {
 
 function buildMySiteEntry(site) {
   const wrap = el('div', { class: 'swing-site' });
-  const title = sanitizeMessage(site.title);
-  wrap.append(
-    el('div', { class: 'swing-site-row' }, [
-      el('span', { class: 'swing-site-name' }, site.d),
-      title ? el('span', { class: 'swing-hint' }, title) : null,
-    ]),
-  );
+  wrap.append(buildSiteNameRow(site));
   wrap.append(el('div', { class: 'swing-site-meta' }, `${formatBytes(site.size)} · ${formatTime(site.created_at)}`));
   appendLinksAndMessage(wrap, site);
   wrap.append(
@@ -264,24 +257,13 @@ function closeReconnect() {
   publishEls.reconnect.hidden = true;
 }
 
-function sleep(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
 async function waitForRestart(previousInstance) {
-  for (let attempt = 0; attempt < MAX_RESTART_POLLS; attempt += 1) {
-    await sleep(1000);
-    try {
-      const overview = await apiFetch('/api/overview');
-      if (overview.instance !== previousInstance) {
-        location.reload();
-        return;
-      }
-    } catch {
-      // still restarting
-    }
-  }
-  setStatus(publishEls.reconnectStatus, 'error', t('setupTimedOut'));
+  const restarted = await pollUntil(async () => {
+    const overview = await apiFetch('/api/overview');
+    return overview.instance !== previousInstance;
+  });
+  if (restarted) location.reload();
+  else setStatus(publishEls.reconnectStatus, 'error', t('setupTimedOut'));
 }
 
 async function saveReconnect() {

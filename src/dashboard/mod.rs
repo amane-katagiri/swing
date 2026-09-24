@@ -162,6 +162,8 @@ fn ui_router() -> Router<Arc<AppState>> {
         .route("/pairing.js", get(assets::pairing_js))
         .route("/login.js", get(assets::login_js))
         .route("/desktop.js", get(assets::desktop_js))
+        .route("/desktop-window.js", get(assets::desktop_window_js))
+        .route("/desktop-icons.svg", get(assets::desktop_icons_svg))
         .route("/desktop-page.html", get(assets::desktop_page))
         .route("/desktop-page.css", get(assets::desktop_page_css))
         .route("/desktop-frame.css", get(assets::desktop_frame_css))

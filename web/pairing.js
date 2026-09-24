@@ -1,11 +1,7 @@
 import { t } from './i18n.js';
-import { apiFetch, setStatus, clearStatus, describeError, setBusy, createLoadGuard, ensureBusyStructure } from './util.js';
+import { apiFetch, setStatus, clearStatus, describeError, setBusy, createLoadGuard, ensureBusyStructure, sleep } from './util.js';
 
 const PAIRING_POLL_MS = 1500;
-
-function sleep(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
 
 export function createPairing(els, onChange) {
   let pairing = null;

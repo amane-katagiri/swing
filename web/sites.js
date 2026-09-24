@@ -18,9 +18,8 @@ import {
   wireStyleSwitch,
   wireSortSwitch,
   createLoadGuard,
-  sanitizeMessage,
 } from './util.js';
-import { copyButton, storedBadge, appendLinksAndMessage, renderMirrorOpResult, renderOpError, buildRemoveControl } from './ui.js';
+import { copyButton, storedBadge, appendLinksAndMessage, renderMirrorOpResult, renderOpError, buildRemoveControl, buildSiteNameRow } from './ui.js';
 
 const MAX_MIRROR_KEYS = 100;
 
@@ -74,11 +73,7 @@ function nip05Badge(status, template) {
 
 function buildSiteEntry(site) {
   const wrap = el('div', { class: 'swing-site', 'data-stored': String(!!site.stored) });
-  const title = sanitizeMessage(site.title);
-  const row = el('div', { class: 'swing-site-row' }, [
-    el('span', { class: 'swing-site-name' }, site.d),
-    title ? el('span', { class: 'swing-hint' }, title) : null,
-  ]);
+  const row = buildSiteNameRow(site);
   const badges = el('div', { class: 'swing-site-badges' }, [
     storedBadge(site),
     site.nip05 ? nip05Badge(site.nip05, 'nip05Badge') : null,

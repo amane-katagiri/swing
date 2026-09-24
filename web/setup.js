@@ -1,5 +1,5 @@
 import { t, currentLang } from './i18n.js';
-import { cache, el, apiFetch, setStatus, clearStatus, describeError, setBusy, setFormDisabled, createLoadGuard } from './util.js';
+import { cache, el, apiFetch, setStatus, clearStatus, describeError, setBusy, setFormDisabled, createLoadGuard, pollUntil } from './util.js';
 import { loadOverview } from './publish.js';
 import { createPairing } from './pairing.js';
 
@@ -14,7 +14,6 @@ const setupEls = {
   result: document.getElementById('setup-result'),
 };
 
-const MAX_POLL_ATTEMPTS = 120;
 const KEY_CHOICE_HINTS = { generate: 'setupKeyChoiceGenerate', existing: 'setupKeyChoiceExisting', signer: 'setupKeyChoiceSigner' };
 
 const CONFIG_FIELDS = [
@@ -45,10 +44,6 @@ let submitting = false;
 let polling = false;
 let pairing = null;
 const lockedFields = new Set();
-
-function sleep(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
 
 function renderIntro() {
   if (!lastConfig) return;
@@ -136,21 +131,17 @@ async function pollUntilReady() {
   if (polling) return;
   polling = true;
   try {
-    for (let attempt = 0; attempt < MAX_POLL_ATTEMPTS; attempt += 1) {
-      await sleep(1000);
-      try {
-        const overview = await apiFetch('/api/overview');
-        cache.overview = overview;
-        if (!overview.setup) {
-          clearStatus(setupEls.formStatus);
-          location.hash = '#/settings';
-          return;
-        }
-      } catch {
-        // still restarting
-      }
+    const ready = await pollUntil(async () => {
+      const overview = await apiFetch('/api/overview');
+      cache.overview = overview;
+      return !overview.setup;
+    });
+    if (ready) {
+      clearStatus(setupEls.formStatus);
+      location.hash = '#/settings';
+    } else {
+      setStatus(setupEls.formStatus, 'error', t('setupTimedOut'));
     }
-    setStatus(setupEls.formStatus, 'error', t('setupTimedOut'));
   } finally {
     polling = false;
   }

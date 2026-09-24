@@ -15,6 +15,14 @@ export function storedBadge(site) {
   return el('span', { class: 'swing-badge', 'data-stored': String(!!site.stored) }, site.stored ? t('stored') : t('notStored'));
 }
 
+export function buildSiteNameRow(site) {
+  const title = sanitizeMessage(site.title);
+  return el('div', { class: 'swing-site-row' }, [
+    el('span', { class: 'swing-site-name' }, site.d),
+    title ? el('span', { class: 'swing-hint' }, title) : null,
+  ]);
+}
+
 export function appendLinksAndMessage(wrap, site) {
   const links = el('div', { class: 'swing-site-links' }, [
     site.url ? maybeLink(site.url, t('openSite')) : null,

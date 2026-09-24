@@ -46,6 +46,25 @@ export function clamp(v, lo, hi) {
   return Math.min(hi, Math.max(lo, v));
 }
 
+export function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+const POLL_ATTEMPTS = 120;
+const POLL_INTERVAL_MS = 1000;
+
+export async function pollUntil(predicate) {
+  for (let attempt = 0; attempt < POLL_ATTEMPTS; attempt += 1) {
+    await sleep(POLL_INTERVAL_MS);
+    try {
+      if (await predicate()) return true;
+    } catch {
+      // not ready yet; keep polling until the attempt budget runs out
+    }
+  }
+  return false;
+}
+
 export function setStatus(container, kind, message) {
   container.dataset.kind = kind;
   container.textContent = message || '';
