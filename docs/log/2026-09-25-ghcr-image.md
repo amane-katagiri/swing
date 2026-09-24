@@ -15,4 +15,6 @@ release ワークフローに `image` ジョブを足し、`v*` タグの push �
 ## 検証
 
 - `docker/release.Dockerfile` を amd64 で手元でビルドし、`<TARGETARCH>/swing` が `/usr/local/bin/swing` に入ること、uid 1000 の `swing` ユーザーで `/data` から `swing up` が起動することを確かめた（中身はダミーのスクリプト）。
-- ワークフロー自体（arm64 のビルド、ghcr への push）はまだ実際のタグで動かしていない。
+- テスト用のブランチで手動実行し、全ジョブが通って `ghcr.io/<owner>/<repo>:<ブランチ名>` が push されることを確かめた。パッケージはリポジトリに紐づき、公開範囲はリポジトリと同じ private になった。
+- push したイメージは `linux/amd64` と `linux/arm64` の 2 つを持つ（ほかに `unknown/unknown` の attestation のマニフェストが 2 つ付く。buildx が既定で付ける provenance）。amd64 では `swing --version` が動き、uid 1000 の `swing` ユーザーで `/data` から動くことを確かめた。arm64 はエミュレーションの無い x86_64 の環境で確かめたので起動はできず、`/usr/local/bin/swing` が aarch64 の静的バイナリであることだけを確かめた。
+- `v*` タグでの実行（バージョンと `latest` のタグ）はまだ試していない。
