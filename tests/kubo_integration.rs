@@ -63,8 +63,7 @@ async fn run_gc() {
     gc.text().await.unwrap();
 }
 
-// Requires a local Kubo daemon (see docs/architecture.md); run manually with:
-//   cargo test --test kubo_integration -- --ignored --test-threads=1
+// Requires a local Kubo daemon; run with `cargo test --test kubo_integration -- --ignored --test-threads=1`.
 #[tokio::test]
 #[ignore]
 async fn add_dir_into_mfs_round_trip() {
@@ -177,8 +176,7 @@ async fn fetch_dag_counts_bytes_and_stops_at_limit() {
     client.mfs_remove(&root).await.unwrap();
 }
 
-// With the recommended `IPFS_PROFILE=test` container the daemon has no peers,
-// so a missing CID never arrives and only the idle timeout ends the fetch.
+// With the recommended `IPFS_PROFILE=test` container the daemon has no peers, so only the idle timeout ends this.
 #[tokio::test]
 #[ignore]
 async fn missing_cid_fails_fast_and_is_never_fetched_by_mfs_put() {
@@ -221,8 +219,7 @@ async fn dag_size_local_fails_fast_on_an_incomplete_dag() {
     assert!(client.dag_size_local(&[cid.as_str()]).await.is_err());
     assert!(started.elapsed() < Duration::from_secs(5));
 
-    // check_site takes a whole site as complete when one dag/stat over all of
-    // its versions succeeds, so one incomplete version has to fail the call.
+    // check_site takes a whole site as complete from one dag/stat, so one incomplete version must fail the call.
     let complete = client
         .add_dir(site_fixture().path(), &format!("{root}/ok"))
         .await

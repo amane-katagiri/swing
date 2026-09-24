@@ -81,9 +81,7 @@ pub struct SiteHealth {
     pub actual_size: Option<u64>,
 }
 
-// One dag/stat over every version of a site walks blocks the versions share
-// only once, and fails if any block is missing, so the per-version walk is
-// only needed to tell which version is broken.
+// One dag/stat over every version counts shared blocks once; the per-version walk only finds which is broken.
 pub async fn check_site<C: KuboStore>(ipfs: &C, versions: &[(&str, &str)]) -> SiteHealth {
     let mut health = Vec::with_capacity(versions.len());
     for (path, cid) in versions {
@@ -149,8 +147,7 @@ async fn list_dir<C: KuboStore>(
     }
 }
 
-// Everything under the agent root belongs to SWING, so any entry the state
-// does not reference is a leftover of a failed or interrupted step.
+// Everything under the agent root belongs to SWING, so an entry the state doesn't reference is a leftover.
 pub async fn find_garbage<C: KuboStore>(ipfs: &C, layout: &MfsLayout, state: &State) -> Garbage {
     let expected: HashSet<String> = state
         .sites
@@ -326,8 +323,7 @@ fn bytes_or_unknown(size: Option<u64>) -> String {
     size.map_or_else(|| "unknown".to_string(), |n| n.to_string())
 }
 
-// Machine-readable tokens from the dashboard API (dashboard/dto.rs) restated
-// as the short human labels the CLI has always printed in brackets.
+// Restates the dashboard API's machine-readable tokens as the short labels the CLI has always printed.
 fn health_label(token: &str) -> &str {
     match token {
         "cid_mismatch" => "cid mismatch",
@@ -404,85 +400,10 @@ pub async fn status(config: &Config) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::BTreeMap;
-    use std::sync::Mutex;
-
-    use crate::ipfs::{FetchLimits, Fetched};
     use crate::state::VersionRecord;
+    use crate::test_support::FakeKubo;
 
     use super::*;
-
-    #[derive(Default)]
-    struct FakeKubo {
-        mfs: BTreeMap<String, String>,
-        incomplete: HashSet<String>,
-        fail_list: HashSet<String>,
-        fail_stat: HashSet<String>,
-        unions: BTreeMap<String, u64>,
-        dag_stats: Mutex<Vec<String>>,
-    }
-
-    impl KuboStore for FakeKubo {
-        async fn fetch_dag(&self, _cid: &str, _limits: FetchLimits) -> Result<Fetched> {
-            unreachable!()
-        }
-
-        async fn dag_size_local(&self, cids: &[&str]) -> Result<u64> {
-            let key = cids.join(",");
-            self.dag_stats.lock().unwrap().push(key.clone());
-            for cid in cids {
-                if self.incomplete.contains(*cid) {
-                    bail!("block not found");
-                }
-            }
-            Ok(self.unions.get(&key).copied().unwrap_or(cids.len() as u64))
-        }
-
-        async fn mfs_put(&self, _cid: &str, _path: &str) -> Result<()> {
-            unreachable!()
-        }
-
-        async fn mfs_remove(&self, _path: &str) -> Result<()> {
-            unreachable!()
-        }
-
-        async fn mfs_list(&self, path: &str) -> Result<Vec<MfsEntry>> {
-            if self.fail_list.contains(path) {
-                bail!("simulated files/ls failure");
-            }
-            let prefix = format!("{path}/");
-            let mut entries: BTreeMap<String, MfsEntry> = BTreeMap::new();
-            for (p, cid) in &self.mfs {
-                let Some(rest) = p.strip_prefix(&prefix) else {
-                    continue;
-                };
-                let (name, is_dir) = match rest.split_once('/') {
-                    Some((name, _)) => (name, true),
-                    None => (rest, false),
-                };
-                entries.insert(
-                    name.to_string(),
-                    MfsEntry {
-                        name: name.to_string(),
-                        is_dir,
-                        cid: cid.clone(),
-                    },
-                );
-            }
-            Ok(entries.into_values().collect())
-        }
-
-        async fn mfs_stat_cid(&self, path: &str) -> Result<Option<String>> {
-            if self.fail_stat.contains(path) {
-                bail!("simulated files/stat failure");
-            }
-            Ok(self.mfs.get(path).cloned())
-        }
-
-        async fn is_directory(&self, _cid: &str) -> Result<bool> {
-            unreachable!()
-        }
-    }
 
     const PK: &str = "ab";
 
@@ -510,12 +431,13 @@ mod tests {
     async fn check_version_classifies_each_problem() {
         let l = layout();
         let path = |d| l.agent_version(PK, d, 1);
-        let mut kubo = FakeKubo::default();
-        kubo.mfs.insert(path("ok"), "bafy-ok".into());
-        kubo.mfs.insert(path("moved"), "bafy-other".into());
-        kubo.mfs.insert(path("broken"), "bafy-broken".into());
-        kubo.incomplete.insert("bafy-broken".into());
-        kubo.fail_stat.insert(path("flaky"));
+        let kubo = FakeKubo::with(|s| {
+            s.mfs.insert(path("ok"), "bafy-ok".into());
+            s.mfs.insert(path("moved"), "bafy-other".into());
+            s.mfs.insert(path("broken"), "bafy-broken".into());
+            s.fail_stat.insert("bafy-broken".into());
+            s.fail_mfs_stat_cid.insert(path("flaky"));
+        });
 
         assert_eq!(
             check_version(&kubo, &path("ok"), "bafy-ok").await,
@@ -540,14 +462,15 @@ mod tests {
     #[tokio::test]
     async fn check_site_measures_every_version_in_one_dag_stat() {
         let l = layout();
-        let mut kubo = FakeKubo::default();
-        for created_at in [1u64, 2] {
-            kubo.mfs.insert(
-                l.agent_version(PK, "a.example", created_at),
-                format!("bafy-{created_at}"),
-            );
-        }
-        kubo.unions.insert("bafy-1,bafy-2".into(), 150);
+        let kubo = FakeKubo::with(|s| {
+            for created_at in [1u64, 2] {
+                s.mfs.insert(
+                    l.agent_version(PK, "a.example", created_at),
+                    format!("bafy-{created_at}"),
+                );
+            }
+            s.unions.insert("bafy-1,bafy-2".into(), 150);
+        });
         let paths: Vec<String> = [1u64, 2]
             .iter()
             .map(|c| l.agent_version(PK, "a.example", *c))
@@ -558,24 +481,23 @@ mod tests {
 
         assert_eq!(site.versions, vec![VersionHealth::Ok, VersionHealth::Ok]);
         assert_eq!(site.actual_size, Some(150));
-        assert_eq!(*kubo.dag_stats.lock().unwrap(), vec!["bafy-1,bafy-2"]);
+        assert_eq!(kubo.s.lock().unwrap().dag_stats, vec!["bafy-1,bafy-2"]);
     }
 
     #[tokio::test]
     async fn check_site_finds_the_broken_version_and_sizes_the_rest() {
         let l = layout();
-        let mut kubo = FakeKubo::default();
-        for created_at in [1u64, 2, 3] {
-            kubo.mfs.insert(
-                l.agent_version(PK, "a.example", created_at),
-                format!("bafy-{created_at}"),
-            );
-        }
-        kubo.mfs
-            .remove(&l.agent_version(PK, "a.example", 3))
-            .unwrap();
-        kubo.incomplete.insert("bafy-2".into());
-        kubo.unions.insert("bafy-1".into(), 40);
+        let kubo = FakeKubo::with(|s| {
+            for created_at in [1u64, 2, 3] {
+                s.mfs.insert(
+                    l.agent_version(PK, "a.example", created_at),
+                    format!("bafy-{created_at}"),
+                );
+            }
+            s.mfs.remove(&l.agent_version(PK, "a.example", 3)).unwrap();
+            s.fail_stat.insert("bafy-2".into());
+            s.unions.insert("bafy-1".into(), 40);
+        });
         let paths: Vec<String> = [1u64, 2, 3]
             .iter()
             .map(|c| l.agent_version(PK, "a.example", *c))
@@ -593,7 +515,7 @@ mod tests {
         assert_eq!(site.versions[2], VersionHealth::Missing);
         assert_eq!(site.actual_size, Some(40));
         assert_eq!(
-            *kubo.dag_stats.lock().unwrap(),
+            kubo.s.lock().unwrap().dag_stats,
             vec!["bafy-1,bafy-2", "bafy-1", "bafy-2", "bafy-1"]
         );
     }
@@ -602,20 +524,21 @@ mod tests {
     async fn find_garbage_reports_the_highest_unreferenced_path() {
         let l = layout();
         let state = state_with(&[("kept.example", 2)]);
-        let mut kubo = FakeKubo::default();
         let account = l.agent_account(PK);
-        for path in [
-            l.agent_version(PK, "kept.example", 2),
-            l.agent_version(PK, "kept.example", 1),
-            l.agent_version(PK, "gone.example", 1),
-            l.agent_version(PK, "gone.example", 2),
-            format!("{account}/stray-file"),
-            "/swing/agent/cd/a.example/1".to_string(),
-            "/swing/agent/loose".to_string(),
-            l.publish_version(PK, "kept.example", 1),
-        ] {
-            kubo.mfs.insert(path, "bafy".into());
-        }
+        let kubo = FakeKubo::with(|s| {
+            for path in [
+                l.agent_version(PK, "kept.example", 2),
+                l.agent_version(PK, "kept.example", 1),
+                l.agent_version(PK, "gone.example", 1),
+                l.agent_version(PK, "gone.example", 2),
+                format!("{account}/stray-file"),
+                "/swing/agent/cd/a.example/1".to_string(),
+                "/swing/agent/loose".to_string(),
+                l.publish_version(PK, "kept.example", 1),
+            ] {
+                s.mfs.insert(path, "bafy".into());
+            }
+        });
 
         let garbage = find_garbage(&kubo, &l, &state).await;
 
@@ -636,10 +559,11 @@ mod tests {
     async fn find_garbage_keeps_directories_it_could_not_list() {
         let l = layout();
         let state = State::default();
-        let mut kubo = FakeKubo::default();
-        kubo.mfs
-            .insert(l.agent_version(PK, "a.example", 1), "bafy".into());
-        kubo.fail_list.insert(l.agent_site(PK, "a.example"));
+        let kubo = FakeKubo::with(|s| {
+            s.mfs
+                .insert(l.agent_version(PK, "a.example", 1), "bafy".into());
+            s.fail_list.insert(l.agent_site(PK, "a.example"));
+        });
 
         let garbage = find_garbage(&kubo, &l, &state).await;
 

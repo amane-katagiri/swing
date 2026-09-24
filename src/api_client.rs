@@ -9,9 +9,7 @@ use serde::de::DeserializeOwned;
 use crate::auth;
 use crate::config::Config;
 
-// Above the dashboard's own REQUEST_TIMEOUT (120s, src/dashboard/mod.rs) so a
-// slow server-side call surfaces as the server's own timeout response rather
-// than a client-side cutoff.
+// Above dashboard's own REQUEST_TIMEOUT so a slow call times out server-side, not client-side.
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(125);
 
 #[derive(Debug)]
@@ -40,10 +38,7 @@ struct ErrorBody {
     error: String,
 }
 
-// The dashboard always binds a concrete address (docs/architecture/dashboard.md),
-// but an unspecified one (0.0.0.0/::) is only meaningful as a bind address;
-// connecting to it, and sending it as the Host header, has to target loopback
-// instead to satisfy the dashboard's own Host guard (src/dashboard/guard.rs).
+// An unspecified bind address (0.0.0.0/::) isn't connectable; loopback also satisfies the dashboard's Host guard.
 fn loopback_addr(addr: SocketAddr) -> SocketAddr {
     match addr {
         SocketAddr::V4(v4) if v4.ip().is_unspecified() => {
@@ -128,12 +123,13 @@ impl ApiClient {
         self.finish(result).await
     }
 
-    pub async fn post<T: DeserializeOwned>(&self, path: &str) -> Result<T, ApiClientError> {
-        let result = self
-            .request(Method::POST, path)
+    fn post_request(&self, path: &str) -> RequestBuilder {
+        self.request(Method::POST, path)
             .header("X-Swing-Dashboard", "1")
-            .send()
-            .await;
+    }
+
+    pub async fn post<T: DeserializeOwned>(&self, path: &str) -> Result<T, ApiClientError> {
+        let result = self.post_request(path).send().await;
         self.finish(result).await
     }
 
@@ -142,12 +138,7 @@ impl ApiClient {
         path: &str,
         body: &B,
     ) -> Result<T, ApiClientError> {
-        let result = self
-            .request(Method::POST, path)
-            .header("X-Swing-Dashboard", "1")
-            .json(body)
-            .send()
-            .await;
+        let result = self.post_request(path).json(body).send().await;
         self.finish(result).await
     }
 }

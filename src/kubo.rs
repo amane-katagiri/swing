@@ -315,23 +315,16 @@ fn process_alive(pid: u32) -> bool {
     if ret == 0 {
         return true;
     }
-    // ESRCH ("no such process") doesn't reliably map to io::ErrorKind::NotFound; compare
-    // the raw errno instead. Any other errno (e.g. EPERM) means the process does exist.
+    // ESRCH doesn't reliably map to io::ErrorKind::NotFound, so compare the raw errno instead.
     std::io::Error::last_os_error().raw_os_error() != Some(libc::ESRCH)
 }
 
 #[cfg(unix)]
 async fn wait_for_exit(pid: u32, timeout: Duration) -> bool {
-    let deadline = tokio::time::Instant::now() + timeout;
-    loop {
-        if !process_alive(pid) {
-            return true;
-        }
-        if tokio::time::Instant::now() >= deadline {
-            return false;
-        }
-        tokio::time::sleep(Duration::from_millis(500)).await;
-    }
+    wait_until(timeout, Duration::from_millis(500), || async {
+        !process_alive(pid)
+    })
+    .await
 }
 
 #[cfg(unix)]
@@ -375,20 +368,19 @@ async fn terminate_process(pid: u32) -> Result<()> {
         let stderr = String::from_utf8_lossy(&output.stderr);
         bail!("taskkill failed for pid {pid}: {}", stderr.trim());
     }
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
-    loop {
-        if !process_is_ipfs(pid).await {
-            return Ok(());
-        }
-        if tokio::time::Instant::now() >= deadline {
-            bail!("orphaned Kubo (pid {pid}) did not exit after taskkill /F");
-        }
-        tokio::time::sleep(Duration::from_millis(500)).await;
+    let exited = wait_until(
+        Duration::from_secs(10),
+        Duration::from_millis(500),
+        || async { !process_is_ipfs(pid).await },
+    )
+    .await;
+    if exited {
+        Ok(())
+    } else {
+        bail!("orphaned Kubo (pid {pid}) did not exit after taskkill /F")
     }
 }
 
-/// Called once at startup, after the instance lock is held: any Kubo bound to
-/// this repo can only be a leftover from a previous swing that died hard.
 pub async fn recover_orphan(state_dir: &Path, repo: &Path) -> Result<()> {
     let Some(pid) = read_pid_file(state_dir)? else {
         return Ok(());
@@ -416,6 +408,23 @@ pub fn pick_free_port() -> Result<u16> {
         .context("reading ephemeral port")?
         .port();
     Ok(port)
+}
+
+async fn wait_until<F, Fut>(timeout: Duration, interval: Duration, mut ready: F) -> bool
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = bool>,
+{
+    let deadline = tokio::time::Instant::now() + timeout;
+    loop {
+        if ready().await {
+            return true;
+        }
+        if tokio::time::Instant::now() >= deadline {
+            return false;
+        }
+        tokio::time::sleep(interval).await;
+    }
 }
 
 fn forward_lines<R>(reader: R, stream: &'static str, saw_repo_lock: Option<Arc<AtomicBool>>)
@@ -587,9 +596,7 @@ impl Daemon {
     }
 }
 
-/// A Job Object is the closest Windows equivalent to Linux's PR_SET_PDEATHSIG:
-/// closing the last handle to it kills every process still assigned to it,
-/// so it survives a `kill -9`-equivalent (TerminateProcess) of swing itself.
+// A Job Object is the closest Windows equivalent to Linux's PR_SET_PDEATHSIG.
 #[cfg(windows)]
 mod windows_job {
     use anyhow::{Result, bail};
@@ -650,23 +657,33 @@ mod windows_job {
 pub async fn wait_healthy(api_url: &str, timeout: Duration) -> Result<()> {
     let client = reqwest::Client::new();
     let url = format!("{}/api/v0/id", api_url.trim_end_matches('/'));
-    let deadline = tokio::time::Instant::now() + timeout;
-    loop {
-        let attempt = client.post(&url).timeout(Duration::from_secs(5)).send();
-        match attempt.await {
-            Ok(resp) if resp.status().is_success() => return Ok(()),
-            _ => {}
-        }
-        if tokio::time::Instant::now() >= deadline {
-            bail!("Kubo did not become healthy within {timeout:?} (POST {url})");
-        }
-        tokio::time::sleep(Duration::from_secs(1)).await;
+    let healthy = wait_until(timeout, Duration::from_secs(1), || async {
+        matches!(
+            client.post(&url).timeout(Duration::from_secs(5)).send().await,
+            Ok(resp) if resp.status().is_success()
+        )
+    })
+    .await;
+    if healthy {
+        Ok(())
+    } else {
+        bail!("Kubo did not become healthy within {timeout:?} (POST {url})")
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn test_kubo_bin() -> Option<PathBuf> {
+        match std::env::var("SWING_TEST_KUBO_BIN") {
+            Ok(bin) => Some(PathBuf::from(bin)),
+            Err(_) => {
+                eprintln!("skipping: SWING_TEST_KUBO_BIN not set");
+                None
+            }
+        }
+    }
 
     #[test]
     fn converts_ip4_and_ip6_multiaddrs() {
@@ -789,11 +806,9 @@ mod tests {
     #[tokio::test]
     #[ignore]
     async fn full_lifecycle_against_real_kubo() {
-        let Ok(bin) = std::env::var("SWING_TEST_KUBO_BIN") else {
-            eprintln!("skipping: SWING_TEST_KUBO_BIN not set");
+        let Some(bin) = test_kubo_bin() else {
             return;
         };
-        let bin = PathBuf::from(bin);
         let dir = tempfile::tempdir().unwrap();
         let repo = dir.path().join("kubo-repo");
 
@@ -853,11 +868,9 @@ mod tests {
     #[tokio::test]
     #[ignore]
     async fn recover_orphan_kills_a_leftover_daemon() {
-        let Ok(bin) = std::env::var("SWING_TEST_KUBO_BIN") else {
-            eprintln!("skipping: SWING_TEST_KUBO_BIN not set");
+        let Some(bin) = test_kubo_bin() else {
             return;
         };
-        let bin = PathBuf::from(bin);
         let dir = tempfile::tempdir().unwrap();
         let repo = dir.path().join("kubo-repo");
         let state_dir = dir.path().join("state");
@@ -891,9 +904,7 @@ mod tests {
         // Simulate an orphan: the child must survive past this test's own process exit.
         std::mem::forget(daemon);
 
-        // mem::forget skips the Drop that would register the child with tokio's orphan
-        // reaper, so once killed it would sit as a zombie under this test process forever;
-        // stand in for the real orphan's new parent (init/a subreaper) and reap it here.
+        // mem::forget skips tokio's orphan reaper, so stand in for it here or the killed child zombies.
         #[cfg(unix)]
         std::thread::spawn(move || unsafe {
             let mut status = 0;

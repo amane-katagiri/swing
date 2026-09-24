@@ -143,20 +143,21 @@ fn newest_follow_set(
     saved: Option<Event>,
     now: u64,
 ) -> (Option<Event>, Option<&'static str>) {
-    // `fetch_follow_set` already drops an implausible fetch; filtering `saved`
-    // too closes the recovery path for a poisoned copy saved before this check.
-    let fetched = fetched.filter(|e| nostr::plausible_at(e.created_at.as_secs(), now));
-    let saved = saved.filter(|e| nostr::plausible_at(e.created_at.as_secs(), now));
-    match (fetched, saved) {
-        (Some(fetched), Some(saved)) if nostr::is_newer_replaceable(&saved, &fetched) => (
-            Some(saved),
-            Some("(relays returned an older follow set; using the newer one saved by the agent)"),
-        ),
-        (None, Some(saved)) => (
-            Some(saved),
-            Some("(follow set not found on relays; using the one saved by the agent)"),
-        ),
-        (fetched, _) => (fetched, None),
+    let fetched_was_none = fetched.is_none();
+    match nostr::choose_follow_set(fetched, true, saved, now) {
+        None => (None, None),
+        Some(choice) => {
+            let note = if fetched_was_none {
+                Some("(follow set not found on relays; using the one saved by the agent)")
+            } else if choice.republish {
+                Some(
+                    "(relays returned an older follow set; using the newer one saved by the agent)",
+                )
+            } else {
+                None
+            };
+            (Some(choice.event), note)
+        }
     }
 }
 
@@ -337,11 +338,7 @@ async fn api_mirror_change(
 
 fn print_relay_results_dto(results: &[dto::RelayResultDto]) {
     for r in results {
-        if r.ok {
-            println!("  \u{2713} {}", r.relay);
-        } else {
-            println!("  \u{2717} {}", r.relay);
-        }
+        nostr::print_relay_line(&r.relay, r.ok);
     }
 }
 
@@ -408,9 +405,7 @@ fn civil_from_days(z: i64) -> (i64, u32, u32) {
     (y, m, d)
 }
 
-// nostr_sdk 0.45's Timestamp has no human-readable formatter (only Display,
-// which prints raw seconds), so this hand-rolls UTC civil-date math instead
-// of pulling in a chrono-sized dependency for one display line.
+// nostr_sdk's Timestamp only prints raw seconds, so this hand-rolls UTC civil-date math instead of adding chrono.
 fn format_unix_timestamp(secs: u64) -> String {
     let days = (secs / 86_400) as i64;
     let rem = secs % 86_400;
@@ -531,6 +526,39 @@ pub struct SitesView {
     pub unfollowed: Vec<AccountSites>,
 }
 
+fn nip05_status(state: &State, key: &str) -> Option<String> {
+    state.verifications.get(key).map(|v| v.status.clone())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn build_site_row(
+    d: String,
+    cid: String,
+    url: Option<String>,
+    size: Option<u64>,
+    stored_size: Option<u64>,
+    created_at: u64,
+    title: Option<String>,
+    message: Option<String>,
+    nip05: Option<String>,
+    replicas: Option<replicas::ReplicaCounts>,
+    stored: bool,
+) -> SiteRow {
+    SiteRow {
+        d,
+        cid,
+        url,
+        size,
+        stored_size,
+        created_at,
+        title,
+        message,
+        nip05,
+        replicas,
+        stored,
+    }
+}
+
 pub async fn collect_sites(relay: &RelayClient, config: &Config) -> Result<SitesView> {
     let (follow_event, follow_note) = current_follow_set(relay, config).await?;
     let follow_set_found = follow_event.is_some();
@@ -594,21 +622,20 @@ pub async fn collect_sites(relay: &RelayClient, config: &Config) -> Result<Sites
                     .and_then(|versions| versions.iter().find(|v| v.cid == ev.cid));
                 let stored = stored_version.is_some();
                 let stored_size = stored_version.map(|v| v.size);
-                let nip05 = state.verifications.get(&key).map(|v| v.status.clone());
                 let replicas = replica_counts(&replica_data, ev);
-                SiteRow {
-                    d: ev.d.clone(),
-                    cid: ev.cid.clone(),
-                    url: ev.url.clone(),
-                    size: ev.size,
+                build_site_row(
+                    ev.d.clone(),
+                    ev.cid.clone(),
+                    ev.url.clone(),
+                    ev.size,
                     stored_size,
-                    created_at: ev.created_at,
-                    title: ev.title.clone(),
-                    message: ev.message.clone(),
-                    nip05,
+                    ev.created_at,
+                    ev.title.clone(),
+                    ev.message.clone(),
+                    nip05_status(&state, &key),
                     replicas,
                     stored,
-                }
+                )
             })
             .collect();
         accounts.push(AccountSites { pubkey, sites });
@@ -623,20 +650,20 @@ pub async fn collect_sites(relay: &RelayClient, config: &Config) -> Result<Sites
             .into_iter()
             .map(|(d, version)| {
                 let key = state::site_key(&pubkey_hex, &d);
-                let nip05 = state.verifications.get(&key).map(|v| v.status.clone());
-                SiteRow {
+                let nip05 = nip05_status(&state, &key);
+                build_site_row(
                     d,
-                    cid: version.cid,
-                    url: None,
-                    size: Some(version.size),
-                    stored_size: Some(version.size),
-                    created_at: version.created_at,
-                    title: None,
-                    message: None,
+                    version.cid,
+                    None,
+                    Some(version.size),
+                    Some(version.size),
+                    version.created_at,
+                    None,
+                    None,
                     nip05,
-                    replicas: None,
-                    stored: true,
-                }
+                    None,
+                    true,
+                )
             })
             .collect();
         unfollowed.push(AccountSites { pubkey, sites });
@@ -749,10 +776,7 @@ pub async fn sites(config: &Config) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn keys() -> Keys {
-        Keys::generate()
-    }
+    use crate::test_support::keys;
 
     #[test]
     fn ensure_within_follow_set_cap_allows_exactly_the_budget() {

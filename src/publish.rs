@@ -178,8 +178,7 @@ pub async fn add_and_measure(
     let path = layout.publish_version(pubkey_hex, d, created_at);
     let cid = nostr::canonical_cid(&ipfs.add_dir(dir, &path).await?)
         .context("Kubo returned an invalid cid")?;
-    // add with pin=false does not hold Kubo's GC lock, so a GC during the add
-    // could drop blocks before they were linked into MFS.
+    // add with pin=false doesn't hold Kubo's GC lock, so this verifies nothing was dropped before MFS linked it.
     let size = ipfs
         .dag_size_local(&[cid.as_str()])
         .await
@@ -217,9 +216,7 @@ pub async fn sign_and_send(
     Ok(nostr::relay_send_results(relay.relays(), &output))
 }
 
-/// Site `d`/`url`/`title` validation shared by the CLI and the dashboard API,
-/// which report the same checks under different flag/field names and error
-/// types.
+/// Site `d`/`url`/`title` validation shared by the CLI and the dashboard API, which report it differently.
 #[derive(Debug)]
 pub enum SiteFieldError {
     InvalidD(anyhow::Error),

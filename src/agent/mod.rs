@@ -193,8 +193,7 @@ impl<C: KuboStore, N: Nip05Verify, R: ReportRelay> Agent<C, N, R> {
         self.save(&state, "reconciliation").await;
     }
 
-    // Compared against the state rather than the previous follow set, so
-    // accounts dropped while the agent was stopped are removed too.
+    // Compared against the state, not the previous follow set, so accounts dropped while stopped are removed too.
     async fn remove_unfollowed(&self) {
         let targets: HashSet<String> = self
             .targets
@@ -410,8 +409,6 @@ mod tests {
         assert!(!fx.state_path.exists());
     }
 
-    // Requires the local Kubo used by tests/kubo_integration.rs:
-    //   cargo test --lib agent_stores_and_removes_through_real_kubo -- --ignored
     #[tokio::test]
     #[ignore]
     async fn agent_stores_and_removes_through_real_kubo() {

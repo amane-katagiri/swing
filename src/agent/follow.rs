@@ -21,6 +21,21 @@ pub(super) async fn refresh_follow_set<C, N, R>(
     N: Nip05Verify + Send + Sync + 'static,
     R: ReportRelay + Send + Sync + 'static,
 {
+    let Some(follow_event) = choose_and_apply_follow_set(relay, agent).await else {
+        return;
+    };
+    resubscribe_and_backfill(relay, agent, tasks, follow_event).await;
+}
+
+async fn choose_and_apply_follow_set<C, N, R>(
+    relay: &RelayClient,
+    agent: &Arc<Agent<C, N, R>>,
+) -> Option<Event>
+where
+    C: KuboStore + Send + Sync + 'static,
+    N: Nip05Verify + Send + Sync + 'static,
+    R: ReportRelay + Send + Sync + 'static,
+{
     let config = &agent.config;
     let (fetched, fetch_succeeded) = match relay.fetch_follow_set(&config.nostr.mirror_set).await {
         Ok(event) => (event, true),
@@ -56,7 +71,7 @@ pub(super) async fn refresh_follow_set<C, N, R>(
         } else {
             warn!(mirror_set = %config.nostr.mirror_set, "no follow set found yet; will retry");
         }
-        return;
+        return None;
     };
     if choice.republish {
         warn!(event_id = %choice.event.id, "relays returned an older follow set or none; republishing the saved one");
@@ -68,8 +83,20 @@ pub(super) async fn refresh_follow_set<C, N, R>(
             Err(e) => warn!(error = %e, "republishing the follow set failed"),
         }
     }
-    let follow_event = choice.event;
+    Some(choice.event)
+}
 
+async fn resubscribe_and_backfill<C, N, R>(
+    relay: &RelayClient,
+    agent: &Arc<Agent<C, N, R>>,
+    tasks: &mut JoinSet<()>,
+    follow_event: Event,
+) where
+    C: KuboStore + Send + Sync + 'static,
+    N: Nip05Verify + Send + Sync + 'static,
+    R: ReportRelay + Send + Sync + 'static,
+{
+    let config = &agent.config;
     let (targets, truncated) = nostr::follow_set_pubkeys_capped(&follow_event);
     if truncated {
         warn!(

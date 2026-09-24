@@ -552,16 +552,7 @@ mod tests {
     }
 
     fn site(pk: PublicKey, d: &str) -> SiteEvent {
-        SiteEvent {
-            pubkey: pk,
-            d: d.to_string(),
-            cid: "bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi".to_string(),
-            url: None,
-            size: None,
-            title: None,
-            message: None,
-            created_at: 1,
-        }
+        crate::test_support::site_event_fixture(pk, d, 1)
     }
 
     #[tokio::test]

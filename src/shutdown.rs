@@ -81,8 +81,7 @@ fn spawn_watcher(token: CancellationToken) -> Result<()> {
     Ok(())
 }
 
-/// Task Scheduler's `/End` only terminates `conhost.exe --headless`, the task's
-/// own process, and leaves swing running as its orphaned child.
+// Task Scheduler's `/End` only kills `conhost.exe --headless`, leaving swing running as its orphan.
 #[cfg(windows)]
 pub fn cancel_when_parent_exits(token: CancellationToken) -> Result<()> {
     let parent = parent_process::open()?;

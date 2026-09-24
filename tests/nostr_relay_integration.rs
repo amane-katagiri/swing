@@ -6,33 +6,35 @@ fn relay_url() -> String {
     std::env::var("SWING_TEST_RELAY").unwrap_or_else(|_| "ws://127.0.0.1:18080".to_string())
 }
 
-// Requires a local Nostr relay (see docs/architecture.md); run manually with:
-//   cargo test --test nostr_relay_integration -- --ignored --test-threads=1
+async fn connect() -> nostr::RelayClient {
+    nostr::RelayClient::connect(Signer::Local(Keys::generate()), &[relay_url()])
+        .await
+        .expect("connect")
+}
+
 #[tokio::test]
 #[ignore]
 async fn publish_and_fetch_site_event_round_trip() {
-    let keys = Keys::generate();
-    let relay = nostr::RelayClient::connect(Signer::Local(keys.clone()), &[relay_url()])
-        .await
-        .expect("connect");
+    let relay = connect().await;
 
-    let event = nostr::build_site_event_builder(
-        35980,
-        "roundtrip.example",
-        "bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
-        Some("https://roundtrip.example/"),
-        Some(4242),
-        Some("Roundtrip site"),
-        Some("Add a roundtrip page"),
-    )
-    .finalize(&keys)
-    .unwrap();
+    let event = relay
+        .sign(nostr::build_site_event_builder(
+            35980,
+            "roundtrip.example",
+            "bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
+            Some("https://roundtrip.example/"),
+            Some(4242),
+            Some("Roundtrip site"),
+            Some("Add a roundtrip page"),
+        ))
+        .await
+        .unwrap();
 
     let out = relay.publish_to_relays(&event).await.expect("publish");
     assert!(!out.success.is_empty(), "relay did not ack the event");
 
     let fetched = relay
-        .fetch_site_events(35980, &[keys.public_key()])
+        .fetch_site_events(35980, &[relay.public_key()])
         .await
         .expect("fetch_site_events");
     assert!(
@@ -56,12 +58,8 @@ async fn replica_reports_are_found_by_site_and_replaced_by_withdrawals() {
     use std::collections::BTreeSet;
 
     let author = Keys::generate();
-    let reporter = nostr::RelayClient::connect(Signer::Local(Keys::generate()), &[relay_url()])
-        .await
-        .expect("connect reporter");
-    let other = nostr::RelayClient::connect(Signer::Local(Keys::generate()), &[relay_url()])
-        .await
-        .expect("connect other");
+    let reporter = connect().await;
+    let other = connect().await;
     let cid = "bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi".to_string();
     let now = Timestamp::now().as_secs();
     let build = |d: &str, cids: BTreeSet<String>, created_at: u64| {
@@ -163,11 +161,6 @@ async fn publish(relay: &nostr::RelayClient, builder: EventBuilder) {
 #[ignore]
 async fn follow_set_authors_are_found_by_referenced_account() {
     let target = Keys::generate().public_key();
-    let connect = || async {
-        nostr::RelayClient::connect(Signer::Local(Keys::generate()), &[relay_url()])
-            .await
-            .expect("connect")
-    };
     let (follower, former, other_set) = (connect().await, connect().await, connect().await);
     let now = Timestamp::now().as_secs();
     let follow_set = |d: &str, pks: &[PublicKey], created_at: u64| {

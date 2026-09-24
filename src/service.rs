@@ -31,6 +31,20 @@ fn require_system_supported(system: bool) -> Result<()> {
     Ok(())
 }
 
+#[cfg(not(windows))]
+fn ensure_parent_dir(path: &Path) -> Result<()> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("creating directory {}", parent.display()))?;
+    }
+    Ok(())
+}
+
+#[cfg(not(windows))]
+fn write_service_file(path: &Path, content: impl AsRef<[u8]>) -> Result<()> {
+    std::fs::write(path, content).with_context(|| format!("writing {}", path.display()))
+}
+
 fn escape_systemd_specifiers(value: &str) -> String {
     value.replace('%', "%%")
 }
@@ -326,12 +340,9 @@ mod linux {
         no_start: bool,
     ) -> Result<()> {
         let path = unit_path(system)?;
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)
-                .with_context(|| format!("creating directory {}", parent.display()))?;
-        }
+        ensure_parent_dir(&path)?;
         let unit = systemd_unit(exe, config, workdir, system);
-        std::fs::write(&path, unit).with_context(|| format!("writing {}", path.display()))?;
+        write_service_file(&path, unit)?;
         println!("Wrote systemd unit to {}.", path.display());
 
         run_command({
@@ -480,14 +491,8 @@ mod macos {
     pub fn install(exe: &Path, config: &Path, workdir: &Path, no_start: bool) -> Result<()> {
         let path = plist_path()?;
         let log = log_path()?;
-        if let Some(parent) = log.parent() {
-            std::fs::create_dir_all(parent)
-                .with_context(|| format!("creating directory {}", parent.display()))?;
-        }
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)
-                .with_context(|| format!("creating directory {}", parent.display()))?;
-        }
+        ensure_parent_dir(&log)?;
+        ensure_parent_dir(&path)?;
 
         if is_loaded() {
             let _ = Command::new("launchctl")
@@ -496,7 +501,7 @@ mod macos {
         }
 
         let plist = launchd_plist(exe, config, workdir, &log);
-        std::fs::write(&path, plist).with_context(|| format!("writing {}", path.display()))?;
+        write_service_file(&path, plist)?;
         println!("Wrote launchd agent to {}.", path.display());
 
         if !no_start {
@@ -527,8 +532,7 @@ mod macos {
         let _ = Command::new("launchctl")
             .args(["bootout", &target])
             .output();
-        std::fs::write(&path, launchd_tray_plist(tray, config, workdir))
-            .with_context(|| format!("writing {}", path.display()))?;
+        write_service_file(&path, launchd_tray_plist(tray, config, workdir))?;
         println!(
             "Registered swing-tray to start at login ({}).",
             path.display()

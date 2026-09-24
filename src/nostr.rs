@@ -9,8 +9,7 @@ use crate::signer::Signer;
 
 pub const SITE_SUBSCRIPTION_ID: &str = "swing-sites";
 
-// `created_at` is self-declared by the author, so a small tolerance is all that
-// separates honest clock skew from a timestamp forged to defeat the rate limit.
+// `created_at` is self-declared, so this tolerance is what separates honest clock skew from a forged timestamp.
 pub const MAX_FUTURE_SKEW: u64 = 900;
 
 pub fn plausible_at(created_at: u64, now: u64) -> bool {
@@ -304,18 +303,21 @@ pub fn relay_send_results(
         .collect()
 }
 
-pub fn print_relay_send_result_lines(results: &[RelaySendResult]) {
-    for result in results {
-        if result.ok {
-            println!("  \u{2713} {}", result.relay);
-        } else {
-            println!("  \u{2717} {}", result.relay);
-        }
+pub fn print_relay_line(relay: &str, ok: bool) {
+    if ok {
+        println!("  \u{2713} {relay}");
+    } else {
+        println!("  \u{2717} {relay}");
     }
 }
 
-// NIP-01: for replaceable events the later created_at wins, and on a tie
-// the lowest id is kept.
+pub fn print_relay_send_result_lines(results: &[RelaySendResult]) {
+    for result in results {
+        print_relay_line(&result.relay, result.ok);
+    }
+}
+
+// NIP-01: for replaceable events the later created_at wins, ties broken by the lowest id.
 pub fn is_newer_replaceable(a: &Event, b: &Event) -> bool {
     (a.created_at, std::cmp::Reverse(a.id)) > (b.created_at, std::cmp::Reverse(b.id))
 }
@@ -340,8 +342,7 @@ pub fn choose_follow_set(
     stored: Option<Event>,
     now: u64,
 ) -> Option<FollowSetChoice> {
-    // A poisoned stored copy must be dropped too, not just an implausible
-    // fetch, or a legitimately timed fetch could never displace it.
+    // The stored copy is filtered too, or a poisoned one could never be displaced by a plausible fetch.
     let fetched = fetched.filter(|e| plausible_at(e.created_at.as_secs(), now));
     let stored = stored.filter(|e| plausible_at(e.created_at.as_secs(), now));
     match (fetched, stored) {
@@ -471,8 +472,7 @@ pub fn parse_site_event(event: &Event, expected_kind: u16) -> Result<SiteEvent> 
     let d = event.tags.identifier().context("missing d tag")?;
     validate_d_tag(&d)?;
     let cid = canonical_cid(tag_value(event, "cid").context("missing cid tag")?)?;
-    // A malformed url tag is untrusted input from another party's event, not a
-    // reason to drop an otherwise-valid site update; only the url is discarded.
+    // A malformed url doesn't invalidate an otherwise-valid site update; only the url is discarded.
     let url = tag_value(event, "url")
         .map(|s| s.to_string())
         .filter(|u| valid_http_url(u));
@@ -553,8 +553,7 @@ pub fn build_site_event_builder(
     ))
 }
 
-// `expiration` is self-declared like `created_at`, so a report that never
-// re-signs must still age out; only re-signing proves the reporter is alive.
+// `expiration` is self-declared, so only re-signing (not just the field) proves the reporter is still alive.
 pub const MAX_REPORT_AGE: u64 = 7 * 86_400;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -660,10 +659,7 @@ pub fn build_replica_report_builder(
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn keys() -> Keys {
-        Keys::generate()
-    }
+    use crate::test_support::{self, CID_A, CID_B, keys, site_event_fixture as site_event};
 
     fn make_site_event(keys: &Keys, kind: u16, d: &str, cid: &str, created_at: u64) -> Event {
         build_site_event_builder(
@@ -1084,19 +1080,6 @@ mod tests {
         );
     }
 
-    fn site_event(pk: PublicKey, d: &str, created_at: u64) -> SiteEvent {
-        SiteEvent {
-            pubkey: pk,
-            d: d.to_string(),
-            cid: "bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi".to_string(),
-            url: None,
-            size: None,
-            title: None,
-            message: None,
-            created_at,
-        }
-    }
-
     #[test]
     fn cap_sites_per_author_keeps_the_first_n_by_d() {
         let a = keys().public_key();
@@ -1315,9 +1298,6 @@ mod tests {
         );
     }
 
-    const CID_A: &str = "bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi";
-    const CID_B: &str = "QmYwAPJzv5CZsnA9LqYKXfRSZryVXxNn7ZP1FyEBgvJvHR";
-
     fn report(
         reporter: &Keys,
         author: &PublicKey,
@@ -1325,17 +1305,7 @@ mod tests {
         cids: &[&str],
         created_at: u64,
     ) -> Event {
-        build_replica_report_builder(
-            35981,
-            35980,
-            author,
-            d,
-            &cids.iter().map(|c| c.to_string()).collect(),
-            Timestamp::from_secs(created_at + 100),
-        )
-        .custom_created_at(Timestamp::from_secs(created_at))
-        .finalize(reporter)
-        .unwrap()
+        test_support::replica_report_event(reporter, author, d, cids, created_at, created_at + 100)
     }
 
     fn report_with_tags(reporter: &Keys, d: &str, a: &str, cid: &str) -> Event {

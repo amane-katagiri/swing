@@ -1,137 +1,17 @@
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use nostr_sdk::prelude::*;
 
-use crate::config::{
-    AgentConfig, Config, DashboardConfig, GatewayConfig, IpfsApi, IpfsConfig, KuboConfig, Listen,
-    Nip05Mode, NostrConfig, PolicyConfig, PublishConfig,
-};
-use crate::ipfs::{FetchLimits, Fetched, KuboStore, MfsEntry};
+use crate::config::{Config, IpfsApi, Nip05Mode, PolicyConfig};
 use crate::nip05::{Nip05Verify, VerificationResult};
 use crate::nostr::ReportRelay;
 use crate::state::{self, SiteKey, State, VersionRecord};
 
 use super::Agent;
 
-#[derive(Default)]
-pub(super) struct FakeKuboState {
-    pub(super) mfs: BTreeMap<String, String>,
-    pub(super) put_calls: Vec<String>,
-    pub(super) fetched: Vec<String>,
-    pub(super) fail_fetch: HashSet<String>,
-    pub(super) fail_stat: HashSet<String>,
-    pub(super) fail_put: HashSet<String>,
-    pub(super) fail_remove: HashSet<String>,
-    pub(super) sizes: HashMap<String, u64>,
-    pub(super) files: HashSet<String>,
-}
-
-impl FakeKuboState {
-    pub(super) fn stores(&self, cid: &str) -> bool {
-        self.mfs.values().any(|c| c == cid)
-    }
-
-    pub(super) fn paths(&self) -> Vec<String> {
-        self.mfs.keys().cloned().collect()
-    }
-}
-
-#[derive(Default)]
-pub(super) struct FakeKubo {
-    pub(super) s: Mutex<FakeKuboState>,
-    pub(super) gate: tokio::sync::RwLock<()>,
-    pub(super) entered_fetch: tokio::sync::Notify,
-}
-
-impl FakeKubo {
-    pub(super) fn with(f: impl FnOnce(&mut FakeKuboState)) -> Self {
-        let kubo = Self::default();
-        f(&mut kubo.s.lock().unwrap());
-        kubo
-    }
-}
-
-impl KuboStore for FakeKubo {
-    async fn fetch_dag(&self, cid: &str, limits: FetchLimits) -> anyhow::Result<Fetched> {
-        self.entered_fetch.notify_one();
-        let _open = self.gate.read().await;
-        let mut s = self.s.lock().unwrap();
-        s.fetched.push(cid.to_string());
-        if s.fail_fetch.contains(cid) {
-            anyhow::bail!("simulated fetch failure");
-        }
-        if s.sizes.get(cid).copied().unwrap_or(0) > limits.max_bytes {
-            return Ok(Fetched::TooLarge);
-        }
-        Ok(Fetched::Complete)
-    }
-
-    async fn dag_size_local(&self, cids: &[&str]) -> anyhow::Result<u64> {
-        let s = self.s.lock().unwrap();
-        let mut total = 0;
-        for cid in cids {
-            if s.fail_stat.contains(*cid) {
-                anyhow::bail!("simulated dag/stat failure");
-            }
-            total += s.sizes.get(*cid).copied().unwrap_or(0);
-        }
-        Ok(total)
-    }
-
-    async fn mfs_put(&self, cid: &str, path: &str) -> anyhow::Result<()> {
-        let mut s = self.s.lock().unwrap();
-        s.put_calls.push(cid.to_string());
-        if s.fail_put.contains(cid) {
-            anyhow::bail!("simulated files/cp failure");
-        }
-        s.mfs.insert(path.to_string(), cid.to_string());
-        Ok(())
-    }
-
-    async fn mfs_remove(&self, path: &str) -> anyhow::Result<()> {
-        let mut s = self.s.lock().unwrap();
-        if s.fail_remove.contains(path) {
-            anyhow::bail!("simulated files/rm failure");
-        }
-        let prefix = format!("{path}/");
-        s.mfs.retain(|p, _| p != path && !p.starts_with(&prefix));
-        Ok(())
-    }
-
-    async fn mfs_list(&self, path: &str) -> anyhow::Result<Vec<MfsEntry>> {
-        let s = self.s.lock().unwrap();
-        let prefix = format!("{path}/");
-        let mut entries: BTreeMap<String, MfsEntry> = BTreeMap::new();
-        for (p, cid) in &s.mfs {
-            let Some(rest) = p.strip_prefix(&prefix) else {
-                continue;
-            };
-            let (name, is_dir) = match rest.split_once('/') {
-                Some((name, _)) => (name, true),
-                None => (rest, false),
-            };
-            entries.insert(
-                name.to_string(),
-                MfsEntry {
-                    name: name.to_string(),
-                    is_dir,
-                    cid: if is_dir { String::new() } else { cid.clone() },
-                },
-            );
-        }
-        Ok(entries.into_values().collect())
-    }
-
-    async fn mfs_stat_cid(&self, path: &str) -> anyhow::Result<Option<String>> {
-        Ok(self.s.lock().unwrap().mfs.get(path).cloned())
-    }
-
-    async fn is_directory(&self, cid: &str) -> anyhow::Result<bool> {
-        Ok(!self.s.lock().unwrap().files.contains(cid))
-    }
-}
+pub(super) use crate::test_support::{FakeKubo, FakeKuboState};
 
 #[derive(Default)]
 pub(super) struct FakeNip05 {
@@ -221,61 +101,22 @@ impl ReportRelay for FakeRelay {
 }
 
 pub(super) fn test_config(policy: PolicyConfig) -> Config {
-    Config {
-        nostr: NostrConfig {
-            secret_key: Some("unused".to_string().into()),
-            relays: vec![],
-            mirror_set: "site-mirror".to_string(),
-            site_event_kind: 35980,
-            replica_event_kind: 35981,
-        },
-        ipfs: IpfsConfig {
-            api: IpfsApi::Url("http://127.0.0.1:5001".to_string()),
-            mfs_root: "/swing".to_string(),
-        },
-        policy,
-        agent: AgentConfig {
-            state_dir: std::path::PathBuf::from("./data"),
-            poll_interval: Duration::from_secs(300),
-            fetch_timeout: Duration::from_secs(60),
-            fetch_idle_timeout: Duration::from_secs(10),
-            concurrency: 2,
-            report_ttl: Duration::from_secs(REPORT_TTL),
-        },
-        publish: PublishConfig {
-            nip05: Nip05Mode::Off,
-            keep_versions: 5,
-        },
-        dashboard: DashboardConfig {
-            listen: ([127, 0, 0, 1], 8082).into(),
-            ui: true,
-            allowed_hosts: Vec::new(),
-            public_url: None,
-            gateway: None,
-            custom_css: None,
-            desktop_page: None,
-            desktop_page_css: None,
-            desktop_banner: None,
-            max_upload: 2 * (1u64 << 30),
-        },
-        kubo: KuboConfig {
-            managed: true,
-            binary: None,
-            repo: std::path::PathBuf::from("./data/kubo"),
-            storage_max: 1_000_000,
-            provide_strategy: "pinned+mfs".to_string(),
-            gateway_listen: ([127, 0, 0, 1], 8080).into(),
-            swarm_port: None,
-        },
-        gateway: GatewayConfig {
-            listen: Listen::Off,
-            hosts: Vec::new(),
-            upstream: "http://127.0.0.1:8080".to_string(),
-        },
-        config_path: std::path::PathBuf::from("./swing.toml"),
-        config_exists: true,
-        sources: std::collections::BTreeMap::new(),
-    }
+    let mut config = crate::config::build_config_from_str("", |_| None).unwrap();
+    config.nostr.secret_key = Some("unused".to_string().into());
+    config.nostr.relays = Vec::new();
+    config.nostr.mirror_set = "site-mirror".to_string();
+    config.ipfs.api = IpfsApi::Url("http://127.0.0.1:5001".to_string());
+    config.policy = policy;
+    config.agent.fetch_timeout = Duration::from_secs(60);
+    config.agent.fetch_idle_timeout = Duration::from_secs(10);
+    config.agent.concurrency = 2;
+    config.publish.nip05 = Nip05Mode::Off;
+    config.dashboard.gateway = None;
+    config.kubo.storage_max = 1_000_000;
+    config.config_path = std::path::PathBuf::from("./swing.toml");
+    config.config_exists = true;
+    config.sources = std::collections::BTreeMap::new();
+    config
 }
 
 pub(super) fn default_policy() -> PolicyConfig {

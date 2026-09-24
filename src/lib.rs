@@ -23,5 +23,7 @@ pub mod shutdown;
 pub mod signer;
 pub mod state;
 pub mod stop;
+#[cfg(test)]
+mod test_support;
 pub mod up;
 pub mod webring;

@@ -1,3 +1,4 @@
+use std::path::Path;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -57,6 +58,109 @@ async fn stop_daemon(daemon: kubo::Daemon, config: &Config, grace: Duration) -> 
         warn!(error = %e, "failed to remove kubo.pid");
     }
     result
+}
+
+fn spawn_agent(
+    config: Config,
+    token: CancellationToken,
+    dashboard: &Arc<dashboard::AppState>,
+    notify: &Arc<Notify>,
+) -> tokio::task::JoinHandle<Result<()>> {
+    tokio::spawn(agent::run_until(
+        config,
+        token,
+        Arc::clone(dashboard),
+        Arc::clone(notify),
+    ))
+}
+
+enum StartOutcome {
+    Ready(Box<kubo::Daemon>, String),
+    Retry,
+    Cancelled,
+}
+
+async fn start_kubo(
+    bin: &Path,
+    config: &Config,
+    backoff: &mut Backoff,
+    token: &CancellationToken,
+) -> Result<StartOutcome> {
+    macro_rules! attempt {
+        ($result:expr, $msg:literal) => {
+            match $result {
+                Ok(v) => v,
+                Err(e) => {
+                    warn!(error = %e, $msg);
+                    backoff.wait(Duration::ZERO, token).await;
+                    return Ok(StartOutcome::Retry);
+                }
+            }
+        };
+    }
+
+    let initialised = attempt!(
+        kubo::ensure_repo(bin, &config.kubo.repo).await,
+        "failed to prepare Kubo repo"
+    );
+    if initialised {
+        info!(repo = %config.kubo.repo.display(), "initialised Kubo repo");
+    }
+
+    let api_port = attempt!(
+        kubo::pick_free_port(),
+        "failed to pick a free port for the Kubo API"
+    );
+    let settings = kubo::KuboSettings {
+        storage_max: config.kubo.storage_max,
+        provide_strategy: config.kubo.provide_strategy.clone(),
+        api_port,
+        gateway: config.kubo.gateway_listen,
+        swarm_port: config.kubo.swarm_port,
+        public_gateway_hosts: config.gateway.hosts.clone(),
+    };
+    attempt!(
+        kubo::apply_config(bin, &config.kubo.repo, &settings).await,
+        "failed to configure Kubo"
+    );
+
+    let api_url = format!("http://127.0.0.1:{api_port}");
+    let mut daemon = attempt!(
+        kubo::Daemon::spawn(bin, &config.kubo.repo, api_url.clone()).await,
+        "failed to spawn the Kubo daemon"
+    );
+    if let Some(pid) = daemon.pid()
+        && let Err(e) = kubo::write_pid_file(&config.agent.state_dir, pid)
+    {
+        warn!(error = %e, "failed to write kubo.pid");
+    }
+
+    let health = tokio::select! {
+        res = kubo::wait_healthy(&api_url, MANAGED_HEALTH_TIMEOUT) => Some(res),
+        _ = token.cancelled() => None,
+    };
+    let health = match health {
+        None => {
+            let _ = stop_daemon(daemon, config, DAEMON_STOP_GRACE).await;
+            return Ok(StartOutcome::Cancelled);
+        }
+        Some(h) => h,
+    };
+    if let Err(e) = health {
+        warn!(error = %e, "Kubo did not become healthy");
+        if matches!(daemon.try_wait(), Ok(Some(_))) && daemon.saw_repo_lock_error() {
+            warn!(
+                repo = %config.kubo.repo.display(),
+                "another ipfs daemon seems to hold the Kubo repo lock; stop it or point [kubo].repo elsewhere"
+            );
+        }
+        let _ = stop_daemon(daemon, config, DAEMON_STOP_GRACE).await;
+        backoff.wait(Duration::ZERO, token).await;
+        return Ok(StartOutcome::Retry);
+    }
+
+    info!(api = %api_url, "kubo is ready");
+    Ok(StartOutcome::Ready(Box::new(daemon), api_url))
 }
 
 pub async fn run(config: Config, token: CancellationToken) -> Result<Exit> {
@@ -209,88 +313,21 @@ async fn run_managed(
             return Ok(());
         }
 
-        match kubo::ensure_repo(&bin, &config.kubo.repo).await {
-            Ok(true) => info!(repo = %config.kubo.repo.display(), "initialised Kubo repo"),
-            Ok(false) => {}
-            Err(e) => {
-                warn!(error = %e, "failed to prepare Kubo repo");
-                backoff.wait(Duration::ZERO, &token).await;
-                continue 'daemon;
-            }
-        }
-
-        let api_port = match kubo::pick_free_port() {
-            Ok(p) => p,
-            Err(e) => {
-                warn!(error = %e, "failed to pick a free port for the Kubo API");
-                backoff.wait(Duration::ZERO, &token).await;
-                continue 'daemon;
-            }
+        let (mut daemon, api_url) = match start_kubo(&bin, &config, &mut backoff, &token).await? {
+            StartOutcome::Ready(daemon, api_url) => (*daemon, api_url),
+            StartOutcome::Retry => continue 'daemon,
+            StartOutcome::Cancelled => return Ok(()),
         };
-        let settings = kubo::KuboSettings {
-            storage_max: config.kubo.storage_max,
-            provide_strategy: config.kubo.provide_strategy.clone(),
-            api_port,
-            gateway: config.kubo.gateway_listen,
-            swarm_port: config.kubo.swarm_port,
-            public_gateway_hosts: config.gateway.hosts.clone(),
-        };
-        if let Err(e) = kubo::apply_config(&bin, &config.kubo.repo, &settings).await {
-            warn!(error = %e, "failed to configure Kubo");
-            backoff.wait(Duration::ZERO, &token).await;
-            continue 'daemon;
-        }
-
-        let api_url = format!("http://127.0.0.1:{api_port}");
-        let mut daemon = match kubo::Daemon::spawn(&bin, &config.kubo.repo, api_url.clone()).await {
-            Ok(d) => d,
-            Err(e) => {
-                warn!(error = %e, "failed to spawn the Kubo daemon");
-                backoff.wait(Duration::ZERO, &token).await;
-                continue 'daemon;
-            }
-        };
-        if let Some(pid) = daemon.pid()
-            && let Err(e) = kubo::write_pid_file(&config.agent.state_dir, pid)
-        {
-            warn!(error = %e, "failed to write kubo.pid");
-        }
-
-        let health = tokio::select! {
-            res = kubo::wait_healthy(&api_url, MANAGED_HEALTH_TIMEOUT) => Some(res),
-            _ = token.cancelled() => None,
-        };
-        let health = match health {
-            None => {
-                let _ = stop_daemon(daemon, &config, DAEMON_STOP_GRACE).await;
-                return Ok(());
-            }
-            Some(h) => h,
-        };
-        if let Err(e) = health {
-            warn!(error = %e, "Kubo did not become healthy");
-            if matches!(daemon.try_wait(), Ok(Some(_))) && daemon.saw_repo_lock_error() {
-                warn!(
-                    repo = %config.kubo.repo.display(),
-                    "another ipfs daemon seems to hold the Kubo repo lock; stop it or point [kubo].repo elsewhere"
-                );
-            }
-            let _ = stop_daemon(daemon, &config, DAEMON_STOP_GRACE).await;
-            backoff.wait(Duration::ZERO, &token).await;
-            continue 'daemon;
-        }
-
-        info!(api = %api_url, "kubo is ready");
         let mut managed_config = config.clone();
         managed_config.ipfs.api = IpfsApi::Url(api_url);
 
         let mut agent_token = token.child_token();
-        let mut agent_handle = tokio::spawn(agent::run_until(
+        let mut agent_handle = spawn_agent(
             managed_config.clone(),
             agent_token.clone(),
-            Arc::clone(&dashboard),
-            Arc::clone(&notify),
-        ));
+            &dashboard,
+            &notify,
+        );
         let mut agent_started = Instant::now();
         let daemon_started = Instant::now();
 
@@ -330,12 +367,12 @@ async fn run_managed(
                     }
                     agent_token = token.child_token();
                     agent_started = Instant::now();
-                    agent_handle = tokio::spawn(agent::run_until(
+                    agent_handle = spawn_agent(
                         managed_config.clone(),
                         agent_token.clone(),
-                        Arc::clone(&dashboard),
-                        Arc::clone(&notify),
-                    ));
+                        &dashboard,
+                        &notify,
+                    );
                 }
                 _ = token.cancelled() => {
                     agent_token.cancel();

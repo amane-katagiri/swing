@@ -1,4 +1,4 @@
-# ダッシュボード HTTP API（`src/dashboard/api.rs`, `src/dashboard/dto.rs`）
+# ダッシュボード HTTP API（`src/dashboard/api.rs`, `src/dashboard/dto.rs`, `src/dashboard/config_dto.rs`）
 
 [`dashboard.md`](../dashboard.md) の一部。ガード・タイムアウトは [`dashboard.md`](../dashboard.md)、画面側からの使い方は [`web.md`](web.md) を参照。
 
@@ -166,7 +166,7 @@ Follow Set が無ければ `title: null`、`members: []`。
 - `kubo.binary`/`kubo.repo` はパスを文字列で返す（`binary` が未設定なら空文字）。`kubo.swarm_port` は未設定なら文字列 `"-"`（他のセクションと違い、数値でなく文字列で返る）。
 - `value` は文字列・真偽・数値・文字列配列のいずれか（常に生の値）。容量・時間の項目は読みやすい文字列を `display` に添える: 容量は 1024 基数の最大単位に割り切れれば整数（`"100 GB"`）、割り切れなければ小数第 1 位まで、KB 未満はバイト表記。時間は日/時/分のどれかで割り切れれば大きい単位優先（`"5m"`）、割り切れなければ秒。個数系（`keep_versions` など）には `display` が付かず、無い項目はフィールドごと出ない。
 - `config_path` は常に何か文字列が入る（環境変数だけで動いている、かつ設定ファイルが無くても `null` にはならない。下記の「設定ファイルのパス解決」）。`config_exists` はそのパスに実際にファイルがあるかどうか。
-- `writable`: `config_exists` なら（`std::fs::OpenOptions::append(true)` で）そのファイルを開けるかどうか、`config_exists` が `false` なら親ディレクトリの `Permissions::readonly()` を見て判定する（`src/dashboard/dto.rs::is_config_writable`。副作用は無い）。`false` なら Settings／Setup 画面は編集フォームを出さず、読み取り専用表示にする（[`web.md`](web.md)）。
+- `writable`: `config_exists` なら（`std::fs::OpenOptions::append(true)` で）そのファイルを開けるかどうか、`config_exists` が `false` なら親ディレクトリの `Permissions::readonly()` を見て判定する（`src/dashboard/config_dto.rs::is_config_writable`。副作用は無い）。`false` なら Settings／Setup 画面は編集フォームを出さず、読み取り専用表示にする（[`web.md`](web.md)）。
 - `restart_required`: この `swing up` プロセスが起動してから一度でも `PUT /api/config` か `POST /api/setup` が成功していれば `true`（`AppState.restart_required`、`AtomicBool`。プロセスが実際に再起動する—`Exit::Restart` を経て `up::run` が呼び直される—までリセットされない）。
 - `dashboard` セクションに `ui`（真偽値、`SWING_DASHBOARD_UI`）が入る。`listen` は常に `SocketAddr` の文字列。
 - 各 `items[]` は追加で次のフィールドを持つ:

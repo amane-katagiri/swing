@@ -362,30 +362,7 @@ mod tests {
     use std::collections::BTreeSet;
 
     use super::*;
-
-    const CID_A: &str = "bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi";
-    const CID_B: &str = "QmYwAPJzv5CZsnA9LqYKXfRSZryVXxNn7ZP1FyEBgvJvHR";
-
-    fn report(
-        reporter: &Keys,
-        author: &PublicKey,
-        d: &str,
-        cids: &[&str],
-        created_at: u64,
-        expiration: u64,
-    ) -> Event {
-        nostr::build_replica_report_builder(
-            35981,
-            35980,
-            author,
-            d,
-            &cids.iter().map(|c| c.to_string()).collect::<BTreeSet<_>>(),
-            Timestamp::from_secs(expiration),
-        )
-        .custom_created_at(Timestamp::from_secs(created_at))
-        .finalize(reporter)
-        .unwrap()
-    }
+    use crate::test_support::{CID_A, CID_B, replica_report_event as report};
 
     #[test]
     fn collect_reports_keeps_the_newest_live_report_per_reporter() {

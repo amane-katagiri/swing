@@ -74,7 +74,6 @@ impl Poller {
         }
     }
 
-    // Each check runs schtasks/launchctl, and polling speeds up to once a second while a start or stop is in flight.
     async fn service_installed(&mut self) -> bool {
         if let Some((installed, at)) = self.installed
             && at.elapsed() < INSTALLED_CACHE

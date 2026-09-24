@@ -1,8 +1,8 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use anyhow::{Context, Result};
-use clap::{Parser, Subcommand};
+use clap::{Args, Parser, Subcommand};
 use swing::shutdown::{self, Exit};
 use swing::{
     config, health, key, login, mirror, publish, replicas, service, settings, stop, up, webring,
@@ -12,6 +12,18 @@ use tracing_subscriber::EnvFilter;
 
 // Not #[tokio::main]: shutdown_timeout keeps a stuck blocking thread from holding the process open.
 const RUNTIME_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(10);
+
+#[derive(Args)]
+struct ConfigArg {
+    #[arg(long, help = "Config file (default: $SWING_CONFIG or ./swing.toml)")]
+    config: Option<PathBuf>,
+}
+
+impl ConfigArg {
+    fn as_deref(&self) -> Option<&Path> {
+        self.config.as_deref()
+    }
+}
 
 #[derive(Parser)]
 #[command(
@@ -30,8 +42,8 @@ enum Command {
         about = "Run Kubo (if managed) and the mirror agent under one supervisor; restarts either when it fails"
     )]
     Up {
-        #[arg(long, help = "Config file (default: $SWING_CONFIG or ./swing.toml)")]
-        config: Option<PathBuf>,
+        #[command(flatten)]
+        config: ConfigArg,
         #[arg(
             long,
             value_name = "PATH",
@@ -46,8 +58,8 @@ enum Command {
         about = "Stop a running `swing up` instance gracefully, via its dashboard API (POST /api/shutdown or /api/restart)"
     )]
     Stop {
-        #[arg(long, help = "Config file (default: $SWING_CONFIG or ./swing.toml)")]
-        config: Option<PathBuf>,
+        #[command(flatten)]
+        config: ConfigArg,
         #[arg(
             long,
             help = "Ask it to restart instead of staying stopped (needs [dashboard].listen)"
@@ -76,8 +88,8 @@ enum Command {
     },
     #[command(about = "Add a static site to IPFS and announce its CID on Nostr")]
     Publish {
-        #[arg(long, help = "Config file (default: $SWING_CONFIG or ./swing.toml)")]
-        config: Option<PathBuf>,
+        #[command(flatten)]
+        config: ConfigArg,
         #[arg(long, help = "Site identifier (d tag), e.g. your domain name")]
         site: String,
         #[arg(
@@ -108,15 +120,15 @@ enum Command {
     },
     #[command(about = "Show followed sites, their latest CIDs and storage status")]
     Sites {
-        #[arg(long, help = "Config file (default: $SWING_CONFIG or ./swing.toml)")]
-        config: Option<PathBuf>,
+        #[command(flatten)]
+        config: ConfigArg,
     },
     #[command(
         about = "Show who reports holding each site (default: your own sites) and how many hold the latest version"
     )]
     Replicas {
-        #[arg(long, help = "Config file (default: $SWING_CONFIG or ./swing.toml)")]
-        config: Option<PathBuf>,
+        #[command(flatten)]
+        config: ConfigArg,
         #[arg(value_name = "KEY", help = "Site authors (npub, hex or nprofile)")]
         keys: Vec<String>,
     },
@@ -124,15 +136,15 @@ enum Command {
         about = "Check stored versions against Kubo MFS and list leftover paths, via a running `swing up`'s dashboard API (GET /api/status; exits non-zero on problems)"
     )]
     Status {
-        #[arg(long, help = "Config file (default: $SWING_CONFIG or ./swing.toml)")]
-        config: Option<PathBuf>,
+        #[command(flatten)]
+        config: ConfigArg,
     },
     #[command(
         about = "Show mutual mirror relations as a webring graph, crawling follow sets from the given accounts (default: yourself)"
     )]
     Webring {
-        #[arg(long, help = "Config file (default: $SWING_CONFIG or ./swing.toml)")]
-        config: Option<PathBuf>,
+        #[command(flatten)]
+        config: ConfigArg,
         #[arg(
             long,
             default_value_t = 2,
@@ -164,8 +176,8 @@ enum DashboardCommand {
         about = "Open the dashboard in a browser with a single-use login link, via a running `swing up`'s dashboard API (POST /api/login-code)"
     )]
     Open {
-        #[arg(long, help = "Config file (default: $SWING_CONFIG or ./swing.toml)")]
-        config: Option<PathBuf>,
+        #[command(flatten)]
+        config: ConfigArg,
         #[arg(long, help = "Only print the login link and code")]
         no_browser: bool,
     },
@@ -173,8 +185,8 @@ enum DashboardCommand {
         about = "Replace the dashboard token, logging out every browser session (POST /api/token/rotate, or the token file directly when swing up is not running)"
     )]
     RotateToken {
-        #[arg(long, help = "Config file (default: $SWING_CONFIG or ./swing.toml)")]
-        config: Option<PathBuf>,
+        #[command(flatten)]
+        config: ConfigArg,
     },
 }
 
@@ -196,8 +208,8 @@ enum KeyCommand {
 enum ServiceCommand {
     #[command(about = "Register swing up as a login/system service")]
     Install {
-        #[arg(long, help = "Config file (default: $SWING_CONFIG or ./swing.toml)")]
-        config: Option<PathBuf>,
+        #[command(flatten)]
+        config: ConfigArg,
         #[arg(
             long,
             help = "Register a systemd system unit instead of a user unit (Linux only)"
@@ -249,15 +261,15 @@ enum ServiceCommand {
 enum MirrorCommand {
     #[command(about = "List pubkeys in the mirror set")]
     List {
-        #[arg(long, help = "Config file (default: $SWING_CONFIG or ./swing.toml)")]
-        config: Option<PathBuf>,
+        #[command(flatten)]
+        config: ConfigArg,
     },
     #[command(
         about = "Add pubkeys (npub, hex or nprofile) to the mirror set, via a running `swing up`'s dashboard API (POST /api/mirror/add)"
     )]
     Add {
-        #[arg(long, help = "Config file (default: $SWING_CONFIG or ./swing.toml)")]
-        config: Option<PathBuf>,
+        #[command(flatten)]
+        config: ConfigArg,
         #[arg(required = true, num_args = 1.., value_name = "KEY")]
         keys: Vec<String>,
     },
@@ -265,8 +277,8 @@ enum MirrorCommand {
         about = "Remove pubkeys from the mirror set, via a running `swing up`'s dashboard API (POST /api/mirror/remove)"
     )]
     Remove {
-        #[arg(long, help = "Config file (default: $SWING_CONFIG or ./swing.toml)")]
-        config: Option<PathBuf>,
+        #[command(flatten)]
+        config: ConfigArg,
         #[arg(required = true, num_args = 1.., value_name = "KEY")]
         keys: Vec<String>,
     },

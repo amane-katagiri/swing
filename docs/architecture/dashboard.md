@@ -124,9 +124,9 @@ HTTP サーバー（axum 0.8）で、ダッシュボードのブラウザ向け�
 
 各 JS ファイルの役割・依存関係は [`dashboard/web.md#構成`](dashboard/web.md#構成) を参照。
 
-## 設定の読み込みと編集（`src/settings.rs`）
+## 設定の読み込みと編集（`src/settings/`）
 
-すべての設定キーは `src/settings.rs::SETTINGS`（`Setting` の配列。キー・セクション・TOML フィールド・環境変数・種類・`swing.example.toml` 上の見え方・編集可否・英日の説明を持つ）に 1 箇所のカタログとしてまとまっている（[`../architecture.md#設定と環境変数`](../architecture.md#設定と環境変数)）。`GET /api/config` はこのカタログをそのまま列挙するので、載っている項目（パス・待ち受けアドレス・ポート、kind 番号なども含め）はすべて `kind`/`description` を持つ。
+すべての設定キーは `src/settings/mod.rs::SETTINGS`（`Setting` の配列。キー・セクション・TOML フィールド・環境変数・種類・`swing.example.toml` 上の見え方・編集可否・英日の説明を持つ）に 1 箇所のカタログとしてまとまっている（[`../architecture.md#設定と環境変数`](../architecture.md#設定と環境変数)）。`GET /api/config` はこのカタログをそのまま列挙するので、載っている項目（パス・待ち受けアドレス・ポート、kind 番号なども含め）はすべて `kind`/`description` を持つ。
 
 そのうち書き込める（`PUT /api/config`／`POST /api/setup` で受け付ける）キーはカタログの `editable: true` が付いているものだけに絞っている。`editable: false` のキー（パス・待ち受けアドレス・ポート、`kubo.binary`、`dashboard.ui`、`allowed_hosts`、`kubo.managed`、`ipfs.*`、kind 番号、`gateway.*` など）は、ダッシュボードにログインできる相手（盗まれたセッション cookie を含む）が任意のファイルパスやリスニングアドレスを差し替えられないようにするため、意図的に対象外にしている。現在編集可能なキー（`section.field`、種類）:
 

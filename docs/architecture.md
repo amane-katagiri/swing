@@ -42,7 +42,7 @@ swing/
   src/
     lib.rs           各モジュールを公開するクレートルート
     main.rs          CLI エントリ (clap)
-    config.rs        設定読み込み、サイズ・時間パーサ
+    config/          設定読み込み、サイズ・時間パーサ（mod.rs: 型・パーサ・`Config::load`、build.rs: セクションごとの解決関数に分けた `build_config`）
     nostr.rs         relay 接続 / follow set 取得 / site event 購読・発行・パース / レプリカ報告の組み立て・パース
     ipfs.rs          Kubo RPC クライアント
     mfs.rs           MFS 上のパスの組み立て
@@ -64,11 +64,12 @@ swing/
     login.rs         `swing dashboard open`・`swing dashboard rotate-token`。詳細は architecture/cli.md
     gateway.rs       内蔵 gateway（axum）。Host 名での振り分けと Kubo gateway へのプロキシ。詳細は architecture/gateway.md
     service.rs       `swing service install/uninstall/status/stop`（systemd / launchd / タスクスケジューラ）。詳細は architecture/service.md
-    settings.rs      全設定キーのカタログ（SETTINGS。キー・TOML フィールド・環境変数・種類・例・編集可否・英日の説明）、`swing.example.toml`/`.env.example` の生成（config example / env-example）、ダッシュボードから編集できる設定キーのホワイトリスト（カタログの editable）、`PUT /api/config`（update）・`POST /api/setup`（setup）の読み書き（toml_edit）。詳細は architecture/dashboard.md
+    settings/        全設定キーのカタログ（mod.rs: SETTINGS。キー・TOML フィールド・環境変数・種類・例・編集可否・英日の説明）、`swing.example.toml`/`.env.example` の生成（example.rs: config example / env-example）、ダッシュボードから編集できる設定キーのホワイトリスト（カタログの editable）、`PUT /api/config`（edit.rs: update）・`POST /api/setup`（edit.rs: setup）の読み書き（toml_edit）。詳細は architecture/dashboard.md
     stop.rs          `swing stop`（動いている `swing up` のダッシュボード API 経由。API に到達できなければ「動いていない」として終了する）。詳細は architecture/up.md, architecture/service.md
     shutdown.rs      `cancel_on_signal`（SIGINT/SIGTERM → CancellationToken、force-exit watchdog）、`ExitRequest`/`Exit`（ダッシュボードからの停止・再起動要求と exit code）。up/agent 共通
-    dashboard/       `swing up` 常駐の Web ダッシュボード兼制御 API（mod.rs, guard.rs, api.rs, session.rs, dto.rs, assets.rs）。詳細は architecture/dashboard.md
+    dashboard/       `swing up` 常駐の Web ダッシュボード兼制御 API（mod.rs, guard.rs, api.rs, session.rs, dto.rs, config_dto.rs, assets.rs, upload.rs）。詳細は architecture/dashboard.md
     api_client.rs    ダッシュボード API を呼ぶ CLI 共通クライアント（`ApiClient`。`<state_dir>/dashboard.token` を Bearer トークンとして送る）。`status`・`mirror add`・`mirror remove`・`stop`・`dashboard open`・`dashboard rotate-token` が使う。詳細は architecture/dashboard/http-api.md
+    test_support.rs  `#[cfg(test)]` のクレート共通フィクスチャ（`FakeKubo`、CID・鍵・イベントのテストヘルパ）。agent と health のテストが使う
   web/               ダッシュボードのフロント（index.html, style.css, ES modules（setup.js を含む）, 画像・フォントなどの静的アセット一式）。ビルド工程なしで include_str!/include_bytes! によりバイナリへ埋め込む。desktop-page.html / desktop-page.css / desktop-banner.gif（Desktop 画面のリンク集ページ）だけは設定で差し替えられる。詳細は architecture/dashboard.md
   build.rs           Windows 向けのとき、exe にアイコン（assets/swing.ico）とバージョン情報を埋め込む（winresource）
   assets/swing.ico   swing.exe のファイルアイコン（web/favicon.svg から書き出した 16〜256px）
@@ -134,12 +135,12 @@ swing-tray [--config <path>]
 
 ## 設定と環境変数
 
-すべての設定キー（TOML フィールド、環境変数、種類、既定値、編集可否、説明）は `src/settings.rs` の `SETTINGS`（`Setting` の配列）1 箇所にカタログとして持つ。環境変数は TOML の値を上書きする。`config::build_config` は各キーの env 名をこのカタログから `settings::env_of("<section>.<field>")` で引き、環境変数名の文字列リテラルはカタログにしか存在しない。
+すべての設定キー（TOML フィールド、環境変数、種類、既定値、編集可否、説明）は `src/settings/mod.rs` の `SETTINGS`（`Setting` の配列）1 箇所にカタログとして持つ。環境変数は TOML の値を上書きする。`config::build_config` は各キーの env 名をこのカタログから `settings::env_of("<section>.<field>")` で引き、環境変数名の文字列リテラルはカタログにしか存在しない。
 
 - `swing config example` — カタログから `swing.example.toml`（このリポジトリ直下の同名ファイル）と同じ内容を標準出力に印字する。セクション順・キー順はカタログの宣言順（`nostr` → `ipfs` → `policy` → `agent` → `publish` → `dashboard` → `kubo` → `gateway`）。
 - `swing config env-example` — カタログから `.env.example` と同じ内容を印字する。秘密鍵の行だけ特別扱い（空・非コメント）で、他のキーはすべてコメントアウトした `#SWING_X=既定値` の形で載せる（`.env` に書いて始めて `Source::Env` になり、ダッシュボードでの編集がロックされるため、既定はすべて無効化した状態にしている）。Docker Compose 専用のホストバインド変数（`SWING_KUBO_GATEWAY_BIND`・`SWING_GATEWAY_BIND`・`SWING_DASHBOARD_BIND`）はカタログの外の値で、`config::env_var` は読まない（`compose.yaml` の変数展開専用）。
 
-`cargo test` は次の 2 点でカタログと生成物の乖離を防ぐ（`src/settings.rs` のテスト）:
+`cargo test` は次の 2 点でカタログと生成物の乖離を防ぐ（`src/settings/` のテスト）:
 
 - `swing.example.toml`・`.env.example` の内容が、それぞれ `render_toml_example()`・`render_env_example()` の出力と一致すること（ずれていれば `swing config example > swing.example.toml` / `swing config env-example > .env.example` を実行してコミットし直すよう促すメッセージで失敗する）。
 - 生成した `swing.example.toml` を `build_config_from_str` でパースした結果が、空文字列から作った既定値と一致すること（例の値がコードの既定値から drift しない）。
@@ -185,7 +186,7 @@ TOML キーの無い環境変数は `SWING_CONFIG`（設定ファイルのパス
 - レプリカ報告: `d` を最初の `:` で分け、作者が小文字 hex の公開鍵でない、サイトの `d` が上の `d` の条件を満たさない、`a` の値が `<site_event_kind>:<作者>:<サイトの d>` と一致しない、`cid` タグのどれかが `cid` クレートでパースできない、`expiration` タグがあるのに `u64` としてパースできない、のいずれかなら報告全体を拒否する。`cid` タグは 0 個でもよい（取り下げ）。`expiration` が無ければ `None` として読み、期限切れかどうかの判定は使う側（`ReplicaReport::counts_at`）が行う。
 - 署名は nostr-sdk が受信時に検証する。
 - relay からの取得（`fetch_events`）は 30 秒でタイムアウトする。
-- `created_at` の未来ずれ許容（`nostr::MAX_FUTURE_SKEW`、900 秒）と、それを超えるかどうかを判定する `nostr::plausible_at(created_at, now)` は `nostr.rs` にある（`policy.rs` はここから読む）。保存の可否（`policy::decide`）だけでなく、「現在の版」やその時点で有効な Follow Set をどれとして選ぶかにも同じ基準を使う: `select_latest`（サイトイベント）、`choose_follow_set` と `RelayClient::fetch_follow_set` / `fetch_follow_sets`（Follow Set）、`newest_by_address`（Follow Set 以外にも使う住所ごとの最新選び）。`choose_follow_set` と `mirror.rs` の `newest_follow_set` は、relay から取得した版だけでなく保存済みの版も同じ基準でふるいにかける（先の時刻で一度保存された Follow Set が永久に勝ち続けるのを防ぐため）。詳細は [`agent.md`](architecture/agent.md#follow-set-の選び方) と [`cli.md`](architecture/cli.md)。
+- `created_at` の未来ずれ許容（`nostr::MAX_FUTURE_SKEW`、900 秒）と、それを超えるかどうかを判定する `nostr::plausible_at(created_at, now)` は `nostr.rs` にある（`policy.rs` はここから読む）。保存の可否（`policy::decide`）だけでなく、「現在の版」やその時点で有効な Follow Set をどれとして選ぶかにも同じ基準を使う: `select_latest`（サイトイベント）、`choose_follow_set` と `RelayClient::fetch_follow_set` / `fetch_follow_sets`（Follow Set）、`newest_by_address`（Follow Set 以外にも使う住所ごとの最新選び）。`choose_follow_set` は relay から取得した版だけでなく保存済みの版も同じ基準でふるいにかける（先の時刻で一度保存された Follow Set が永久に勝ち続けるのを防ぐため）。`mirror.rs` の `newest_follow_set` はこの `choose_follow_set` をそのまま呼び、結果から CLI 表示用の注記を組み立てる薄いラッパ。詳細は [`agent.md`](architecture/agent.md#follow-set-の選び方) と [`cli.md`](architecture/cli.md)。
 
 ### 取得と表示の上限（`nostr::budget`）
 
@@ -223,7 +224,7 @@ webring でも同じ考え方を使う。`#p` で見つかる「起点を名指�
 
 ## テスト
 
-- ユニットテスト: `cargo test`。agent のテストは MFS をメモリ上で真似る `FakeKubo` と `FakeNip05` を使う。ダッシュボードのテストは axum の `Router` に `oneshot` でリクエストを投げ、TCP で listen しない。NIP-46 のペアリングのテストは nostr-sdk の `LocalRelay`（プロセス内の relay、ループバックで listen する）と署名アプリ役を使う（[`architecture/signer.md#テスト`](architecture/signer.md#テスト)）。
+- ユニットテスト: `cargo test`。agent と health のテストは、MFS をメモリ上で真似る `FakeKubo`（`src/test_support.rs`、クレート全体で共有する `#[cfg(test)]` フィクスチャ）を使う。agent はこれに `FakeNip05` を組み合わせる。ダッシュボードのテストは axum の `Router` に `oneshot` でリクエストを投げ、TCP で listen しない。NIP-46 のペアリングのテストは nostr-sdk の `LocalRelay`（プロセス内の relay、ループバックで listen する）と署名アプリ役を使う（[`architecture/signer.md#テスト`](architecture/signer.md#テスト)）。
 - 統合テスト（`#[ignore]`、ローカルの Kubo / relay が必要。公開ネットワークには接続しない）:
 
 ```bash

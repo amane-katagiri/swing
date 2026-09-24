@@ -54,9 +54,7 @@ impl VerificationResult {
         }
     }
 
-    /// A coarse, oracle-resistant classification of `Error`'s detail, safe to
-    /// hand to a network caller that should not learn connect/timeout/TLS
-    /// specifics about hosts it can make the agent probe.
+    /// A coarse, oracle-resistant classification of `Error`'s detail, safe to hand to a network caller.
     pub fn coarse_detail(&self) -> Option<&'static str> {
         match self {
             VerificationResult::Error(_, category) => Some(category.as_str()),

@@ -126,8 +126,7 @@ fn walk(
         } else {
             format!("{rel_prefix}/{name}")
         };
-        // metadata() follows symlinks (unlike DirEntry::file_type()), so linked
-        // files/dirs are included instead of silently skipped.
+        // metadata() follows symlinks (unlike DirEntry::file_type()), so linked files/dirs aren't skipped.
         let metadata = std::fs::metadata(&path)
             .with_context(|| format!("reading metadata for {}", path.display()))?;
         if metadata.is_dir() {
@@ -233,9 +232,7 @@ impl IpfsClient {
         if !dir.is_dir() {
             bail!("not a directory: {}", dir.display());
         }
-        // Kubo's multipart add infers the wrapping directory node from a shared
-        // filename prefix; without the root dir's own name as that prefix it
-        // adds each file as an unlinked blob instead of one directory CID.
+        // Kubo infers the wrapping directory node from a shared filename prefix, so the root name must be included or files land as unlinked blobs.
         let root_name = dir
             .file_name()
             .map(|n| n.to_string_lossy().to_string())
@@ -369,8 +366,7 @@ impl IpfsClient {
     pub async fn mfs_put(&self, cid: &str, path: &str) -> Result<()> {
         self.mfs_mkdir(mfs::parent(path)).await?;
         self.mfs_remove(path).await?;
-        // offline=true: only the root block is needed to link it, and callers
-        // have already checked the whole DAG is local.
+        // offline=true: callers have already checked the whole DAG is local.
         self.call(
             "files/cp",
             &format!(
