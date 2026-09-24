@@ -117,12 +117,29 @@ export function stripControlChars(str) {
   return String(str).replace(/[\x00-\x1f\x7f]+/g, ' ').trim();
 }
 
+/* Bidi override/isolate controls (U+202A–U+202E, U+2066–U+2069, U+200E/U+200F, U+061C) and
+   zero-width/invisible characters (U+200B–U+200D, U+2060, U+FEFF) let other people's event
+   text visually reorder or hide itself; they carry no legitimate display purpose here. */
+const UNSAFE_UNICODE_RE = /[​-‏‪-‮⁠-⁩؜﻿]/g;
+
+export function stripUnsafeUnicode(str) {
+  return String(str == null ? '' : str).replace(UNSAFE_UNICODE_RE, '');
+}
+
+/* Combines control-char and bidi/invisible stripping for any text sourced from someone else's
+   Nostr event (title, d, message, webring label, …) before it touches the DOM. Never apply this
+   to the operator's own form inputs. */
+export function sanitizeDisplayText(str, max) {
+  if (str == null) return '';
+  const cleaned = stripUnsafeUnicode(stripControlChars(str));
+  if (!max) return cleaned;
+  return cleaned.length > max ? `${cleaned.slice(0, max)}…` : cleaned;
+}
+
 export function sanitizeMessage(str, max) {
   if (!str) return null;
-  const limit = max || 200;
-  const cleaned = stripControlChars(str);
-  if (!cleaned) return null;
-  return cleaned.length > limit ? `${cleaned.slice(0, limit)}…` : cleaned;
+  const cleaned = sanitizeDisplayText(str, max || 200);
+  return cleaned || null;
 }
 
 export function shortenMiddle(str, head, tail) {
@@ -134,9 +151,9 @@ export function shortenMiddle(str, head, tail) {
 
 export function maybeLink(url, text) {
   if (typeof url === 'string' && /^https?:\/\//i.test(url)) {
-    return el('a', { href: url, target: '_blank', rel: 'noopener noreferrer' }, text || url);
+    return el('a', { href: url, target: '_blank', rel: 'noopener noreferrer' }, text || sanitizeDisplayText(url));
   }
-  return el('span', {}, text || url || '');
+  return el('span', {}, text || sanitizeDisplayText(url) || '');
 }
 
 export function ensureBusyStructure(button) {

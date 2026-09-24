@@ -11,7 +11,7 @@ import {
   formatSiteSize,
   formatTime,
   shortenMiddle,
-  stripControlChars,
+  sanitizeDisplayText,
   maybeLink,
   setBusy,
   getStyle,
@@ -104,7 +104,7 @@ function buildSiteTable(sites) {
   const tbody = el('tbody');
   for (const site of sites) {
     const tr = el('tr', { 'data-stored': String(!!site.stored) });
-    tr.append(el('td', {}, site.d));
+    tr.append(el('td', { dir: 'auto' }, sanitizeDisplayText(site.d)));
     tr.append(el('td', {}, storedBadge(site)));
     tr.append(el('td', {}, site.nip05 ? nip05Badge(site.nip05) : '–'));
     tr.append(el('td', {}, replicaCountText(site)));
@@ -153,7 +153,7 @@ export function renderStatusCheck(status) {
     for (const v of status.versions) {
       const tr = el('tr', { 'data-health': v.health });
       tr.append(el('td', {}, v.npub ? shortenMiddle(v.npub, 10, 4) : '–'));
-      tr.append(el('td', {}, v.d || '–'));
+      tr.append(el('td', { dir: 'auto' }, v.d ? sanitizeDisplayText(v.d) : '–'));
       tr.append(el('td', { class: 'swing-mono' }, v.path || '–'));
       tr.append(el('td', { class: 'swing-mono' }, v.cid ? shortenMiddle(v.cid, 8, 6) : '–'));
       tr.append(el('td', {}, formatBytes(v.size)));
@@ -161,7 +161,7 @@ export function renderStatusCheck(status) {
       tr.append(
         el('td', {}, [
           el('span', { class: 'swing-badge', 'data-health': v.health }, v.health),
-          v.detail ? el('span', { class: 'swing-hint' }, ` ${stripControlChars(v.detail)}`) : null,
+          v.detail ? el('span', { class: 'swing-hint', dir: 'auto' }, ` ${sanitizeDisplayText(v.detail)}`) : null,
         ]),
       );
       tbody.append(tr);
@@ -179,7 +179,7 @@ export function renderStatusCheck(status) {
     for (const site of status.sites) {
       const tr = el('tr');
       tr.append(el('td', {}, shortenMiddle(site.npub, 10, 4)));
-      tr.append(el('td', {}, site.d));
+      tr.append(el('td', { dir: 'auto' }, sanitizeDisplayText(site.d)));
       tr.append(el('td', {}, site.actual == null ? '–' : formatBytes(site.actual)));
       tbody.append(tr);
     }
@@ -192,7 +192,7 @@ export function renderStatusCheck(status) {
   if (status.garbage.length) {
     sitesEls.statusCheckResult.append(el('h3', {}, t('notInState')));
     const list = el('ul', { class: 'swing-plain-list' });
-    for (const g of status.garbage) list.append(el('li', {}, `${g.path}${g.list_failed ? t('listFailedSuffix') : ''}`));
+    for (const g of status.garbage) list.append(el('li', { dir: 'auto' }, `${sanitizeDisplayText(g.path)}${g.list_failed ? t('listFailedSuffix') : ''}`));
     sitesEls.statusCheckResult.append(list);
   }
 }

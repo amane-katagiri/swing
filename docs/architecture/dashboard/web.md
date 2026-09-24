@@ -10,7 +10,7 @@
 |---|---|
 | `storage.js` | `localStorage` の薄いラッパー。他のどのモジュールにも依存しない |
 | `i18n.js` | 多言語辞書と `t()`。`storage.js` にだけ依存する |
-| `util.js` | 画面間で共有するキャッシュ・DOM/fetch ユーティリティ・表示スタイル切替・非同期ロードのガード（`createLoadGuard`）・`sleep()`・`pollUntil(predicate)`（1 秒間隔・最大 120 回、`predicate` が `true` を返すかどれかの `POLL_ATTEMPTS` に達すると止まる汎用ポーリング）。`storage.js`・`i18n.js` に依存する |
+| `util.js` | 画面間で共有するキャッシュ・DOM/fetch ユーティリティ・表示スタイル切替・非同期ロードのガード（`createLoadGuard`）・`sleep()`・`pollUntil(predicate)`（1 秒間隔・最大 120 回、`predicate` が `true` を返すかどれかの `POLL_ATTEMPTS` に達すると止まる汎用ポーリング）・他人のイベント由来テキストの表示前サニタイズ（`stripUnsafeUnicode` / `sanitizeDisplayText` / `sanitizeMessage`）。`storage.js`・`i18n.js` に依存する |
 | `ui.js` | 複数画面で共有する UI 部品（コピーボタン、バッジ、relay 結果表示、サイト名の行 `buildSiteNameRow` など）。`util.js`・`i18n.js` に依存する |
 | `graph.js` | webring 用の自前 force-directed layout。`util.js` の `clamp` だけに依存する |
 | `pairing.js` | 署名アプリ（NIP-46）とのペアリングの部品（`createPairing`）。QR の表示・状態のポーリング・状態表示を受け持ち、Setup 画面と Publish 画面の「署名アプリとつなぎ直す」の両方が使う。`util.js`・`i18n.js` に依存する |
@@ -21,7 +21,7 @@
 
 CSS は `style.css`（全画面共通）に加え、Desktop 画面のウィンドウ枠専用の `desktop.css` を `index.html` が `<link>` で読み込む（読み込み順は下記「CSS カスタマイズのインターフェース」を参照）。Desktop 画面の「リンク集」ページ本文だけは別ドキュメント（`desktop-page.html` + `desktop-page.css`）で、iframe の中で動く（下記「リンク集ページ（iframe）」）。
 
-`#/desktop` `#/sites` `#/webring` `#/publish` `#/settings` `#/setup` の 6 画面と、未ログインのときだけ出す Login 画面をハッシュルーティングで切り替える（既定は `sites`）。現在の画面のナビのリンクには `aria-current="page"` が付く。書き込みリクエストには `X-Swing-Dashboard: 1` と `Content-Type: application/json` を付ける。relay 由来の文字列は DOM API だけで挿入し、`innerHTML` は使わない。`url` は `^https?://` にマッチするときだけリンクにする。
+`#/desktop` `#/sites` `#/webring` `#/publish` `#/settings` `#/setup` の 6 画面と、未ログインのときだけ出す Login 画面をハッシュルーティングで切り替える（既定は `sites`）。現在の画面のナビのリンクには `aria-current="page"` が付く。書き込みリクエストには `X-Swing-Dashboard: 1` と `Content-Type: application/json` を付ける。relay 由来の文字列は DOM API だけで挿入し、`innerHTML` は使わない。`url` は `^https?://` にマッチするときだけリンクにする。他人の Nostr イベント由来のテキスト（サイトの `title`・`d`・`message`、webring のラベル・names など）は表示直前に `util.js::sanitizeDisplayText`（内部で `stripUnsafeUnicode` と `stripControlChars` を呼ぶ。`sanitizeMessage` は空文字を `null` にするラッパー）へ通し、双方向制御文字（U+202A–U+202E, U+2066–U+2069, U+200E/U+200F, U+061C）とゼロ幅文字（U+200B–U+200D, U+2060, U+FEFF）を取り除いてから DOM に入れる（見た目の並び替え・文字の隠蔽を防ぐため）。プロトコル・Rust 側のバリデーションは変えず、表示直前のこの一箇所だけで処理する。対象の要素には `dir="auto"` を付け、CSS 側（`.swing-site-name` / `.swing-hint` / `.swing-site-message` / `.swing-table td` / `.swing-webring-account-row` / `.swing-node-detail dd`,`h2` / `.swing-node text` / `desktop-page.css` の `.desk-link-title` 等）に `unicode-bidi: isolate` を付けて、正当な RTL（アラビア語・ヘブライ語タイトルなど）はそのまま表示しつつ周囲の UI の並びには影響しないようにする。webring の DOT/Mermaid/ASCII エクスポートも同じ `stripUnsafeUnicode` で画面表示用の文字列をきれいにする。オペレーター自身のフォーム入力（Publish フォームへの再入力など）には適用しない。
 
 `app.js` の `init()` は最初のルーティングをする前に `loadOverview()`（[`/api/overview`](http-api.md#get-apioverview)）を待ってから `showRoute()` を呼ぶ（初回描画の一瞬だけ別の画面が見えてから Setup に切り替わる、というちらつきを防ぐため）。`currentRoute()` は `cache.overview.setup` が `true` の間、hash が何であっても常に `'setup'` を返す（URL を直接叩いても Setup に留まる）。`showRoute()` は同じ `cache.overview.setup` を見てサイドナビの表示も切り替える：`true` の間は Setup 項目（Settings と同じ歯車アイコン）だけを表示して `aria-current="page"` を付け、他の 5 項目は `hidden` にする。`false` になれば逆に Setup 項目を隠し、他の 5 項目を通常どおり表示する。`overview.setup` が `true` のまま起動直後に hash が `#/setup` でなければ、`location.hash = '#/setup'` に変えてから描画する。
 

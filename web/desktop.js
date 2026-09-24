@@ -1,5 +1,5 @@
 import { storage } from './storage.js';
-import { cache, el, apiFetch, describeError, createLoadGuard, setBusy, sanitizeMessage, maybeLink } from './util.js';
+import { cache, el, apiFetch, describeError, createLoadGuard, setBusy, sanitizeMessage, sanitizeDisplayText, maybeLink } from './util.js';
 import { DesktopWindow } from './desktop-window.js';
 
 const DESK_TEXT = {
@@ -112,7 +112,8 @@ function buildLinkRow(site) {
   li.append(el('span', { class: 'desk-link-date' }, formatRetroDate(site.created_at)));
 
   const cleanTitle = sanitizeMessage(site.title, 120);
-  const titleText = cleanTitle || site.d;
+  const cleanD = sanitizeDisplayText(site.d);
+  const titleText = cleanTitle || cleanD;
   const primaryHref = site.gateway_url || site.url || null;
   let titleNode;
   if (primaryHref) {
@@ -122,10 +123,11 @@ function buildLinkRow(site) {
     titleNode = el('span', {}, titleText);
   }
   titleNode.classList.add('desk-link-title');
+  titleNode.setAttribute('dir', 'auto');
   li.append(titleNode);
 
   if (cleanTitle) {
-    li.append(el('span', { class: 'desk-link-d' }, `(${site.d})`));
+    li.append(el('span', { class: 'desk-link-d', dir: 'auto' }, `(${cleanD})`));
   }
 
   if (site.gateway_url && site.url) {
@@ -137,7 +139,7 @@ function buildLinkRow(site) {
 
   const msg = sanitizeMessage(site.message);
   if (msg) {
-    li.append(el('p', { class: 'desk-link-message' }, `「${msg}」`));
+    li.append(el('p', { class: 'desk-link-message', dir: 'auto' }, `「${msg}」`));
   }
 
   return li;
@@ -161,7 +163,7 @@ function renderMarquee(sites) {
     return;
   }
   const top = sites[0];
-  const label = sanitizeMessage(top.title, 60) || top.d;
+  const label = sanitizeMessage(top.title, 60) || sanitizeDisplayText(top.d);
   pageEls.marquee.textContent = DESK_TEXT.marqueeLatest(formatRetroDate(top.created_at), label);
 }
 

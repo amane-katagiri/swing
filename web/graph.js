@@ -1,4 +1,4 @@
-import { clamp } from './util.js';
+import { clamp, sanitizeDisplayText } from './util.js';
 
 const NODE_RADIUS = 10;
 const ARROW_LEN = 8;
@@ -184,20 +184,21 @@ export function createWebringGraph(container, { nodes, edges, onSelect, selected
       g.dataset.hasFollowSet = String(!!s.data.has_follow_set);
       g.dataset.depth = String(s.data.depth);
       g.dataset.pubkey = s.data.pubkey;
+      const label = sanitizeDisplayText(s.data.label);
       g.setAttribute('tabindex', '0');
       g.setAttribute('role', 'button');
-      g.setAttribute('aria-label', s.data.label);
+      g.setAttribute('aria-label', label);
 
       const circle = document.createElementNS(SVG_NS, 'circle');
       circle.setAttribute('r', String(NODE_RADIUS));
 
       const title = document.createElementNS(SVG_NS, 'title');
-      title.textContent = s.data.label;
+      title.textContent = label;
 
       const text = document.createElementNS(SVG_NS, 'text');
       text.setAttribute('x', String(NODE_RADIUS + 4));
       text.setAttribute('y', '4');
-      text.textContent = truncateLabel(s.data.label);
+      text.textContent = truncateLabel(label);
 
       g.append(circle, title, text);
       labelEls.push(text);

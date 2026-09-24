@@ -8,6 +8,8 @@ import {
   clearStatus,
   describeError,
   shortenMiddle,
+  sanitizeDisplayText,
+  stripUnsafeUnicode,
   clamp,
   setBusy,
   getStyle,
@@ -68,7 +70,7 @@ function webringQueryKey(q) {
 
 function labelOf(map, pk) {
   const n = map.get(pk);
-  return n ? n.label : shortenMiddle(pk, 8, 4);
+  return n ? sanitizeDisplayText(n.label) : shortenMiddle(pk, 8, 4);
 }
 
 function tierTag(tier) {
@@ -108,7 +110,7 @@ function renderListStyle(data) {
   for (const n of sorted) {
     accounts.append(
       el('div', { class: 'swing-webring-account-row' }, [
-        el('button', { type: 'button', onclick: () => selectNode(n.pubkey) }, n.label),
+        el('button', { type: 'button', dir: 'auto', onclick: () => selectNode(n.pubkey) }, sanitizeDisplayText(n.label)),
         el('span', { class: 'swing-hint' }, ` ${t('depthPrefix', { n: n.depth })}${n.root ? ` ${t('tagRoot')}` : ''}${!n.has_follow_set ? ` ${t('tagNoFollowSet')}` : ''}`),
       ]),
     );
@@ -120,12 +122,12 @@ function renderListStyle(data) {
 
   const mutualGroup = el('div', { class: 'swing-webring-group' }, el('h3', {}, t('mutualHeading', { n: mutual.length })));
   if (mutual.length === 0) mutualGroup.append(el('p', { class: 'swing-hint' }, t('none')));
-  for (const e of mutual) mutualGroup.append(el('div', { class: 'swing-webring-account-row' }, `${labelOf(nodeByKey, e.from)} ↔ ${labelOf(nodeByKey, e.to)}`));
+  for (const e of mutual) mutualGroup.append(el('div', { class: 'swing-webring-account-row', dir: 'auto' }, `${labelOf(nodeByKey, e.from)} ↔ ${labelOf(nodeByKey, e.to)}`));
   wrap.append(mutualGroup);
 
   const onewayGroup = el('div', { class: 'swing-webring-group' }, el('h3', {}, t('onewayHeading', { n: oneway.length })));
   if (oneway.length === 0) onewayGroup.append(el('p', { class: 'swing-hint' }, t('none')));
-  for (const e of oneway) onewayGroup.append(el('div', { class: 'swing-webring-account-row' }, `${labelOf(nodeByKey, e.from)} → ${labelOf(nodeByKey, e.to)}`));
+  for (const e of oneway) onewayGroup.append(el('div', { class: 'swing-webring-account-row', dir: 'auto' }, `${labelOf(nodeByKey, e.from)} → ${labelOf(nodeByKey, e.to)}`));
   wrap.append(onewayGroup);
 
   const referencing = data.referencing || { accounts: [], more: 0 };
@@ -139,7 +141,7 @@ function renderListStyle(data) {
 }
 
 function renderAsciiStyle(data) {
-  webringEls.content.append(el('pre', { class: 'swing-pre' }, data.text || ''));
+  webringEls.content.append(el('pre', { class: 'swing-pre' }, stripUnsafeUnicode(data.text || '')));
 }
 
 function buildSourceBlock(title, text) {
@@ -155,8 +157,8 @@ function buildSourceBlock(title, text) {
 }
 
 function renderSourceStyle(data) {
-  webringEls.content.append(buildSourceBlock(t('graphvizTitle'), data.dot));
-  webringEls.content.append(buildSourceBlock(t('mermaidTitle'), data.mermaid));
+  webringEls.content.append(buildSourceBlock(t('graphvizTitle'), stripUnsafeUnicode(data.dot)));
+  webringEls.content.append(buildSourceBlock(t('mermaidTitle'), stripUnsafeUnicode(data.mermaid)));
 }
 
 async function getMirrorMemberSet() {
@@ -195,7 +197,7 @@ function renderNodeDetail(node, pubkey, replicasResp, memberSet) {
   const isMirrored = memberSet.has(pubkey);
   webringEls.detail.append(
     el('div', { class: 'swing-heading-row' }, [
-      el('h2', {}, node ? node.label : t('tableAccount')),
+      el('h2', { dir: 'auto' }, node ? sanitizeDisplayText(node.label) : t('tableAccount')),
       isMirrored ? el('span', { class: 'swing-badge', 'data-mirrored': 'true' }, t('mirroredBadge')) : null,
     ]),
   );
@@ -208,7 +210,8 @@ function renderNodeDetail(node, pubkey, replicasResp, memberSet) {
     : shortenMiddle(pubkey, 10, 6);
   dl.append(el('dt', {}, 'npub'), el('dd', {}, npubDd));
   if (node) {
-    dl.append(el('dt', {}, t('detailNames')), el('dd', {}, node.names.length ? node.names.join(', ') : '–'));
+    const names = node.names.map((n) => sanitizeDisplayText(n)).join(', ');
+    dl.append(el('dt', {}, t('detailNames')), el('dd', { dir: 'auto' }, node.names.length ? names : '–'));
     dl.append(el('dt', {}, t('detailDepth')), el('dd', {}, String(node.depth)));
   }
   webringEls.detail.append(dl);
@@ -224,7 +227,7 @@ function renderNodeDetail(node, pubkey, replicasResp, memberSet) {
         : t('replicaCountBadge', { replicas: site.replicas });
       block.append(
         el('div', { class: 'swing-site-row' }, [
-          el('span', { class: 'swing-site-name' }, site.d),
+          el('span', { class: 'swing-site-name', dir: 'auto' }, sanitizeDisplayText(site.d)),
           el('span', { class: 'swing-badge' }, countText),
         ]),
       );

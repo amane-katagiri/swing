@@ -137,6 +137,10 @@ body {
   animation: desk-marquee 16s linear infinite;
 }
 
+#desk-marquee-text {
+  unicode-bidi: isolate;
+}
+
 @keyframes desk-marquee {
   from {
     transform: translateX(0);
@@ -333,6 +337,7 @@ body {
   color: var(--desk-link);
   text-decoration: underline;
   font-weight: 700;
+  unicode-bidi: isolate;
 }
 
 .desk-link-title:visited {
@@ -349,6 +354,7 @@ span.desk-link-title {
   flex: none;
   font-size: 12px;
   color: #666666;
+  unicode-bidi: isolate;
 }
 
 .desk-link-honke {
@@ -362,6 +368,7 @@ span.desk-link-title {
   margin: 1px 0 0 38px;
   color: #333333;
   font-size: 12px;
+  unicode-bidi: isolate;
 }
 
 .desk-footer {

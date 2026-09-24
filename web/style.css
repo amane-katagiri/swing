@@ -684,6 +684,7 @@ textarea.swing-input {
 .swing-hint {
   color: var(--swing-text-muted);
   font-size: 0.85rem;
+  unicode-bidi: isolate;
 }
 
 .swing-toolbar {
@@ -923,6 +924,7 @@ textarea.swing-input {
 
 .swing-site-name {
   font-weight: 600;
+  unicode-bidi: isolate;
 }
 
 .swing-site-badges {
@@ -949,6 +951,7 @@ textarea.swing-input {
   margin-top: var(--swing-space-1);
   margin-bottom: var(--swing-space-2);
   font-style: italic;
+  unicode-bidi: isolate;
 }
 
 .swing-copyable {
@@ -988,6 +991,7 @@ body[data-view="sites"][data-style="table"] .swing-site-set {
   border-bottom: 1px solid var(--swing-border);
   vertical-align: top;
   overflow-wrap: anywhere;
+  unicode-bidi: isolate;
 }
 
 .swing-table th {
@@ -1158,6 +1162,7 @@ body[data-view="sites"][data-style="table"] .swing-site-set {
   font-family: var(--swing-font-ui);
   font-size: var(--swing-graph-label-size);
   user-select: none;
+  unicode-bidi: isolate;
 }
 
 .swing-arrow-oneway-fill {
@@ -1227,6 +1232,7 @@ body[data-view="sites"][data-style="table"] .swing-site-set {
   align-items: baseline;
   padding: var(--swing-space-1) 0;
   border-bottom: 1px solid var(--swing-border);
+  unicode-bidi: isolate;
 }
 
 .swing-webring-account-row button {
@@ -1253,6 +1259,11 @@ body[data-view="sites"][data-style="table"] .swing-site-set {
   margin: 0;
   font-family: var(--swing-font-mono);
   word-break: break-all;
+  unicode-bidi: isolate;
+}
+
+.swing-node-detail h2 {
+  unicode-bidi: isolate;
 }
 
 .swing-node-detail .swing-plain-list li {

@@ -1,4 +1,4 @@
-import { el, apiFetch, setBusy, copyWithFeedback, describeError, maybeLink, sanitizeMessage } from './util.js';
+import { el, apiFetch, setBusy, copyWithFeedback, describeError, maybeLink, sanitizeMessage, sanitizeDisplayText } from './util.js';
 import { t } from './i18n.js';
 
 export function copyButton(text, ariaLabel) {
@@ -18,8 +18,8 @@ export function storedBadge(site) {
 export function buildSiteNameRow(site) {
   const title = sanitizeMessage(site.title);
   return el('div', { class: 'swing-site-row' }, [
-    el('span', { class: 'swing-site-name' }, site.d),
-    title ? el('span', { class: 'swing-hint' }, title) : null,
+    el('span', { class: 'swing-site-name', dir: 'auto' }, sanitizeDisplayText(site.d)),
+    title ? el('span', { class: 'swing-hint', dir: 'auto' }, title) : null,
   ]);
 }
 
@@ -31,7 +31,7 @@ export function appendLinksAndMessage(wrap, site) {
   if (links.childNodes.length) wrap.append(links);
 
   const msg = sanitizeMessage(site.message);
-  if (msg) wrap.append(el('p', { class: 'swing-site-message' }, `“${msg}”`));
+  if (msg) wrap.append(el('p', { class: 'swing-site-message', dir: 'auto' }, `“${msg}”`));
 }
 
 export function renderRelayResults(container, relays) {
