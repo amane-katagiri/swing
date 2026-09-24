@@ -44,3 +44,6 @@ tower = { version = "0.5", default-features = false, features = ["util"] }
 [[bin]]
 name = "swing"
 path = "src/main.rs"
+
+[build-dependencies]
+winresource = { version = "0.1", default-features = false }

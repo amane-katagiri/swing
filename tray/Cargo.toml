@@ -21,3 +21,6 @@ rfd = { version = "0.17", default-features = false }
 [[bin]]
 name = "swing-tray"
 path = "src/main.rs"
+
+[build-dependencies]
+winresource = { version = "0.1", default-features = false }

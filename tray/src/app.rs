@@ -10,7 +10,10 @@ use tray_icon::{Icon, TrayIcon, TrayIconBuilder};
 use crate::status::{Lang, Pending, Snapshot, is_running, labels, menu_state};
 use crate::worker::{self, Action, Update};
 
+#[cfg(windows)]
 const ICON_PNG: &[u8] = include_bytes!("../assets/icon-64.png");
+#[cfg(target_os = "macos")]
+const ICON_PNG: &[u8] = include_bytes!("../assets/icon-template-64.png");
 const ACTION_ERROR_TTL: Duration = Duration::from_secs(15);
 const PENDING_TIMEOUT: Duration = Duration::from_secs(120);
 
@@ -120,6 +123,14 @@ fn icons() -> (Icon, Icon) {
     )
 }
 
+fn set_icon(tray: &TrayIcon, icon: &Icon) {
+    // TrayIcon::set_icon drops the template flag on macOS.
+    #[cfg(target_os = "macos")]
+    let _ = tray.set_icon_with_as_template(Some(icon.clone()), true);
+    #[cfg(not(target_os = "macos"))]
+    let _ = tray.set_icon(Some(icon.clone()));
+}
+
 struct View {
     lang: Lang,
     items: Items,
@@ -198,7 +209,7 @@ impl View {
             } else {
                 &self.inactive_icon
             };
-            let _ = tray.set_icon(Some(icon.clone()));
+            set_icon(tray, icon);
             self.shown_active = Some(state.active_icon);
         }
     }
@@ -256,6 +267,7 @@ pub fn run(config_path: Option<PathBuf>, _lock: Option<std::fs::File>) -> ! {
                     TrayIconBuilder::new()
                         .with_menu(Box::new(view.items.menu()))
                         .with_icon(view.inactive_icon.clone())
+                        .with_icon_as_template(cfg!(target_os = "macos"))
                         .with_tooltip("SWING")
                         .with_menu_on_left_click(true)
                         .build()

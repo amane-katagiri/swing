@@ -4,6 +4,7 @@
 
 ## Dockerfile
 
+- builder に `Cargo.toml`・`Cargo.lock`・`build.rs`・`assets/`・`src/`・`tray/`・`web/` を COPY し、`cargo build --release` で `swing` だけをビルドする。`tray/` はビルドしないが、workspace のメンバーの `Cargo.toml` が無いと cargo がワークスペースを読めないので入れる。`build.rs` は Linux では何もしない。
 - builder `rust:1.97-slim-trixie`、runtime `debian:trixie-slim`（glibc を揃えるため同じコードネーム）。
 - runtime には `/usr/local/bin/swing` だけを置き、ユーザー `swing`（uid/gid 1000）で実行する。`/data` はそのユーザー所有の `VOLUME`。
 - `WORKDIR /data`。`--config`／`SWING_CONFIG` のどちらも無いときに `resolve_config_path` が返す `<cwd>/swing.toml`（[`../architecture.md#設定と環境変数`](../architecture.md#設定と環境変数)）がこの `/data` の下（volume の中）になるようにするため。これが無いと `swing.toml` はコンテナのルート直下に作られ、コンテナを作り直すたびに消える。

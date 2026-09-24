@@ -70,6 +70,8 @@ swing/
     dashboard/       `swing up` 常駐の Web ダッシュボード兼制御 API（mod.rs, guard.rs, api.rs, session.rs, dto.rs, assets.rs）。詳細は architecture/dashboard.md
     api_client.rs    ダッシュボード API を呼ぶ CLI 共通クライアント（`ApiClient`。`<state_dir>/dashboard.token` を Bearer トークンとして送る）。`status`・`mirror add`・`mirror remove`・`stop`・`dashboard open`・`dashboard rotate-token` が使う。詳細は architecture/dashboard/http-api.md
   web/               ダッシュボードのフロント（index.html, style.css, ES modules（setup.js を含む）, 画像・フォントなどの静的アセット一式）。ビルド工程なしで include_str!/include_bytes! によりバイナリへ埋め込む。desktop-page.html / desktop-page.css / desktop-banner.gif（Desktop 画面のリンク集ページ）だけは設定で差し替えられる。詳細は architecture/dashboard.md
+  build.rs           Windows 向けのとき、exe にアイコン（assets/swing.ico）とバージョン情報を埋め込む（winresource）
+  assets/swing.ico   swing.exe のファイルアイコン（web/favicon.svg から書き出した 16〜256px）
   tests/
     kubo_integration.rs          Kubo 連携の統合テスト（#[ignore]）
     nostr_relay_integration.rs   relay 連携の統合テスト（#[ignore]）
@@ -77,7 +79,10 @@ swing/
     src/status.rs    状態から表示・使える項目・アイコンを決める純粋関数
     src/worker.rs    ダッシュボード API のポーリングとメニュー操作（tokio）
     src/app.rs       tao のイベントループとトレイアイコン（Windows / macOS のみ）
-    assets/icon-64.png
+    build.rs         ルートの build.rs と同じ（Windows 向けのとき assets/swing-tray.ico を埋め込む）
+    assets/swing-tray.svg, assets/swing-tray.ico  swing-tray.exe のファイルアイコン（ロゴの右下にタスクトレイのバッジ）と、その元の SVG
+    assets/icon-64.png           Windows のトレイアイコン
+    assets/icon-template-64.png  macOS のメニューバーのアイコン（テンプレート画像）
   docker/kubo-init.d/  Kubo コンテナの起動スクリプト（外部 Kubo の設定。compose 専用）
   Dockerfile, compose.yaml, .env.example, swing.example.toml
   .github/workflows/release.yml  配布用バイナリのビルドとドラフトリリース（[ビルドとリリース](#ビルドとリリース)）
@@ -250,6 +255,7 @@ Windows 向けのクロスビルド（WSL / Linux から）: `cargo install carg
 
 - Rust は 1.97（Dockerfile と同じ）。Linux は glibc のバージョンに依存しないよう musl の静的バイナリにする。
 - workspace には `swing` と `swing-tray`（`tray/`）がある。fmt / clippy / test は `--workspace` で回す。Linux は `-p swing` だけをビルドし、Windows と macOS は `--workspace` でビルドする。
+- Windows 向けにビルドすると、`build.rs`（`swing` と `swing-tray` の両方）が `winresource` でファイルアイコン（`swing` は `assets/swing.ico`、`swing-tray` は `tray/assets/swing-tray.ico`）とバージョン情報（`Cargo.toml` の `name`・`version`）をリソースとして exe に埋め込み、エクスプローラーでアイコンが付く。MSVC のランナーでは Windows SDK の `rc.exe`、`cargo xwin` では `llvm-rc` を使う。他の target では何もしない。macOS の `swing`・`swing-tray` は `.app` バンドルではない素の実行ファイルなので、ファイルアイコンは付かない。
 - 成果物は `swing-<ref>-<target>.tar.gz`（Windows は `.zip`）で、中身は `swing`（`swing.exe`）・`LICENSE`・`README.md`。Windows と macOS には `swing-tray`（`swing-tray.exe`）も入れる。Kubo は同梱しない。
 - タグのときは、タグ名と `Cargo.toml` の `version` が一致しないと失敗する（`v0.1.0` と `0.1.0`）。全 target が通ると `SHA256SUMS` を付けた**ドラフト**のリリースを作る。公開は GitHub 上で手動で行う。
 - 手動実行のときはリリースを作らず、Actions の artifact として残すだけ。
