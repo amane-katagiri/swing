@@ -9,13 +9,14 @@
 - runtime には `/usr/local/bin/swing` だけを置き、ユーザー `swing`（uid/gid 1000）で実行する。`/data` はそのユーザー所有の `VOLUME`。
 - `WORKDIR /data`。`--config`／`SWING_CONFIG` のどちらも無いときに `resolve_config_path` が返す `<cwd>/swing.toml`（[`../architecture.md#設定と環境変数`](../architecture.md#設定と環境変数)）がこの `/data` の下（volume の中）になるようにするため。これが無いと `swing.toml` はコンテナのルート直下に作られ、コンテナを作り直すたびに消える。
 - `ENTRYPOINT ["swing"]`、`CMD ["up"]`（[`up.md`](up.md)）。`mirror` サービスは `SWING_KUBO_MANAGED=false` を固定で渡すので、コンテナの中では Kubo を子プロセスにせず外部の `ipfs` サービスに対して動く（`swing up` の unmanaged 経路）。
+- `docker/release.Dockerfile` は release ワークフローが ghcr.io に push するイメージ用。runtime ステージだけで、ビルド済みの musl バイナリを `<TARGETARCH>/swing` から入れる。それ以外はこの Dockerfile の runtime と同じ（[`../architecture.md#ビルドとリリース`](../architecture.md#ビルドとリリース)）。`compose.yaml` はこれを使わずルートの `Dockerfile` からビルドする。
 
 ## compose.yaml
 
 | サービス | 内容 |
 |---|---|
 | `ipfs` | `ipfs/kubo:v0.43.1`（[Kubo のバージョン](kubo.md#kubo-のバージョン)）。イメージ既定の `command` に `--enable-gc` を足す。volume `ipfs-data:/data/ipfs` と `./docker/kubo-init.d:/container-init.d:ro`。公開ポートは `4001/tcp`・`4001/udp` と、Gateway の `${SWING_KUBO_GATEWAY_BIND:-127.0.0.1:8080}:8080`。healthcheck は `ipfs id` |
-| `mirror` | `build: .`、`env_file: .env`。`SWING_IPFS_API=http://ipfs:5001`、`SWING_STATE_DIR=/data`、`SWING_DASHBOARD_LISTEN=${SWING_DASHBOARD_LISTEN:-0.0.0.0:8082}`、`SWING_KUBO_MANAGED=false`、`SWING_GATEWAY_LISTEN=${SWING_GATEWAY_LISTEN:-off}`、`SWING_GATEWAY_UPSTREAM=http://ipfs:8080`、`RUST_LOG=info`。volume `swing-data:/data`。公開ポート `${SWING_DASHBOARD_BIND:-127.0.0.1:8082}:8082` と `${SWING_GATEWAY_BIND:-127.0.0.1:8081}:8081`。`ipfs` が healthy になるのを待つ |
+| `mirror` | `build: .`、`env_file: .env`。`build: .` の直後に、release ワークフローが push するイメージ（`ghcr.io/amane-katagiri/swing`。タグを書かないので `latest`）の `image:` をコメントアウトして置いてある（`build` と入れ替えて使う）。`SWING_IPFS_API=http://ipfs:5001`、`SWING_STATE_DIR=/data`、`SWING_DASHBOARD_LISTEN=${SWING_DASHBOARD_LISTEN:-0.0.0.0:8082}`、`SWING_KUBO_MANAGED=false`、`SWING_GATEWAY_LISTEN=${SWING_GATEWAY_LISTEN:-off}`、`SWING_GATEWAY_UPSTREAM=http://ipfs:8080`、`RUST_LOG=info`。volume `swing-data:/data`。公開ポート `${SWING_DASHBOARD_BIND:-127.0.0.1:8082}:8082` と `${SWING_GATEWAY_BIND:-127.0.0.1:8081}:8081`。`ipfs` が healthy になるのを待つ |
 
 2 サービスとも `restart: unless-stopped`。Caddy による専用の `gateway` サービス（旧 `gateway` プロファイル、`docker/caddy/`）は廃止した。内蔵 gateway（[`gateway.md`](gateway.md)）が `mirror` コンテナの中で同じ役割を果たす。`SWING_GATEWAY_LISTEN` の既定は `off` なので、有効にする場合は `.env` で `SWING_GATEWAY_LISTEN=0.0.0.0:8081`（コンテナ内バインド）と `SWING_GATEWAY_HOSTS` を設定する。ホスト側の 8081 ポート自体は `[gateway].listen` の設定に関わらず常に compose がマッピングする（`SWING_GATEWAY_BIND` で変更・変えなければ `127.0.0.1:8081` に固定で公開される。gateway を使わない構成でもポートだけは空いている、という compose 側のトレードオフ）。
 

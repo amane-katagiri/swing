@@ -87,8 +87,9 @@ swing/
     assets/icon-64.png           Windows のトレイアイコン
     assets/icon-template-64.png  macOS のメニューバーのアイコン（テンプレート画像）
   docker/kubo-init.d/  Kubo コンテナの起動スクリプト（外部 Kubo の設定。compose 専用）
+  docker/release.Dockerfile  ghcr.io に push するイメージ。release ワークフローがビルド済みの musl バイナリを入れる
   Dockerfile, compose.yaml, .env.example, swing.example.toml
-  .github/workflows/release.yml  配布用バイナリのビルドとドラフトリリース（[ビルドとリリース](#ビルドとリリース)）
+  .github/workflows/release.yml  配布用バイナリとコンテナイメージのビルド、ドラフトリリース（[ビルドとリリース](#ビルドとリリース)）
   docs/                役割は AGENTS.md を参照
 ```
 
@@ -265,6 +266,8 @@ Windows 向けのクロスビルド（WSL / Linux から）: `cargo install carg
 - 成果物は `swing-<ref>-<target>.tar.gz`（Windows は `.zip`）で、中身は `swing`（`swing.exe`）・`LICENSE`・`README.md`。Windows と macOS には `swing-tray`（`swing-tray.exe`）も入れる。Kubo は同梱しない。
 - タグのときは、タグ名と `Cargo.toml` の `version` が一致しないと失敗する（`v0.1.0` と `0.1.0`）。全 target が通ると `SHA256SUMS` を付けた**ドラフト**のリリースを作る。公開は GitHub 上で手動で行う。
 - 手動実行のときはリリースを作らず、Actions の artifact として残すだけ。
+- `image` ジョブが `ghcr.io/<owner>/<repo>`（小文字）のコンテナイメージを `linux/amd64`・`linux/arm64` で作る。中身は `build` ジョブの `x86_64-unknown-linux-musl`・`aarch64-unknown-linux-musl` の `swing` を `docker/release.Dockerfile` に入れたもので、イメージの中で Rust はビルドしない（arm64 のビルドを QEMU で走らせずに済み、リリースの tar.gz と同じバイナリになる）。QEMU は runtime ステージの `RUN`（ユーザー作成）にだけ使う。ユーザー・`/data`・`ENTRYPOINT`・`CMD` はルートの `Dockerfile` と同じ（[`architecture/docker.md`](architecture/docker.md#dockerfile)）。
+- イメージのタグは `v` を除いたバージョン（`0.1.0`）と `latest`。バージョンに `-` を含む（`0.2.0-rc.1` など）ときは `latest` を付けない。タグのイメージは、ドラフトのリリースを公開する前に push される。手動実行のときは、実行したブランチ名のタグ（`main` など）だけで push する（`latest` は付けない）。ブランチ名に `/` があると、成果物のファイル名とイメージのタグのどちらにも使えないので失敗する。`org.opencontainers.image.source` ラベルでパッケージをこのリポジトリに紐づけ、パッケージの公開範囲はリポジトリに合わせる。
 - `.env.example` と `swing.example.toml` は、テストで生成結果とバイト単位で比べるため、`.gitattributes` で LF に固定している（Windows のランナーで checkout 時に CRLF にされないように）。
 
 サードパーティの action・ツール:
@@ -275,5 +278,6 @@ Windows 向けのクロスビルド（WSL / Linux から）: `cargo install carg
 | `Swatinem/rust-cache` | Cargo のビルドキャッシュ |
 | `taiki-e/install-action` | `cargo-zigbuild` をビルド済みバイナリからインストール |
 | ziglang（PyPI、`pip3 install`） | `cargo zigbuild` が使う Zig 本体 |
+| `docker/setup-qemu-action`・`docker/setup-buildx-action`・`docker/login-action`・`docker/build-push-action` | マルチアーキテクチャのイメージのビルドと ghcr.io への push |
 
 サードパーティおよび `actions/*`（`actions/checkout`・`actions/upload-artifact`・`actions/download-artifact`）の action はフルコミット SHA に固定し、末尾に `# vN` コメントでタグ相当のバージョンを添えている。ziglang は pip の `==` でバージョンを固定する。Rust ツールチェインのバージョン自体はこれらのピン留めとは別で、ワークフローの `toolchain:` 入力（環境変数 `RUST_TOOLCHAIN`）で決まる。選定理由と信頼性の評価は [2026-09-25 の log](log/2026-09-25-release-actions-rationale.md) を参照。

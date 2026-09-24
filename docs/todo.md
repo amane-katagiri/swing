@@ -32,6 +32,7 @@
 | 低 | タスクトレイ: Linux 対応（`ksni` なら Rust だけで書けて musl でもビルドできる。GNOME は拡張を入れないと表示されない） | [タスクトレイ](log/2026-09-24-tray-icon.md) |
 | 低 | macOS: `swing-tray` を `.app` バンドル（`SWING.app`。`Info.plist` と `.icns`）にして、Finder と「ログイン項目」にアイコンと名前を出す。LaunchAgent の `ProgramArguments`、`swing` と同じディレクトリにあるかの判定（`service install`）、release ワークフローの同梱の仕方が変わる | [アプリのアイコン](log/2026-09-24-app-icons.md) |
 | 低 | インストーラとパッケージ。Homebrew tap（kubo は `depends_on "kubo"` で解決）、`install.sh`、winget（Inno の installer 型、`ipfs.exe` 同梱、ユーザー権限でのインストール、`InstallerType: inno`、インストール時にサービスを起動しない） | [配布方式の設計](log/2026-09-21-distribution-design.md) |
+| 中 | release ワークフローの `image` ジョブを最初のタグで確かめる（arm64 のイメージが動くこと、ghcr.io への push とパッケージがリポジトリに紐づくこと） | [ghcr へのイメージ push](log/2026-09-25-ghcr-image.md) |
 | 低 | release ワークフローに macOS の ad-hoc 署名（`rcodesign`）と GitHub の artifact attestation を入れる。attestation は private リポジトリだと GitHub Enterprise Cloud が要るので、public にしてから | [配布方式の設計](log/2026-09-21-distribution-design.md)、[release ワークフロー](log/2026-09-24-release-workflow-and-kubo-signature.md) |
 | 低 | `content` の長さ上限。サーバ側では切らず `/api/sites` に全文を返している（表示はクライアントで 200 文字に切る） | 監査（自己申告の信用） |
 | 低 | Desktop 画面のアイコンが NIP-05 の「対象外」と「検証済み」を区別しない（Sites 画面には N/A バッジがある） | 監査（自己申告の信用） |

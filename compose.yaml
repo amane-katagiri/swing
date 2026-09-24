@@ -23,6 +23,7 @@ services:
 
   mirror:
     build: .
+    # image: ghcr.io/amane-katagiri/swing
     restart: unless-stopped
     env_file: .env
     environment:
