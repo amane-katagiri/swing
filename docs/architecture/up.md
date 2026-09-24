@@ -44,6 +44,8 @@
 3. `PATH` 上の `ipfs`（Windows も `PATHEXT` は見ず `ipfs.exe` 固定）。
 4. どれも無ければエラー（`Kubo binary not found: ...`）。
 
+2・3 で見つけたときは解決したパスを `tracing::info!` で 1 行残す（`[kubo].binary` を明示した場合は出さない）。複数ユーザーが使うホストでは PATH 上の全ディレクトリを信用することになるので、`[kubo].binary` を明示しておくことを勧める。
+
 ## バージョン確認
 
 `kubo::KUBO_VERSION = "0.43.1"`（compose の Kubo イメージと同じ、[`kubo.md#kubo-のバージョン`](kubo.md#kubo-のバージョン)）。`swing up` は起動時に一度だけ `ipfs version --number` を実行し、`KUBO_VERSION` と異なれば `warn!` するだけで続行する（エラーにしない）。実行できない（バイナリが壊れている等）場合は `version()` 自体が失敗し、`swing up` はエラー終了する。
@@ -117,12 +119,24 @@ Kubo 自身に「行儀よく終わる」機会を与えるため、まず Kubo 
 
 `swing up` を SIGKILL 等で強制終了すると、`Daemon` の drop も `Daemon::stop` も走らないため、子の Kubo が残り得る（Linux は `PR_SET_PDEATHSIG` で大抵は道連れになるが保証ではない。Windows の Job Object は未検証、macOS には対抗手段が無い）。残った Kubo は同じ repo の lock を握ったままなので、次の `swing up` がそこに気づかずポートだけ変えて起動しようとしても `ipfs config`/起動が repo lock で失敗し続けうる。
 
-- `kubo::write_pid_file(state_dir, pid)` / `read_pid_file(state_dir)` / `remove_pid_file(state_dir)`: `<state_dir>/kubo.pid` に子の PID（10 進）を読み書きする薄いヘルパー。`run_managed` が `Daemon::spawn` 成功直後に書き、`Daemon::stop` が完了したら（通常のシャットダウンでも、agent 再起動に伴う経路でも）消す。Kubo が自分で落ちた（`daemon.wait()` が先に返った）場合も、`stop` を呼ばずに直接消す。
+PID だけでは死んだ子と同じ PID を拾った無関係のプロセスを区別できない（PID の再利用）ため、`kubo.pid` には PID に加えて Kubo の API ポートとプロセス開始時刻を記録し、孤児回収はまず API 経由のグレースフルシャットダウンを試し、それが効かないときだけ「記録した開始時刻と今の開始時刻が一致するか」を確かめてから SIGTERM/SIGKILL に進む。
+
+- `kubo::write_pid_file(state_dir, pid, api_port)`: `<state_dir>/kubo.pid` に JSON（`{"pid": <pid>, "api_port": <port>, "started_at": "<opaque marker>"}`）を書く。`started_at` は起動直後にその `pid` から取った、OS ごとに意味の異なる不透明な文字列（比較にしか使わない）。`run_managed` が `Daemon::spawn` 成功直後に、実際に選んだ `api_port` と一緒に書く。
+  - Linux: `/proc/<pid>/stat` の `starttime`（22 番目のフィールド。`comm` にスペースや `)` が入り得るので、パースは文字列全体の最後の `)` より後ろでフィールドを数える）。
+  - macOS: `ps -o lstart= -p <pid>` の出力（人間可読な日時文字列をそのまま識別子として使う。パースはしない）。
+  - Windows: `GetProcessTimes` が返す作成時刻の `FILETIME`（`dwHighDateTime`/`dwLowDateTime` を文字列化したもの）。
+  - 開始時刻が取れなければ `write_pid_file` 自体がエラーを返す（呼び出し元の `run_managed` は他の起動失敗と同様 `warn!` するだけで続行する）。
+- `read_pid_file(state_dir)`（非公開）: `kubo.pid` を読んで上記の JSON としてパースする。ファイルが無ければ `Ok(None)`。JSON として読めない内容なら `Err`（互換読み込みはしない。壊れている・形式が違うファイルは無条件に「検証不能」として扱う）。
+- `kubo::remove_pid_file(state_dir)`: 変更なし。ファイルを消すだけ。
 - `kubo::recover_orphan(state_dir, repo) -> Result<()>`: `run_managed` が起動時に 1 回、[多重起動の防止](#多重起動の防止lockrs) のロックを取った直後・デーモンループに入る前に呼ぶ（ロックが取れている＝他の swing は生きていないので、この repo に対する Kubo がもしいればそれは孤児か無関係の別プロセスのどちらかでしかない）。
   1. `kubo.pid` が無ければ何もせず終了。
-  2. あれば、その PID が生きていて `ipfs` プロセスかどうかを確かめる（unix: `ps -p <pid> -o comm=` の出力に `ipfs` を含むか。windows: `tasklist /FI "PID eq <pid>" /FO CSV /NH` の出力に `ipfs` を含むか）。生きていない・`ipfs` でなければ `warn!("stale kubo.pid")` を出してファイルを消すだけで終わる。
-  3. 生きていて `ipfs` なら `warn!("terminating orphaned Kubo left by a previous swing")` を出し、終了を試みる: unix は SIGTERM → 500ms 間隔で最大 30 秒待ち → まだいれば SIGKILL → 最大 10 秒待つ（それでも終わらなければエラーで `swing up` 自体を止める）。windows は `taskkill /PID <pid> /T /F`（この経路にはグレースフルな段階が無い）→ 最大 10 秒待つ。生存確認は unix が `kill(pid, 0)`（`ESRCH` の判定は `raw_os_error()` を見る。`io::ErrorKind::NotFound` に必ずしもマップされないため）、windows は上と同じ `tasklist` チェック。終わったら `kubo.pid` を消す。
-  - `recover_orphan` が失敗すると `run_managed` はそのままエラーを返し、`swing up` は起動せずに終了する（バックオフして黙って再試行しない。repo lock を握ったままの孤児がいるのに新しい Kubo を起動しても意味が無いため）。
+  2. あっても `read_pid_file` が読めなければ（JSON として壊れている等）、`warn!` を出してファイルを消すだけで終わる。何も kill しない。
+  3. 読めたら、まず記録されている `api_port` に `POST http://127.0.0.1:<api_port>/api/v0/shutdown` をタイムアウト 3 秒で送る（本物の Kubo でなければまず応答しない）。接続・応答があれば、その `pid` の終了を最大 30 秒待つ。終了すれば `kubo.pid` を消して終わり（SIGTERM/SIGKILL には進まない）。
+  4. API 経由で終わらなかった（応答が無い、または応答はあったが 30 秒待っても終了しなかった）場合、強制終了の前に本人確認をする: その `pid` の**今の**開始時刻を上記と同じ方法で取り直し、`kubo.pid` に記録された `started_at` と比較する。
+     - 今の開始時刻が取れない（プロセスがもう無い）→ `warn!` は出さず `info!` で「もう動いていない」旨を出し、`kubo.pid` を消して終わる。
+     - 取れたが記録と一致しない → その `pid` は記録した Kubo とは別物（PID が再利用された）と判断し、`warn!` を出して **kill せずに** `kubo.pid` を消して終わる。
+     - 一致する → 同じプロセスだと確認できたので `warn!("terminating orphaned Kubo left by a previous swing")` を出し、SIGTERM/SIGKILL に進む: unix は SIGTERM → 500ms 間隔で最大 30 秒待ち → まだいれば SIGKILL → 最大 10 秒待つ（それでも終わらなければエラーで `swing up` 自体を止める）。windows は `taskkill /PID <pid> /T /F`（この経路にはグレースフルな段階が無い）→ 最大 10 秒待つ。生存確認は unix が `kill(pid, 0)`（`ESRCH` の判定は `raw_os_error()` を見る。`io::ErrorKind::NotFound` に必ずしもマップされないため）、windows は `OpenProcess` + `GetExitCodeProcess` で `STILL_ACTIVE` かどうかを見る。終わったら `kubo.pid` を消す。
+  - 本人確認で不一致・検証不能と判定したケースは `recover_orphan` 自体は `Ok(())` を返す（新しい Kubo の起動は続行する）。SIGTERM/SIGKILL のエスカレーションが実際に失敗した場合だけ `Err` になり、`run_managed` はそのままエラーを返して `swing up` は起動せずに終了する（バックオフして黙って再試行しない。repo lock を握ったままの孤児がいるのに新しい Kubo を起動しても意味が無いため）。
 
 ### repo lock のヒント
 

@@ -6,6 +6,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::{Child, Command};
@@ -261,23 +262,36 @@ fn pid_file_path(state_dir: &Path) -> PathBuf {
     state_dir.join("kubo.pid")
 }
 
-pub fn write_pid_file(state_dir: &Path, pid: u32) -> Result<()> {
-    let path = pid_file_path(state_dir);
-    std::fs::write(&path, pid.to_string()).with_context(|| format!("writing {}", path.display()))
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct PidRecord {
+    pid: u32,
+    api_port: u16,
+    started_at: String,
 }
 
-pub fn read_pid_file(state_dir: &Path) -> Result<Option<u32>> {
+pub fn write_pid_file(state_dir: &Path, pid: u32, api_port: u16) -> Result<()> {
+    let started_at = process_start_marker(pid)
+        .with_context(|| format!("determining the start time of Kubo process {pid}"))?;
+    let record = PidRecord {
+        pid,
+        api_port,
+        started_at,
+    };
+    let path = pid_file_path(state_dir);
+    let text = serde_json::to_string(&record).context("serializing kubo.pid")?;
+    std::fs::write(&path, text).with_context(|| format!("writing {}", path.display()))
+}
+
+fn read_pid_file(state_dir: &Path) -> Result<Option<PidRecord>> {
     let path = pid_file_path(state_dir);
     let text = match std::fs::read_to_string(&path) {
         Ok(text) => text,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(e) => return Err(e).with_context(|| format!("reading {}", path.display())),
     };
-    let pid: u32 = text
-        .trim()
-        .parse()
-        .with_context(|| format!("parsing {}", path.display()))?;
-    Ok(Some(pid))
+    let record: PidRecord =
+        serde_json::from_str(&text).with_context(|| format!("parsing {}", path.display()))?;
+    Ok(Some(record))
 }
 
 pub fn remove_pid_file(state_dir: &Path) -> Result<()> {
@@ -289,31 +303,58 @@ pub fn remove_pid_file(state_dir: &Path) -> Result<()> {
     }
 }
 
-#[cfg(unix)]
-async fn process_is_ipfs(pid: u32) -> bool {
-    let output = Command::new("ps")
-        .args(["-p", &pid.to_string(), "-o", "comm="])
+// comm can itself contain spaces and ')', so the field list is only unambiguous after the last ')'.
+#[cfg(any(test, target_os = "linux"))]
+fn parse_proc_stat_starttime(stat: &str) -> Option<String> {
+    let rparen = stat.rfind(')')?;
+    let rest = stat.get(rparen + 1..)?;
+    rest.split_whitespace().nth(19).map(|s| s.to_string())
+}
+
+#[cfg(target_os = "linux")]
+fn process_start_marker(pid: u32) -> Option<String> {
+    let text = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
+    parse_proc_stat_starttime(&text)
+}
+
+#[cfg(target_os = "macos")]
+fn process_start_marker(pid: u32) -> Option<String> {
+    let output = std::process::Command::new("ps")
+        .args(["-o", "lstart=", "-p", &pid.to_string()])
         .stdin(Stdio::null())
         .output()
-        .await;
-    match output {
-        Ok(out) if out.status.success() => String::from_utf8_lossy(&out.stdout).contains("ipfs"),
-        _ => false,
+        .ok()?;
+    if !output.status.success() {
+        return None;
     }
+    let text = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if text.is_empty() { None } else { Some(text) }
 }
 
 #[cfg(windows)]
-async fn process_is_ipfs(pid: u32) -> bool {
-    let output = Command::new("tasklist")
-        .args(["/FI", &format!("PID eq {pid}"), "/FO", "CSV", "/NH"])
-        .stdin(Stdio::null())
-        .output()
-        .await;
-    match output {
-        Ok(out) if out.status.success() => String::from_utf8_lossy(&out.stdout)
-            .to_ascii_lowercase()
-            .contains("ipfs"),
-        _ => false,
+fn process_start_marker(pid: u32) -> Option<String> {
+    use windows_sys::Win32::Foundation::{CloseHandle, FILETIME};
+    use windows_sys::Win32::System::Threading::{
+        GetProcessTimes, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION,
+    };
+    unsafe {
+        let handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
+        if handle.is_null() {
+            return None;
+        }
+        let mut creation: FILETIME = std::mem::zeroed();
+        let mut exit: FILETIME = std::mem::zeroed();
+        let mut kernel: FILETIME = std::mem::zeroed();
+        let mut user: FILETIME = std::mem::zeroed();
+        let ok = GetProcessTimes(handle, &mut creation, &mut exit, &mut kernel, &mut user);
+        CloseHandle(handle);
+        if ok == 0 {
+            return None;
+        }
+        Some(format!(
+            "{}-{}",
+            creation.dwHighDateTime, creation.dwLowDateTime
+        ))
     }
 }
 
@@ -327,12 +368,45 @@ fn process_alive(pid: u32) -> bool {
     std::io::Error::last_os_error().raw_os_error() != Some(libc::ESRCH)
 }
 
-#[cfg(unix)]
+#[cfg(windows)]
+fn process_alive(pid: u32) -> bool {
+    use windows_sys::Win32::Foundation::{CloseHandle, STILL_ACTIVE};
+    use windows_sys::Win32::System::Threading::{
+        GetExitCodeProcess, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION,
+    };
+    unsafe {
+        let handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
+        if handle.is_null() {
+            return false;
+        }
+        let mut code: u32 = 0;
+        let ok = GetExitCodeProcess(handle, &mut code);
+        CloseHandle(handle);
+        ok != 0 && code == STILL_ACTIVE as u32
+    }
+}
+
 async fn wait_for_exit(pid: u32, timeout: Duration) -> bool {
     wait_until(timeout, Duration::from_millis(500), || async {
         !process_alive(pid)
     })
     .await
+}
+
+// Only a real Kubo answers this; an unrelated process reusing the port will fail to connect
+// or time out, so a response here is not itself proof of identity but a successful exit is.
+async fn attempt_graceful_shutdown(api_port: u16, pid: u32) -> bool {
+    let url = format!("http://127.0.0.1:{api_port}/api/v0/shutdown");
+    let responded = reqwest::Client::new()
+        .post(&url)
+        .timeout(Duration::from_secs(3))
+        .send()
+        .await
+        .is_ok();
+    if !responded {
+        return false;
+    }
+    wait_for_exit(pid, Duration::from_secs(30)).await
 }
 
 #[cfg(unix)]
@@ -376,13 +450,7 @@ async fn terminate_process(pid: u32) -> Result<()> {
         let stderr = String::from_utf8_lossy(&output.stderr);
         bail!("taskkill failed for pid {pid}: {}", stderr.trim());
     }
-    let exited = wait_until(
-        Duration::from_secs(10),
-        Duration::from_millis(500),
-        || async { !process_is_ipfs(pid).await },
-    )
-    .await;
-    if exited {
+    if wait_for_exit(pid, Duration::from_secs(10)).await {
         Ok(())
     } else {
         bail!("orphaned Kubo (pid {pid}) did not exit after taskkill /F")
@@ -390,20 +458,55 @@ async fn terminate_process(pid: u32) -> Result<()> {
 }
 
 pub async fn recover_orphan(state_dir: &Path, repo: &Path) -> Result<()> {
-    let Some(pid) = read_pid_file(state_dir)? else {
-        return Ok(());
+    let record = match read_pid_file(state_dir) {
+        Ok(Some(record)) => record,
+        Ok(None) => return Ok(()),
+        Err(e) => {
+            tracing::warn!(
+                error = %e,
+                repo = %repo.display(),
+                "kubo.pid is not a valid pid file; leaving its process alone"
+            );
+            remove_pid_file(state_dir)?;
+            return Ok(());
+        }
     };
-    if !process_is_ipfs(pid).await {
-        tracing::warn!(pid, repo = %repo.display(), "stale kubo.pid");
+
+    if attempt_graceful_shutdown(record.api_port, record.pid).await {
+        tracing::info!(
+            pid = record.pid,
+            repo = %repo.display(),
+            "orphaned Kubo shut down gracefully via its API"
+        );
         remove_pid_file(state_dir)?;
         return Ok(());
     }
+
+    let Some(current_started_at) = process_start_marker(record.pid) else {
+        tracing::info!(
+            pid = record.pid,
+            repo = %repo.display(),
+            "stale kubo.pid (process is no longer running)"
+        );
+        remove_pid_file(state_dir)?;
+        return Ok(());
+    };
+    if current_started_at != record.started_at {
+        tracing::warn!(
+            pid = record.pid,
+            repo = %repo.display(),
+            "pid in kubo.pid no longer belongs to the recorded Kubo (start time differs); leaving it alone"
+        );
+        remove_pid_file(state_dir)?;
+        return Ok(());
+    }
+
     tracing::warn!(
-        pid,
+        pid = record.pid,
         repo = %repo.display(),
         "terminating orphaned Kubo left by a previous swing"
     );
-    terminate_process(pid).await?;
+    terminate_process(record.pid).await?;
     remove_pid_file(state_dir)?;
     Ok(())
 }
@@ -790,11 +893,44 @@ mod tests {
     fn pid_file_round_trips() {
         let dir = tempfile::tempdir().unwrap();
         assert_eq!(read_pid_file(dir.path()).unwrap(), None);
-        write_pid_file(dir.path(), 4242).unwrap();
-        assert_eq!(read_pid_file(dir.path()).unwrap(), Some(4242));
+        let pid = std::process::id();
+        write_pid_file(dir.path(), pid, 4242).unwrap();
+        let record = read_pid_file(dir.path()).unwrap().unwrap();
+        assert_eq!(record.pid, pid);
+        assert_eq!(record.api_port, 4242);
+        assert!(!record.started_at.is_empty());
         remove_pid_file(dir.path()).unwrap();
         assert_eq!(read_pid_file(dir.path()).unwrap(), None);
         remove_pid_file(dir.path()).unwrap();
+    }
+
+    #[test]
+    fn read_pid_file_rejects_unparseable_content() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("kubo.pid"), "not a pid file").unwrap();
+        assert!(read_pid_file(dir.path()).is_err());
+    }
+
+    #[test]
+    fn parses_starttime_from_proc_stat_with_simple_comm() {
+        let stat = "12345 (ipfs) S 1 12345 12345 0 -1 4194304 100 0 0 0 10 5 0 0 20 0 1 0 \
+                     987654321 20971520 512";
+        assert_eq!(
+            parse_proc_stat_starttime(stat),
+            Some("987654321".to_string())
+        );
+    }
+
+    #[test]
+    fn parses_starttime_from_proc_stat_with_spaces_and_parens_in_comm() {
+        let stat = "12345 (my ip)fs proc) S 1 12345 12345 0 -1 4194304 100 0 0 0 10 5 0 0 20 0 1 0 \
+                     555555 20971520 512";
+        assert_eq!(parse_proc_stat_starttime(stat), Some("555555".to_string()));
+    }
+
+    #[test]
+    fn parse_proc_stat_starttime_is_none_without_a_closing_paren() {
+        assert_eq!(parse_proc_stat_starttime("garbage"), None);
     }
 
     #[tokio::test]
@@ -804,11 +940,62 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn recover_orphan_removes_stale_pid_file() {
+    async fn recover_orphan_removes_unparseable_pid_file_without_killing_anything() {
         let dir = tempfile::tempdir().unwrap();
-        write_pid_file(dir.path(), 999_999_999).unwrap();
+        std::fs::write(dir.path().join("kubo.pid"), "not a pid file").unwrap();
         recover_orphan(dir.path(), dir.path()).await.unwrap();
         assert_eq!(read_pid_file(dir.path()).unwrap(), None);
+    }
+
+    #[tokio::test]
+    async fn recover_orphan_removes_stale_pid_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let record = PidRecord {
+            pid: 999_999_999,
+            api_port: pick_free_port().unwrap(),
+            started_at: "0".to_string(),
+        };
+        std::fs::write(
+            dir.path().join("kubo.pid"),
+            serde_json::to_string(&record).unwrap(),
+        )
+        .unwrap();
+        recover_orphan(dir.path(), dir.path()).await.unwrap();
+        assert_eq!(read_pid_file(dir.path()).unwrap(), None);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn recover_orphan_does_not_kill_on_start_time_mismatch() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut child = std::process::Command::new("sleep")
+            .arg("5")
+            .spawn()
+            .unwrap();
+        let pid = child.id();
+        let real_started_at =
+            process_start_marker(pid).expect("spawned process should have a start time");
+        let record = PidRecord {
+            pid,
+            api_port: pick_free_port().unwrap(),
+            started_at: format!("{real_started_at}-not-the-real-one"),
+        };
+        std::fs::write(
+            dir.path().join("kubo.pid"),
+            serde_json::to_string(&record).unwrap(),
+        )
+        .unwrap();
+
+        recover_orphan(dir.path(), dir.path()).await.unwrap();
+
+        assert_eq!(read_pid_file(dir.path()).unwrap(), None);
+        assert!(
+            process_alive(pid),
+            "a start-time mismatch must not kill the process"
+        );
+
+        let _ = child.kill();
+        let _ = child.wait();
     }
 
     #[tokio::test]
@@ -873,19 +1060,17 @@ mod tests {
         daemon.stop(Duration::from_secs(10)).await.unwrap();
     }
 
-    #[tokio::test]
-    #[ignore]
-    async fn recover_orphan_kills_a_leftover_daemon() {
-        let Some(bin) = test_kubo_bin() else {
-            return;
-        };
-        let dir = tempfile::tempdir().unwrap();
-        let repo = dir.path().join("kubo-repo");
-        let state_dir = dir.path().join("state");
+    /// Starts a real Kubo daemon, writes its pid file with the daemon's real api_port, then
+    /// forgets the `Daemon` handle and reaps it manually to simulate an orphan left by a killed
+    /// `swing up`. Returns the state dir, the daemon's real API URL, and its pid.
+    #[cfg(unix)]
+    async fn spawn_orphan(bin: &Path, dir: &Path) -> (PathBuf, String, u32) {
+        let repo = dir.join("kubo-repo");
+        let state_dir = dir.join("state");
         std::fs::create_dir_all(&state_dir).unwrap();
 
-        ensure_repo(&bin, &repo).await.unwrap();
-        run_ipfs(&bin, &repo, &["config", "profile", "apply", "test"])
+        ensure_repo(bin, &repo).await.unwrap();
+        run_ipfs(bin, &repo, &["config", "profile", "apply", "test"])
             .await
             .unwrap();
 
@@ -898,12 +1083,12 @@ mod tests {
             swarm_port: None,
             public_gateway_hosts: vec![],
         };
-        apply_config(&bin, &repo, &settings).await.unwrap();
+        apply_config(bin, &repo, &settings).await.unwrap();
 
         let api_url = format!("http://127.0.0.1:{api_port}");
-        let daemon = Daemon::spawn(&bin, &repo, api_url.clone()).await.unwrap();
+        let daemon = Daemon::spawn(bin, &repo, api_url.clone()).await.unwrap();
         let pid = daemon.pid().unwrap();
-        write_pid_file(&state_dir, pid).unwrap();
+        write_pid_file(&state_dir, pid, api_port).unwrap();
 
         wait_healthy(&api_url, Duration::from_secs(60))
             .await
@@ -911,20 +1096,31 @@ mod tests {
 
         // Simulate an orphan: the child must survive past this test's own process exit.
         std::mem::forget(daemon);
-
         // mem::forget skips tokio's orphan reaper, so stand in for it here or the killed child zombies.
-        #[cfg(unix)]
         std::thread::spawn(move || unsafe {
             let mut status = 0;
             libc::waitpid(pid as libc::pid_t, &mut status, 0);
         });
 
-        recover_orphan(&state_dir, &repo).await.unwrap();
+        (state_dir, api_url, pid)
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    #[ignore]
+    async fn recover_orphan_shuts_down_a_leftover_daemon_via_its_api() {
+        let Some(bin) = test_kubo_bin() else {
+            return;
+        };
+        let dir = tempfile::tempdir().unwrap();
+        let (state_dir, api_url, pid) = spawn_orphan(&bin, dir.path()).await;
+
+        recover_orphan(&state_dir, dir.path()).await.unwrap();
 
         assert_eq!(read_pid_file(&state_dir).unwrap(), None);
         assert!(
-            !process_is_ipfs(pid).await,
-            "orphaned Kubo should have been killed"
+            !process_alive(pid),
+            "orphaned Kubo should have exited after the API shutdown"
         );
         let client = reqwest::Client::new();
         let result = client
@@ -935,6 +1131,35 @@ mod tests {
         assert!(
             result.is_err(),
             "Kubo API should no longer answer after recovery"
+        );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    #[ignore]
+    async fn recover_orphan_falls_back_to_signals_when_api_is_unreachable() {
+        let Some(bin) = test_kubo_bin() else {
+            return;
+        };
+        let dir = tempfile::tempdir().unwrap();
+        let (state_dir, _api_url, pid) = spawn_orphan(&bin, dir.path()).await;
+
+        // Overwrite the recorded api_port with a bogus, unlisted one so the graceful-shutdown
+        // attempt fails to connect, forcing the start-time check and signal escalation path.
+        let mut record = read_pid_file(&state_dir).unwrap().unwrap();
+        record.api_port = pick_free_port().unwrap();
+        std::fs::write(
+            state_dir.join("kubo.pid"),
+            serde_json::to_string(&record).unwrap(),
+        )
+        .unwrap();
+
+        recover_orphan(&state_dir, dir.path()).await.unwrap();
+
+        assert_eq!(read_pid_file(&state_dir).unwrap(), None);
+        assert!(
+            !process_alive(pid),
+            "orphaned Kubo should have been killed via signals"
         );
     }
 }

@@ -130,7 +130,7 @@ async fn start_kubo(
         "failed to spawn the Kubo daemon"
     );
     if let Some(pid) = daemon.pid()
-        && let Err(e) = kubo::write_pid_file(&config.agent.state_dir, pid)
+        && let Err(e) = kubo::write_pid_file(&config.agent.state_dir, pid, api_port)
     {
         warn!(error = %e, "failed to write kubo.pid");
     }
