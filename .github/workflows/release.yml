@@ -50,8 +50,8 @@ jobs:
         shell: bash
         run: |
           cargo fmt --check
-          cargo clippy --all-targets -- -D warnings
-          cargo test
+          cargo clippy --workspace --all-targets -- -D warnings
+          cargo test --workspace
 
       - name: Install cargo-zigbuild
         if: matrix.zig
@@ -67,9 +67,9 @@ jobs:
         shell: bash
         run: |
           if [ "${{ matrix.zig }}" = true ]; then
-            cargo zigbuild --release --locked --target ${{ matrix.target }}
+            cargo zigbuild --release --locked -p swing --target ${{ matrix.target }}
           else
-            cargo build --release --locked --target ${{ matrix.target }}
+            cargo build --release --locked --workspace --target ${{ matrix.target }}
           fi
 
       - name: Package
@@ -79,10 +79,13 @@ jobs:
           mkdir -p "dist/$name"
           cp LICENSE README.md "dist/$name/"
           if [ "${{ runner.os }}" = Windows ]; then
-            cp "target/${{ matrix.target }}/release/swing.exe" "dist/$name/"
+            cp "target/${{ matrix.target }}/release/swing.exe" "target/${{ matrix.target }}/release/swing-tray.exe" "dist/$name/"
             (cd dist && 7z a "$name.zip" "$name" >/dev/null)
           else
             cp "target/${{ matrix.target }}/release/swing" "dist/$name/"
+            if [ "${{ runner.os }}" = macOS ]; then
+              cp "target/${{ matrix.target }}/release/swing-tray" "dist/$name/"
+            fi
             tar -C dist -czf "dist/$name.tar.gz" "$name"
           fi
           rm -r "dist/$name"

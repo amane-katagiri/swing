@@ -126,6 +126,63 @@ pub fn launchd_plist(exe: &Path, config: &Path, workdir: &Path, log: &Path) -> S
     )
 }
 
+pub fn launchd_tray_plist(tray: &Path, config: &Path, workdir: &Path) -> String {
+    let tray = xml_escape(&tray.to_string_lossy());
+    let config = xml_escape(&config.to_string_lossy());
+    let workdir = xml_escape(&workdir.to_string_lossy());
+    format!(
+        r#"<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>jp.ne.ama.swing-tray</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>{tray}</string>
+        <string>--config</string>
+        <string>{config}</string>
+    </array>
+    <key>WorkingDirectory</key>
+    <string>{workdir}</string>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>LimitLoadToSessionType</key>
+    <string>Aqua</string>
+    <key>ProcessType</key>
+    <string>Interactive</string>
+</dict>
+</plist>
+"#
+    )
+}
+
+// Explorer starts Run entries through CreateProcess, which is not documented to accept \\?\ paths.
+fn strip_verbatim(path: &str) -> String {
+    if let Some(unc) = path.strip_prefix(r"\\?\UNC\") {
+        return format!(r"\\{unc}");
+    }
+    path.strip_prefix(r"\\?\").unwrap_or(path).to_owned()
+}
+
+pub fn tray_run_command(tray: &Path, config: &Path) -> String {
+    format!(
+        "\"{}\" --config \"{}\"",
+        strip_verbatim(&tray.to_string_lossy()),
+        strip_verbatim(&config.to_string_lossy())
+    )
+}
+
+pub fn tray_exe_path(exe: &Path) -> Option<PathBuf> {
+    let name = if cfg!(windows) {
+        "swing-tray.exe"
+    } else {
+        "swing-tray"
+    };
+    let path = exe.parent()?.join(name);
+    path.is_file().then_some(path)
+}
+
 fn quote_schtasks_arg(arg: &str) -> String {
     let escaped = xml_escape(arg);
     format!("&quot;{escaped}&quot;")
@@ -245,6 +302,20 @@ mod linux {
             cmd.arg("--user");
         }
         cmd
+    }
+
+    pub fn start(system: bool) -> Result<()> {
+        run_command({
+            let mut cmd = systemctl(system);
+            cmd.args(["start", "swing"]);
+            cmd
+        })?;
+        println!("Started swing with systemd.");
+        Ok(())
+    }
+
+    pub fn is_installed(system: bool) -> bool {
+        unit_path(system).is_ok_and(|p| p.exists())
     }
 
     pub fn install(
@@ -376,12 +447,18 @@ mod macos {
 
     const LABEL: &str = "jp.ne.ama.swing";
 
-    fn plist_path() -> Result<PathBuf> {
+    const TRAY_LABEL: &str = "jp.ne.ama.swing-tray";
+
+    fn agent_plist_path(label: &str) -> Result<PathBuf> {
         let home = std::env::var_os("HOME").context("cannot determine HOME")?;
         Ok(PathBuf::from(home)
             .join("Library")
             .join("LaunchAgents")
-            .join(format!("{LABEL}.plist")))
+            .join(format!("{label}.plist")))
+    }
+
+    fn plist_path() -> Result<PathBuf> {
+        agent_plist_path(LABEL)
     }
 
     fn log_path() -> Result<PathBuf> {
@@ -412,12 +489,7 @@ mod macos {
                 .with_context(|| format!("creating directory {}", parent.display()))?;
         }
 
-        let already_loaded = Command::new("launchctl")
-            .args(["print", &service_target()])
-            .output()
-            .map(|o| o.status.success())
-            .unwrap_or(false);
-        if already_loaded {
+        if is_loaded() {
             let _ = Command::new("launchctl")
                 .args(["bootout", &service_target()])
                 .output();
@@ -447,6 +519,84 @@ mod macos {
         }
         println!("Logs are written to {}.", log.display());
         Ok(())
+    }
+
+    pub fn install_tray(tray: &Path, config: &Path, workdir: &Path, no_start: bool) -> Result<()> {
+        let path = agent_plist_path(TRAY_LABEL)?;
+        let target = format!("gui/{}/{TRAY_LABEL}", uid());
+        let _ = Command::new("launchctl")
+            .args(["bootout", &target])
+            .output();
+        std::fs::write(&path, launchd_tray_plist(tray, config, workdir))
+            .with_context(|| format!("writing {}", path.display()))?;
+        println!(
+            "Registered swing-tray to start at login ({}).",
+            path.display()
+        );
+        if !no_start {
+            run_command({
+                let mut cmd = Command::new("launchctl");
+                cmd.args([
+                    "bootstrap",
+                    &format!("gui/{}", uid()),
+                    &path.to_string_lossy(),
+                ]);
+                cmd
+            })?;
+            println!("Started swing-tray.");
+        }
+        Ok(())
+    }
+
+    pub fn uninstall_tray() -> Result<()> {
+        let path = agent_plist_path(TRAY_LABEL)?;
+        if !path.exists() {
+            return Ok(());
+        }
+        let _ = Command::new("launchctl")
+            .args(["bootout", &format!("gui/{}/{TRAY_LABEL}", uid())])
+            .output();
+        std::fs::remove_file(&path).with_context(|| format!("removing {}", path.display()))?;
+        println!("Removed {}.", path.display());
+        Ok(())
+    }
+
+    fn is_loaded() -> bool {
+        Command::new("launchctl")
+            .args(["print", &service_target()])
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false)
+    }
+
+    pub fn start(_system: bool) -> Result<()> {
+        if is_loaded() {
+            run_command({
+                let mut cmd = Command::new("launchctl");
+                cmd.args(["kickstart", &service_target()]);
+                cmd
+            })?;
+        } else {
+            let path = plist_path()?;
+            if !path.exists() {
+                bail!("swing is not registered as a service; run `swing service install` first");
+            }
+            run_command({
+                let mut cmd = Command::new("launchctl");
+                cmd.args([
+                    "bootstrap",
+                    &format!("gui/{}", uid()),
+                    &path.to_string_lossy(),
+                ]);
+                cmd
+            })?;
+        }
+        println!("Started swing with launchd.");
+        Ok(())
+    }
+
+    pub fn is_installed(_system: bool) -> bool {
+        plist_path().is_ok_and(|p| p.exists())
     }
 
     pub fn stop(_system: bool) -> Result<()> {
@@ -495,9 +645,78 @@ mod macos {
 #[cfg(windows)]
 mod windows {
     use super::*;
+    use std::os::windows::process::CommandExt;
     use std::process::Command;
+    use windows_sys::Win32::Foundation::{ERROR_FILE_NOT_FOUND, ERROR_SUCCESS};
+    use windows_sys::Win32::System::Registry::{
+        HKEY_CURRENT_USER, REG_SZ, RegDeleteKeyValueW, RegSetKeyValueW,
+    };
+    use windows_sys::Win32::System::Threading::CREATE_NO_WINDOW;
 
     const TASK_NAME: &str = "swing";
+    const RUN_KEY: &str = r"Software\Microsoft\Windows\CurrentVersion\Run";
+    const RUN_VALUE: &str = "swing-tray";
+
+    fn wide(s: &str) -> Vec<u16> {
+        s.encode_utf16().chain(Some(0)).collect()
+    }
+
+    pub fn install_tray(tray: &Path, config: &Path, workdir: &Path, no_start: bool) -> Result<()> {
+        let data = wide(&tray_run_command(tray, config));
+        let len = u32::try_from(data.len() * 2).context("swing-tray command line is too long")?;
+        let status = unsafe {
+            RegSetKeyValueW(
+                HKEY_CURRENT_USER,
+                wide(RUN_KEY).as_ptr(),
+                wide(RUN_VALUE).as_ptr(),
+                REG_SZ,
+                data.as_ptr().cast(),
+                len,
+            )
+        };
+        if status != ERROR_SUCCESS {
+            bail!("writing HKCU\\{RUN_KEY}\\{RUN_VALUE} failed (error {status})");
+        }
+        println!("Registered swing-tray to start at login (HKCU\\{RUN_KEY}\\{RUN_VALUE}).");
+        if !no_start {
+            Command::new(tray)
+                .arg("--config")
+                .arg(config)
+                .current_dir(workdir)
+                .stdin(std::process::Stdio::null())
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .spawn()
+                .with_context(|| format!("starting {}", tray.display()))?;
+            println!("Started swing-tray.");
+        }
+        Ok(())
+    }
+
+    pub fn uninstall_tray() -> Result<()> {
+        let status = unsafe {
+            RegDeleteKeyValueW(
+                HKEY_CURRENT_USER,
+                wide(RUN_KEY).as_ptr(),
+                wide(RUN_VALUE).as_ptr(),
+            )
+        };
+        match status {
+            ERROR_SUCCESS => {
+                println!("Removed swing-tray from HKCU\\{RUN_KEY}.");
+                Ok(())
+            }
+            ERROR_FILE_NOT_FOUND => Ok(()),
+            other => bail!("removing HKCU\\{RUN_KEY}\\{RUN_VALUE} failed (error {other})"),
+        }
+    }
+
+    // swing-tray is a GUI-subsystem process; without this each schtasks call flashes a console window.
+    fn schtasks() -> Command {
+        let mut cmd = Command::new("schtasks");
+        cmd.creation_flags(CREATE_NO_WINDOW);
+        cmd
+    }
 
     fn current_user() -> Result<String> {
         let username = std::env::var("USERNAME").context("USERNAME is not set")?;
@@ -524,7 +743,7 @@ mod windows {
             .with_context(|| format!("writing {}", tmp_path.display()))?;
 
         let result = run_command({
-            let mut cmd = Command::new("schtasks");
+            let mut cmd = schtasks();
             cmd.args([
                 "/Create",
                 "/TN",
@@ -542,7 +761,7 @@ mod windows {
 
         if !no_start {
             run_command({
-                let mut cmd = Command::new("schtasks");
+                let mut cmd = schtasks();
                 cmd.args(["/Run", "/TN", TASK_NAME]);
                 cmd
             })?;
@@ -556,6 +775,23 @@ mod windows {
         Ok(())
     }
 
+    pub fn start(_system: bool) -> Result<()> {
+        run_command({
+            let mut cmd = schtasks();
+            cmd.args(["/Run", "/TN", TASK_NAME]);
+            cmd
+        })?;
+        println!("Started the task.");
+        Ok(())
+    }
+
+    pub fn is_installed(_system: bool) -> bool {
+        schtasks()
+            .args(["/Query", "/TN", TASK_NAME])
+            .output()
+            .is_ok_and(|o| o.status.success())
+    }
+
     pub async fn stop(_system: bool) -> Result<()> {
         let (config, _workdir, _exe) = resolve_service_paths(None)?;
         let cfg = crate::config::Config::load(Some(&config))?;
@@ -564,7 +800,7 @@ mod windows {
             Err(e) => {
                 println!("Warning: graceful stop failed ({e:#}); falling back to `schtasks /End`.");
                 run_command({
-                    let mut cmd = Command::new("schtasks");
+                    let mut cmd = schtasks();
                     cmd.args(["/End", "/TN", TASK_NAME]);
                     cmd
                 })?;
@@ -579,11 +815,9 @@ mod windows {
         {
             let _ = crate::stop::run(&cfg, false, std::time::Duration::from_secs(60)).await;
         }
-        let _ = Command::new("schtasks")
-            .args(["/End", "/TN", TASK_NAME])
-            .output();
+        let _ = schtasks().args(["/End", "/TN", TASK_NAME]).output();
         run_command({
-            let mut cmd = Command::new("schtasks");
+            let mut cmd = schtasks();
             cmd.args(["/Delete", "/TN", TASK_NAME, "/F"]);
             cmd
         })?;
@@ -592,7 +826,7 @@ mod windows {
     }
 
     pub fn status(_system: bool) -> Result<()> {
-        let output = Command::new("schtasks")
+        let output = schtasks()
             .args(["/Query", "/TN", TASK_NAME, "/FO", "LIST", "/V"])
             .output();
         match output {
@@ -608,21 +842,55 @@ mod windows {
     }
 }
 
-pub fn install(config_path: Option<&Path>, system: bool, no_start: bool) -> Result<()> {
+#[cfg(any(windows, target_os = "macos"))]
+fn install_tray(
+    exe: &Path,
+    config: &Path,
+    workdir: &Path,
+    no_start: bool,
+    no_tray: bool,
+) -> Result<()> {
+    #[cfg(target_os = "macos")]
+    use macos as platform;
+    #[cfg(windows)]
+    use windows as platform;
+
+    if no_tray {
+        return platform::uninstall_tray();
+    }
+    let Some(tray) = tray_exe_path(exe) else {
+        println!(
+            "swing-tray was not found next to {}; skipping the tray icon.",
+            exe.display()
+        );
+        return Ok(());
+    };
+    platform::install_tray(&tray, config, workdir, no_start)
+}
+
+pub fn install(
+    config_path: Option<&Path>,
+    system: bool,
+    no_start: bool,
+    no_tray: bool,
+) -> Result<()> {
     require_system_supported(system)?;
     let (config, workdir, exe) = resolve_service_paths(config_path)?;
 
     #[cfg(target_os = "linux")]
     {
+        let _ = no_tray;
         linux::install(&exe, &config, &workdir, system, no_start)
     }
     #[cfg(target_os = "macos")]
     {
-        macos::install(&exe, &config, &workdir, no_start)
+        macos::install(&exe, &config, &workdir, no_start)?;
+        install_tray(&exe, &config, &workdir, no_start, no_tray)
     }
     #[cfg(windows)]
     {
-        windows::install(&exe, &config, &workdir, no_start)
+        windows::install(&exe, &config, &workdir, no_start)?;
+        install_tray(&exe, &config, &workdir, no_start, no_tray)
     }
     #[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
     {
@@ -639,10 +907,12 @@ pub async fn uninstall(system: bool) -> Result<()> {
     }
     #[cfg(target_os = "macos")]
     {
+        macos::uninstall_tray()?;
         macos::uninstall(system)
     }
     #[cfg(windows)]
     {
+        windows::uninstall_tray()?;
         windows::uninstall(system).await
     }
     #[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
@@ -672,6 +942,47 @@ pub async fn stop(system: bool) -> Result<()> {
     }
 }
 
+pub fn start(system: bool) -> Result<()> {
+    require_system_supported(system)?;
+
+    #[cfg(target_os = "linux")]
+    {
+        linux::start(system)
+    }
+    #[cfg(target_os = "macos")]
+    {
+        macos::start(system)
+    }
+    #[cfg(windows)]
+    {
+        windows::start(system)
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
+    {
+        bail!("service management is not supported on this OS");
+    }
+}
+
+pub fn is_installed(system: bool) -> bool {
+    #[cfg(target_os = "linux")]
+    {
+        linux::is_installed(system)
+    }
+    #[cfg(target_os = "macos")]
+    {
+        macos::is_installed(system)
+    }
+    #[cfg(windows)]
+    {
+        windows::is_installed(system)
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
+    {
+        let _ = system;
+        false
+    }
+}
+
 pub fn status(system: bool) -> Result<()> {
     require_system_supported(system)?;
 
@@ -696,6 +1007,54 @@ pub fn status(system: bool) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn tray_plist_runs_the_tray_with_the_config_in_gui_sessions_only() {
+        let plist = launchd_tray_plist(
+            Path::new("/opt/swing/swing-tray"),
+            Path::new("/Users/a & b/swing.toml"),
+            Path::new("/Users/a & b"),
+        );
+        assert!(plist.contains("<string>jp.ne.ama.swing-tray</string>"));
+        assert!(plist.contains(
+            "<string>/opt/swing/swing-tray</string>\n        <string>--config</string>\n        <string>/Users/a &amp; b/swing.toml</string>"
+        ));
+        assert!(plist.contains("<key>LimitLoadToSessionType</key>\n    <string>Aqua</string>"));
+        assert!(plist.contains("<key>RunAtLoad</key>\n    <true/>"));
+        assert!(!plist.contains("KeepAlive"));
+    }
+
+    #[test]
+    fn tray_run_command_quotes_paths_and_drops_verbatim_prefixes() {
+        assert_eq!(
+            tray_run_command(
+                Path::new(r"\\?\C:\Program Files\swing\swing-tray.exe"),
+                Path::new(r"\\?\C:\Users\a\swing.toml"),
+            ),
+            r#""C:\Program Files\swing\swing-tray.exe" --config "C:\Users\a\swing.toml""#
+        );
+        assert_eq!(
+            tray_run_command(
+                Path::new(r"\\?\UNC\server\share\swing-tray.exe"),
+                Path::new(r"D:\swing.toml"),
+            ),
+            r#""\\server\share\swing-tray.exe" --config "D:\swing.toml""#
+        );
+    }
+
+    #[test]
+    fn tray_exe_is_found_only_next_to_swing() {
+        let dir = tempfile::tempdir().unwrap();
+        let exe = dir.path().join("swing");
+        assert_eq!(tray_exe_path(&exe), None);
+        let name = if cfg!(windows) {
+            "swing-tray.exe"
+        } else {
+            "swing-tray"
+        };
+        std::fs::write(dir.path().join(name), b"").unwrap();
+        assert_eq!(tray_exe_path(&exe), Some(dir.path().join(name)));
+    }
 
     #[test]
     fn systemd_unit_user_scope() {

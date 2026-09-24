@@ -205,12 +205,25 @@ enum ServiceCommand {
         system: bool,
         #[arg(long, help = "Register without starting it now")]
         no_start: bool,
+        #[arg(
+            long,
+            help = "Do not register swing-tray to start at login (Windows and macOS)"
+        )]
+        no_tray: bool,
     },
     #[command(about = "Remove the service registration")]
     Uninstall {
         #[arg(
             long,
             help = "Register a systemd system unit instead of a user unit (Linux only)"
+        )]
+        system: bool,
+    },
+    #[command(about = "Start the registered service")]
+    Start {
+        #[arg(
+            long,
+            help = "Target the systemd system unit instead of the user unit (Linux only)"
         )]
         system: bool,
     },
@@ -344,8 +357,10 @@ async fn run_other(command: Command) -> Result<()> {
                 config,
                 system,
                 no_start,
-            } => service::install(config.as_deref(), system, no_start),
+                no_tray,
+            } => service::install(config.as_deref(), system, no_start, no_tray),
             ServiceCommand::Uninstall { system } => service::uninstall(system).await,
+            ServiceCommand::Start { system } => service::start(system),
             ServiceCommand::Stop { system } => service::stop(system).await,
             ServiceCommand::Status { system } => service::status(system),
         },

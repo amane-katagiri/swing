@@ -3,8 +3,9 @@
 [`../architecture.md`](../architecture.md) の一部。`swing up` そのものは [`up.md`](up.md)。
 
 ```
-swing service install   [--config <path>] [--system] [--no-start]
+swing service install   [--config <path>] [--system] [--no-start] [--no-tray]
 swing service uninstall [--system]
+swing service start     [--system]
 swing service stop      [--system]
 swing service status    [--system]
 ```
@@ -13,7 +14,22 @@ swing service status    [--system]
 
 `--system` は Linux でのみ有効。他 OS で指定するとエラー（「--system is only supported on Linux」）。`--no-start` は登録だけ行い起動しない（`install` のみ）。
 
-生成する unit / plist / XML の文字列はそれぞれ純粋関数（`systemd_unit`・`launchd_plist`・`schtasks_xml`）で作り、ユニットテストで検証している。OS 依存の実行部分（ファイル書き込み・`systemctl`/`launchctl`/`schtasks` の呼び出し）だけ `cfg(target_os = ...)` で分岐し、対象 3 OS 以外では `install`/`uninstall`/`status`/`stop` すべて「service management is not supported on this OS」でエラーになる（コンパイル自体は全 OS で通る）。`service::uninstall`/`service::stop` は（Windows がグレースフルな停止で非同期処理を要するため）`async fn`（他は同期のまま）。
+## タスクトレイの自動起動（Windows と macOS）
+
+`install` は、`swing` 実行ファイルと同じディレクトリに `swing-tray`（Windows は `swing-tray.exe`。`tray_exe_path`）があれば、ログイン時に `swing-tray --config <config>` を起動するよう登録する（[`tray.md`](tray.md)）。見つからなければ「swing-tray was not found next to ...」と出して、トレイの登録だけ飛ばす。`--no-start` でなければ、登録した直後にトレイも起動する。`--no-tray` を付けると登録せず、既に登録があれば消す（付けずに `install` し直した後で外すときのため）。`uninstall` は、トレイの登録もあれば消す。Linux ではトレイを扱わず、`--no-tray` は何もしない。
+
+| OS | 登録先 | 直後の起動 | `uninstall` |
+|---|---|---|---|
+| Windows | `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` の値 `swing-tray`（`RegSetKeyValueW`）。中身は `tray_run_command` が作る `"<swing-tray.exe>" --config "<config>"` | `swing-tray.exe` を子プロセスとして起動し、待たない | 値を消す（`RegDeleteKeyValueW`。無ければ何もしない）。動いているトレイは、登録が消えたのを自分で見つけて終わる（[`tray.md`](tray.md#サービスの登録が消えたら終了する)） |
+| macOS | `~/Library/LaunchAgents/jp.ne.ama.swing-tray.plist`（`launchd_tray_plist`）。`RunAtLoad = true`・`LimitLoadToSessionType = Aqua`・`ProcessType = Interactive`、`KeepAlive` は無し | 先に `launchctl bootout gui/<uid>/jp.ne.ama.swing-tray`（失敗は無視）してから `launchctl bootstrap gui/<uid> <plist>` | `bootout`（失敗は無視）して plist を消す。動いているトレイも止まる |
+
+- Windows でタスクスケジューラではなく Run キーにしているのは、タスクマネージャーの「スタートアップ アプリ」に出て、ユーザーが画面から無効にできるため。`swing-tray.exe` は GUI サブシステムなので、`swing up` のように `conhost --headless` を挟む必要も無い。
+- Run キーに書くパスからは `\\?\` を外す（`canonicalize` が付ける。`\\?\UNC\` は `\\` に戻す）。Explorer は Run キーの値を `CreateProcess` で起動するが、`CreateProcess` がこの形式のパスを受け付けるとは書かれていないため。
+- macOS で `KeepAlive` を付けないのは、トレイのメニューの「終了」で閉じたなら、次のログインまで出さないため。
+
+生成する unit / plist / XML の文字列はそれぞれ純粋関数（`systemd_unit`・`launchd_plist`・`schtasks_xml`）で作り、ユニットテストで検証している。OS 依存の実行部分（ファイル書き込み・`systemctl`/`launchctl`/`schtasks` の呼び出し）だけ `cfg(target_os = ...)` で分岐し、対象 3 OS 以外では `install`/`uninstall`/`start`/`status`/`stop` すべて「service management is not supported on this OS」でエラーになる（コンパイル自体は全 OS で通る）。`service::uninstall`/`service::stop` は（Windows がグレースフルな停止で非同期処理を要するため）`async fn`（他は同期のまま）。
+
+`service::is_installed(system)` は登録済みかどうかを返す（Linux は unit ファイル、macOS は plist の有無、Windows は `schtasks /Query /TN swing` が成功するか）。CLI からは使わず、`swing-tray` が「起動」を出すかどうかの判定に使う（[`tray.md`](tray.md)）。
 
 ## `swing stop`（`stop.rs`）
 
@@ -59,6 +75,7 @@ WantedBy=default.target        # --system なら multi-user.target
 `ExecStart` の各パスは二重引用符で囲み、`%` を `%%`（systemd の指定子）、`$` を `$$`（環境変数の展開）にし、`\`・`"` をエスケープする（`quote_systemd_arg`）。`WorkingDirectory` は引用符を受け付けない（「path is not absolute」で unit が読み込めなくなる）ので、囲まずに `%` だけ `%%` にする（空白はそのままでよい）。
 
 - `install`: unit を書き出し → `systemctl [--user] daemon-reload` → `systemctl [--user] enable [--now] swing`（`--no-start` なら `--now` を付けない）。`--system` でなければ続けて `loginctl enable-linger <uid>` を試み（引数なしだと呼び出し元の logind セッションが対象になり、WSL のシェルなどセッションが無い環境では「No such device or address」で失敗するため UID を渡す）、失敗したら「ログアウト中も動かし続けるには自分で実行して」という warn を出す（インストール自体は失敗にしない）。
+- `start`: `systemctl [--user] start swing`。
 - `uninstall`: `systemctl [--user] disable --now swing`（失敗は「未登録だったかもしれない」旨の注記のみ）→ unit ファイル削除 → `systemctl [--user] daemon-reload`。
 - `stop`: `systemctl [--user] stop swing`。unit の `ExecStart` はプロセスに SIGTERM を送る（`KillSignal=SIGTERM`。[`up.md`](up.md#終了要求と-exit-codeshutdownexitrequest-shutdownexit) の停止シーケンスに入る）のを `systemd` が待つだけで、登録は残る（`enable` はそのまま。次のログイン/`systemctl start swing`で再び動く）。`Restart=on-failure` なので、正常終了（exit code 0）扱いの `stop`（`systemctl stop` は SIGTERM 送出後 `TimeoutStopSec=60` まで待ってから `exit 0` で終わったとみなす）では自動再起動しない。
 - `status`: unit ファイルが無ければ `not installed` と出して終わる。あれば `systemctl [--user] status swing --no-pager` をそのまま実行し、標準入出力をそのまま引き継ぐ（終了コードは呼び出し元に伝播しない）。
@@ -77,6 +94,7 @@ WantedBy=default.target        # --system なら multi-user.target
 plist の主なキー（`launchd_plist`）: `ProgramArguments` = `[<exe>, "up", "--config", <config>]`、`WorkingDirectory`、`RunAtLoad = true`、`KeepAlive = { SuccessfulExit = false }`（非 0 で終わったときだけ再起動する。systemd の `Restart=on-failure` と同じ意味）、`StandardOutPath`/`StandardErrorPath` = ログパス、`EnvironmentVariables.PATH = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"`（Homebrew の bin を含める）。パス・値は XML エスケープする。
 
 - `install`: 既に `launchctl print gui/<uid>/jp.ne.ama.swing` が成功する（＝ロード済み）なら先に `bootout` してから、plist を書き出す。`--no-start` でなければ `launchctl bootstrap gui/<uid> <plist>` でロードする。
+- `start`: ロード済み（`launchctl print` が成功する）なら `launchctl kickstart gui/<uid>/jp.ne.ama.swing`。ロードされていなければ `launchctl bootstrap gui/<uid> <plist>`（plist が無ければ「swing is not registered as a service」でエラー）。
 - `uninstall`: `launchctl bootout gui/<uid>/jp.ne.ama.swing`（失敗は無視）→ plist ファイル削除。
 - `stop`: `launchctl kill SIGTERM gui/<uid>/jp.ne.ama.swing`（bootout ではなくプロセスに直接 SIGTERM を送るだけ。[`up.md`](up.md#終了要求と-exit-codeshutdownexitrequest-shutdownexit) の停止シーケンスに入る）。`swing up` は exit 0 で終わるので `KeepAlive = { SuccessfulExit = false }` により止まったままになる（次のログインで `RunAtLoad` により再び起動する）。手で再開するなら `launchctl kickstart -k gui/<uid>/jp.ne.ama.swing`。ログインをまたいで止め続けるなら `launchctl disable gui/<uid>/jp.ne.ama.swing` してから `bootout`（戻すときは `enable` → `service install`）。
 - `status`: plist が無ければ `not installed`。あれば `launchctl print gui/<uid>/jp.ne.ama.swing` をそのまま実行。
@@ -101,9 +119,12 @@ plist の主なキー（`launchd_plist`）: `ProgramArguments` = `[<exe>, "up", 
 タスクの XML には環境変数を書けないため、ログ出力先は `up` のコマンドライン引数 `--log-file` で渡す（下記）。
 
 - `install`: XML を一時ファイルに書き、`schtasks /Create /TN swing /XML <tmpfile> /F` で登録してから一時ファイルを削除する。`schtasks` の出力は OEM コードページ（日本語環境では CP932）なので、失敗時の標準エラーと `status` の標準出力は UTF-8 として読めなければ OEM コードページとして変換して表示する。`--no-start` でなければ `schtasks /Run /TN swing` で即時起動する。
+- `start`: `schtasks /Run /TN swing`。
 - `uninstall`: まず `stop`（下記）と同じグレースフルな停止を試みる（失敗しても無視して続ける）。続けて `schtasks /End /TN swing`（失敗は無視、既にグレースフルに止まっていれば no-op）→ `schtasks /Delete /TN swing /F`。
 - `stop`: `swing stop`（[`up.md`](up.md#終了要求と-exit-codeshutdownexitrequest-shutdownexit)）と同じロジック（`stop::run`、上記「`swing stop`」）を、設定ファイルを `service.rs` の既存のパス解決（`resolve_service_paths`。`--config` は取らず、`install` と同じ規則で探す）で見つけて 60 秒のタイムアウトで呼ぶ（ダッシュボード API 経由）。失敗したら warn を出して `schtasks /End /TN swing`（強制終了）にフォールバックする。タスクの登録自体は残る。`swing stop --restart` はプロセスを終了させずに同じ PID のまま再起動する（[`up.md#終了要求と-exit-codeshutdownexitrequest-shutdownexit`](up.md#終了要求と-exit-codeshutdownexitrequest-shutdownexit)）。素の `stop` も `/End` によるフォールバックも、次のログオン時トリガーまで再起動しない。
 - `status`: `schtasks /Query /TN swing /FO LIST /V` を実行し、標準出力をそのまま表示する。失敗（未登録など）なら `not installed` と出す。
+
+`schtasks` はすべて `CREATE_NO_WINDOW` を付けて起動する。GUI サブシステムの `swing-tray`（[`tray.md`](tray.md)）から呼ぶと、付けない場合は呼ぶたびにコンソールウィンドウが一瞬開くため。出力はパイプで受け取るので、CLI から呼んだときの表示は変わらない。
 
 ## `swing up --log-file <path>`
 

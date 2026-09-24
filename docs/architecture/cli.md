@@ -23,14 +23,14 @@
 
 ## dashboard open / rotate-token
 
-実装は `src/login.rs`。認証の仕組みは [`dashboard.md#認証srcauthrs-srcdashboardsessionrs`](dashboard.md#認証srcauthrs-srcdashboardsessionrs)。
+実装は `src/login.rs`（URL の組み立ては `login::request_link`、ブラウザで開くのは `login::open_browser`。どちらも `swing-tray` と共通。[`tray.md`](tray.md)）。認証の仕組みは [`dashboard.md#認証srcauthrs-srcdashboardsessionrs`](dashboard.md#認証srcauthrs-srcdashboardsessionrs)。
 
 - `dashboard open [--config] [--no-browser]`: `POST /api/login-code` で使い捨てのログインコードをもらい、`<[dashboard].public_url>/login?code=<code>`（未設定なら `http://<接続先>`）とコード（`login code (single use, valid for 5 minutes): ...`）を標準出力に出す。`--no-browser` が無ければ続けて OS の既定ブラウザで URL を開く（Linux は `xdg-open`、macOS は `open`、Windows は `rundll32 url.dll,FileProtocolHandler`）。開けなければ標準エラーに案内を出すだけで正常終了する。`[dashboard].ui = false` ならエラー終了する。`swing up` が動いていなければ `swing up is not running (...)` でエラー終了する。`public_url` が未設定のときの接続先は `ApiClient` と同じく未指定アドレスをループバックに直したもの。コンテナ内で実行したときのように、ブラウザから見えるアドレスとずれる場合は `public_url` を設定するか、出力されたコードをログイン画面に貼る。
 - `dashboard rotate-token [--config]`: `POST /api/token/rotate` でトークンを作り直す（ブラウザのセッションはすべて無効になる）。`swing up` が動いていなければ `<state_dir>/dashboard.token` を直接書き換える。
 
-## service install / uninstall / status / stop
+## service install / uninstall / start / stop / status
 
-`swing up` を OS のログイン/システムサービスとして登録する（systemd user unit・launchd LaunchAgent・Windows タスクスケジューラ、[`service.md`](service.md)）。`install` は `--config`（省略時は `SWING_CONFIG` または `./swing.toml`。どちらも無ければエラー）・`--system`（Linux のみ）・`--no-start`（登録だけで起動しない）を取る。`uninstall`/`status`/`stop` は `--system` のみ。`stop` は登録を残したままプロセスだけ止める。OS ごとの実体（`systemctl stop` / `launchctl kill` / Windows は `swing stop` と同じ API 経由）は [`service.md`](service.md) の各 OS の節を参照。上の `stop`（`swing stop`）とは別で、こちらはサービス機構を通す。`uninstall` はどの OS でも止めてから登録を消す。Linux（`systemctl disable --now`）と macOS（`launchctl bootout`）はサービス機構が SIGTERM を送るのでそれ自体がグレースフル、Windows は `schtasks /End` が強制終了なので、その前に `swing stop` と同じ手順で止めてから `/End` → `/Delete` する。
+`swing up` を OS のログイン/システムサービスとして登録する（systemd user unit・launchd LaunchAgent・Windows タスクスケジューラ、[`service.md`](service.md)）。`install` は `--config`（省略時は `SWING_CONFIG` または `./swing.toml`。どちらも無ければエラー）・`--system`（Linux のみ）・`--no-start`（登録だけで起動しない）・`--no-tray`（Windows と macOS で、`swing-tray` をログイン時に起動する登録をしない。[`service.md#タスクトレイの自動起動windows-と-macos`](service.md#タスクトレイの自動起動windows-と-macos)）を取る。`uninstall`/`status`/`stop` は `--system` のみ。`start` は登録済みのサービスをサービス機構から起動する（`systemctl start` / `launchctl kickstart`（未ロードなら `bootstrap`）/ `schtasks /Run`）。`stop` は登録を残したままプロセスだけ止める。OS ごとの実体（`systemctl stop` / `launchctl kill` / Windows は `swing stop` と同じ API 経由）は [`service.md`](service.md) の各 OS の節を参照。上の `stop`（`swing stop`）とは別で、こちらはサービス機構を通す。`uninstall` はどの OS でも止めてから登録を消す。Linux（`systemctl disable --now`）と macOS（`launchctl bootout`）はサービス機構が SIGTERM を送るのでそれ自体がグレースフル、Windows は `schtasks /End` が強制終了なので、その前に `swing stop` と同じ手順で止めてから `/End` → `/Delete` する。
 
 ## publish
 

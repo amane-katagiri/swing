@@ -12,7 +12,8 @@
 | [`architecture/kubo.md`](architecture/kubo.md) | MFS の使い方、Kubo RPC、Kubo のバージョン |
 | [`architecture/up.md`](architecture/up.md) | `swing up`（supervisor）と Kubo の起動・設定・終了（`kubo.rs`） |
 | [`architecture/gateway.md`](architecture/gateway.md) | 内蔵 gateway（`gateway.rs`）: Host 振り分けと Kubo gateway へのプロキシ |
-| [`architecture/service.md`](architecture/service.md) | `swing service install / uninstall / status / stop`（systemd / launchd / タスクスケジューラ）、`swing stop`（`stop.rs`） |
+| [`architecture/service.md`](architecture/service.md) | `swing service install / uninstall / start / stop / status`（systemd / launchd / タスクスケジューラ）、`swing stop`（`stop.rs`） |
+| [`architecture/tray.md`](architecture/tray.md) | タスクトレイ（`swing-tray`、Windows と macOS）: メニュー、状態の表示、ダッシュボード API の使い方 |
 | [`architecture/docker.md`](architecture/docker.md) | Dockerfile、compose、外部 Kubo コンテナの設定、compose から `swing up` への移行 |
 | [`architecture/dashboard.md`](architecture/dashboard.md) | `swing up` の寿命で常時動く Web ダッシュボード兼制御 API（起動と終了、設定、ガード、静的ファイル、agent 未準備時の扱い） |
 | [`architecture/dashboard/http-api.md`](architecture/dashboard/http-api.md) | ダッシュボードの HTTP API |
@@ -72,6 +73,11 @@ swing/
   tests/
     kubo_integration.rs          Kubo 連携の統合テスト（#[ignore]）
     nostr_relay_integration.rs   relay 連携の統合テスト（#[ignore]）
+  tray/              タスクトレイ（`swing-tray`）の別クレート。workspace のメンバーで、`swing` クレートをライブラリとして使う。詳細は architecture/tray.md
+    src/status.rs    状態から表示・使える項目・アイコンを決める純粋関数
+    src/worker.rs    ダッシュボード API のポーリングとメニュー操作（tokio）
+    src/app.rs       tao のイベントループとトレイアイコン（Windows / macOS のみ）
+    assets/icon-64.png
   docker/kubo-init.d/  Kubo コンテナの起動スクリプト（外部 Kubo の設定。compose 専用）
   Dockerfile, compose.yaml, .env.example, swing.example.toml
   .github/workflows/release.yml  配布用バイナリのビルドとドラフトリリース（[ビルドとリリース](#ビルドとリリース)）
@@ -87,8 +93,9 @@ swing/
 ```
 swing up      [--config <path>] [--log-file <path>]
 swing stop    [--config <path>] [--restart] [--timeout <secs>]
-swing service install   [--config <path>] [--system] [--no-start]
+swing service install   [--config <path>] [--system] [--no-start] [--no-tray]
 swing service uninstall [--system]
+swing service start     [--system]
 swing service stop      [--system]
 swing service status    [--system]
 swing dashboard open         [--config <path>] [--no-browser]
@@ -104,6 +111,8 @@ swing webring [<key>...] [--depth <N>] [--format <text|dot|mermaid>] [--config <
 swing key generate
 swing config example
 swing config env-example
+
+swing-tray [--config <path>]
 ```
 
 `swing up` は Kubo（`[kubo].managed = true` なら）と mirror-agent の中身を 1 プロセスの supervisor として動かす（[`architecture/up.md`](architecture/up.md)）。`managed = false` なら既に動いている Kubo（外部のもの）を待ってから同じことをする。mirror-agent を単体で起動するサブコマンドは無く、常に `swing up` を経由する。`swing service` は `swing up` を OS の常駐に登録する（[`architecture/service.md`](architecture/service.md)）。`swing stop`／`swing service stop` は動いている `swing up` にグレースフルな停止・再起動を要求する（[`architecture/up.md#終了要求と-exit-codeshutdownexitrequest-shutdownexit`](architecture/up.md#終了要求と-exit-codeshutdownexitrequest-shutdownexit)）。`--restart` による再起動はプロセスを終了させず、同じプロセス内で設定を読み直して動き直す（exit code でサービスマネージャに再起動させる古い経路は無くなった）。
@@ -240,7 +249,8 @@ Windows 向けのクロスビルド（WSL / Linux から）: `cargo install carg
 | `x86_64-pc-windows-msvc` | windows-latest | する | `cargo build` |
 
 - Rust は 1.97（Dockerfile と同じ）。Linux は glibc のバージョンに依存しないよう musl の静的バイナリにする。
-- 成果物は `swing-<ref>-<target>.tar.gz`（Windows は `.zip`）で、中身は `swing`（`swing.exe`）・`LICENSE`・`README.md`。Kubo は同梱しない。
+- workspace には `swing` と `swing-tray`（`tray/`）がある。fmt / clippy / test は `--workspace` で回す。Linux は `-p swing` だけをビルドし、Windows と macOS は `--workspace` でビルドする。
+- 成果物は `swing-<ref>-<target>.tar.gz`（Windows は `.zip`）で、中身は `swing`（`swing.exe`）・`LICENSE`・`README.md`。Windows と macOS には `swing-tray`（`swing-tray.exe`）も入れる。Kubo は同梱しない。
 - タグのときは、タグ名と `Cargo.toml` の `version` が一致しないと失敗する（`v0.1.0` と `0.1.0`）。全 target が通ると `SHA256SUMS` を付けた**ドラフト**のリリースを作る。公開は GitHub 上で手動で行う。
 - 手動実行のときはリリースを作らず、Actions の artifact として残すだけ。
 - `.env.example` と `swing.example.toml` は、テストで生成結果とバイト単位で比べるため、`.gitattributes` で LF に固定している（Windows のランナーで checkout 時に CRLF にされないように）。

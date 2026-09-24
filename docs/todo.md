@@ -7,6 +7,7 @@
 | 中 | NIP-46: iPhone の Clave で、リンクの貼り付け・確認の署名・閉じているときの応答（プッシュで起きるか。`nostrconnect://` で指定した relay でも起きるのか、`wss://relay.powr.build` でないと起きないのか）を確かめ、画面と README の案内を合わせる | [NIP-46 対応](log/2026-09-24-nip46-remote-signer.md) |
 | 低 | NIP-46: セットアップ後に、同じアカウントのまま秘密鍵と署名アプリを切り替える操作をダッシュボードに用意する（設定画面に「署名の方法」を置く案）。秘密鍵に切り替えるときは今の公開鍵と同じ鍵だけを受け付け、秘密鍵を消す前に確認する。秘密鍵が環境変数（`SWING_NOSTR_SECRET_KEY`）由来なら、ダッシュボードからは消せないので案内だけにする。アカウント自体を変える操作は作らない（Follow Set・公開したサイト・レプリカ報告が前のアカウントに残るため。手作業で `secret_key` か `remote-signer.json` を書き換える）。今は `swing up` を止めて `remote-signer.json`（か `secret_key`）を消し、セットアップからやり直す（署名アプリどうしのつなぎ直しは公開画面からできる） | [NIP-46 対応](log/2026-09-24-nip46-remote-signer.md) |
 | 低 | NIP-46: 署名アプリが作った `bunker://` URI を貼って接続する方法（署名アプリ起点）。今は SWING が出す `nostrconnect://` の QR コードだけ | [NIP-46 対応](log/2026-09-24-nip46-remote-signer.md) |
+| 低 | `signer::tests::answers_from_a_signer_whose_clock_runs_behind_are_received` がまれに落ちる（`src/signer.rs` の `remote.sign(...).await.unwrap()`）。`RemoteSigner` の応答待ちが 5 秒なので、マシンが重いと間に合わない可能性がある。`cargo test --workspace` を 1 回だけ回したときに 1 度落ち、直後の単独実行と全体の再実行では通った | [タスクトレイ](log/2026-09-24-tray-icon.md)の検証中に見つけた |
 | 中 | NIP-05 の実 HTTP 経路の統合テスト（ローカル TLS エンドポイント相手、`#[ignore]`） | レビュー |
 | 中 | 取得に失敗した CID を覚えて指数バックオフで再試行する。今は poll ごとに同じ CID の取得を試み、そのたびに最大 `SWING_FETCH_IDLE_TIMEOUT` の間、並行枠を 1 つ使う | レビュー（DoS） |
 | 低 | レプリカ報告 1 件が持てる `cid` タグの数に上限が無い。誰でも 1 件の報告に大量の `cid` タグを詰め込める（サイトイベント・レプリカ報告・Follow Set の取得件数、1 作者が持つ `d` の数、Follow Set 1 件の `p` タグ数、`webring::crawl` のノード総数には [取得と表示の上限](log/2026-09-23-fetch-and-display-budgets.md) で上限を入れた） | レビュー（DoS） |
@@ -26,6 +27,9 @@
 | 低 | `compose.yaml` の `mirror.env_file: .env` が必須指定なので、`.env` が無いと `docker compose config` も失敗する（`--env-file` では代わりにならない） | 結合確認 |
 | 低 | 自分専用のゲートウェイ（外出先からミラー済みサイトを見る）。ダッシュボードの認証と同じ `auth::sign_session` を用途ラベル `gateway-session` で使い、`[gateway]` に認証必須の `private_hosts` を分けて置く。ダッシュボードとは別オリジンにする（ミラーしたサイトの JS が cookie 付きで `/api/*` を叩けないように）。cookie は `Secure` 付き・期限 7 日程度。パス形式（`/ipfs/<cid>/`）だとサイトどうしが同じオリジンになり、subdomain 形式（`<cid>.ipfs.<host>`）だと 2 階層のワイルドカード証明書が要る。どちらにするかは未決 | [ダッシュボードの認証](log/2026-09-23-dashboard-auth.md) |
 | 低 | gateway の TLS（`rustls-acme`）。前段（Cloudflare Tunnel など）に任せる運用で当面は不要だが、直接インターネットに晒す構成では要る | [配布方式の設計](log/2026-09-21-distribution-design.md)、[配布方式の実装](log/2026-09-23-distribution-implementation.md) |
+| 中 | タスクトレイ: Windows と macOS の実機で確かめる（メニューの各操作、状態の表示の切り替わり、`schtasks` を呼ぶときにコンソールウィンドウが出ないこと、macOS で Dock に出ないこと、`service install` の後にログインし直してトレイが出ること、Windows のタスクマネージャーのスタートアップ アプリに出ること） | [タスクトレイ](log/2026-09-24-tray-icon.md) |
+| 低 | タスクトレイ: Linux 対応（`ksni` なら Rust だけで書けて musl でもビルドできる。GNOME は拡張を入れないと表示されない） | [タスクトレイ](log/2026-09-24-tray-icon.md) |
+| 低 | タスクトレイ: macOS のテンプレート画像（白黒）のアイコン、`swing-tray.exe` のファイルアイコン（exe に埋め込むリソース） | [タスクトレイ](log/2026-09-24-tray-icon.md) |
 | 低 | インストーラとパッケージ。Homebrew tap（kubo は `depends_on "kubo"` で解決）、`install.sh`、winget（Inno の installer 型、`ipfs.exe` 同梱、ユーザー権限でのインストール、`InstallerType: inno`、インストール時にサービスを起動しない） | [配布方式の設計](log/2026-09-21-distribution-design.md) |
 | 低 | release ワークフローに macOS の ad-hoc 署名（`rcodesign`）と GitHub の artifact attestation を入れる。attestation は private リポジトリだと GitHub Enterprise Cloud が要るので、public にしてから | [配布方式の設計](log/2026-09-21-distribution-design.md)、[release ワークフロー](log/2026-09-24-release-workflow-and-kubo-signature.md) |
 | 低 | `content` の長さ上限。サーバ側では切らず `/api/sites` に全文を返している（表示はクライアントで 200 文字に切る） | 監査（自己申告の信用） |

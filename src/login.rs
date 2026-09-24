@@ -23,7 +23,7 @@ fn browser_command(url: &str) -> Command {
     }
 }
 
-fn open_browser(url: &str) -> Result<()> {
+pub fn open_browser(url: &str) -> Result<()> {
     let mut cmd = browser_command(url);
     let program = cmd.get_program().to_string_lossy().into_owned();
     let status = cmd
@@ -38,7 +38,13 @@ fn open_browser(url: &str) -> Result<()> {
     Ok(())
 }
 
-pub async fn open(config: &Config, no_browser: bool) -> Result<()> {
+pub struct LoginLink {
+    pub url: String,
+    pub code: String,
+    pub expires_in: u64,
+}
+
+pub async fn request_link(config: &Config) -> Result<LoginLink> {
     if !config.dashboard.ui {
         bail!("the dashboard UI is disabled ([dashboard].ui = false)");
     }
@@ -52,14 +58,22 @@ pub async fn open(config: &Config, no_browser: bool) -> Result<()> {
         .public_url
         .clone()
         .unwrap_or_else(|| format!("http://{}", client.addr()));
-    let url = format!("{base}/login?code={}", dto.code);
-    println!("{url}");
+    Ok(LoginLink {
+        url: format!("{base}/login?code={}", dto.code),
+        code: dto.code,
+        expires_in: dto.expires_in,
+    })
+}
+
+pub async fn open(config: &Config, no_browser: bool) -> Result<()> {
+    let link = request_link(config).await?;
+    println!("{}", link.url);
     println!(
         "login code (single use, valid for {} minutes): {}",
-        dto.expires_in / 60,
-        dto.code
+        link.expires_in / 60,
+        link.code
     );
-    if !no_browser && let Err(e) = open_browser(&url) {
+    if !no_browser && let Err(e) = open_browser(&link.url) {
         eprintln!(
             "could not open a browser ({e:#}); open the URL above or enter the code on the login screen"
         );
