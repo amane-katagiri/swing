@@ -29,6 +29,7 @@ SWING（Nostr + IPFS 個人サイト相互ミラー）のリポジトリで作�
 
 - コメントは原則書かない。書くなら「自然な実装を避けた理由」を 1 行だけ。
 - `cargo fmt` / `cargo clippy --all-targets -- -D warnings` / `cargo test` を通す。
+- Windows 向けのコード（`#[cfg(windows)]` など）に触れたら `cargo xwin clippy --workspace --target x86_64-pc-windows-msvc --all-targets -- -D warnings` も通す。Windows の実行ファイルは `cargo xwin build --release --workspace --target x86_64-pc-windows-msvc` で作る。素の `cargo check --target x86_64-pc-windows-msvc` は `ring` の C コンパイルで止まるので使わない。
 - テストで公開 relay や公開 IPFS に接続しない。統合テストはローカルの Kubo / relay に限定し `#[ignore]` にする。
 - 環境変数は `SWING_` 接頭辞で統一する。
 - ダッシュボードに要素を足すときは、既存のクラス（`swing-panel`・`swing-btn`・`swing-status` など）と余白トークン（`--swing-space-*`）だけで組み、隣接する要素との余白を必ず確認する。状態表示は既存のもの（例: `#publish-status`）と同じ置き方にする。`swing-status` は上の余白を持たないので、ボタン列などの直後に置くなら余白を足す。見た目の変更はデモ環境（`docker/demo/demo.sh up`）で実際に表示してから報告する。
