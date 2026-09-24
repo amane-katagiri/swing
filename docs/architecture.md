@@ -264,3 +264,14 @@ Windows 向けのクロスビルド（WSL / Linux から）: `cargo install carg
 - タグのときは、タグ名と `Cargo.toml` の `version` が一致しないと失敗する（`v0.1.0` と `0.1.0`）。全 target が通ると `SHA256SUMS` を付けた**ドラフト**のリリースを作る。公開は GitHub 上で手動で行う。
 - 手動実行のときはリリースを作らず、Actions の artifact として残すだけ。
 - `.env.example` と `swing.example.toml` は、テストで生成結果とバイト単位で比べるため、`.gitattributes` で LF に固定している（Windows のランナーで checkout 時に CRLF にされないように）。
+
+サードパーティの action・ツール:
+
+| 名前 | 役割 |
+|---|---|
+| `dtolnay/rust-toolchain` | 指定バージョンの Rust ツールチェインをインストール |
+| `Swatinem/rust-cache` | Cargo のビルドキャッシュ |
+| `taiki-e/install-action` | `cargo-zigbuild` をビルド済みバイナリからインストール |
+| ziglang（PyPI、`pip3 install`） | `cargo zigbuild` が使う Zig 本体 |
+
+サードパーティおよび `actions/*`（`actions/checkout`・`actions/upload-artifact`・`actions/download-artifact`）の action はフルコミット SHA に固定し、末尾に `# vN` コメントでタグ相当のバージョンを添えている。ziglang は pip の `==` でバージョンを固定する。Rust ツールチェインのバージョン自体はこれらのピン留めとは別で、ワークフローの `toolchain:` 入力（環境変数 `RUST_TOOLCHAIN`）で決まる。選定理由と信頼性の評価は [2026-09-25 の log](log/2026-09-25-release-actions-rationale.md) を参照。
