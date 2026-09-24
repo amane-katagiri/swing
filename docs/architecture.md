@@ -243,7 +243,7 @@ docker run -d --rm -p 127.0.0.1:18080:8080 scsibug/nostr-rs-relay
 cargo test --test nostr_relay_integration -- --ignored --test-threads=1
 ```
 
-Windows 向けのクロスビルド（WSL / Linux から）: `cargo install cargo-xwin` と `lld-link`（Homebrew なら `brew install lld`）を用意して `cargo xwin clippy --target x86_64-pc-windows-msvc --all-targets -- -D warnings` / `cargo xwin build --release --target x86_64-pc-windows-msvc`。macOS 向けは `ring` の C コードに macOS SDK のヘッダが要り、WSL からは `cargo check` も通らないので、下の release ワークフローで確かめる。
+Windows 向けのクロスビルド（WSL / Linux から）: `cargo install cargo-xwin` と `lld-link`（Homebrew なら `brew install lld`）を用意して `cargo xwin clippy --target x86_64-pc-windows-msvc --all-targets -- -D warnings` / `cargo xwin build --release --target x86_64-pc-windows-msvc`。macOS 向けは `ring` の C コードに macOS SDK のヘッダが要り、SDK の無い Linux からは `cargo check` も通らないので、下の release ワークフローで確かめる。
 
 ## ビルドとリリース
 

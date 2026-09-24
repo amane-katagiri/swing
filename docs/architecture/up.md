@@ -91,7 +91,7 @@
 
 - `IPFS_PATH=<repo>`。stdin は `/dev/null` 相当、stdout/stderr は pipe。
 - Linux（`cfg(target_os = "linux")`）のみ、`pre_exec` で `PR_SET_PDEATHSIG(SIGTERM)` を設定する。swing プロセスが SIGKILL 等で消えても、Linux では子の Kubo に SIGTERM が届く。
-- Windows（`cfg(windows)`）のみ、Job Object を作って `SetInformationJobObject`（`JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`）で「最後のハンドルが閉じたら中のプロセスを道連れに kill する」設定にし、`AssignProcessToJobObject` で子プロセスを割り当てる。Job Object の HANDLE は `Daemon` が持ち、`Drop` で `CloseHandle` する（swing が `TerminateProcess` 相当で消えれば、OS がハンドルを閉じて Kubo も一緒に落ちる。Linux の `PR_SET_PDEATHSIG` の Windows での相当品）。**この経路は未検証**（[`../../docs/architecture.md`](../architecture.md) の実行環境では Windows SDK が無く `cargo check --target x86_64-pc-windows-msvc` すら通らないため、API シグネチャを `windows-sys` のソースで確認しただけ）。macOS にはこの種の機構が無く、`kill_on_drop(true)` と次回起動時の孤児回収に頼る。
+- Windows（`cfg(windows)`）のみ、Job Object を作って `SetInformationJobObject`（`JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`）で「最後のハンドルが閉じたら中のプロセスを道連れに kill する」設定にし、`AssignProcessToJobObject` で子プロセスを割り当てる。Job Object の HANDLE は `Daemon` が持ち、`Drop` で `CloseHandle` する（swing が `TerminateProcess` 相当で消えれば、OS がハンドルを閉じて Kubo も一緒に落ちる。Linux の `PR_SET_PDEATHSIG` の Windows での相当品）。**この経路は Windows の実機では未検証**（型は `cargo xwin clippy` で確かめている。[`architecture.md`](../architecture.md) のビルドの節を参照）。macOS にはこの種の機構が無く、`kill_on_drop(true)` と次回起動時の孤児回収に頼る。
 - 標準出力・標準エラーは 1 行ごとに `tracing::info!`（stdout）/ `tracing::warn!`（読み取りエラー時）で `target: "kubo"`、`stream = "stdout" | "stderr"` フィールド付きで転送する（Kubo 自身のログレベルは反映せず、行の内容をそのまま info として流す）。標準エラーの行に `"lock"` が含まれていたら `Daemon` 内の `Arc<AtomicBool>` を立てる（`Daemon::saw_repo_lock_error()`）。Kubo は他のデーモンが同じ repo の lock を持っているとき、この語を含むメッセージ（`someone else has the lock` 等）を標準エラーに出すため。
 
 ## ヘルス待ち（`kubo::wait_healthy`）
