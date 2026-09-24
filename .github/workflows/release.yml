@@ -26,15 +26,15 @@ jobs:
           - { os: macos-latest, target: x86_64-apple-darwin, check: false, zig: false }
           - { os: windows-latest, target: x86_64-pc-windows-msvc, check: true, zig: false }
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
-      - uses: dtolnay/rust-toolchain@master
+      - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # v1
         with:
           toolchain: ${{ env.RUST_TOOLCHAIN }}
           targets: ${{ matrix.target }}
           components: clippy, rustfmt
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@49a0bdc70d2e1b713ca9e2869b211fcce03d3c1c # v2
         with:
           key: ${{ matrix.target }}
 
@@ -56,9 +56,9 @@ jobs:
       - name: Install cargo-zigbuild
         if: matrix.zig
         run: |
-          pip3 install --user ziglang
+          pip3 install --user ziglang==0.16.0
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
-      - uses: taiki-e/install-action@v2
+      - uses: taiki-e/install-action@9983c65e42da123ff25d1f78505eb6de315aa172 # v2
         if: matrix.zig
         with:
           tool: cargo-zigbuild
@@ -90,7 +90,7 @@ jobs:
           fi
           rm -r "dist/$name"
 
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: ${{ matrix.target }}
           path: dist/*
@@ -103,7 +103,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           path: dist
           merge-multiple: true
