@@ -181,3 +181,35 @@ impl KuboStore for FakeKubo {
         Ok(!self.s.lock().unwrap().files.contains(cid))
     }
 }
+
+// Refuses `connect` like Primal does for an app it already knows, so the tests fail if SWING ever sends one.
+pub(crate) struct TestSigner {
+    pub sign: bool,
+}
+
+impl nostr_connect::prelude::NostrConnectSignerActions for TestSigner {
+    fn approve(&self, _app: &PublicKey, req: &NostrConnectRequest) -> bool {
+        match req {
+            NostrConnectRequest::Connect { .. } => false,
+            NostrConnectRequest::SignEvent(_) => self.sign,
+            _ => true,
+        }
+    }
+}
+
+pub(crate) fn serve_test_signer(uri: &str, user: &Keys, sign: bool) {
+    use nostr_connect::prelude::{NostrConnectKeys, NostrConnectRemoteSigner};
+
+    let uri = NostrConnectUri::parse(uri).unwrap();
+    let remote = NostrConnectRemoteSigner::from_uri(
+        uri,
+        NostrConnectKeys::new(Keys::generate(), user.clone()),
+        None,
+    )
+    .unwrap();
+    tokio::spawn(async move {
+        // The app has to be listening before the signer answers the QR code.
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        remote.serve(TestSigner { sign }).await
+    });
+}

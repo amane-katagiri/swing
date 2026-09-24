@@ -15,6 +15,7 @@ pub mod mfs;
 pub mod mirror;
 pub mod nip05;
 pub mod nostr;
+pub mod pair;
 pub mod policy;
 pub mod publish;
 pub mod replicas;

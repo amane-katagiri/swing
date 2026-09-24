@@ -6,7 +6,7 @@
 
 - `<key>` は npub / hex / nprofile を受け付ける。
 - 「Follow Set」は kind 30000、`d = mirror_set` のうち、作者ごとに NIP-01 の置き換え規則で最新のもの。`created_at` が現在時刻より 900 秒（`nostr::MAX_FUTURE_SKEW`）を超えて先のものは、それが relay から取れた最新であっても無いものとして扱う（`RelayClient::fetch_follow_set` / `fetch_follow_sets`）。「サイトごとの最新のサイトイベント」（sites・replicas・webring で使う `nostr::select_latest`）も同じ基準で、先すぎる `created_at` のイベントは選ばない。
-- `up`・`publish`・`service install`/`uninstall` 以外は読み取り専用で、`state.json` も MFS も OS のファイルも変えない（`mirror add` / `remove` は Follow Set を relay に送る。`stop`／`service stop` は動いているプロセスに停止・再起動を要求するだけで、ファイルは変えない）。`service install`/`uninstall` は OS のサービス定義ファイル（systemd unit / launchd plist / タスクスケジューラのタスク）を書く・消す。
+- `up`・`publish`・`service install`/`uninstall`・`signer pair` 以外は読み取り専用で、`state.json` も MFS も OS のファイルも変えない（`mirror add` / `remove` は Follow Set を relay に送る。`stop`／`service stop` は動いているプロセスに停止・再起動を要求するだけで、ファイルは変えない）。`service install`/`uninstall` は OS のサービス定義ファイル（systemd unit / launchd plist / タスクスケジューラのタスク）を書く・消す。`signer pair` は `<state_dir>/remote-signer.json` を書く。
 - `up` は処理を始める前に `<[agent].state_dir>/swing.lock` のインスタンスロックを取る（[`up.md#多重起動の防止lockrs`](up.md#多重起動の防止lockrs)）。同じ `state_dir` に対して既に動いていれば、起動側のエラーで即座に終了する。
 - `status`・`mirror add`・`mirror remove`・`stop`／`service stop`・`dashboard open`・`dashboard rotate-token` は relay/Kubo に直接つながず、動いている `swing up` のダッシュボード API（`[dashboard].listen`、既定 `http://127.0.0.1:8082`）を `src/api_client.rs::ApiClient` 経由で叩く。`<[agent].state_dir>/dashboard.token` を読んで `Authorization: Bearer` で送るので、`swing up` と同じ設定（同じ `state_dir`）を読めて、そのファイルを読めるユーザーで実行する必要がある。API が `[dashboard].listen` を未指定アドレス（`0.0.0.0` / `::`）で待ち受けていても、クライアントは接続先と `Host` ヘッダをループバックの同じポートへ正規化する。API に接続できなければ `status`・`mirror add`・`mirror remove` は `swing up is not running (cannot connect to <addr>)` でエラー終了し（非ゼロ終了）、`stop`／`service stop` は `not running` を出して正常終了（終了コード 0）する。`sites`・`replicas`・`webring`・`mirror list`・`publish` はこの API を経由せず relay/Kubo に直接つなぐので、`swing up` が動いていなくても使える。
 - `[nostr].secret_key`（`SWING_NOSTR_SECRET_KEY`）は必須ではない。`signer::Signer::require` を呼ぶコマンド（`sites`・`replicas`・`webring`・`mirror list`・`publish`）は秘密鍵も `<state_dir>/remote-signer.json`（NIP-46 の署名アプリ。[`signer.md`](signer.md)）も無ければエラー終了するが、`status`・`mirror add`・`mirror remove`・`stop`／`service stop` はダッシュボード API 経由で鍵を直接使わないので鍵が無くても動く。ただし鍵が無い `swing up` はセットアップモードで動いており（[`up.md#セットアップモード鍵未設定`](up.md#セットアップモード鍵未設定)）、そこでは `status`・`mirror add`・`mirror remove` は 503 `agent is not configured` を返す。
@@ -105,6 +105,17 @@ state は読まない。
 - `mermaid`: `graph LR`。ノード ID は `n<番号>`（hex 順）、ラベルは名前と縮めた npub で、`#` `&` `"` `<` `>` はエンティティにする。起点は `root` クラス、双方向の組は `<-->` にする。`referencing` は含めない。
 - Follow Set・サイトイベントのどれかの取得に失敗したらエラーで終了する。
 - たどるアカウントの総数は `nostr::budget::MAX_CRAWL_NODES`（1000）を超えない。超えて見つかったアカウントは crawl に加えず件数だけ数え、`text` の末尾に `(crawl stopped at the 1000-account budget; not reached: N)` として出す（深さの上限外で表示していない `beyond` とは別のカウンタ）。アカウントの名前に使う `d` も 1 アカウントあたり先頭 50 件までに切り詰める。
+
+## signer pair
+
+NIP-46 の署名アプリと、ターミナルに出した QR コードでペアリングし、`<state_dir>/remote-signer.json` に保存する（実装は `src/pair.rs`、ペアリングそのものはダッシュボードと同じ `signer::Pairing`。[`signer.md#ペアリングpairing`](signer.md#ペアリングpairing)）。`--config` と `--relay <URL>`（署名アプリとのやりとりに使う relay。繰り返し指定で最大 5 個、既定 `wss://relay.primal.net`）を取る。ダッシュボード API は使わず、動いている `swing up` があってもなくても同じように動く。
+
+1. `[nostr].secret_key`（`SWING_NOSTR_SECRET_KEY`）が設定されていれば、QR を出す前にエラーで終了する（鍵と `remote-signer.json` の両方があると `Signer::load` がエラーにするため）。
+2. `--relay` を `signer::parse_pairing_relays`（ダッシュボードの `POST /api/setup/signer` と共通）で確かめ、`PairingRequest::for_config` で perms・probe の kind・待ち時間をダッシュボードと同じにして `Pairing::start` する。
+3. `signer::qr_text` で QR コードを Unicode のブロック文字（上下 2 モジュールで 1 文字、quiet zone 付き）で標準出力に出し、続けて `nostrconnect://` のリンクと `scan the QR code with your signer app, or paste the link into it (waiting up to 10 minutes)` を出す。QR は明るいモジュールをブロックで描くので、暗い背景のターミナルで正しく読める。
+4. 状態を 200ms 間隔で見る。署名アプリが接続したら（`Checking`）`connected as <npub>; asking the signer app to sign a check event...` を出す。失敗（`Failed`、10 分のタイムアウトを含む）ならエラーで終了する。
+5. `remote-signer.json` が既にあるときはつなぎ直しとして扱い、そのファイルのユーザーと同じ公開鍵の署名アプリだけを受け付ける。違えば、接続した時点（確認の署名をリクエストする前）で `the signer app signs as <npub>, not as this swing's <npub>; connect the same Nostr account` でエラー終了し、ファイルは変えない。
+6. `Ready` になったら `remote-signer.json` を書く。確認の署名が通れば `the check event was signed`、通らなければ標準エラーに警告を出す（保存はする）。最後に `paired: swing now signs as <npub> (saved to <path>)` と、動いている `swing up` には再起動するまで反映されないこと（`swing stop --restart` かサービスの再起動）を出す。`remote-signer.json` 以外の設定は書かない。
 
 ## key generate
 

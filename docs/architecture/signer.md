@@ -39,19 +39,21 @@ SWING が出すイベント（サイトイベント・Follow Set・レプリカ�
 ```
 
 - `app_secret_key` は SWING が作った使い捨ての鍵で、署名アプリとの暗号化にだけ使う。ユーザーとして署名する力は無く、署名アプリが許可した範囲のリクエストしか通らない。`RemoteSignerFile` の `Debug` はこの値を出さない。ペアリングの secret は保存しない（以後は使わないため）。
-- ファイルを書くのはセットアップ（`POST /api/setup`）と、署名アプリとのつなぎ直し（`POST /api/signer/reconnect`）だけ。つなぎ直しは、今と同じ Nostr アカウント（公開鍵）で署名する署名アプリでなければ受け付けない。秘密鍵に戻すには、`swing up` を止めてこのファイルを消し、セットアップモードからやり直す。
+- ファイルを書くのはセットアップ（`POST /api/setup`）と、署名アプリとのつなぎ直し（`POST /api/signer/reconnect`）と、`swing signer pair`（[`cli.md#signer-pair`](cli.md#signer-pair)）だけ。`swing signer pair` は秘密鍵が設定されていれば書かず、ファイルが既にあればつなぎ直しと同じく同じアカウントの署名アプリだけを受け付ける。つなぎ直しは、今と同じ Nostr アカウント（公開鍵）で署名する署名アプリでなければ受け付けない。秘密鍵に戻すには、`swing up` を止めてこのファイルを消し、セットアップモードからやり直す。
 
 ## ペアリング（`Pairing`）
 
 QR コードを使う `nostrconnect://`（クライアント起点）の接続だけを実装している。
 
 1. `Pairing::start(PairingRequest)` がアプリ鍵と 16 バイトの secret を作り、`nostrconnect_uri` で URI を組み立てて、ペアリングのタスクを spawn する。URI のクエリは `relay`（複数可）・`secret`・`perms`・`name=SWING`・`metadata={"name":"SWING"}`。`metadata` は `name` を読まない古い署名アプリ（rust-nostr のパーサを含む）のために付けている。
-2. `perms` は `requested_perms(kinds)` が作り、`get_public_key` と、SWING が署名する 3 種類（`[nostr].replica_event_kind`・`[nostr].site_event_kind`・`30000`）の `sign_event:<kind>` を並べる。perms はリクエストでしかなく、自動で許可するかどうかは署名アプリが決める（Amber は接続時に perms を見せず、承認のときに「常に許可」を選ぶか、後からアプリごとの権限で kind ごとに許可する）。
+2. `PairingRequest::for_config` が `[nostr]` の kind から perms・probe の kind と、`PAIRING_TIMEOUT`・`RELAY_CONNECT_TIMEOUT`・`PROBE_TIMEOUT` を組み立てる（ダッシュボードと `swing signer pair` で共通）。relay は `parse_pairing_relays` で確かめる（空白を除いて 1〜`MAX_PAIRING_RELAYS`（5）個、`ws`/`wss` の URL）。`perms` は `requested_perms(kinds)` が作り、`get_public_key` と、SWING が署名する 3 種類（`[nostr].replica_event_kind`・`[nostr].site_event_kind`・`30000`）の `sign_event:<kind>` を並べる。perms はリクエストでしかなく、自動で許可するかどうかは署名アプリが決める（Amber は接続時に perms を見せず、承認のときに「常に許可」を選ぶか、後からアプリごとの権限で kind ごとに許可する）。
 3. タスクは `NostrConnect`（`PAIRING_TIMEOUT`、10 分）で署名アプリからの `connect` 応答（secret が一致するもの）を待ち、続けて `get_public_key` を送る。ユーザーの公開鍵と署名アプリの公開鍵が分かったら状態を `Checking` にする。待っている間、始めてから `RELAY_CONNECT_TIMEOUT`（15 秒）たった時点で relay に 1 つもつながっていなければ、`could not connect to the relay (<relay>)` で失敗にする（つながらない relay で 10 分待たせないため）。
 4. 保存するのと同じ内容から `RemoteSigner` を作り直し（`PROBE_TIMEOUT`、60 秒。ユーザーが署名アプリで承認する時間を含む）、kind `[nostr].replica_event_kind` の空のイベント（`alt` は `SWING signer check`）の署名をリクエストする（probe）。再起動後と同じ手順（`connect` を送らずにリクエストだけを送る）を通るので、再起動後も署名できることをここで確かめる。probe の署名は relay に送らない。
 5. probe が成功すれば `Ready { probe_signed: true }`、失敗しても `Ready { probe_signed: false, probe_error }` にする（接続自体はできているので、署名アプリの設定を直してから続けられる）。3 までに失敗したら `Failed(メッセージ)`。probe が通っても、署名アプリが自動で許可したのか、ユーザーがその場で承認したのかは区別できない。画面は「確認の署名が通った」とだけ伝え、自動で署名されるとは言わない。
 
-状態は `AppState.pairing: Mutex<Option<Pairing>>` に 1 つだけ持つ。新しいペアリングを始めると古いものは捨て、`Drop` でタスクを止める。セットアップかつなぎ直しが成功したら `None` に戻す。ペアリングはセットアップモードの間のほか、署名アプリで動いている間も始められる（署名アプリ側で接続が切れたときのつなぎ直し）。API は [`dashboard/http-api.md#post-apisetupsigner`](dashboard/http-api.md#post-apisetupsigner)。
+QR コードはダッシュボード用に `qr_svg`（SVG）、`swing signer pair` 用に `qr_text`（Unicode のブロック文字）で描く。
+
+ダッシュボードでは、状態を `AppState.pairing: Mutex<Option<Pairing>>` に 1 つだけ持つ。新しいペアリングを始めると古いものは捨て、`Drop` でタスクを止める。セットアップかつなぎ直しが成功したら `None` に戻す。ペアリングはセットアップモードの間のほか、署名アプリで動いている間も始められる（署名アプリ側で接続が切れたときのつなぎ直し）。API は [`dashboard/http-api.md#post-apisetupsigner`](dashboard/http-api.md#post-apisetupsigner)。
 
 ## 署名アプリがオフラインのとき
 
@@ -63,3 +65,4 @@ QR コードを使う `nostrconnect://`（クライアント起点）の接続�
 
 - `signer::tests` は nostr-sdk の `LocalRelay`（dev-dependency で `local-relay` feature を有効にしている、プロセス内の relay）と `nostr_connect::NostrConnectRemoteSigner`（署名アプリ役）を使い、QR 用 URI の発行 → 接続 → probe → `remote-signer.json` から `Signer::require` で読み直して署名、までを通す。署名アプリ役は `connect` を断るので、SWING が `connect` を送ればテストが落ちる。署名アプリ役が `sign_event` を拒否する場合（`probe_signed: false` になり、`last_failure` が残る）と、つながらない relay で 15 秒待たずに（テストでは短くして）失敗することも確かめる。外部の relay や Docker は使わないので `#[ignore]` にしていない。
 - ダッシュボードの `/api/setup/signer` と `POST /api/setup`（`remote_signer: true`）は `dashboard::tests` で確かめる。
+- `swing signer pair` は `pair::tests` で、同じ `LocalRelay` と署名アプリ役を使い、新しく保存すること・秘密鍵があれば QR を出さずに断ること・保存済みと別のアカウントを断ってファイルを変えないことを確かめる。署名アプリ役（`TestSigner`・`serve_test_signer`）は `src/test_support.rs` にあり、`signer::tests` と共有する。

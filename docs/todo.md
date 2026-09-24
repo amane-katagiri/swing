@@ -6,6 +6,7 @@
 |---|---|---|
 | 中 | NIP-46: iPhone の Clave で、リンクの貼り付け・確認の署名・閉じているときの応答（プッシュで起きるか。`nostrconnect://` で指定した relay でも起きるのか、`wss://relay.powr.build` でないと起きないのか）を確かめ、画面と README の案内を合わせる | [NIP-46 対応](log/2026-09-24-nip46-remote-signer.md) |
 | 低 | NIP-46: セットアップ後に、同じアカウントのまま秘密鍵と署名アプリを切り替える操作をダッシュボードに用意する（設定画面に「署名の方法」を置く案）。秘密鍵に切り替えるときは今の公開鍵と同じ鍵だけを受け付け、秘密鍵を消す前に確認する。秘密鍵が環境変数（`SWING_NOSTR_SECRET_KEY`）由来なら、ダッシュボードからは消せないので案内だけにする。アカウント自体を変える操作は作らない（Follow Set・公開したサイト・レプリカ報告が前のアカウントに残るため。手作業で `secret_key` か `remote-signer.json` を書き換える）。今は `swing up` を止めて `remote-signer.json`（か `secret_key`）を消し、セットアップからやり直す（署名アプリどうしのつなぎ直しは公開画面からできる） | [NIP-46 対応](log/2026-09-24-nip46-remote-signer.md) |
+| 低 | CLI の出力に nostr-sdk の INFO ログ（`Connected to '<relay>'`・`Relay '<relay>' has been shutdown.`）が標準エラーに混ざる。`swing signer pair` では QR とメッセージの間に挟まって読みにくい。`swing up` 以外のコマンドでは既定のログレベルを下げるか、`nostr_sdk` を warn にする | [CLI からのペアリング](log/2026-09-25-cli-signer-pair.md) |
 | 低 | NIP-46: 署名アプリが作った `bunker://` URI を貼って接続する方法（署名アプリ起点）。今は SWING が出す `nostrconnect://` の QR コードだけ | [NIP-46 対応](log/2026-09-24-nip46-remote-signer.md) |
 | 低 | `signer::tests::answers_from_a_signer_whose_clock_runs_behind_are_received` がまれに落ちる（`src/signer.rs` の `remote.sign(...).await.unwrap()`）。`RemoteSigner` の応答待ちが 5 秒なので、マシンが重いと間に合わない可能性がある。`cargo test --workspace` を 1 回だけ回したときに 1 度落ち、直後の単独実行と全体の再実行では通った | [タスクトレイ](log/2026-09-24-tray-icon.md)の検証中に見つけた |
 | 中 | NIP-05 の実 HTTP 経路の統合テスト（ローカル TLS エンドポイント相手、`#[ignore]`） | レビュー |

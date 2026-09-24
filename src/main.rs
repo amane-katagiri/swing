@@ -5,7 +5,8 @@ use anyhow::{Context, Result};
 use clap::{Args, Parser, Subcommand};
 use swing::shutdown::{self, Exit};
 use swing::{
-    config, health, key, login, mirror, publish, replicas, service, settings, stop, up, webring,
+    config, health, key, login, mirror, pair, publish, replicas, service, settings, stop, up,
+    webring,
 };
 use tracing::info;
 use tracing_subscriber::EnvFilter;
@@ -156,6 +157,11 @@ enum Command {
         #[arg(value_name = "KEY", help = "Starting accounts (npub, hex or nprofile)")]
         keys: Vec<String>,
     },
+    #[command(about = "Sign with a signer app on your phone (NIP-46) instead of a secret key")]
+    Signer {
+        #[command(subcommand)]
+        action: SignerCommand,
+    },
     #[command(about = "Generate or inspect Nostr keys (no config or secret key required)")]
     Key {
         #[command(subcommand)]
@@ -196,6 +202,24 @@ enum ConfigCommand {
     Example,
     #[command(about = "Print .env.example, generated from the settings catalog")]
     EnvExample,
+}
+
+#[derive(Subcommand)]
+enum SignerCommand {
+    #[command(
+        about = "Pair a signer app by showing a nostrconnect:// QR code in the terminal, and save it to remote-signer.json"
+    )]
+    Pair {
+        #[command(flatten)]
+        config: ConfigArg,
+        #[arg(
+            long = "relay",
+            value_name = "URL",
+            default_value = pair::DEFAULT_RELAY,
+            help = "Relay both swing and the signer app can reach (repeatable, up to 5)"
+        )]
+        relays: Vec<String>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -433,6 +457,12 @@ async fn run_other(command: Command) -> Result<()> {
             let cfg = config::Config::load(config.as_deref())?;
             webring::show(&cfg, &keys, depth, format).await
         }
+        Command::Signer { action } => match action {
+            SignerCommand::Pair { config, relays } => {
+                let cfg = config::Config::load(config.as_deref())?;
+                pair::run(&cfg, &relays).await
+            }
+        },
         Command::Key { action } => match action {
             KeyCommand::Generate => key::generate(),
         },

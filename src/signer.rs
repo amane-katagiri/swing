@@ -7,7 +7,7 @@ use nostr_connect::prelude::{ErrorKind as ConnectErrorKind, NostrConnect};
 use nostr_sdk::prelude::*;
 use serde::{Deserialize, Serialize};
 
-use crate::config::Config;
+use crate::config::{Config, NostrConfig};
 
 pub const REMOTE_SIGNER_FILE: &str = "remote-signer.json";
 pub const SIGN_TIMEOUT: Duration = Duration::from_secs(90);
@@ -15,6 +15,7 @@ pub const PAIRING_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 pub const PROBE_TIMEOUT: Duration = Duration::from_secs(60);
 pub const RELAY_CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
 pub const APP_NAME: &str = "SWING";
+pub const MAX_PAIRING_RELAYS: usize = 5;
 const SECRET_BYTES: usize = 16;
 
 pub fn remote_signer_path(state_dir: &Path) -> PathBuf {
@@ -97,7 +98,7 @@ impl Signer {
 
     pub fn require(config: &Config) -> Result<Self> {
         Self::load(config)?.context(
-            "missing Nostr key: set SWING_NOSTR_SECRET_KEY or [nostr].secret_key, or pair a signer app on the dashboard's setup page",
+            "missing Nostr key: set SWING_NOSTR_SECRET_KEY or [nostr].secret_key, or pair a signer app on the dashboard's setup page or with `swing signer pair`",
         )
     }
 
@@ -325,6 +326,24 @@ pub fn requested_perms(kinds: &[u16]) -> String {
         .join(",")
 }
 
+pub fn parse_pairing_relays(relays: &[String]) -> Result<Vec<RelayUrl>> {
+    let relays: Vec<&str> = relays
+        .iter()
+        .map(|r| r.trim())
+        .filter(|r| !r.is_empty())
+        .collect();
+    if relays.is_empty() {
+        bail!("relays must include at least one entry");
+    }
+    if relays.len() > MAX_PAIRING_RELAYS {
+        bail!("relays must include at most {MAX_PAIRING_RELAYS} entries");
+    }
+    relays
+        .into_iter()
+        .map(|r| RelayUrl::parse(r).map_err(|e| anyhow!("invalid relay {r}: {e}")))
+        .collect()
+}
+
 pub fn nostrconnect_uri(
     app: &PublicKey,
     relays: &[RelayUrl],
@@ -359,6 +378,18 @@ pub fn qr_svg(text: &str) -> Result<String> {
         .build())
 }
 
+// Light modules are drawn as blocks, so the code reads correctly on the usual dark terminal background.
+pub fn qr_text(text: &str) -> Result<String> {
+    use qrcode::render::unicode::Dense1x2;
+    let code = qrcode::QrCode::new(text.as_bytes()).context("encoding the QR code")?;
+    Ok(code
+        .render::<Dense1x2>()
+        .dark_color(Dense1x2::Light)
+        .light_color(Dense1x2::Dark)
+        .quiet_zone(true)
+        .build())
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PairingState {
     Waiting,
@@ -382,6 +413,19 @@ pub struct PairingRequest {
     pub pairing_timeout: Duration,
     pub relay_timeout: Duration,
     pub probe_timeout: Duration,
+}
+
+impl PairingRequest {
+    pub fn for_config(nostr: &NostrConfig, relays: Vec<RelayUrl>) -> Self {
+        Self {
+            relays,
+            perms: requested_perms(&[nostr.replica_event_kind, nostr.site_event_kind, 30000]),
+            probe_kind: nostr.replica_event_kind,
+            pairing_timeout: PAIRING_TIMEOUT,
+            relay_timeout: RELAY_CONNECT_TIMEOUT,
+            probe_timeout: PROBE_TIMEOUT,
+        }
+    }
 }
 
 pub struct Pairing {
@@ -568,6 +612,28 @@ mod tests {
     }
 
     #[test]
+    fn qr_text_is_a_block_of_equal_width_lines() {
+        let text = qr_text("nostrconnect://abc").unwrap();
+        let widths: Vec<usize> = text.lines().map(|l| l.chars().count()).collect();
+        assert!(widths.len() > 10);
+        assert!(widths.iter().all(|w| *w == widths[0]));
+    }
+
+    #[test]
+    fn pairing_relays_are_trimmed_and_validated() {
+        let relays =
+            parse_pairing_relays(&[" wss://relay.example ".to_string(), String::new()]).unwrap();
+        assert_eq!(
+            relays,
+            vec![RelayUrl::parse("wss://relay.example").unwrap()]
+        );
+        assert!(parse_pairing_relays(&[]).is_err());
+        assert!(parse_pairing_relays(&["https://relay.example".to_string()]).is_err());
+        let many: Vec<String> = (0..6).map(|i| format!("wss://r{i}.example")).collect();
+        assert!(parse_pairing_relays(&many).is_err());
+    }
+
+    #[test]
     fn remote_signer_file_round_trips_and_hides_the_app_key() {
         let dir = tempfile::tempdir().unwrap();
         assert!(RemoteSignerFile::load(dir.path()).unwrap().is_none());
@@ -674,28 +740,7 @@ mod tests {
         assert!(check_signed(&altered, user.public_key(), id).is_err());
     }
 
-    // Refuses `connect` like Primal does for an app it already knows, so the tests fail if SWING ever sends one.
-    struct TestSigner {
-        sign: bool,
-    }
-
-    impl nostr_connect::prelude::NostrConnectSignerActions for TestSigner {
-        fn approve(
-            &self,
-            _app: &PublicKey,
-            req: &nostr_connect::prelude::NostrConnectRequest,
-        ) -> bool {
-            match req {
-                NostrConnectRequest::Connect { .. } => false,
-                NostrConnectRequest::SignEvent(_) => self.sign,
-                _ => true,
-            }
-        }
-    }
-
     async fn pair_with(user: &Keys, sign: bool) -> (LocalRelay, PairedSigner) {
-        use nostr_connect::prelude::{NostrConnectKeys, NostrConnectRemoteSigner};
-
         let relay = LocalRelay::new();
         relay.run().await.unwrap();
         let pairing = Pairing::start(PairingRequest {
@@ -707,16 +752,7 @@ mod tests {
             probe_timeout: Duration::from_secs(3),
         })
         .unwrap();
-        // The app has to be listening before the signer answers the QR code.
-        tokio::time::sleep(Duration::from_millis(500)).await;
-        let uri = NostrConnectUri::parse(pairing.uri()).unwrap();
-        let remote = NostrConnectRemoteSigner::from_uri(
-            uri,
-            NostrConnectKeys::new(Keys::generate(), user.clone()),
-            None,
-        )
-        .unwrap();
-        tokio::spawn(async move { remote.serve(TestSigner { sign }).await });
+        crate::test_support::serve_test_signer(pairing.uri(), user, sign);
 
         let deadline = tokio::time::Instant::now() + Duration::from_secs(20);
         loop {

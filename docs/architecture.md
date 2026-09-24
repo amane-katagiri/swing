@@ -58,6 +58,7 @@ swing/
     webring.rs       Follow Set のたどり方とグラフの組み立て・出力、webring サブコマンド
     nip05.rs         NIP-05 検証
     signer.rs        署名（Signer: 秘密鍵か NIP-46 の署名アプリ）、remote-signer.json、QR コードでのペアリング。詳細は architecture/signer.md
+    pair.rs          `swing signer pair`（ターミナルに QR コードを出して署名アプリとペアリングする）。詳細は architecture/cli.md
     up.rs            `swing up` supervisor（Kubo の起動・監視、agent の起動・再起動、バックオフ）。詳細は architecture/up.md
     kubo.rs          Kubo バイナリの検出・init・`ipfs config` 適用・子プロセスの起動と終了・ヘルス待ち・kubo.pid と孤児回収。詳細は architecture/up.md
     lock.rs          多重起動防止のインスタンスロック（swing.lock）。詳細は architecture/up.md
@@ -115,6 +116,7 @@ swing sites                            [--config <path>]
 swing replicas [<key>...]              [--config <path>]
 swing status                           [--config <path>]
 swing webring [<key>...] [--depth <N>] [--format <text|dot|mermaid>] [--config <path>]
+swing signer pair [--relay <URL>]...   [--config <path>]
 swing key generate
 swing config example
 swing config env-example
@@ -124,7 +126,7 @@ swing-tray [--config <path>]
 
 `swing up` は Kubo（`[kubo].managed = true` なら）と mirror-agent の中身を 1 プロセスの supervisor として動かす（[`architecture/up.md`](architecture/up.md)）。`managed = false` なら既に動いている Kubo（外部のもの）を待ってから同じことをする。mirror-agent を単体で起動するサブコマンドは無く、常に `swing up` を経由する。`swing service` は `swing up` を OS の常駐に登録する（[`architecture/service.md`](architecture/service.md)）。`swing stop`／`swing service stop` は動いている `swing up` にグレースフルな停止・再起動を要求する（[`architecture/up.md#終了要求と-exit-codeshutdownexitrequest-shutdownexit`](architecture/up.md#終了要求と-exit-codeshutdownexitrequest-shutdownexit)）。`--restart` による再起動はプロセスを終了させず、同じプロセス内で設定を読み直して動き直す（exit code でサービスマネージャに再起動させる古い経路は無くなった）。
 
-署名には `[nostr].secret_key`（`SWING_NOSTR_SECRET_KEY`）の秘密鍵か、`<state_dir>/remote-signer.json` に保存した NIP-46 の署名アプリのどちらか 1 つを使う（[`architecture/signer.md`](architecture/signer.md)）。どちらも無いと `swing up` はセットアップモード（ダッシュボードのみ）で起動し、ダッシュボードのセットアップ画面から鍵を書き込むか署名アプリとペアリングできる（[`architecture/up.md#セットアップモード鍵未設定`](architecture/up.md#セットアップモード鍵未設定)）。鍵を直接使うコマンド（`sites`・`replicas`・`webring`・`mirror list`・`publish`）は鍵も署名アプリも無ければエラー終了するが、ダッシュボード API 経由の `status`・`mirror add`・`mirror remove`・`stop`／`service stop` は鍵無しでも動く（[`architecture/cli.md`](architecture/cli.md)）。
+署名には `[nostr].secret_key`（`SWING_NOSTR_SECRET_KEY`）の秘密鍵か、`<state_dir>/remote-signer.json` に保存した NIP-46 の署名アプリのどちらか 1 つを使う（[`architecture/signer.md`](architecture/signer.md)）。どちらも無いと `swing up` はセットアップモード（ダッシュボードのみ）で起動し、ダッシュボードのセットアップ画面から鍵を書き込むか署名アプリとペアリングできる（[`architecture/up.md#セットアップモード鍵未設定`](architecture/up.md#セットアップモード鍵未設定)）。署名アプリとのペアリングは `swing signer pair` でもできる。鍵を直接使うコマンド（`sites`・`replicas`・`webring`・`mirror list`・`publish`）は鍵も署名アプリも無ければエラー終了するが、ダッシュボード API 経由の `status`・`mirror add`・`mirror remove`・`stop`／`service stop` は鍵無しでも動く（[`architecture/cli.md`](architecture/cli.md)）。
 
 設定ファイルは次の順で 1 つのパスに決まる（`config::resolve_config_path`）。1 か 2 を指定してそのファイルが無ければエラー終了。3 は存在確認をせず、そのままファイルの読み書き先になる（無ければ設定は既定値と環境変数だけで組み立て、`Config.config_exists = false` になる。ダッシュボードのセットアップ・設定編集はこのパスに新規作成・上書きする）。`SWING_CONFIG` の空文字は未設定として扱う。
 

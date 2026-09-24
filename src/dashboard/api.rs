@@ -579,35 +579,9 @@ pub async fn reconnect_signer(State(state): State<Arc<AppState>>) -> Result<Resp
     Ok((StatusCode::OK, body).into_response())
 }
 
-const MAX_SIGNER_RELAYS: usize = 5;
-
 #[derive(Debug, Deserialize)]
 pub struct StartPairingRequest {
     relays: Vec<String>,
-}
-
-fn parse_signer_relays(relays: &[String]) -> Result<Vec<RelayUrl>, ApiError> {
-    let relays: Vec<&str> = relays
-        .iter()
-        .map(|r| r.trim())
-        .filter(|r| !r.is_empty())
-        .collect();
-    if relays.is_empty() {
-        return Err(ApiError::BadRequest(
-            "relays must include at least one entry".to_string(),
-        ));
-    }
-    if relays.len() > MAX_SIGNER_RELAYS {
-        return Err(ApiError::BadRequest(format!(
-            "relays must include at most {MAX_SIGNER_RELAYS} entries"
-        )));
-    }
-    relays
-        .into_iter()
-        .map(|r| {
-            RelayUrl::parse(r).map_err(|e| ApiError::BadRequest(format!("invalid relay {r}: {e}")))
-        })
-        .collect()
 }
 
 pub async fn start_pairing(
@@ -615,17 +589,10 @@ pub async fn start_pairing(
     AppJson(req): AppJson<StartPairingRequest>,
 ) -> Result<Json<dto::PairingStartDto>, ApiError> {
     ensure_can_pair(&state)?;
-    let relays = parse_signer_relays(&req.relays)?;
-    let nostr = &state.config.nostr;
-    let pairing = Pairing::start(PairingRequest {
-        relays,
-        perms: signer::requested_perms(&[nostr.replica_event_kind, nostr.site_event_kind, 30000]),
-        probe_kind: nostr.replica_event_kind,
-        pairing_timeout: signer::PAIRING_TIMEOUT,
-        relay_timeout: signer::RELAY_CONNECT_TIMEOUT,
-        probe_timeout: signer::PROBE_TIMEOUT,
-    })
-    .map_err(|e| ApiError::BadRequest(format!("{e:#}")))?;
+    let bad_request = |e: anyhow::Error| ApiError::BadRequest(format!("{e:#}"));
+    let relays = signer::parse_pairing_relays(&req.relays).map_err(bad_request)?;
+    let pairing = Pairing::start(PairingRequest::for_config(&state.config.nostr, relays))
+        .map_err(bad_request)?;
     let uri = pairing.uri().to_string();
     let qr_svg = signer::qr_svg(&uri).map_err(|e| ApiError::Internal(format!("{e:#}")))?;
     *state.pairing.lock().expect("pairing lock") = Some(pairing);
