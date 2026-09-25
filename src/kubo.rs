@@ -21,6 +21,12 @@ const ESCALATION: Duration = SIGTERM_GRACE;
 #[cfg(not(unix))]
 const ESCALATION: Duration = Duration::ZERO;
 
+const ORPHAN_SHUTDOWN_RPC_TIMEOUT: Duration = Duration::from_secs(3);
+const ORPHAN_SHUTDOWN_GRACE: Duration = Duration::from_secs(30);
+#[cfg(unix)]
+const ORPHAN_SIGTERM_GRACE: Duration = Duration::from_secs(30);
+const ORPHAN_KILL_WAIT: Duration = Duration::from_secs(10);
+
 pub const fn daemon_stop_budget(grace: Duration) -> Duration {
     SHUTDOWN_RPC_TIMEOUT
         .saturating_add(grace)
@@ -413,14 +419,14 @@ async fn attempt_graceful_shutdown(api_port: u16, pid: u32) -> bool {
     let url = format!("http://127.0.0.1:{api_port}/api/v0/shutdown");
     let responded = reqwest::Client::new()
         .post(&url)
-        .timeout(Duration::from_secs(3))
+        .timeout(ORPHAN_SHUTDOWN_RPC_TIMEOUT)
         .send()
         .await
         .is_ok();
     if !responded {
         return false;
     }
-    wait_for_exit(pid, Duration::from_secs(30)).await
+    wait_for_exit(pid, ORPHAN_SHUTDOWN_GRACE).await
 }
 
 #[cfg(unix)]
@@ -432,7 +438,7 @@ async fn terminate_process(pid: u32) -> Result<()> {
             return Err(err).context("sending SIGTERM to orphaned Kubo");
         }
     }
-    if wait_for_exit(pid, Duration::from_secs(30)).await {
+    if wait_for_exit(pid, ORPHAN_SIGTERM_GRACE).await {
         return Ok(());
     }
     tracing::warn!(
@@ -446,7 +452,7 @@ async fn terminate_process(pid: u32) -> Result<()> {
             return Err(err).context("sending SIGKILL to orphaned Kubo");
         }
     }
-    if wait_for_exit(pid, Duration::from_secs(10)).await {
+    if wait_for_exit(pid, ORPHAN_KILL_WAIT).await {
         return Ok(());
     }
     bail!("orphaned Kubo (pid {pid}) did not exit after SIGKILL")
@@ -464,7 +470,7 @@ async fn terminate_process(pid: u32) -> Result<()> {
         let stderr = String::from_utf8_lossy(&output.stderr);
         bail!("taskkill failed for pid {pid}: {}", stderr.trim());
     }
-    if wait_for_exit(pid, Duration::from_secs(10)).await {
+    if wait_for_exit(pid, ORPHAN_KILL_WAIT).await {
         Ok(())
     } else {
         bail!("orphaned Kubo (pid {pid}) did not exit after taskkill /F")

@@ -49,7 +49,7 @@ jobs:
         if: matrix.check
         shell: bash
         run: |
-          cargo fmt --check
+          cargo fmt --all --check
           cargo clippy --workspace --all-targets -- -D warnings
           cargo test --workspace
 
