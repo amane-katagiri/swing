@@ -240,7 +240,7 @@ SWING_DASHBOARD_UI=false
 
 ### 自分のマスコットを追加する
 
-Desktop 画面を歩き回るマスコットは、同梱の 2 体（`mochi`・`neko`）に加えて自分で追加できます。`SWING_DASHBOARD_MASCOTS_DIR` にディレクトリを指定し、その直下に `manifest.json` とスプライト画像を入れたサブディレクトリ（1 つがそのまま 1 パック、ディレクトリ名がパックの id）を置いて `swing up` を再起動してください。マニフェストの書き方・検証規則は [`docs/architecture/dashboard/mascot.md#パック形式-1`](docs/architecture/dashboard/mascot.md#パック形式-1) を参照してください。
+Desktop 画面を歩き回るマスコットは、同梱の 2 体（`mochi`・`neko`）に加えて自分で追加できます。`SWING_DASHBOARD_MASCOTS_DIR` にディレクトリを指定し、その直下に `manifest.json` とスプライト画像を入れたサブディレクトリ（1 つがそのまま 1 パック、ディレクトリ名がパックの id）を置いて `swing up` を再起動してください。作り方は [`docs/mascot-guide.md`](docs/mascot-guide.md)、マニフェストの書き方・検証規則の詳細は [`docs/architecture/dashboard/mascot.md#パック形式-1`](docs/architecture/dashboard/mascot.md#パック形式-1) を参照してください。
 
 どのマスコットを出すか・動き・更新の確認の間隔は、Desktop 画面の「コントロール パネル」の「マスコット」タブで選べます。
 
