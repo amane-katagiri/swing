@@ -149,7 +149,7 @@ enum Command {
         #[arg(
             long,
             default_value_t = 2,
-            help = "Hops to crawl from the starting accounts, following both directions"
+            help = "Hops to crawl outbound from the starting accounts"
         )]
         depth: usize,
         #[arg(long, value_enum, default_value_t = webring::Format::Text)]
@@ -251,7 +251,7 @@ enum ServiceCommand {
     Uninstall {
         #[arg(
             long,
-            help = "Register a systemd system unit instead of a user unit (Linux only)"
+            help = "Target the systemd system unit instead of the user unit (Linux only)"
         )]
         system: bool,
     },
@@ -275,7 +275,7 @@ enum ServiceCommand {
     Status {
         #[arg(
             long,
-            help = "Register a systemd system unit instead of a user unit (Linux only)"
+            help = "Target the systemd system unit instead of the user unit (Linux only)"
         )]
         system: bool,
     },
