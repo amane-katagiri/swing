@@ -494,6 +494,12 @@ fn resolve_agent(
     if report_ttl / 2 <= poll_interval {
         bail!("report_ttl must be more than twice poll_interval");
     }
+    if report_ttl > crate::nostr::MAX_REPORT_AGE {
+        bail!(
+            "report_ttl must be at most {}",
+            crate::format::format_duration_secs(crate::nostr::MAX_REPORT_AGE)
+        );
+    }
 
     Ok(AgentConfig {
         state_dir: PathBuf::from(state_dir),
@@ -941,6 +947,26 @@ mod tests {
         assert!(err.to_string().contains("report_ttl"));
         let cfg = build_config(minimal_file(), env("21m")).unwrap();
         assert_eq!(cfg.agent.report_ttl, Duration::from_secs(21 * 60));
+    }
+
+    #[test]
+    fn report_ttl_must_not_outlive_the_receivers_max_report_age() {
+        let env = |ttl: &'static str| {
+            move |k: &str| match k {
+                "SWING_REPORT_TTL" => Some(ttl.to_string()),
+                _ => None,
+            }
+        };
+        let cfg = build_config(minimal_file(), env("7d")).unwrap();
+        assert_eq!(
+            cfg.agent.report_ttl,
+            Duration::from_secs(crate::nostr::MAX_REPORT_AGE)
+        );
+        let err = build_config(minimal_file(), env("604801s")).unwrap_err();
+        assert!(
+            err.to_string().contains("report_ttl must be at most 7d"),
+            "{err}"
+        );
     }
 
     #[test]

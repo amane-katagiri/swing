@@ -127,12 +127,12 @@ state のロックの中で行う。
 | 無い | `cid` が 1 つ以上 | `cid` 無し（取り下げ） |
 | 不明 | — | 送らない |
 
-- `created_at` は現在時刻。記録の `created_at` 以下になるときは記録の `created_at + 1` にする。`expiration` は `created_at + report_ttl`。
+- `created_at` は現在時刻。記録の `created_at` 以下になるときは記録の `created_at + 1` にする。`expiration` は `created_at + report_ttl`（足し算は飽和させる）。
 - 全 relay に送り、どこかに受理されたら記録を更新する。受理されなければ warn を出し、次の同期で送り直す。
 - 署名（NIP-46 の署名アプリへのリクエストを含む）か送信がエラーになったら warn を出して、その回の残りの報告は送らずに打ち切る。残りは次の同期で送り直す（署名アプリがオフラインのときの扱いは [`signer.md#署名アプリがオフラインのとき`](signer.md#署名アプリがオフラインのとき)）。
 - 取り下げた記録は `cid` 無しで残り、出し直さない。
 
-受信側で報告を数える規則（`replicas::collect_reports` / `ReplicaReport::counts_at`）は [「レプリカ報告の信頼度」](nostr.md#レプリカ報告の信頼度replicastier)。`report_ttl` の既定 `3d` に対し、数えるのをやめる期間（`nostr::MAX_REPORT_AGE`）はそれより長い（[取得と表示の上限](nostr.md#取得と表示の上限nostrbudget)）。
+受信側で報告を数える規則（`replicas::collect_reports` / `ReplicaReport::counts_at`）は [「レプリカ報告の信頼度」](nostr.md#レプリカ報告の信頼度replicastier)。受信側は `created_at` から `nostr::MAX_REPORT_AGE`（7 日）を過ぎた報告を数えない（[取得と表示の上限](nostr.md#取得と表示の上限nostrbudget)）ので、`report_ttl` はそれ以下でないと設定の検証でエラーになる（[`../architecture.md`](../architecture.md#設定と環境変数)）。出し直しは `report_ttl / 2` ごとなので、上限の 7 日でも最新の報告は常に 3.5 日以内に出ている。
 
 ## ポリシー判定（policy.rs）
 

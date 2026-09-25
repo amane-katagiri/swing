@@ -385,8 +385,8 @@ pub const SETTINGS: &[Setting] = &[
         example: Example::Value("\"3d\""),
         editable: true,
         description: Text {
-            en: "How long a replica report stays valid; it is re-sent after half this time and must be more than twice poll_interval.",
-            ja: "レプリカ報告の有効期間。半分の期間を過ぎたら新しい報告を出す。poll_interval の 2 倍より長くする必要がある",
+            en: "How long a replica report stays valid; it is re-sent after half this time, must be more than twice poll_interval, and at most 7d (receivers stop counting older reports).",
+            ja: "レプリカ報告の有効期間。半分の期間を過ぎたら新しい報告を出す。poll_interval の 2 倍より長く、7d 以下にする必要がある（受信側はそれより古い報告を数えない）",
         },
     },
     Setting {

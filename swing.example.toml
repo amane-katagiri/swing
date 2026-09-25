@@ -29,7 +29,7 @@ poll_interval = "5m"                 # SWING_POLL_INTERVAL: Follow Set の再取
 fetch_timeout = "15m"                # SWING_FETCH_TIMEOUT: 1 サイト分の取得全体のタイムアウト
 fetch_idle_timeout = "2m"            # SWING_FETCH_IDLE_TIMEOUT: 取得中にデータが届かないまま待つ上限
 concurrency = 4                      # SWING_CONCURRENCY: 同時に取得・保存するサイト数
-report_ttl = "3d"                    # SWING_REPORT_TTL: レプリカ報告の有効期間。半分の期間を過ぎたら新しい報告を出す。poll_interval の 2 倍より長くする必要がある
+report_ttl = "3d"                    # SWING_REPORT_TTL: レプリカ報告の有効期間。半分の期間を過ぎたら新しい報告を出す。poll_interval の 2 倍より長く、7d 以下にする必要がある（受信側はそれより古い報告を数えない）
 
 [publish]
 nip05 = "warn"                       # SWING_PUBLISH_NIP05: swing publish の NIP-05 検証モード（off / warn / require、--nip05 が優先）

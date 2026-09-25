@@ -22,11 +22,14 @@ const HOP_BY_HOP: &[&str] = &[
     "upgrade",
 ];
 
+const UPSTREAM_HEADER_TIMEOUT: Duration = Duration::from_secs(60);
+
 #[derive(Clone)]
 struct GatewayState {
     hosts: Vec<String>,
     upstream: String,
     client: reqwest::Client,
+    header_timeout: Duration,
 }
 
 fn split_host_port(host_header: &str) -> &str {
@@ -83,10 +86,20 @@ pub fn client() -> Result<reqwest::Client> {
 }
 
 pub fn router(hosts: Vec<String>, upstream: String, client: reqwest::Client) -> Router {
+    router_with_header_timeout(hosts, upstream, client, UPSTREAM_HEADER_TIMEOUT)
+}
+
+fn router_with_header_timeout(
+    hosts: Vec<String>,
+    upstream: String,
+    client: reqwest::Client,
+    header_timeout: Duration,
+) -> Router {
     let state = GatewayState {
         hosts,
         upstream,
         client,
+        header_timeout,
     };
     Router::new().fallback(proxy).with_state(state)
 }
@@ -140,13 +153,19 @@ async fn proxy(
 
     let body = reqwest::Body::wrap_stream(req.into_body().into_data_stream());
 
-    let upstream_response = state
+    let send = state
         .client
         .request(method, &url)
         .headers(out_headers)
         .body(body)
-        .send()
-        .await;
+        .send();
+    let Ok(upstream_response) = tokio::time::timeout(state.header_timeout, send).await else {
+        warn!(
+            timeout_secs = state.header_timeout.as_secs_f64(),
+            url, "gateway upstream did not send response headers in time"
+        );
+        return StatusCode::GATEWAY_TIMEOUT.into_response();
+    };
 
     match upstream_response {
         Ok(resp) => {
@@ -340,6 +359,44 @@ mod tests {
 
         token.cancel();
         gateway_handle.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn upstream_that_never_sends_headers_is_gateway_timeout() {
+        let silent = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let upstream = format!("http://{}", silent.local_addr().unwrap());
+        let _silent_handle = tokio::spawn(async move {
+            let mut held = Vec::new();
+            while let Ok((stream, _)) = silent.accept().await {
+                held.push(stream);
+            }
+        });
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let gateway = format!("http://{}", listener.local_addr().unwrap());
+        let app = router_with_header_timeout(
+            vec!["example.com".to_string()],
+            upstream,
+            client().unwrap(),
+            Duration::from_millis(200),
+        );
+        let _gateway_handle = tokio::spawn(async move {
+            axum::serve(
+                listener,
+                app.into_make_service_with_connect_info::<SocketAddr>(),
+            )
+            .await
+            .unwrap();
+        });
+
+        let resp = reqwest::Client::new()
+            .get(format!("{gateway}/"))
+            .header("host", "example.com")
+            .timeout(Duration::from_secs(10))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), reqwest::StatusCode::GATEWAY_TIMEOUT);
+        assert_eq!(resp.bytes().await.unwrap().len(), 0);
     }
 
     #[tokio::test]

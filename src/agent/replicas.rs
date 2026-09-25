@@ -182,7 +182,7 @@ impl<C: KuboStore, N: Nip05Verify, R: ReportRelay> Agent<C, N, R> {
                 &author,
                 d,
                 &cids,
-                Timestamp::from_secs(created_at + ttl),
+                Timestamp::from_secs(created_at.saturating_add(ttl)),
             )
             .custom_created_at(Timestamp::from_secs(created_at));
             match self.reporter.send_report(report).await {

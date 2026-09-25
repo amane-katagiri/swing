@@ -7,6 +7,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use anyhow::{Context, Result};
 use axum::Json;
 use axum::extract::{Multipart, State};
+use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use tokio::io::AsyncWriteExt;
 
@@ -118,21 +119,12 @@ async fn create_private_file(path: &Path) -> std::io::Result<tokio::fs::File> {
     options.open(path).await
 }
 
-// multer hides the length-limit error behind a generic MultipartError; only its Display text tells 413 from 400.
+// status() gives 500 when the request body stream itself fails (e.g. the client drops mid-upload); that is not a server fault.
 fn multipart_error_to_api(err: axum::extract::multipart::MultipartError) -> ApiError {
-    let mut current: &dyn std::error::Error = &err;
-    loop {
-        if current
-            .to_string()
-            .to_ascii_lowercase()
-            .contains("length limit")
-        {
-            return ApiError::PayloadTooLarge(err.to_string());
-        }
-        match current.source() {
-            Some(source) => current = source,
-            None => return ApiError::BadRequest(err.to_string()),
-        }
+    if err.status() == StatusCode::PAYLOAD_TOO_LARGE {
+        ApiError::PayloadTooLarge(err.to_string())
+    } else {
+        ApiError::BadRequest(err.to_string())
     }
 }
 

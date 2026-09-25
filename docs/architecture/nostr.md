@@ -14,7 +14,15 @@
 - `url`: 2048 バイト超、制御文字を含む、または http(s) としてパースできなければ `url` だけを無視する。`swing publish --url` も同じ判定で拒否する。
 - `title`: 空、256 バイト超、制御文字を含む場合は `title` だけを無視する。保存の判断には使わない。
 - `content`: 空でなければ `SiteEvent::message` に入れる。検証せず、保存の判断にも使わない。
-- Follow Set: relay のフィルタに加え、受信後にも kind・`d`・署名を確かめる（`nostr::is_follow_set_of`）。自分の Follow Set を 1 件取る `fetch_follow_set` はさらに作者が自分の公開鍵であることを確かめるが、複数の作者の Follow Set をまとめて取る `fetch_follow_sets` は作者を要求した `authors` と照合せず、イベント自身の `pubkey` ごとに最新を選ぶ。`content`（暗号化 private 部分）は読まない。
+- Follow Set: relay のフィルタに加え、受信後にも kind・`d`・署名を確かめる（`nostr::is_follow_set_of`）。`content`（暗号化 private 部分）は読まない。
+- フィルタとの照合: nostr-sdk は受信したイベントが REQ のフィルタに一致するかを確かめない（`verify_subscriptions` が既定で無効）ので、relay がフィルタを無視して他人のイベントを返してきても、`RelayClient` の取得関数が受信後にフィルタの条件で照合して捨てる。
+  - `fetch_follow_set`: 作者が自分の公開鍵であること。
+  - `fetch_follow_sets`: 作者が要求した `authors` に含まれること。残ったものを作者ごとに最新 1 件にする。
+  - `fetch_site_events`: kind が `[nostr].site_event_kind` で、作者が要求した `authors` に含まれること。
+  - `fetch_replica_reports`: kind が `[nostr].replica_event_kind` で、`a` タグのどれかが要求した座標のいずれかと一致すること。
+  - `fetch_follow_set_authors_referencing`: 作者を指定しない取得なので、`p` タグのどれかが要求した相手に含まれること。
+  - `fetch_own_reports`（agent のレプリカ報告の同期）: 呼び出し側（`agent::replicas`）が作者が自分であることを確かめ、kind は `parse_replica_report` が確かめる。
+  - 購読（`subscribe_site_events`）で届くサイトイベントは、agent の `submit` が Follow Set の対象かを確かめて捨てる（[`agent.md` の「並行処理」](agent.md#並行処理)）。
 - レプリカ報告: `d` を最初の `:` で分け、作者が小文字 hex の公開鍵でない、サイトの `d` が上の `d` の条件を満たさない、`a` の値が `<site_event_kind>:<作者>:<サイトの d>` と一致しない、`cid` タグのどれかが上の `cid` の判定を満たさない、`expiration` タグがあるのに `u64` としてパースできない、のいずれかなら報告全体を拒否する。`cid` タグは 0 個でもよい（取り下げ）。`expiration` が無ければ `None` として読み、期限切れかどうかの判定は使う側（`ReplicaReport::counts_at`）が行う。
 - 署名は nostr-sdk が受信時に検証する。
 
@@ -40,7 +48,7 @@
 | `MAX_REFERENCING_LISTED` | 50 | `webring::crawl`。`#p` で見つかる「起点を名指ししているだけの相手」（`Crawl.referencing`）の一覧を先頭 50 件までに切り詰める。超えた件数は `Crawl.referencing_dropped` に積む。たどり方は [`cli.md#webring`](cli.md#webring) |
 | `MAX_RELAY_FETCH_LIMIT` | 20,000 | `nostr::capped_limit` の上限値。個々の `limit()` 計算がどれだけ大きくなっても、relay 1 台への 1 回の REQ に付ける `limit` はこれを超えない |
 
-表の外に、数える報告の古さの上限 `nostr::MAX_REPORT_AGE`（7 日。`budget` モジュールではなく `nostr` 直下）がある。`ReplicaReport::counts_at` が使い、`created_at` からこれを超えて古い報告は `expiration` に関わらず数えない。
+表の外に、数える報告の古さの上限 `nostr::MAX_REPORT_AGE`（7 日。`budget` モジュールではなく `nostr` 直下）がある。`ReplicaReport::counts_at` が使い、`created_at` からこれを超えて古い報告は `expiration` に関わらず数えない。自分が出す報告の有効期間 `[agent].report_ttl` の上限でもある（[`../architecture.md`](../architecture.md#設定と環境変数)の検証）。
 
 relay への `Filter::limit` は `nostr::capped_limit(count, per)`（= `min(count * per, MAX_RELAY_FETCH_LIMIT)`）で、取得先の件数（作者数・サイト数など）に経路ごとの倍率を掛けて決める。
 

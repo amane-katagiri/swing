@@ -106,14 +106,20 @@ impl RelayClient {
         if authors.is_empty() {
             return Ok(Vec::new());
         }
+        let kind = Kind::Custom(site_event_kind);
         let filter = Filter::new()
-            .kind(Kind::Custom(site_event_kind))
+            .kind(kind)
             .authors(authors.iter().copied())
             .limit(capped_limit(
                 authors.len(),
                 budget::MAX_SITES_PER_AUTHOR_LISTED,
             ));
-        self.fetch(filter, "fetching site events").await
+        let events = self.fetch(filter, "fetching site events").await?;
+        let requested: HashSet<PublicKey> = authors.iter().copied().collect();
+        Ok(events
+            .into_iter()
+            .filter(|e| e.kind == kind && requested.contains(&e.pubkey))
+            .collect())
     }
 
     pub async fn fetch_replica_reports(
@@ -124,11 +130,22 @@ impl RelayClient {
         if sites.is_empty() {
             return Ok(Vec::new());
         }
+        let kind = Kind::Custom(report_kind);
         let filter = Filter::new()
-            .kind(Kind::Custom(report_kind))
+            .kind(kind)
             .coordinates(sites)
             .limit(capped_limit(sites.len(), budget::MAX_REPORTS_PER_SITE));
-        self.fetch(filter, "fetching replica reports").await
+        let events = self.fetch(filter, "fetching replica reports").await?;
+        let requested: HashSet<String> = sites.iter().map(|c| c.to_string()).collect();
+        Ok(events
+            .into_iter()
+            .filter(|e| {
+                e.kind == kind
+                    && e.tags.iter().any(|t| {
+                        t.kind() == "a" && t.content().is_some_and(|a| requested.contains(a))
+                    })
+            })
+            .collect())
     }
 
     pub async fn fetch_follow_sets(
@@ -147,9 +164,11 @@ impl RelayClient {
             .limit(capped_limit(authors.len(), 2));
         let events = self.fetch(filter, "fetching follow sets").await?;
         let now = Timestamp::now().as_secs();
+        let requested: HashSet<PublicKey> = authors.iter().copied().collect();
         let mut newest: HashMap<PublicKey, Event> = HashMap::new();
         for event in events {
-            if !is_follow_set_of(&event, &event.pubkey, mirror_set)
+            if !requested.contains(&event.pubkey)
+                || !is_follow_set_of(&event, &event.pubkey, mirror_set)
                 || !plausible_at(event.created_at.as_secs(), now)
             {
                 continue;
@@ -1596,5 +1615,125 @@ mod tests {
             .map(|e| e.id)
             .collect();
         assert_eq!(ids, vec![plausible.id]);
+    }
+
+    #[derive(Debug)]
+    struct IgnoresFilter;
+
+    impl QueryPolicy for IgnoresFilter {
+        fn admit_query<'a>(
+            &'a self,
+            query: &'a mut Filter,
+            _addr: &'a std::net::SocketAddr,
+        ) -> std::pin::Pin<Box<dyn Future<Output = QueryPolicyResult> + Send + 'a>> {
+            Box::pin(async move {
+                *query = Filter::new();
+                QueryPolicyResult::Accept
+            })
+        }
+    }
+
+    async fn relay_that_ignores_filters(events: &[Event]) -> (LocalRelay, RelayClient) {
+        let local = LocalRelayBuilder::default()
+            .query_policy(IgnoresFilter)
+            .build();
+        local.run().await.unwrap();
+        let url = local.url().await.to_string();
+        let seeder = Client::default();
+        seeder.add_relay(url.as_str()).await.unwrap();
+        seeder.connect().await;
+        for event in events {
+            seeder.send_event(event).await.unwrap();
+        }
+        seeder.shutdown().await;
+        let client = RelayClient::connect(Signer::Local(keys()), &[url])
+            .await
+            .unwrap();
+        (local, client)
+    }
+
+    #[tokio::test]
+    async fn fetches_drop_events_the_relay_returns_for_unrequested_authors() {
+        let now = Timestamp::now().as_secs();
+        let wanted = keys();
+        let stranger = keys();
+        let wanted_site = make_site_event(&wanted, 35980, "wanted.example", CID_A, now);
+        let stranger_site = make_site_event(&stranger, 35980, "stranger.example", CID_B, now);
+        let wanted_set = follow_set(&wanted, "swing", now, "wanted");
+        let stranger_set = follow_set(&stranger, "swing", now, "stranger");
+        let wanted_report = report(
+            &stranger,
+            &wanted.public_key(),
+            "wanted.example",
+            &[CID_A],
+            now,
+        );
+        let stranger_report = report(
+            &wanted,
+            &stranger.public_key(),
+            "stranger.example",
+            &[CID_B],
+            now,
+        );
+        let all = [
+            wanted_site.clone(),
+            stranger_site.clone(),
+            wanted_set.clone(),
+            stranger_set.clone(),
+            wanted_report.clone(),
+            stranger_report.clone(),
+        ];
+        let (_local, client) = relay_that_ignores_filters(&all).await;
+
+        let unfiltered = client
+            .fetch(
+                Filter::new()
+                    .kind(Kind::Custom(35980))
+                    .author(wanted.public_key()),
+                "probe",
+            )
+            .await
+            .unwrap();
+        assert!(unfiltered.iter().any(|e| e.id == stranger_site.id));
+
+        let sites = client
+            .fetch_site_events(35980, &[wanted.public_key()])
+            .await
+            .unwrap();
+        assert_eq!(
+            sites.iter().map(|e| e.id).collect::<Vec<_>>(),
+            vec![wanted_site.id]
+        );
+
+        let sets = client
+            .fetch_follow_sets("swing", &[wanted.public_key()])
+            .await
+            .unwrap();
+        assert_eq!(sets.len(), 1);
+        assert_eq!(sets[&wanted.public_key()].id, wanted_set.id);
+
+        let reports = client
+            .fetch_replica_reports(
+                35981,
+                &[site_coordinate(
+                    35980,
+                    &wanted.public_key(),
+                    "wanted.example",
+                )],
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            reports.iter().map(|e| e.id).collect::<Vec<_>>(),
+            vec![wanted_report.id]
+        );
+
+        let referencing = client
+            .fetch_follow_set_authors_referencing("swing", &[wanted.public_key()])
+            .await
+            .unwrap();
+        assert!(referencing.is_empty());
+
+        client.shutdown().await;
     }
 }

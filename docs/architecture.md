@@ -169,7 +169,7 @@ compose でのコンテナ内の待ち受けとホスト側の公開アドレス
 検証:
 
 - `poll_interval`、`concurrency`、`max_sites_per_account`、`[publish].keep_versions`、`[agent].fetch_timeout`、`[agent].fetch_idle_timeout`、`[dashboard].max_upload` は 0 だとエラー。
-- `report_ttl` の半分が `poll_interval` 以下ならエラー。
+- `report_ttl` の半分が `poll_interval` 以下ならエラー。`report_ttl` が `nostr::MAX_REPORT_AGE`（7 日）を超えてもエラー（`report_ttl must be at most 7d`）。
 - `mfs_root` は `/` で始まる絶対パス。`/` そのもの、空の要素、`.`、`..` を含むとエラー。末尾の `/` は取り除く。
 - `[kubo].managed = true` のときに `[ipfs].api`（TOML または `SWING_IPFS_API`）が指定されているとエラー（`[ipfs].api conflicts with [kubo].managed = true`）。
 - `[gateway].listen` が `off` 以外で `[gateway].hosts` が空ならエラー。
