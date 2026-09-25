@@ -6,7 +6,7 @@
 </p>
 
 <p align="center">
-  <img src="docs/assets/dashboard-desktop.png" alt="ダッシュボードの Desktop 画面。Windows 風デスクトップの上のブラウザウィンドウに、保存中のサイトのリンク集が並んでいる" width="900">
+  <img src="docs/assets/dashboard-desktop.png" alt="ダッシュボードの Desktop 画面。Windows 風デスクトップの上のブラウザウィンドウに、保存中のサイトのリンク集が並び、右下にデスクトップの背景を設定するコントロール パネルのダイアログが開いている" width="900">
   <br>
   <sub>Desktop 画面（<a href="docker/demo/README.md">デモ環境</a>のサンプルデータ）</sub>
 </p>

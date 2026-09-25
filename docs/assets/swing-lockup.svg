@@ -10,8 +10,8 @@
       <circle cx="114" cy="384" r="18"/>
     </g>
   </g>
-  <g transform="translate(175 0) scale(0.74074074)" shape-rendering="crispEdges">
-    <g fill="#000000">
+  <g transform="translate(175 0) scale(0.74074074)">
+    <g fill="#000000" shape-rendering="crispEdges">
       <rect x="10" y="130.82" width="90" height="18"/>
       <rect x="80" y="107.82" width="30" height="15"/>
       <rect x="0" y="107.82" width="30" height="15"/>
