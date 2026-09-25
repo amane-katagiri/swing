@@ -69,7 +69,7 @@ NIP-05 の検証結果はバッジで `OK`（`verified`）/ `NG`（`mismatch`）
 - 署名アプリのときは「つなぎ直す」ボタンから relay 欄と QR（`pairing.js`）とキャンセルボタンを出す。ペアリングが `ready` になると「つなぎ直して再起動」ボタン（`#pub-signer-save`）が有効になり、押すと [`POST /api/signer/reconnect`](http-api.md#post-apisignerreconnect) を呼び、`pollUntil` で `GET /api/overview` を読んで `instance` が変わったらページを読み直す。
 - publish のアップロード後、署名アプリのときは処理中の表示を `processingOnAgentSigner`（承認を求められたら承認して、という案内）にする。
 - publish が成功したら進捗バーを隠し、`#publish-status` に結果（relay N つのうち M つが受け付けたか。全部受け付ければ `ok`、一部だけなら `warn`）を出す。結果のパネルにはサイト・URL・タイトル・NIP-05・署名（署名アプリのときだけ）・CID・サイズ・作成日時・MFS パス・ファイル数・消した古い版・relay ごとの結果・ゲートウェイのリンクを並べる。
-- My sites: 一覧の「Use」ボタンは `site`・`url`・`title`（`message` を除く）をフォームに入れるだけ。
+- My sites: 一覧は画面を開いたときにキャッシュが無ければ取得し、publish が成功したときと「再読み込み」で取り直す。一覧の「Use」ボタンは `site`・`url`・`title`（`message` を除く）をフォームに入れるだけ。
 - publish フォームは常にフォルダアップロード（`<input type="file" webkitdirectory multiple>`）。ファイル数・合計サイズを表示し、`max_upload` を超えれば送信ボタンを無効化する。送信は `XMLHttpRequest` で、進捗を `.swing-progress`/`.swing-progress-bar`（`data-state`）に反映する。413 は「上限を超えた」という文言に言い換える。
 - 各ファイルの送信名は `webkitRelativePath` から選んだフォルダ名を除いたもの。最後に使ったフォーム内容は `swing:publish:last` に保存する（下記の localStorage 一覧を参照）。
 

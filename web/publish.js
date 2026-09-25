@@ -422,6 +422,7 @@ function submitUpload({ site, url, title, message, nip05, files }) {
         saveLastPublish({ site, url, title, message, nip05 });
         publishEls.uploadInput.value = '';
         updateUploadInfo();
+        loadMySites(true);
       } else {
         showProgress('error', 100);
         handlePublishHttpError(xhr.status, body);
