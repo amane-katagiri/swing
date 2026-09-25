@@ -1062,14 +1062,15 @@ body[data-view="sites"][data-style="table"] .swing-site-set {
 
 #status-check-result {
   margin-top: var(--swing-space-3);
-  overflow-x: auto;
 }
 
 #status-check-result h3 {
   margin-top: var(--swing-space-5);
 }
 
-#status-check-result .swing-table {
+.swing-table-scroll {
+  width: 100%;
+  overflow-x: auto;
   margin-bottom: var(--swing-space-3);
 }
 
@@ -1329,6 +1330,7 @@ pre.swing-pre {
   border: 1px solid var(--swing-border);
   overflow: hidden;
   margin-top: var(--swing-space-2);
+  margin-bottom: var(--swing-space-3);
 }
 
 .swing-progress-bar {

@@ -167,7 +167,7 @@ export function renderStatusCheck(status) {
       tbody.append(tr);
     }
     table.append(tbody);
-    sitesEls.statusCheckResult.append(table);
+    sitesEls.statusCheckResult.append(el('div', { class: 'swing-table-scroll' }, table));
   }
   if (status.sites.length) {
     sitesEls.statusCheckResult.append(el('h3', {}, t('actualSize')));
@@ -184,7 +184,7 @@ export function renderStatusCheck(status) {
       tbody.append(tr);
     }
     table.append(tbody);
-    sitesEls.statusCheckResult.append(table);
+    sitesEls.statusCheckResult.append(el('div', { class: 'swing-table-scroll' }, table));
     sitesEls.statusCheckResult.append(
       el('p', {}, t('actualSizeTotal', { size: status.actual_bytes == null ? '–' : formatBytes(status.actual_bytes) })),
     );
