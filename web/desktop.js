@@ -205,17 +205,123 @@ function injectFrameChrome(doc) {
   });
 }
 
+/* Win95-faithful default: the window starts active on boot rather than only once it actually has focus, so this is skipped until a real element has been focused at least once. */
+let hasHadRealFocus = false;
+let activeSyncScheduled = false;
+function scheduleActiveTitlebarSync() {
+  if (activeSyncScheduled) return;
+  activeSyncScheduled = true;
+  requestAnimationFrame(() => {
+    activeSyncScheduled = false;
+    const focused = document.activeElement;
+    const meaningful = focused && focused !== document.body && focused !== document.documentElement;
+    if (meaningful) hasHadRealFocus = true;
+    else if (!hasHadRealFocus) return;
+    DesktopWindow.syncActive();
+    DesktopSettings.syncActive();
+  });
+}
+
 function wirePageFrame() {
   if (!deskEls.frame) return;
   const onLoad = () => {
     const doc = capturePageEls();
     frameChromeReady = injectFrameChrome(doc);
-    if (doc) doc.addEventListener('click', () => DesktopWindow.deselectIcons());
+    if (doc) {
+      doc.addEventListener('click', () => DesktopWindow.deselectIcons());
+      doc.addEventListener('keydown', onFrameKeydown, true);
+    }
+    scheduleActiveTitlebarSync();
     if (cache.sites) DesktopView.render();
   };
   deskEls.frame.addEventListener('load', onLoad);
   const doc = pageDocument();
   if (doc && doc.readyState === 'complete') onLoad();
+}
+
+function outerDesktopFocusable() {
+  const view = document.getElementById('view-desktop');
+  /* Not `[href]`: that also matches the decorative SVG `<use href>` icon references. */
+  return Array.from(view.querySelectorAll('button, input, [tabindex]:not([tabindex="-1"])')).filter(
+    (node) => !node.disabled && node.offsetParent !== null,
+  );
+}
+
+function innerDesktopFocusable() {
+  const doc = pageDocument();
+  if (!doc || !doc.body) return [];
+  return Array.from(doc.querySelectorAll('a[href], button, input, [tabindex]:not([tabindex="-1"])')).filter((node) => node.offsetParent !== null);
+}
+
+function combinedDesktopFocusable() {
+  const outer = outerDesktopFocusable();
+  const inner = innerDesktopFocusable();
+  if (!deskEls.frame || inner.length === 0) return outer;
+  const before = [];
+  const after = [];
+  for (const node of outer) {
+    (deskEls.frame.compareDocumentPosition(node) & Node.DOCUMENT_POSITION_PRECEDING ? before : after).push(node);
+  }
+  return [...before, ...inner, ...after];
+}
+
+/* Defers entirely to the dialog's own tighter trap (desktop-settings.js) while it's open. */
+function desktopTrapActive() {
+  return document.body.dataset.view === 'desktop' && !DesktopSettings.isDialogOpen();
+}
+
+function escapeDesktopToSideNav(ev) {
+  const link = document.querySelector('a[data-route="desktop"]');
+  if (!link) return;
+  ev.preventDefault();
+  link.focus();
+}
+
+function onDesktopKeydown(ev) {
+  if (!desktopTrapActive()) return;
+  const view = document.getElementById('view-desktop');
+  if (!view.contains(document.activeElement)) return;
+  if (ev.key === 'Escape') {
+    escapeDesktopToSideNav(ev);
+    return;
+  }
+  if (ev.key !== 'Tab') return;
+  const list = combinedDesktopFocusable();
+  if (list.length === 0) return;
+  const first = list[0];
+  const last = list[list.length - 1];
+  if (ev.shiftKey && document.activeElement === first) {
+    ev.preventDefault();
+    last.focus();
+  } else if (!ev.shiftKey && document.activeElement === last) {
+    ev.preventDefault();
+    first.focus();
+  }
+}
+
+/* A separate listener because same-origin iframes still don't bubble keydown to the parent. */
+function onFrameKeydown(ev) {
+  if (!desktopTrapActive()) return;
+  const doc = pageDocument();
+  if (!doc) return;
+  if (ev.key === 'Escape') {
+    escapeDesktopToSideNav(ev);
+    return;
+  }
+  if (ev.key !== 'Tab') return;
+  const inner = innerDesktopFocusable();
+  if (inner.length === 0) return;
+  const list = combinedDesktopFocusable();
+  const active = doc.activeElement;
+  if (ev.shiftKey && active === inner[0]) {
+    const idx = list.indexOf(inner[0]);
+    ev.preventDefault();
+    (idx > 0 ? list[idx - 1] : list[list.length - 1]).focus();
+  } else if (!ev.shiftKey && active === inner[inner.length - 1]) {
+    const idx = list.indexOf(inner[inner.length - 1]);
+    ev.preventDefault();
+    (idx >= 0 && idx < list.length - 1 ? list[idx + 1] : list[0]).focus();
+  }
 }
 
 function pageFrameLoaded() {
@@ -268,13 +374,22 @@ export const DesktopView = {
     wirePageFrame();
     warmDeskFonts();
     if (deskEls.reloadBtn) {
-      deskEls.reloadBtn.addEventListener('click', () => this.load(true, deskEls.reloadBtn));
+      deskEls.reloadBtn.addEventListener('click', () => {
+        this.load(true, deskEls.reloadBtn);
+        DesktopWindow.focusWindow();
+      });
     }
     bumpVisitCounter();
     updateClock();
     setInterval(updateClock, 30000);
-    DesktopWindow.init();
-    DesktopSettings.init();
+    DesktopWindow.init(scheduleActiveTitlebarSync);
+    DesktopSettings.init(scheduleActiveTitlebarSync);
+    document.addEventListener('keydown', onDesktopKeydown, true);
+    document.addEventListener('focusin', scheduleActiveTitlebarSync);
+    document.addEventListener('focusout', scheduleActiveTitlebarSync);
+    window.addEventListener('blur', scheduleActiveTitlebarSync);
+    window.addEventListener('focus', scheduleActiveTitlebarSync);
+    document.getElementById('view-desktop').addEventListener('pointerdown', scheduleActiveTitlebarSync);
   },
   onShow() {
     revealWindowWhenReady();

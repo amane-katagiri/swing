@@ -57,6 +57,7 @@ let flashCount = 0;
 let dragState = null;
 let comboOpen = false;
 let comboActiveIndex = 0;
+let onActivationChange = () => {};
 
 function clampNum(v, lo, hi) {
   return Math.min(hi, Math.max(lo, v));
@@ -380,6 +381,8 @@ function syncImagePanel() {
   settingsEls.comboField.disabled = !image;
   closeCombo();
   renderComboValue(image ? image.display : 'center');
+  /* Disabling the just-clicked control (e.g. 削除) blurs it to body; keep focus in the dialog. */
+  if (!settingsEls.dialog.hidden && !settingsEls.dialog.contains(document.activeElement)) settingsEls.dialog.focus();
 }
 
 function syncFormFromState() {
@@ -609,6 +612,7 @@ function openDialog() {
   placeDialog();
   settingsEls.dialog.focus();
   document.addEventListener('keydown', onDialogKeydown, true);
+  onActivationChange();
 }
 
 function closeDialog() {
@@ -618,6 +622,7 @@ function closeDialog() {
   stopFlash();
   document.removeEventListener('keydown', onDialogKeydown, true);
   settingsEls.icon.focus();
+  onActivationChange();
 }
 
 function applyState(state) {
@@ -721,6 +726,7 @@ function wireEvents() {
   });
 
   settingsEls.overlay.addEventListener('click', () => flashTitlebar());
+  settingsEls.dialog.addEventListener('focusin', () => selectIcon(null));
 
   settingsEls.closeBtn.addEventListener('click', cancelAndClose);
   settingsEls.cancelBtn.addEventListener('click', cancelAndClose);
@@ -758,7 +764,8 @@ function wireEvents() {
 }
 
 export const DesktopSettings = {
-  init() {
+  init(onChange) {
+    onActivationChange = onChange || onActivationChange;
     savedState = loadSavedWallpaper();
     pendingState = cloneWallpaper(savedState);
     buildSwatches();
@@ -767,5 +774,12 @@ export const DesktopSettings = {
   },
   applyStoredWallpaper() {
     applyBackground(settingsEls.wallpaper, savedState, { preview: false });
+  },
+  isDialogOpen() {
+    return !settingsEls.dialog.hidden;
+  },
+  syncActive() {
+    if (flashTimer) return;
+    settingsEls.titlebar.classList.toggle('is-inactive', !settingsEls.dialog.contains(document.activeElement));
   },
 };

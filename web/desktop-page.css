@@ -49,6 +49,12 @@ body {
   margin: 0;
 }
 
+/* Matches desktop.css's dotted focus rectangle; a separate document needs its own copy. */
+a:focus-visible {
+  outline: 1px dotted #000000;
+  outline-offset: 1px;
+}
+
 .desk-page-inner {
   --desk-col: min(720px, 100%);
   width: var(--desk-col);

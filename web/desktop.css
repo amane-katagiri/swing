@@ -376,8 +376,8 @@ button.desk-toolbtn:active {
 }
 
 button.desk-toolbtn:focus-visible {
-  outline: 2px solid #000000;
-  outline-offset: 1px;
+  outline: 1px dotted #000000;
+  outline-offset: -3px;
 }
 
 .desk-address-row {
@@ -644,7 +644,13 @@ button.desk-toolbtn:focus-visible {
   overflow: hidden;
 }
 
-.desk-dialog-titlebar.is-inactive {
+/* Win95 shows active/inactive via the titlebar, not a ring around the whole window. */
+#desk-window:focus-visible,
+.desk-dialog:focus-visible {
+  outline: none;
+}
+
+.desk-titlebar.is-inactive {
   background: var(--desk-shadow);
   color: var(--desk-text);
 }
@@ -770,6 +776,12 @@ button.desk-toolbtn:focus-visible {
   outline-offset: -4px;
 }
 
+/* Outside, not inset: inset would be invisible against the darker palette colors. */
+.desk-wp-swatch:focus-visible {
+  outline: 1px dotted #000000;
+  outline-offset: 1px;
+}
+
 .desk-wp-color-row {
   display: flex;
   flex-wrap: wrap;
@@ -795,6 +807,11 @@ button.desk-toolbtn:focus-visible {
   border: 0;
   background: none;
   cursor: default;
+}
+
+#desk-wp-custom-color-input:focus-visible {
+  outline: 1px dotted #000000;
+  outline-offset: 2px;
 }
 
 #desk-wp-custom-color-input::-webkit-color-swatch-wrapper {

@@ -1,3 +1,5 @@
+import { DesktopSettings } from './desktop-settings.js';
+
 /* Geometry is kept only in memory (not localStorage) and recomputed from `.desk-screen`'s current size, so it survives sidebar collapse/expand and resize without persisting anything. */
 const MIN_W = 320;
 const MIN_H = 240;
@@ -35,6 +37,8 @@ const winState = {
   initialized: false,
   userPositioned: false,
 };
+
+let onActivationChange = () => {};
 
 function isNarrowLayout() {
   return window.matchMedia('(max-width: 760px)').matches;
@@ -125,12 +129,16 @@ function reflowWindow() {
 function minimizeWindow() {
   winState.minimized = true;
   renderWindow();
+  winEls.taskbtn.focus();
+  onActivationChange();
 }
 
 function closeWindow() {
   winState.closed = true;
   winState.minimized = false;
   renderWindow();
+  winEls.iconExplorer.focus();
+  onActivationChange();
 }
 
 function openWindowFromIcon() {
@@ -145,6 +153,8 @@ function openWindowFromIcon() {
     winState.minimized = false;
   }
   renderWindow();
+  winEls.win.focus();
+  onActivationChange();
 }
 
 function toggleMaximized() {
@@ -164,8 +174,11 @@ function wireWindowChrome() {
 
   winEls.taskbtn.addEventListener('click', () => {
     if (winState.closed) return;
+    const wasMinimized = winState.minimized;
     winState.minimized = !winState.minimized;
     renderWindow();
+    if (wasMinimized) winEls.win.focus();
+    onActivationChange();
   });
 
   winEls.titlebar.addEventListener('dblclick', (ev) => {
@@ -304,11 +317,20 @@ function wireWindowChrome() {
   });
   winEls.screen.addEventListener('click', () => selectDesktopIcon(null));
 
+  winEls.win.addEventListener('focusin', () => selectDesktopIcon(null));
+
+  /* Clicking non-focusable chrome (menubar/toolbar/statusbar/address row) doesn't move focus on its own, so it wouldn't otherwise activate the window. */
+  winEls.win.addEventListener('pointerdown', (ev) => {
+    if (ev.target.closest('button, input, [tabindex]:not([tabindex="-1"])')) return;
+    winEls.win.focus();
+  });
+
   new ResizeObserver(() => reflowWindow()).observe(winEls.screen);
 }
 
 export const DesktopWindow = {
-  init() {
+  init(onChange) {
+    onActivationChange = onChange || onActivationChange;
     wireWindowChrome();
   },
   reflow() {
@@ -319,5 +341,12 @@ export const DesktopWindow = {
   },
   deselectIcons() {
     selectDesktopIcon(null);
+  },
+  focusWindow() {
+    winEls.win.focus();
+  },
+  syncActive() {
+    const active = winEls.win.contains(document.activeElement) && !DesktopSettings.isDialogOpen();
+    winEls.titlebar.classList.toggle('is-inactive', !active);
   },
 };
