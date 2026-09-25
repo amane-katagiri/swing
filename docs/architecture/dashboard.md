@@ -114,7 +114,7 @@ HTTP サーバー（axum 0.8）で、ダッシュボードのブラウザ向け�
 | `GET /favicon.svg` | `image/svg+xml`。Desktop 画面の Start ボタンと同じ SWING の 3 色マーク（`icon-desk-start` と同じ図形） |
 | `GET /favicon-32.png` `/apple-touch-icon.png` | `image/png`（`include_bytes!`）。`favicon.svg` から書き出した 32×32（透過、SVG 非対応ブラウザ向け）と 180×180（白背景、iOS のホーム画面向け） |
 | `GET /style.css` `/desktop.css` | `text/css; charset=utf-8` |
-| `GET /boot.js` `/app.js` `/graph.js` `/storage.js` `/i18n.js` `/util.js` `/ui.js` `/sites.js` `/webring.js` `/publish.js` `/settings.js` `/setup.js` `/login.js` `/desktop.js` `/desktop-window.js` `/desktop-settings.js` | `text/javascript; charset=utf-8` |
+| `GET /boot.js` `/app.js` `/graph.js` `/storage.js` `/i18n.js` `/util.js` `/ui.js` `/sites.js` `/webring.js` `/publish.js` `/settings.js` `/setup.js` `/login.js` `/desktop.js` `/desktop-window.js` `/desktop-settings.js` `/desktop-dialog.js` `/desktop-wallpaper.js` `/desktop-wallpaper-image.js` `/desktop-combobox.js` `/desktop-focus.js` `/desktop-drag.js` | `text/javascript; charset=utf-8` |
 | `GET /desktop-icons.svg` | `image/svg+xml`。Desktop 画面のピクセルアートアイコンのスプライト（`<symbol>` 集）。`index.html` から `<use href="/desktop-icons.svg#icon-desk-…">` で外部参照する |
 | `GET /desktop-page.html` `/desktop-page.css` | `text/html; charset=utf-8` / `text/css; charset=utf-8`。Desktop 画面の iframe に入るリンク集ページとその CSS |
 | `GET /desktop-frame.css` | `text/css; charset=utf-8`。同じ iframe に `desktop.js` が差し込む窓側の CSS（スクロールバー）。差し替え対象ではない |

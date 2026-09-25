@@ -270,7 +270,7 @@
             <svg class="desk-titlebar-icon" aria-hidden="true"><use href="/desktop-icons.svg#icon-desk-control-panel-color"></use></svg>
             <span class="desk-titlebar-text" id="desk-dialog-title">コントロール パネル</span>
             <div class="desk-titlebar-btns">
-              <button type="button" class="desk-tbtn desk-tbtn-close" id="desk-dialog-close" aria-label="閉じる" title="閉じる"><svg class="desk-glyph desk-glyph-close" width="8" height="7" viewBox="0 0 8 7" shape-rendering="crispEdges" aria-hidden="true">
+              <button type="button" class="desk-tbtn desk-tbtn-close" id="desk-dialog-close" data-dialog-action="close" aria-label="閉じる" title="閉じる"><svg class="desk-glyph desk-glyph-close" width="8" height="7" viewBox="0 0 8 7" shape-rendering="crispEdges" aria-hidden="true">
                 <rect x="0" y="0" width="2" height="1"></rect><rect x="6" y="0" width="2" height="1"></rect>
                 <rect x="1" y="1" width="2" height="1"></rect><rect x="5" y="1" width="2" height="1"></rect>
                 <rect x="2" y="2" width="2" height="1"></rect><rect x="4" y="2" width="2" height="1"></rect>
@@ -334,9 +334,9 @@
             </div>
           </div>
           <div class="desk-dialog-buttons">
-            <button type="button" class="desk-dialog-btn" id="desk-dialog-ok">OK</button>
-            <button type="button" class="desk-dialog-btn" id="desk-dialog-cancel">キャンセル</button>
-            <button type="button" class="desk-dialog-btn" id="desk-dialog-apply" disabled>適用</button>
+            <button type="button" class="desk-dialog-btn" id="desk-dialog-ok" data-dialog-action="ok">OK</button>
+            <button type="button" class="desk-dialog-btn" id="desk-dialog-cancel" data-dialog-action="cancel">キャンセル</button>
+            <button type="button" class="desk-dialog-btn" id="desk-dialog-apply" data-dialog-action="apply" disabled>適用</button>
           </div>
         </div>
       </div>

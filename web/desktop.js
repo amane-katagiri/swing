@@ -2,6 +2,7 @@ import { storage } from './storage.js';
 import { cache, el, apiFetch, describeError, createLoadGuard, setBusy, sanitizeMessage, sanitizeDisplayText, maybeLink } from './util.js';
 import { DesktopWindow } from './desktop-window.js';
 import { DesktopSettings } from './desktop-settings.js';
+import { tabAcrossEdge, focusableIn, isModalOpen, scheduleActiveSync } from './desktop-focus.js';
 
 const DESK_TEXT = {
   loading: 'よみこみちゅう…',
@@ -25,7 +26,46 @@ const deskEls = {
   clock: document.getElementById('desk-clock'),
   statusText: document.getElementById('desk-status-text'),
   reloadBtn: document.getElementById('desk-reload'),
+  screen: document.getElementById('desk-screen'),
+  icons: Array.from(document.querySelectorAll('.desk-icon')),
 };
+
+const LAUNCHERS = [
+  { icon: document.getElementById('desk-icon-explorer'), open: () => DesktopWindow.open() },
+  { icon: document.getElementById('desk-icon-control-panel'), open: () => DesktopSettings.open() },
+];
+
+function selectIcon(icon) {
+  for (const other of deskEls.icons) other.classList.toggle('is-selected', other === icon);
+}
+
+function wireIconLaunchers() {
+  for (const icon of deskEls.icons) {
+    icon.addEventListener('click', (ev) => {
+      ev.stopPropagation();
+      selectIcon(icon);
+    });
+  }
+  if (deskEls.screen) deskEls.screen.addEventListener('click', () => selectIcon(null));
+
+  for (const { icon, open } of LAUNCHERS) {
+    icon.addEventListener('dblclick', (ev) => {
+      ev.stopPropagation();
+      open();
+    });
+    icon.addEventListener('keydown', (ev) => {
+      if (ev.key === 'Enter' || ev.key === ' ') {
+        ev.preventDefault();
+        selectIcon(icon);
+        open();
+      }
+    });
+  }
+
+  document.addEventListener('focusin', (ev) => {
+    if (ev.target instanceof Element && ev.target.closest('.desk-window')) selectIcon(null);
+  });
+}
 
 /* Page markup is replaceable, so every element here is optional and looked up again whenever the frame document changes. */
 const pageEls = { status: null, list: null, marquee: null, counter: null };
@@ -190,7 +230,7 @@ function updateClock() {
 
 const desktopLoadGuard = createLoadGuard();
 
-/* The scrollbar belongs to the window, not the replaceable page, and a parent document can't style a child iframe's scrollbar via CSS, so it's injected here (first, so a replaced page can override it). */
+/* A parent document can't style a child iframe's scrollbar via CSS. */
 function injectFrameChrome(doc) {
   if (!doc || !doc.head) return Promise.resolve();
   if (doc.getElementById(FRAME_CHROME_ID)) return Promise.resolve();
@@ -205,33 +245,16 @@ function injectFrameChrome(doc) {
   });
 }
 
-/* Win95-faithful default: the window starts active on boot rather than only once it actually has focus, so this is skipped until a real element has been focused at least once. */
-let hasHadRealFocus = false;
-let activeSyncScheduled = false;
-function scheduleActiveTitlebarSync() {
-  if (activeSyncScheduled) return;
-  activeSyncScheduled = true;
-  requestAnimationFrame(() => {
-    activeSyncScheduled = false;
-    const focused = document.activeElement;
-    const meaningful = focused && focused !== document.body && focused !== document.documentElement;
-    if (meaningful) hasHadRealFocus = true;
-    else if (!hasHadRealFocus) return;
-    DesktopWindow.syncActive();
-    DesktopSettings.syncActive();
-  });
-}
-
 function wirePageFrame() {
   if (!deskEls.frame) return;
   const onLoad = () => {
     const doc = capturePageEls();
     frameChromeReady = injectFrameChrome(doc);
     if (doc) {
-      doc.addEventListener('click', () => DesktopWindow.deselectIcons());
+      doc.addEventListener('click', () => selectIcon(null));
       doc.addEventListener('keydown', onFrameKeydown, true);
     }
-    scheduleActiveTitlebarSync();
+    scheduleActiveSync();
     if (cache.sites) DesktopView.render();
   };
   deskEls.frame.addEventListener('load', onLoad);
@@ -240,17 +263,13 @@ function wirePageFrame() {
 }
 
 function outerDesktopFocusable() {
-  const view = document.getElementById('view-desktop');
-  /* Not `[href]`: that also matches the decorative SVG `<use href>` icon references. */
-  return Array.from(view.querySelectorAll('button, input, [tabindex]:not([tabindex="-1"])')).filter(
-    (node) => !node.disabled && node.offsetParent !== null,
-  );
+  return focusableIn(document.getElementById('view-desktop'));
 }
 
 function innerDesktopFocusable() {
   const doc = pageDocument();
   if (!doc || !doc.body) return [];
-  return Array.from(doc.querySelectorAll('a[href], button, input, [tabindex]:not([tabindex="-1"])')).filter((node) => node.offsetParent !== null);
+  return focusableIn(doc, { links: true });
 }
 
 function combinedDesktopFocusable() {
@@ -265,9 +284,8 @@ function combinedDesktopFocusable() {
   return [...before, ...inner, ...after];
 }
 
-/* Defers entirely to the dialog's own tighter trap (desktop-settings.js) while it's open. */
 function desktopTrapActive() {
-  return document.body.dataset.view === 'desktop' && !DesktopSettings.isDialogOpen();
+  return document.body.dataset.view === 'desktop' && !isModalOpen();
 }
 
 function escapeDesktopToSideNav(ev) {
@@ -286,17 +304,7 @@ function onDesktopKeydown(ev) {
     return;
   }
   if (ev.key !== 'Tab') return;
-  const list = combinedDesktopFocusable();
-  if (list.length === 0) return;
-  const first = list[0];
-  const last = list[list.length - 1];
-  if (ev.shiftKey && document.activeElement === first) {
-    ev.preventDefault();
-    last.focus();
-  } else if (!ev.shiftKey && document.activeElement === last) {
-    ev.preventDefault();
-    first.focus();
-  }
+  tabAcrossEdge(ev, combinedDesktopFocusable(), document.activeElement);
 }
 
 /* A separate listener because same-origin iframes still don't bubble keydown to the parent. */
@@ -311,17 +319,7 @@ function onFrameKeydown(ev) {
   if (ev.key !== 'Tab') return;
   const inner = innerDesktopFocusable();
   if (inner.length === 0) return;
-  const list = combinedDesktopFocusable();
-  const active = doc.activeElement;
-  if (ev.shiftKey && active === inner[0]) {
-    const idx = list.indexOf(inner[0]);
-    ev.preventDefault();
-    (idx > 0 ? list[idx - 1] : list[list.length - 1]).focus();
-  } else if (!ev.shiftKey && active === inner[inner.length - 1]) {
-    const idx = list.indexOf(inner[inner.length - 1]);
-    ev.preventDefault();
-    (idx >= 0 && idx < list.length - 1 ? list[idx + 1] : list[0]).focus();
-  }
+  tabAcrossEdge(ev, combinedDesktopFocusable(), doc.activeElement, inner);
 }
 
 function pageFrameLoaded() {
@@ -372,6 +370,7 @@ function revealWindowWhenReady() {
 export const DesktopView = {
   init() {
     wirePageFrame();
+    wireIconLaunchers();
     warmDeskFonts();
     if (deskEls.reloadBtn) {
       deskEls.reloadBtn.addEventListener('click', () => {
@@ -382,18 +381,18 @@ export const DesktopView = {
     bumpVisitCounter();
     updateClock();
     setInterval(updateClock, 30000);
-    DesktopWindow.init(scheduleActiveTitlebarSync);
-    DesktopSettings.init(scheduleActiveTitlebarSync);
+    DesktopWindow.init();
+    DesktopSettings.init();
     document.addEventListener('keydown', onDesktopKeydown, true);
-    document.addEventListener('focusin', scheduleActiveTitlebarSync);
-    document.addEventListener('focusout', scheduleActiveTitlebarSync);
-    window.addEventListener('blur', scheduleActiveTitlebarSync);
-    window.addEventListener('focus', scheduleActiveTitlebarSync);
-    document.getElementById('view-desktop').addEventListener('pointerdown', scheduleActiveTitlebarSync);
+    document.addEventListener('focusin', scheduleActiveSync);
+    document.addEventListener('focusout', scheduleActiveSync);
+    window.addEventListener('blur', scheduleActiveSync);
+    window.addEventListener('focus', scheduleActiveSync);
+    document.getElementById('view-desktop').addEventListener('pointerdown', scheduleActiveSync);
   },
   onShow() {
     revealWindowWhenReady();
-    DesktopSettings.applyStoredWallpaper();
+    DesktopSettings.boot();
     if (cache.sites) this.render();
     else this.load();
     requestAnimationFrame(() => DesktopWindow.reflow());

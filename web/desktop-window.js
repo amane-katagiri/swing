@@ -1,12 +1,10 @@
-import { DesktopSettings } from './desktop-settings.js';
+import { FOCUSABLE, keepFocusOnDisable, registerFrame, scheduleActiveSync } from './desktop-focus.js';
+import { TITLEBAR_H, MIN_VISIBLE_TITLEBAR, clampNum, screenSize, trackPointer } from './desktop-drag.js';
 
-/* Geometry is kept only in memory (not localStorage) and recomputed from `.desk-screen`'s current size, so it survives sidebar collapse/expand and resize without persisting anything. */
 const MIN_W = 320;
 const MIN_H = 240;
 const SCREEN_PAD = 18;
 const ICON_COLUMN = 108;
-const TITLEBAR_H = 26;
-const MIN_VISIBLE_TITLEBAR = 60;
 const UNMAXIMIZE_DRAG_THRESHOLD = 4;
 
 const WIN_TEXT = {
@@ -18,14 +16,12 @@ const winEls = {
   screen: document.getElementById('desk-screen'),
   win: document.getElementById('desk-window'),
   titlebar: document.getElementById('desk-titlebar'),
-  titlebarText: document.getElementById('desk-titlebar-text'),
   btnMin: document.getElementById('desk-btn-min'),
   btnMax: document.getElementById('desk-btn-max'),
   glyphMax: document.getElementById('desk-glyph-max'),
   btnClose: document.getElementById('desk-btn-close'),
   taskbtn: document.getElementById('desk-taskbtn'),
   iconExplorer: document.getElementById('desk-icon-explorer'),
-  icons: Array.from(document.querySelectorAll('.desk-icon')),
   resizeHandles: Array.from(document.querySelectorAll('.desk-resize')),
 };
 
@@ -38,19 +34,8 @@ const winState = {
   userPositioned: false,
 };
 
-let onActivationChange = () => {};
-
 function isNarrowLayout() {
   return window.matchMedia('(max-width: 760px)').matches;
-}
-
-function clampNum(v, lo, hi) {
-  return Math.min(hi, Math.max(lo, v));
-}
-
-function screenSize() {
-  const rect = winEls.screen.getBoundingClientRect();
-  return { width: rect.width, height: rect.height };
 }
 
 function defaultGeometry(size) {
@@ -73,7 +58,7 @@ function clampGeometry(g, size) {
 function applyWindowGeometry() {
   winEls.win.classList.toggle('is-maximized', winState.maximized);
   if (winState.maximized) {
-    const size = screenSize();
+    const size = screenSize(winEls.screen);
     winEls.win.style.left = '0px';
     winEls.win.style.top = '0px';
     winEls.win.style.width = `${Math.floor(size.width)}px`;
@@ -107,7 +92,7 @@ function renderWindow() {
 
 function ensureWindowInitialized() {
   if (winState.initialized) return;
-  const size = screenSize();
+  const size = screenSize(winEls.screen);
   if (size.width === 0 || size.height === 0) return;
   winState.geom = clampGeometry(defaultGeometry(size), size);
   winState.initialized = true;
@@ -119,7 +104,7 @@ function reflowWindow() {
     ensureWindowInitialized();
     return;
   }
-  const size = screenSize();
+  const size = screenSize(winEls.screen);
   if (size.width === 0 || size.height === 0) return;
   const base = winState.userPositioned || winState.maximized ? winState.geom : defaultGeometry(size);
   winState.geom = clampGeometry(base, size);
@@ -130,7 +115,7 @@ function minimizeWindow() {
   winState.minimized = true;
   renderWindow();
   winEls.taskbtn.focus();
-  onActivationChange();
+  scheduleActiveSync();
 }
 
 function closeWindow() {
@@ -138,12 +123,12 @@ function closeWindow() {
   winState.minimized = false;
   renderWindow();
   winEls.iconExplorer.focus();
-  onActivationChange();
+  scheduleActiveSync();
 }
 
 function openWindowFromIcon() {
   if (winState.closed) {
-    const size = screenSize();
+    const size = screenSize(winEls.screen);
     const base = winState.userPositioned ? winState.geom : defaultGeometry(size);
     winState.geom = clampGeometry(base, size);
     winState.closed = false;
@@ -154,17 +139,13 @@ function openWindowFromIcon() {
   }
   renderWindow();
   winEls.win.focus();
-  onActivationChange();
+  scheduleActiveSync();
 }
 
 function toggleMaximized() {
   if (isNarrowLayout()) return;
   winState.maximized = !winState.maximized;
   renderWindow();
-}
-
-function selectDesktopIcon(icon) {
-  for (const other of winEls.icons) other.classList.toggle('is-selected', other === icon);
 }
 
 function wireWindowChrome() {
@@ -178,7 +159,7 @@ function wireWindowChrome() {
     winState.minimized = !winState.minimized;
     renderWindow();
     if (wasMinimized) winEls.win.focus();
-    onActivationChange();
+    scheduleActiveSync();
   });
 
   winEls.titlebar.addEventListener('dblclick', (ev) => {
@@ -186,58 +167,38 @@ function wireWindowChrome() {
     toggleMaximized();
   });
 
-  let drag = null;
   winEls.titlebar.addEventListener('pointerdown', (ev) => {
     if (isNarrowLayout()) return;
     if (ev.target.closest('.desk-tbtn')) return;
     if (ev.button !== 0) return;
-    drag = {
+    ev.preventDefault();
+    const drag = {
       startX: ev.clientX,
       startY: ev.clientY,
       origX: winState.geom.x,
       origY: winState.geom.y,
       fromMaximized: winState.maximized,
     };
-    document.body.classList.add('desk-no-select');
-    ev.preventDefault();
-    try {
-      winEls.titlebar.setPointerCapture(ev.pointerId);
-    } catch {
-      /* no active pointer to capture (e.g. synthetic events) */
-    }
+    trackPointer(winEls.titlebar, ev, (mv) => {
+      const size = screenSize(winEls.screen);
+      if (drag.fromMaximized) {
+        if (Math.hypot(mv.clientX - drag.startX, mv.clientY - drag.startY) < UNMAXIMIZE_DRAG_THRESHOLD) return;
+        const rect = winEls.screen.getBoundingClientRect();
+        const ratio = clampNum((drag.startX - rect.left) / Math.max(1, rect.width), 0, 1);
+        drag.origX = drag.startX - rect.left - winState.geom.w * ratio;
+        drag.origY = drag.startY - rect.top - TITLEBAR_H / 2;
+        drag.fromMaximized = false;
+        winState.maximized = false;
+        renderWindow();
+      }
+      winState.userPositioned = true;
+      winState.geom = clampGeometry(
+        { ...winState.geom, x: drag.origX + (mv.clientX - drag.startX), y: drag.origY + (mv.clientY - drag.startY) },
+        size,
+      );
+      applyWindowGeometry();
+    });
   });
-  winEls.titlebar.addEventListener('pointermove', (ev) => {
-    if (!drag) return;
-    const size = screenSize();
-    if (drag.fromMaximized) {
-      if (Math.hypot(ev.clientX - drag.startX, ev.clientY - drag.startY) < UNMAXIMIZE_DRAG_THRESHOLD) return;
-      const rect = winEls.screen.getBoundingClientRect();
-      const ratio = clampNum((drag.startX - rect.left) / Math.max(1, rect.width), 0, 1);
-      drag.origX = drag.startX - rect.left - winState.geom.w * ratio;
-      drag.origY = drag.startY - rect.top - TITLEBAR_H / 2;
-      drag.fromMaximized = false;
-      winState.maximized = false;
-      renderWindow();
-    }
-    winState.userPositioned = true;
-    winState.geom = clampGeometry(
-      { ...winState.geom, x: drag.origX + (ev.clientX - drag.startX), y: drag.origY + (ev.clientY - drag.startY) },
-      size,
-    );
-    applyWindowGeometry();
-  });
-  const endDrag = (ev) => {
-    if (!drag) return;
-    drag = null;
-    document.body.classList.remove('desk-no-select');
-    try {
-      winEls.titlebar.releasePointerCapture(ev.pointerId);
-    } catch {
-      /* pointer capture already released */
-    }
-  };
-  winEls.titlebar.addEventListener('pointerup', endDrag);
-  winEls.titlebar.addEventListener('pointercancel', endDrag);
 
   for (const handle of winEls.resizeHandles) {
     const dir = handle.dataset.dir;
@@ -248,14 +209,7 @@ function wireWindowChrome() {
       const start = { ...winState.geom };
       const startX = ev.clientX;
       const startY = ev.clientY;
-      document.body.classList.add('desk-no-select');
-      try {
-        handle.setPointerCapture(ev.pointerId);
-      } catch {
-        /* no active pointer to capture (e.g. synthetic events) */
-      }
-
-      const onMove = (mv) => {
+      trackPointer(handle, ev, (mv) => {
         const dx = mv.clientX - startX;
         const dy = mv.clientY - startY;
         let { x, y, w, h } = start;
@@ -278,68 +232,27 @@ function wireWindowChrome() {
           h = MIN_H;
         }
         winState.userPositioned = true;
-        winState.geom = clampGeometry({ x, y, w, h }, screenSize());
+        winState.geom = clampGeometry({ x, y, w, h }, screenSize(winEls.screen));
         applyWindowGeometry();
-      };
-      const onUp = (up) => {
-        handle.removeEventListener('pointermove', onMove);
-        handle.removeEventListener('pointerup', onUp);
-        handle.removeEventListener('pointercancel', onUp);
-        document.body.classList.remove('desk-no-select');
-        try {
-          handle.releasePointerCapture(up.pointerId);
-        } catch {
-          /* pointer capture already released */
-        }
-      };
-      handle.addEventListener('pointermove', onMove);
-      handle.addEventListener('pointerup', onUp);
-      handle.addEventListener('pointercancel', onUp);
+      });
     });
   }
-
-  for (const icon of winEls.icons) {
-    icon.addEventListener('click', (ev) => {
-      ev.stopPropagation();
-      selectDesktopIcon(icon);
-    });
-  }
-  winEls.iconExplorer.addEventListener('dblclick', (ev) => {
-    ev.stopPropagation();
-    openWindowFromIcon();
-  });
-  winEls.iconExplorer.addEventListener('keydown', (ev) => {
-    if (ev.key === 'Enter' || ev.key === ' ') {
-      ev.preventDefault();
-      selectDesktopIcon(winEls.iconExplorer);
-      openWindowFromIcon();
-    }
-  });
-  winEls.screen.addEventListener('click', () => selectDesktopIcon(null));
-
-  winEls.win.addEventListener('focusin', () => selectDesktopIcon(null));
 
   /* Clicking non-focusable chrome (menubar/toolbar/statusbar/address row) doesn't move focus on its own, so it wouldn't otherwise activate the window. */
   winEls.win.addEventListener('pointerdown', (ev) => {
-    if (ev.target.closest('button, input, [tabindex]:not([tabindex="-1"])')) return;
+    if (ev.target.closest(FOCUSABLE)) return;
     winEls.win.focus();
   });
 
-  /* Keyed on `disabled` so an ordinary blur such as a desktop click is left alone. */
-  winEls.win.addEventListener('focusout', (ev) => {
-    if (!(ev.target instanceof HTMLElement) || !ev.target.disabled) return;
-    requestAnimationFrame(() => {
-      if (!winEls.win.hidden && !winEls.win.contains(document.activeElement)) winEls.win.focus();
-    });
-  });
+  keepFocusOnDisable(winEls.win);
 
   new ResizeObserver(() => reflowWindow()).observe(winEls.screen);
 }
 
 export const DesktopWindow = {
-  init(onChange) {
-    onActivationChange = onChange || onActivationChange;
+  init() {
     wireWindowChrome();
+    registerFrame({ root: winEls.win, titlebar: winEls.titlebar, modal: false });
   },
   reflow() {
     reflowWindow();
@@ -347,14 +260,10 @@ export const DesktopWindow = {
   reveal() {
     winEls.win.classList.remove('is-loading');
   },
-  deselectIcons() {
-    selectDesktopIcon(null);
+  open() {
+    openWindowFromIcon();
   },
   focusWindow() {
     winEls.win.focus();
-  },
-  syncActive() {
-    const active = winEls.win.contains(document.activeElement) && !DesktopSettings.isDialogOpen();
-    winEls.titlebar.classList.toggle('is-inactive', !active);
   },
 };
