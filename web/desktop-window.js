@@ -136,11 +136,11 @@ function closeWindow() {
 function openWindowFromIcon() {
   if (winState.closed) {
     const size = screenSize();
-    winState.geom = clampGeometry(defaultGeometry(size), size);
+    const base = winState.userPositioned ? winState.geom : defaultGeometry(size);
+    winState.geom = clampGeometry(base, size);
     winState.closed = false;
     winState.minimized = false;
     winState.initialized = true;
-    winState.userPositioned = false;
   } else if (winState.minimized) {
     winState.minimized = false;
   }

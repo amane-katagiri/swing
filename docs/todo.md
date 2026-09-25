@@ -36,6 +36,7 @@
 | 低 | release ワークフローに macOS の ad-hoc 署名（`rcodesign`）と GitHub の artifact attestation を入れる。attestation は private リポジトリだと GitHub Enterprise Cloud が要るので、public にしてから | [配布方式の設計](log/2026-09-21-distribution-design.md)、[release ワークフロー](log/2026-09-24-release-workflow-and-kubo-signature.md) |
 | 低 | `content` の長さ上限。サーバ側では切らず `/api/sites` に全文を返している（表示はクライアントで 200 文字に切る） | 監査（自己申告の信用） |
 | 低 | Desktop 画面のアイコンが NIP-05 の「対象外」と「検証済み」を区別しない（Sites 画面には N/A バッジがある） | 監査（自己申告の信用） |
+| 低 | 「コントロール パネル」ダイアログに「背景」以外のタブ（例: 画面保護（スクリーンセーバー）風の何か、配色）を足す。タブ帯の構造（`data-tab`/`aria-controls`）は複数タブに対応済み | [Desktop 画面に壁紙設定を追加](log/2026-09-25-desktop-wallpaper-settings.md) |
 | 低 | 特定のレプリカ報告者・Follow Set 由来のアカウントを個別にブロックする仕組み。今回の tier 分け（Author/Chosen/Other）はブロックではなく信頼度の提示だけ | [信頼度による tier 分け](log/2026-09-23-trust-tiers.md) |
 | 中 | 取得バイト数の累積予算（`[agent] max_fetch_per_day` / `max_fetch_per_month`）。今の上限は 1 回・1 サイトあたりだけで、1 tick の総取得量に上限が無い。`src/ipfs.rs` の取得中のバイト数を state に積み、`policy::decide` の事前判定で `budget_exhausted` として skip する（`dag/export` を張る前に止める） | [間欠運用と通信量](log/2026-09-23-intermittent-operation-and-traffic-limits.md) |
 | 低 | ミラー取得の一時停止トグル（ダッシュボードのスイッチ・設定・環境変数）と、取得の時間帯ウィンドウ（`active_hours`）。メータード回線の自動判定（NetworkManager の `Metered`、WinRT の `NetworkCostType`、`NWPathMonitor.isExpensive`）は OS ごとに分かれるので後回し | [間欠運用と通信量](log/2026-09-23-intermittent-operation-and-traffic-limits.md) |

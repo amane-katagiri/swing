@@ -1,6 +1,7 @@
 import { storage } from './storage.js';
 import { cache, el, apiFetch, describeError, createLoadGuard, setBusy, sanitizeMessage, sanitizeDisplayText, maybeLink } from './util.js';
 import { DesktopWindow } from './desktop-window.js';
+import { DesktopSettings } from './desktop-settings.js';
 
 const DESK_TEXT = {
   loading: 'よみこみちゅう…',
@@ -273,9 +274,11 @@ export const DesktopView = {
     updateClock();
     setInterval(updateClock, 30000);
     DesktopWindow.init();
+    DesktopSettings.init();
   },
   onShow() {
     revealWindowWhenReady();
+    DesktopSettings.applyStoredWallpaper();
     if (cache.sites) this.render();
     else this.load();
     requestAnimationFrame(() => DesktopWindow.reflow());

@@ -12,6 +12,14 @@ export const storage = {
       localStorage.setItem(key, value);
     } catch {}
   },
+  trySet(key, value) {
+    try {
+      localStorage.setItem(key, value);
+      return true;
+    } catch {
+      return false;
+    }
+  },
   remove(key) {
     try {
       localStorage.removeItem(key);

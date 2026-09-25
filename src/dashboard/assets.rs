@@ -29,6 +29,7 @@ const PAIRING_JS: &str = include_str!("../../web/pairing.js");
 const LOGIN_JS: &str = include_str!("../../web/login.js");
 const DESKTOP_JS: &str = include_str!("../../web/desktop.js");
 const DESKTOP_WINDOW_JS: &str = include_str!("../../web/desktop-window.js");
+const DESKTOP_SETTINGS_JS: &str = include_str!("../../web/desktop-settings.js");
 const DESKTOP_ICONS_SVG: &str = include_str!("../../web/desktop-icons.svg");
 const DESKTOP_PAGE_HTML: &str = include_str!("../../web/desktop-page.html");
 const DESKTOP_PAGE_CSS: &str = include_str!("../../web/desktop-page.css");
@@ -139,6 +140,10 @@ pub async fn desktop_js() -> Response {
 
 pub async fn desktop_window_js() -> Response {
     asset("text/javascript; charset=utf-8", DESKTOP_WINDOW_JS)
+}
+
+pub async fn desktop_settings_js() -> Response {
+    asset("text/javascript; charset=utf-8", DESKTOP_SETTINGS_JS)
 }
 
 pub async fn desktop_icons_svg() -> Response {
@@ -327,6 +332,7 @@ mod tests {
             ("/settings.js", "text/javascript; charset=utf-8"),
             ("/desktop.js", "text/javascript; charset=utf-8"),
             ("/desktop-window.js", "text/javascript; charset=utf-8"),
+            ("/desktop-settings.js", "text/javascript; charset=utf-8"),
             ("/desktop-icons.svg", "image/svg+xml"),
             ("/desktop-page.html", "text/html; charset=utf-8"),
             ("/desktop-page.css", "text/css; charset=utf-8"),

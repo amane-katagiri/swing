@@ -39,6 +39,7 @@ body[data-view="desktop"] .swing-main {
   --desk-font-ui: "PixelMplus12", "MS UI Gothic", "MS PGothic", "ＭＳ Ｐゴシック", Osaka, "Yu Gothic",
     sans-serif;
 
+  position: relative;
   display: flex;
   flex-direction: column;
   flex: 1 1 auto;
@@ -75,6 +76,17 @@ body[data-view="desktop"] .swing-main {
   overflow: hidden;
   font-family: var(--desk-font-ui);
   color: var(--desk-text);
+}
+
+.desk-wallpaper {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+}
+
+.desk-wallpaper[data-fit="pixelated"] {
+  image-rendering: pixelated;
 }
 
 .desk-icons {
@@ -611,6 +623,386 @@ button.desk-toolbtn:focus-visible {
   height: 16px;
   flex: none;
   image-rendering: pixelated;
+}
+
+.desk-dialog-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+}
+
+.desk-dialog-overlay[hidden] {
+  display: none;
+}
+
+/* Inside .desk-screen so it is clipped under the taskbar; z-index must clear the sibling overlay. */
+.desk-dialog {
+  position: absolute;
+  z-index: 21;
+  width: min(420px, calc(100% - 24px));
+  max-height: calc(100% - 24px);
+  overflow: hidden;
+}
+
+.desk-dialog-titlebar.is-inactive {
+  background: var(--desk-shadow);
+  color: var(--desk-text);
+}
+
+.desk-dialog-tabs {
+  display: flex;
+  gap: 2px;
+  flex: none;
+  padding: 6px 6px 0;
+  background: var(--desk-face);
+  font-size: 12px;
+}
+
+.desk-dialog-tab {
+  font: inherit;
+  font-size: 12px;
+  padding: 4px 14px;
+  background: var(--desk-face);
+  border: 0;
+  color: var(--desk-text);
+  box-shadow:
+    inset 1px 1px 0 var(--desk-highlight),
+    inset -1px -1px 0 var(--desk-dark-shadow),
+    inset 2px 2px 0 var(--desk-face-light),
+    inset -2px -2px 0 var(--desk-shadow);
+}
+
+.desk-dialog-tab.is-active {
+  position: relative;
+  z-index: 2;
+  margin-bottom: -2px;
+  padding-bottom: 6px;
+  box-shadow:
+    inset 1px 1px 0 var(--desk-highlight),
+    inset -1px 0 0 var(--desk-dark-shadow),
+    inset 2px 2px 0 var(--desk-face-light),
+    inset -2px 0 0 var(--desk-shadow);
+}
+
+.desk-dialog-tab:focus-visible {
+  outline: 1px dotted #000000;
+  outline-offset: -3px;
+}
+
+.desk-dialog-body {
+  position: relative;
+  z-index: 1;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  margin: 0 6px;
+  padding: 12px;
+  background: var(--desk-face);
+  box-shadow:
+    inset 1px 1px 0 var(--desk-highlight),
+    inset -1px -1px 0 var(--desk-dark-shadow),
+    inset 2px 2px 0 var(--desk-face-light),
+    inset -2px -2px 0 var(--desk-shadow);
+  font-size: 12px;
+}
+
+.desk-tabpanel[hidden] {
+  display: none;
+}
+
+.desk-wp-preview-wrap {
+  display: flex;
+  justify-content: center;
+  margin-bottom: 10px;
+}
+
+.desk-wp-monitor {
+  width: 200px;
+  padding: 10px 10px 16px;
+  background: var(--desk-face);
+  box-shadow: inset 1px 1px 0 var(--desk-highlight), inset -1px -1px 0 var(--desk-dark-shadow), inset 2px 2px 0 var(--desk-face-light), inset -2px -2px 0 var(--desk-shadow);
+}
+
+.desk-wp-monitor-screen {
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  background: var(--desk-teal);
+  border: 2px solid #000000;
+  box-shadow: inset 0 0 0 2px var(--desk-shadow);
+}
+
+.desk-wp-fieldset {
+  /* fieldset otherwise never shrinks below its min-content width. */
+  min-width: 0;
+  margin: 0 0 10px;
+  padding: 8px;
+  border: 1px solid;
+  border-color: var(--desk-shadow) var(--desk-highlight) var(--desk-highlight) var(--desk-shadow);
+}
+
+.desk-wp-fieldset:last-of-type {
+  margin-bottom: 0;
+}
+
+.desk-wp-fieldset legend {
+  padding: 0 4px;
+  font-size: 12px;
+  color: var(--desk-text);
+}
+
+.desk-wp-swatches {
+  display: grid;
+  grid-template-columns: repeat(8, 20px);
+  gap: 2px;
+  margin-bottom: 8px;
+}
+
+.desk-wp-swatch {
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 1px solid var(--desk-dark-shadow);
+}
+
+.desk-wp-swatch.is-selected {
+  outline: 2px dotted #000000;
+  outline-offset: -4px;
+}
+
+.desk-wp-color-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 12px;
+}
+
+.desk-wp-custom-color {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+}
+
+/* appearance: none leaves the swatch pseudo-element rounded. */
+#desk-wp-custom-color-input {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 28px;
+  height: 20px;
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: default;
+}
+
+#desk-wp-custom-color-input::-webkit-color-swatch-wrapper {
+  padding: 0;
+}
+
+#desk-wp-custom-color-input::-webkit-color-swatch {
+  border: 1px solid;
+  border-radius: 0;
+  border-color: var(--desk-shadow) var(--desk-highlight) var(--desk-highlight) var(--desk-shadow);
+}
+
+#desk-wp-custom-color-input::-moz-color-swatch {
+  border: 1px solid;
+  border-radius: 0;
+  border-color: var(--desk-shadow) var(--desk-highlight) var(--desk-highlight) var(--desk-shadow);
+}
+
+.desk-wp-image-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.desk-wp-image-info {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+  margin: 0 0 8px;
+  min-width: 0;
+  font-size: 12px;
+}
+
+.desk-wp-image-filename {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.desk-wp-image-size {
+  flex: none;
+  white-space: nowrap;
+}
+
+.desk-wp-image-size:not(:empty)::before {
+  content: "— ";
+}
+
+.desk-wp-display-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 8px;
+  align-items: center;
+  min-width: 0;
+  font-size: 12px;
+}
+
+#desk-wp-display-label {
+  flex: none;
+}
+
+.desk-wp-combobox {
+  position: relative;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.desk-wp-combobox-field {
+  display: flex;
+  align-items: stretch;
+  width: 100%;
+  font: inherit;
+  font-size: 12px;
+  padding: 0;
+  background: #ffffff;
+  color: var(--desk-text);
+  border: 0;
+  box-shadow: inset 1px 1px 0 var(--desk-dark-shadow), inset -1px -1px 0 var(--desk-highlight);
+}
+
+.desk-wp-combobox-value {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 3px 4px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: left;
+}
+
+.desk-wp-combobox-arrow {
+  position: relative;
+  flex: none;
+  width: 18px;
+  background: var(--desk-face);
+  box-shadow: inset 1px 1px 0 var(--desk-highlight), inset -1px -1px 0 var(--desk-dark-shadow);
+}
+
+.desk-wp-combobox-arrow::before {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 0;
+  height: 0;
+  border-left: 3px solid transparent;
+  border-right: 3px solid transparent;
+  border-top: 4px solid #000000;
+  transform: translate(-50%, -35%);
+}
+
+.desk-wp-combobox-field:active:not(:disabled) .desk-wp-combobox-arrow {
+  box-shadow: inset -1px -1px 0 var(--desk-highlight), inset 1px 1px 0 var(--desk-dark-shadow);
+}
+
+.desk-wp-combobox-field:disabled {
+  background: var(--desk-face-light);
+}
+
+.desk-wp-combobox-field:disabled .desk-wp-combobox-value {
+  color: var(--desk-shadow);
+}
+
+.desk-wp-combobox-field:disabled .desk-wp-combobox-arrow::before {
+  border-top-color: var(--desk-shadow);
+}
+
+.desk-wp-combobox-field:focus-visible {
+  outline: 1px dotted #000000;
+  outline-offset: -3px;
+}
+
+.desk-wp-combobox-list {
+  position: fixed;
+  z-index: 30;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  max-height: 160px;
+  overflow-y: auto;
+  background: #ffffff;
+  border: 1px solid #000000;
+  font-size: 12px;
+}
+
+.desk-wp-combobox-list[hidden] {
+  display: none;
+}
+
+.desk-wp-combobox-option {
+  padding: 3px 6px;
+  color: var(--desk-text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.desk-wp-combobox-option.is-active {
+  background: var(--desk-navy);
+  color: #ffffff;
+}
+
+.desk-wp-image-error,
+.desk-wp-storage-error {
+  margin: 8px 0 0;
+  color: #800000;
+  font-size: 12px;
+}
+
+.desk-dialog-buttons {
+  display: flex;
+  flex: none;
+  justify-content: flex-end;
+  gap: 6px;
+  padding: 8px 10px 10px;
+  background: var(--desk-face);
+}
+
+.desk-dialog-btn {
+  font: inherit;
+  font-size: 12px;
+  min-width: 84px;
+  padding: 4px 12px;
+  background: var(--desk-face);
+  border: 0;
+  color: var(--desk-text);
+  box-shadow: inset 1px 1px 0 var(--desk-highlight), inset -1px -1px 0 var(--desk-dark-shadow), inset 2px 2px 0 var(--desk-face-light), inset -2px -2px 0 var(--desk-shadow);
+}
+
+.desk-dialog-btn:active:not(:disabled) {
+  box-shadow: inset -1px -1px 0 var(--desk-highlight), inset 1px 1px 0 var(--desk-dark-shadow), inset -2px -2px 0 var(--desk-face-light), inset 2px 2px 0 var(--desk-shadow);
+}
+
+.desk-dialog-btn:disabled {
+  color: var(--desk-shadow);
+}
+
+.desk-dialog-btn:focus-visible {
+  outline: 1px dotted #000000;
+  outline-offset: -4px;
+}
+
+.desk-dialog-btn-sm {
+  min-width: auto;
+  padding: 3px 10px;
 }
 
 @media (max-width: 760px) {

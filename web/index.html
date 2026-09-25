@@ -144,6 +144,7 @@
 
     <section id="view-desktop" class="swing-view" data-view-name="desktop" hidden lang="ja">
       <div class="desk-screen" id="desk-screen">
+        <div class="desk-wallpaper" id="desk-wallpaper" aria-hidden="true"></div>
         <div class="desk-icons">
           <div class="desk-icon" aria-hidden="true">
             <svg class="desk-icon-glyph" aria-hidden="true"><use href="/desktop-icons.svg#icon-desk-mycomputer"></use></svg>
@@ -152,6 +153,10 @@
           <div class="desk-icon desk-icon-shortcut" id="desk-icon-explorer" tabindex="0" role="button" aria-label="SWING Explorer を開く">
             <svg class="desk-icon-glyph desk-icon-glyph-solid" aria-hidden="true"><use href="/desktop-icons.svg#icon-desk-swing"></use></svg>
             <span>SWING Explorer</span>
+          </div>
+          <div class="desk-icon desk-icon-shortcut" id="desk-icon-control-panel" tabindex="0" role="button" aria-label="コントロール パネルを開く">
+            <svg class="desk-icon-glyph" aria-hidden="true"><use href="/desktop-icons.svg#icon-desk-control-panel"></use></svg>
+            <span>コントロール パネル</span>
           </div>
           <div class="desk-icon" aria-hidden="true">
             <svg class="desk-icon-glyph" aria-hidden="true"><use href="/desktop-icons.svg#icon-desk-trash"></use></svg>
@@ -259,6 +264,81 @@
           <div class="desk-resize desk-resize-sw" data-dir="sw"></div>
           <div class="desk-resize desk-resize-se" data-dir="se"></div>
         </div>
+
+        <div class="desk-window desk-dialog" id="desk-dialog-control-panel" role="dialog" aria-modal="true" aria-labelledby="desk-dialog-title" tabindex="-1" hidden>
+          <div class="desk-titlebar desk-dialog-titlebar" id="desk-dialog-titlebar">
+            <svg class="desk-titlebar-icon" aria-hidden="true"><use href="/desktop-icons.svg#icon-desk-control-panel-color"></use></svg>
+            <span class="desk-titlebar-text" id="desk-dialog-title">コントロール パネル</span>
+            <div class="desk-titlebar-btns">
+              <button type="button" class="desk-tbtn desk-tbtn-close" id="desk-dialog-close" aria-label="閉じる" title="閉じる"><svg class="desk-glyph desk-glyph-close" width="8" height="7" viewBox="0 0 8 7" shape-rendering="crispEdges" aria-hidden="true">
+                <rect x="0" y="0" width="2" height="1"></rect><rect x="6" y="0" width="2" height="1"></rect>
+                <rect x="1" y="1" width="2" height="1"></rect><rect x="5" y="1" width="2" height="1"></rect>
+                <rect x="2" y="2" width="2" height="1"></rect><rect x="4" y="2" width="2" height="1"></rect>
+                <rect x="3" y="3" width="2" height="1"></rect>
+                <rect x="2" y="4" width="2" height="1"></rect><rect x="4" y="4" width="2" height="1"></rect>
+                <rect x="1" y="5" width="2" height="1"></rect><rect x="5" y="5" width="2" height="1"></rect>
+                <rect x="0" y="6" width="2" height="1"></rect><rect x="6" y="6" width="2" height="1"></rect>
+              </svg></button>
+            </div>
+          </div>
+          <div class="desk-dialog-tabs" role="tablist" aria-label="コントロール パネルのタブ">
+            <button type="button" class="desk-dialog-tab is-active" id="desk-tab-background" data-tab="background" role="tab" aria-selected="true" aria-controls="desk-tabpanel-background">背景</button>
+          </div>
+          <div class="desk-dialog-body">
+            <div class="desk-tabpanel" id="desk-tabpanel-background" role="tabpanel" aria-labelledby="desk-tab-background">
+              <div class="desk-wp-preview-wrap">
+                <div class="desk-wp-monitor">
+                  <div class="desk-wp-monitor-screen" id="desk-wp-preview"></div>
+                </div>
+              </div>
+              <fieldset class="desk-wp-fieldset">
+                <legend>背景色</legend>
+                <div class="desk-wp-swatches" id="desk-wp-swatches" role="group" aria-label="色見本"></div>
+                <div class="desk-wp-color-row">
+                  <label class="desk-wp-custom-color">
+                    色を選択:
+                    <input type="color" id="desk-wp-custom-color-input" value="#008080">
+                  </label>
+                  <button type="button" class="desk-dialog-btn desk-dialog-btn-sm" id="desk-wp-color-reset">既定の色に戻す</button>
+                </div>
+              </fieldset>
+              <fieldset class="desk-wp-fieldset">
+                <legend>壁紙</legend>
+                <div class="desk-wp-image-row">
+                  <button type="button" class="desk-dialog-btn desk-dialog-btn-sm" id="desk-wp-browse">参照...</button>
+                  <button type="button" class="desk-dialog-btn desk-dialog-btn-sm" id="desk-wp-remove" disabled>削除</button>
+                </div>
+                <p class="desk-wp-image-info" id="desk-wp-image-info">
+                  <span class="desk-wp-image-filename" id="desk-wp-image-filename">画像が選択されていません</span><span class="desk-wp-image-size" id="desk-wp-image-size"></span>
+                </p>
+                <input type="file" accept="image/*" id="desk-wp-file-input" class="desk-wp-file-input" hidden>
+                <div class="desk-wp-display-row">
+                  <span id="desk-wp-display-label">表示方法:</span>
+                  <div class="desk-wp-combobox">
+                    <button type="button" class="desk-wp-combobox-field" id="desk-wp-display-field" role="combobox" aria-haspopup="listbox" aria-expanded="false" aria-controls="desk-wp-display-list" aria-labelledby="desk-wp-display-label desk-wp-display-value" disabled>
+                      <span class="desk-wp-combobox-value" id="desk-wp-display-value">中央に表示</span>
+                      <span class="desk-wp-combobox-arrow" aria-hidden="true"></span>
+                    </button>
+                    <ul class="desk-wp-combobox-list" id="desk-wp-display-list" role="listbox" aria-label="表示方法" hidden>
+                      <li class="desk-wp-combobox-option" role="option" id="desk-wp-display-opt-center" data-value="center" aria-selected="true">中央に表示</li>
+                      <li class="desk-wp-combobox-option" role="option" id="desk-wp-display-opt-tile" data-value="tile" aria-selected="false">並べて表示</li>
+                      <li class="desk-wp-combobox-option" role="option" id="desk-wp-display-opt-contain" data-value="contain" aria-selected="false">ページ幅に合わせる</li>
+                      <li class="desk-wp-combobox-option" role="option" id="desk-wp-display-opt-cover" data-value="cover" aria-selected="false">画面に合わせて伸縮</li>
+                      <li class="desk-wp-combobox-option" role="option" id="desk-wp-display-opt-stretch" data-value="stretch" aria-selected="false">拡大して表示</li>
+                    </ul>
+                  </div>
+                </div>
+                <p class="desk-wp-image-error" id="desk-wp-image-error" hidden></p>
+              </fieldset>
+              <p class="desk-wp-storage-error" id="desk-wp-storage-error" hidden></p>
+            </div>
+          </div>
+          <div class="desk-dialog-buttons">
+            <button type="button" class="desk-dialog-btn" id="desk-dialog-ok">OK</button>
+            <button type="button" class="desk-dialog-btn" id="desk-dialog-cancel">キャンセル</button>
+            <button type="button" class="desk-dialog-btn" id="desk-dialog-apply" disabled>適用</button>
+          </div>
+        </div>
       </div>
 
       <div class="desk-taskbar">
@@ -274,6 +354,8 @@
           <span id="desk-clock"></span>
         </span>
       </div>
+
+      <div class="desk-dialog-overlay" id="desk-dialog-overlay" hidden></div>
     </section>
 
     <section id="view-sites" class="swing-view" data-view-name="sites" hidden>
