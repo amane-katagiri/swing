@@ -9,6 +9,7 @@ use axum::response::{IntoResponse, Response};
 use nostr_sdk::prelude::*;
 use serde::Deserialize;
 use serde::de::DeserializeOwned;
+use tracing::error;
 
 use crate::config;
 use crate::health;
@@ -471,12 +472,25 @@ pub struct UpdateConfigRequest {
     items: BTreeMap<String, settings::InputValue>,
 }
 
+fn internal(context: &str, e: impl std::fmt::Display) -> ApiError {
+    let message = format!("{e:#}");
+    error!(error = %message, "{context}");
+    ApiError::Internal(message)
+}
+
+fn settings_error(e: settings::EditError) -> ApiError {
+    match e {
+        settings::EditError::Invalid(e) => ApiError::BadRequest(format!("{e:#}")),
+        settings::EditError::Io(e) => internal("saving the config file failed", e),
+    }
+}
+
 pub async fn update_config(
     State(state): State<Arc<AppState>>,
     AppJson(req): AppJson<UpdateConfigRequest>,
 ) -> Result<Json<dto::ConfigDto>, ApiError> {
-    let updated = settings::update(&state.config, &req.items)
-        .map_err(|e| ApiError::BadRequest(format!("{e:#}")))?;
+    let _writes = state.config_writes.lock().await;
+    let updated = settings::update(&state.config, &req.items).map_err(settings_error)?;
     state.restart_required.store(true, Ordering::SeqCst);
     let dto = dto::config_dto(&updated, true);
     state.set_display_config(updated).await;
@@ -539,21 +553,29 @@ pub async fn setup(
     AppJson(req): AppJson<SetupRequest>,
 ) -> Result<Response, ApiError> {
     ensure_setup_mode(&state)?;
-    let bad_request = |e: anyhow::Error| ApiError::BadRequest(format!("{e:#}"));
+    let mut writes = state.config_writes.lock().await;
+    if writes.setup_done {
+        return Err(ApiError::Conflict(
+            "setup is already done; swing is restarting".to_string(),
+        ));
+    }
     let pubkey = if req.remote_signer {
         let paired = ready_pairing(&state)?;
-        settings::setup(&state.config, None, &req.items).map_err(bad_request)?;
+        settings::setup(&state.config, None, &req.items).map_err(settings_error)?;
         paired
             .file
             .save(&state.config.agent.state_dir)
-            .map_err(|e| ApiError::Internal(format!("{e:#}")))?;
+            .map_err(|e| internal("saving the signer app connection failed", e))?;
         *state.pairing.lock().expect("pairing lock") = None;
         paired.user
     } else {
-        let keys = settings::setup_keys(req.secret_key.as_deref()).map_err(bad_request)?;
-        settings::setup(&state.config, Some(&keys), &req.items).map_err(bad_request)?;
+        let keys = settings::setup_keys(req.secret_key.as_deref())
+            .map_err(|e| ApiError::BadRequest(format!("{e:#}")))?;
+        settings::setup(&state.config, Some(&keys), &req.items).map_err(settings_error)?;
         keys.public_key()
     };
+    writes.setup_done = true;
+    drop(writes);
     let npub = mirror::npub(&pubkey);
     schedule_restart(&state);
     let body = Json(serde_json::json!({ "ok": true, "npub": npub, "restart": true }));
@@ -575,10 +597,12 @@ pub async fn reconnect_signer(State(state): State<Arc<AppState>>) -> Result<Resp
             mirror::npub(&own)
         )));
     }
+    let writes = state.config_writes.lock().await;
     paired
         .file
         .save(&state.config.agent.state_dir)
-        .map_err(|e| ApiError::Internal(format!("{e:#}")))?;
+        .map_err(|e| internal("saving the signer app connection failed", e))?;
+    drop(writes);
     *state.pairing.lock().expect("pairing lock") = None;
     state.restart_required.store(true, Ordering::SeqCst);
     schedule_restart(&state);
@@ -1020,6 +1044,121 @@ mod tests {
         assert_eq!(json["restart"], true);
         assert!(json["npub"].as_str().unwrap().starts_with("npub1"));
         assert!(dir.path().join("swing.toml").exists());
+    }
+
+    fn put_config_body(key: &str, value: &str) -> serde_json::Value {
+        serde_json::json!({ "items": { key: value } })
+    }
+
+    #[tokio::test]
+    async fn put_config_twice_without_a_config_file_keeps_both_items() {
+        let dir = tempfile::tempdir().unwrap();
+        let (config, secret_hex) = test_config_in_dir(dir.path(), true, true);
+        let state = build_state(config, test_exit(), test_keys(&secret_hex), TEST_TOKEN);
+        let app = router(state);
+        let first = put_config_body("policy.max_total_storage", "20GB");
+        let (status, _) = send_json(app.clone(), "PUT", "/api/config", Some(first)).await;
+        assert_eq!(status, StatusCode::OK);
+        let second = put_config_body("nostr.mirror_set", "second-set");
+        let (status, _) = send_json(app, "PUT", "/api/config", Some(second)).await;
+        assert_eq!(status, StatusCode::OK);
+
+        let path = dir.path().join("swing.toml");
+        let saved = crate::config::Config::load(Some(&path)).unwrap();
+        assert_eq!(saved.policy.max_total_storage, 20 * (1u64 << 30));
+        assert_eq!(saved.nostr.mirror_set, "second-set");
+    }
+
+    #[tokio::test]
+    async fn setup_after_put_config_keeps_the_put_item() {
+        let dir = tempfile::tempdir().unwrap();
+        let app = router(setup_mode_state(dir.path()));
+        let put = put_config_body("policy.max_total_storage", "20GB");
+        let (status, _) = send_json(app.clone(), "PUT", "/api/config", Some(put)).await;
+        assert_eq!(status, StatusCode::OK);
+        let body = serde_json::json!({ "secret_key": null, "items": {} });
+        let (status, _) = send_json(app, "POST", "/api/setup", Some(body)).await;
+        assert_eq!(status, StatusCode::OK);
+
+        let path = dir.path().join("swing.toml");
+        let saved = crate::config::Config::load(Some(&path)).unwrap();
+        assert_eq!(saved.policy.max_total_storage, 20 * (1u64 << 30));
+        assert!(saved.nostr.secret_key.is_some());
+    }
+
+    #[tokio::test]
+    async fn a_second_setup_before_the_restart_is_conflict_and_keeps_the_first_key() {
+        let dir = tempfile::tempdir().unwrap();
+        let app = router(setup_mode_state(dir.path()));
+        let body = serde_json::json!({ "secret_key": null, "items": {} });
+        let (status, first) =
+            send_json(app.clone(), "POST", "/api/setup", Some(body.clone())).await;
+        assert_eq!(status, StatusCode::OK);
+        let (status, _) = send_json(app, "POST", "/api/setup", Some(body)).await;
+        assert_eq!(status, StatusCode::CONFLICT);
+
+        let path = dir.path().join("swing.toml");
+        let saved = crate::config::Config::load(Some(&path)).unwrap();
+        let secret = saved.nostr.secret_key.unwrap();
+        let keys = Keys::parse(secret.expose_secret()).unwrap();
+        assert_eq!(first["npub"], crate::mirror::npub(&keys.public_key()));
+    }
+
+    #[tokio::test]
+    async fn an_invalid_config_value_is_bad_request() {
+        let dir = tempfile::tempdir().unwrap();
+        let (config, secret_hex) = test_config_in_dir(dir.path(), true, true);
+        let state = build_state(config, test_exit(), test_keys(&secret_hex), TEST_TOKEN);
+        let body = put_config_body("policy.max_total_storage", "not-a-size");
+        let (status, json) = send_json(router(state), "PUT", "/api/config", Some(body)).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert!(json["error"].as_str().unwrap().contains("invalid size"));
+        assert!(!dir.path().join("swing.toml").exists());
+    }
+
+    #[cfg(unix)]
+    fn read_only_config_dir(dir: &std::path::Path) -> Option<std::path::PathBuf> {
+        use std::os::unix::fs::PermissionsExt;
+
+        let locked = dir.join("locked");
+        std::fs::create_dir(&locked).unwrap();
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o500)).unwrap();
+        // Root, or a filesystem that ignores the mode, can still write here; skip under those runners.
+        if std::fs::write(locked.join("probe"), "").is_ok() {
+            return None;
+        }
+        Some(locked)
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn an_unwritable_config_directory_is_internal_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let Some(locked) = read_only_config_dir(dir.path()) else {
+            return;
+        };
+        let (config, secret_hex) = test_config_in_dir(&locked, true, true);
+        let state = build_state(config, test_exit(), test_keys(&secret_hex), TEST_TOKEN);
+        let body = put_config_body("policy.max_total_storage", "20GB");
+        let (status, json) = send_json(router(state), "PUT", "/api/config", Some(body)).await;
+        assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+        assert!(json["error"].as_str().unwrap().contains("swing.toml"));
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn setup_into_an_unwritable_config_directory_is_internal_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let Some(locked) = read_only_config_dir(dir.path()) else {
+            return;
+        };
+        let app = router(setup_mode_state(&locked));
+        let body = serde_json::json!({ "secret_key": null, "items": {} });
+        let (status, _) = send_json(app.clone(), "POST", "/api/setup", Some(body)).await;
+        assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+        let bad = serde_json::json!({ "secret_key": "not-a-key", "items": {} });
+        let (status, _) = send_json(app, "POST", "/api/setup", Some(bad)).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
     }
 
     fn setup_mode_state(dir: &std::path::Path) -> Arc<AppState> {

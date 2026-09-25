@@ -1,7 +1,8 @@
 use std::collections::BTreeMap;
+use std::fmt;
 use std::path::Path;
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result, anyhow, bail};
 use nostr_sdk::prelude::Keys;
 use toml_edit::{Array, DocumentMut, Item, Table, Value};
 
@@ -96,15 +97,35 @@ fn check_not_env_sourced(current: &Config, items: &BTreeMap<String, InputValue>)
     Ok(())
 }
 
-fn load_document(current: &Config) -> Result<DocumentMut> {
-    let text = if current.config_exists {
-        std::fs::read_to_string(&current.config_path)
-            .with_context(|| format!("reading config file {}", current.config_path.display()))?
-    } else {
-        String::new()
+#[derive(Debug)]
+pub enum EditError {
+    Invalid(anyhow::Error),
+    Io(anyhow::Error),
+}
+
+impl fmt::Display for EditError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Invalid(e) | Self::Io(e) => write!(f, "{e:#}"),
+        }
+    }
+}
+
+impl std::error::Error for EditError {}
+
+fn load_document(path: &Path) -> Result<DocumentMut, EditError> {
+    let text = match std::fs::read_to_string(path) {
+        Ok(text) => text,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
+        Err(e) => {
+            return Err(EditError::Io(
+                anyhow::Error::new(e).context(format!("reading config file {}", path.display())),
+            ));
+        }
     };
     text.parse::<DocumentMut>()
         .context("parsing existing config file")
+        .map_err(EditError::Invalid)
 }
 
 fn write_atomic(path: &Path, contents: &str) -> Result<()> {
@@ -114,15 +135,19 @@ fn write_atomic(path: &Path, contents: &str) -> Result<()> {
     crate::auth::write_private_file(path, contents)
 }
 
-pub fn update(current: &Config, items: &BTreeMap<String, InputValue>) -> Result<Config> {
-    check_not_env_sourced(current, items)?;
-    let mut doc = load_document(current)?;
-    apply_items(&mut doc, items)?;
-    let rendered = doc.to_string();
-    config::build_config_from_str(&rendered, config::env_var)
-        .context("edited configuration is invalid")?;
-    write_atomic(&current.config_path, &rendered)?;
-    Config::load(Some(&current.config_path))
+fn validate_and_write(path: &Path, rendered: &str) -> Result<Config, EditError> {
+    config::build_config_from_str(rendered, config::env_var)
+        .context("edited configuration is invalid")
+        .map_err(EditError::Invalid)?;
+    write_atomic(path, rendered).map_err(EditError::Io)?;
+    Config::load(Some(path)).map_err(EditError::Io)
+}
+
+pub fn update(current: &Config, items: &BTreeMap<String, InputValue>) -> Result<Config, EditError> {
+    check_not_env_sourced(current, items).map_err(EditError::Invalid)?;
+    let mut doc = load_document(&current.config_path)?;
+    apply_items(&mut doc, items).map_err(EditError::Invalid)?;
+    validate_and_write(&current.config_path, &doc.to_string())
 }
 
 pub fn setup_keys(secret_key_input: Option<&str>) -> Result<Keys> {
@@ -134,30 +159,31 @@ pub fn setup_keys(secret_key_input: Option<&str>) -> Result<Keys> {
     }
 }
 
+fn insert_secret_key(doc: &mut DocumentMut, keys: &Keys) -> Result<()> {
+    ensure_table(doc, "nostr")?.insert(
+        "secret_key",
+        Item::Value(Value::from(keys.secret_key().to_secret_hex())),
+    );
+    Ok(())
+}
+
 pub fn setup(
     current: &Config,
     keys: Option<&Keys>,
     items: &BTreeMap<String, InputValue>,
-) -> Result<Config> {
+) -> Result<Config, EditError> {
     if current.nostr.secret_key.is_some() {
-        bail!("setup is only available before a Nostr key is configured");
+        return Err(EditError::Invalid(anyhow!(
+            "setup is only available before a Nostr key is configured"
+        )));
     }
-    check_not_env_sourced(current, items)?;
-
-    let mut doc = load_document(current)?;
-    apply_items(&mut doc, items)?;
+    check_not_env_sourced(current, items).map_err(EditError::Invalid)?;
+    let mut doc = load_document(&current.config_path)?;
+    apply_items(&mut doc, items).map_err(EditError::Invalid)?;
     if let Some(keys) = keys {
-        let nostr_table = ensure_table(&mut doc, "nostr")?;
-        nostr_table.insert(
-            "secret_key",
-            Item::Value(Value::from(keys.secret_key().to_secret_hex())),
-        );
+        insert_secret_key(&mut doc, keys).map_err(EditError::Invalid)?;
     }
-    let rendered = doc.to_string();
-    config::build_config_from_str(&rendered, config::env_var)
-        .context("edited configuration is invalid")?;
-    write_atomic(&current.config_path, &rendered)?;
-    Config::load(Some(&current.config_path))
+    validate_and_write(&current.config_path, &doc.to_string())
 }
 
 #[cfg(test)]

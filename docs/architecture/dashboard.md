@@ -128,7 +128,14 @@ HTTP サーバー（axum 0.8）で、ダッシュボードのブラウザ向け�
 
 この表はダッシュボードの書き込み範囲を決める安全境界で、実体は `settings::SETTINGS` の `editable` フィールドである。`settings::find`・`settings::is_editable` はこのカタログを引く。`settings::raw_value`（[`dashboard/http-api.md#get-apiconfig`](dashboard/http-api.md#get-apiconfig) の `raw`）は編集可能なキーを手で列挙した `match` で、カタログとの食い違いはテスト `raw_value_covers_every_editable_key` が検出する。カタログに載っていても `source: "env"`（環境変数由来）なら `editable: false` になる。`PUT`/`POST /api/setup` は、編集可能でないキーか env 由来のキーが 1 つでも混ざっていれば要求全体を 400 で拒否し、部分的な適用はしない（非公開の `settings::edit::check_not_env_sourced`）。`nostr.secret_key` はカタログ上 `editable: false` なので `PUT /api/config` からは絶対に書けず、`POST /api/setup` だけが書ける（下記）。
 
-書き込みは `settings::update`（`PUT /api/config`）と `settings::setup`（`POST /api/setup`）の 2 つだけで、どちらも同じ手順を踏む: 既存のファイルを `toml_edit::DocumentMut` として読む（無ければ空文書）→ 渡された項目だけを書き換える（`toml_edit` なのでコメントや他のキーはそのまま残る）→ `config::build_config_from_str` で組み立て直して妥当性を確認する（失敗したらファイルには一切触れない）→ 親ディレクトリが無ければ `auth::create_private_dir_all` で作る → `auth::write_private_file` で書く（どちらも上記「認証」と同じ実装）。既存ファイルの権限は引き継がず、unix では既存・新規を問わず常に `0600` にする。書き込み先は設定ファイルの探索順（[`../architecture.md#設定と環境変数`](../architecture.md#設定と環境変数)）で決まるパスで、ファイルが無ければ新規作成になる。
+書き込みは `settings::update`（`PUT /api/config`）と `settings::setup`（`POST /api/setup`）の 2 つだけで、どちらも同じ手順を踏む: 書き込み先のファイルを毎回その場で `toml_edit::DocumentMut` として読む（起動時の `Config.config_exists` は見ず、読んだ時点で無ければ空文書。起動後に前の保存で作られたファイルもここで読み直すので、保存を重ねても前の項目は消えない）→ 渡された項目だけを書き換える（`toml_edit` なのでコメントや他のキーはそのまま残る）→ `config::build_config_from_str` で組み立て直して妥当性を確認する（失敗したらファイルには一切触れない）→ 親ディレクトリが無ければ `auth::create_private_dir_all` で作る → `auth::write_private_file` で書く（どちらも上記「認証」と同じ実装）。既存ファイルの権限は引き継がず、unix では既存・新規を問わず常に `0600` にする。書き込み先は設定ファイルの探索順（[`../architecture.md#設定と環境変数`](../architecture.md#設定と環境変数)）で決まるパスで、ファイルが無ければ新規作成になる。
+
+失敗は `settings::EditError` の 2 種類に分かれ、HTTP ステータスが変わる:
+
+- `Invalid` — 要求の中身の問題。編集できないキー・env 由来のキー・値の形式違い・組み立て直した設定の検証失敗・既存ファイルの TOML としての解析失敗・`setup` を鍵のある状態で呼んだこと。API は 400 を返す。
+- `Io` — 設定ファイルの読み込み（`NotFound` 以外）・親ディレクトリの作成・一時ファイルの書き込み・`rename`、書き込み後の `Config::load` による読み直しの失敗。読み直しは直前に同じ文字列・同じ環境変数で検証済みなので、ここで失敗するのはファイルの読み込みかプロセス外からの差し替えしかなく、要求側の問題ではないためこちらに入れる。API は 500 を返し、`error!` でログに出す。
+
+設定ファイルを書く API（`PUT /api/config`・`POST /api/setup`・`POST /api/signer/reconnect` の `remote-signer.json` 保存）は `AppState.config_writes: tokio::sync::Mutex<ConfigWrites>` を取ってから読み書きするので、同じプロセス内では 1 つずつ順に走る（並行した保存が互いの項目を消す後勝ちと、`auth::write_private_file` の固定名の一時ファイル `<path>.tmp` の消し合いを防ぐ。プロセス外からの同時書き込みは対象外）。`ConfigWrites.setup_done` は `POST /api/setup` が成功したときに立ち、再起動で `AppState` が作り直されるまで次の `POST /api/setup` を 409 にする。
 
 書き込み成功後の状態は 2 つに分かれる:
 

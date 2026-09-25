@@ -16,7 +16,7 @@
 | 403 | ガードの Host・`X-Swing-Dashboard`・Origin の検証に通らない（[`../dashboard.md#ガードsrcdashboardguardrs`](../dashboard.md#ガードsrcdashboardguardrs)） |
 | 404 | 存在しないルート（空ボディ。JSON ではない） |
 | 408 | リクエストタイムアウト（空ボディ。[`../dashboard.md#タイムアウトsrcdashboardmodrs`](../dashboard.md#タイムアウトsrcdashboardmodrs)） |
-| 409 | publish の多重実行、セットアップ・ペアリング・つなぎ直しを使えない状態、`mirror/add` で Follow Set が上限を超える（各エンドポイント） |
+| 409 | publish の多重実行、セットアップ・ペアリング・つなぎ直しを使えない状態（セットアップが済んで再起動を待っている間の 2 回目の `POST /api/setup` を含む）、`mirror/add` で Follow Set が上限を超える（各エンドポイント） |
 | 413 | ボディが大きすぎる |
 | 422 | publish の NIP-05 `require` 失敗だけ |
 | 500 | ファイルの書き込みなど内部の失敗 |
@@ -36,7 +36,7 @@ API は `swing up` の寿命で動き続ける（[`../up.md`](../up.md)）。
 |---|---|
 | relay・Kubo を使うもの（`/api/sites`・`/api/status`・`/api/mirror`・`/api/mirror/add`・`/api/mirror/remove`・`/api/webring`・`/api/replicas`・`/api/publish/sites`・`/api/publish/upload`） | agent が起動時の突き合わせ（保存量に比例して時間がかかる）を終えて `AppState::set_ready` を呼ぶまでと、agent が落ちて `set_not_ready` を呼んでから次に `set_ready` するまで（[`../agent.md#全体の流れ`](../agent.md#全体の流れ)）は 503 `{"error": "agent is not ready"}`。セットアップモード（[`../up.md#セットアップモード鍵未設定`](../up.md#セットアップモード鍵未設定)）の間は常に 503 `{"error": "agent is not configured"}` |
 | `/api/overview`・`/api/config`・`/api/shutdown`・`/api/restart`・`/api/login`・`/api/login-code`・`/api/token/rotate` | 無い（常に応答する） |
-| `/api/setup` | セットアップモードでなければ 409 |
+| `/api/setup` | セットアップモードでなければ 409。セットアップが一度成功してから再起動するまでも 409 |
 | `/api/setup/signer` | セットアップモードでも署名アプリを使っている間でもなければ 409 |
 | `/api/signer/reconnect` | 署名アプリを使っていなければ 409 |
 
@@ -231,7 +231,8 @@ Follow Set が無ければ `title: null`、`members: []`。
 
 - キーは `"<section>.<フィールド名>"`（`GET /api/config` の `raw` が付くキーと同じ）。値の形式は `raw` と同じ（`nostr.relays` は空配列だと 400）。受け付けないキーの規則と書き込み手順は [`../dashboard.md#設定の読み込みと編集srcsettings`](../dashboard.md#設定の読み込みと編集srcsettings)。
 - 成功したら `restart_required: true` の `ConfigDto`（`GET /api/config` と同じ形）を返す。実際に動いている relay・Kubo・agent への反映は次の再起動から（[`../dashboard.md#設定の読み込みと編集srcsettings`](../dashboard.md#設定の読み込みと編集srcsettings)）。
-- 失敗は 400（書き込みの失敗も含む）。ファイルもプロセスの状態も変わらない。
+- 書き込み先のファイルは要求のたびに読み直す（起動時に無くても、前の `PUT`/`POST /api/setup` が作ったファイルに重ねて書く）。設定ファイルを書く API（`PUT /api/config`・`POST /api/setup`・`POST /api/signer/reconnect`）は同じ Mutex で 1 つずつ順に処理する（[`../dashboard.md#設定の読み込みと編集srcsettings`](../dashboard.md#設定の読み込みと編集srcsettings)）。
+- 入力・検証の失敗は 400、設定ファイルの読み込み・ディレクトリ作成・書き込み・`rename`・書き込み後の読み直しの失敗は 500（`error!` でログに出す）。どちらもプロセスの状態は変わらない。400 のときはファイルにも触れない。
 
 ## POST /api/setup
 
@@ -246,6 +247,8 @@ Follow Set が無ければ `title: null`、`members: []`。
 - `items` は `PUT /api/config` と同じ規則で受け付ける。
 - 成功したら `[nostr].secret_key` に鍵の hex を書き、`items` と合わせて 1 回の書き込みで保存する（`settings::setup`。手順は [`../dashboard.md#設定の読み込みと編集srcsettings`](../dashboard.md#設定の読み込みと編集srcsettings)）。`remote_signer: true` のときは `items` だけを書いてから `remote-signer.json` を書き、ペアリングの状態を捨てる。
 - `npub` は、秘密鍵ならその鍵の、署名アプリならペアリングで受け取ったユーザーの公開鍵。
+- 失敗のステータスは `PUT /api/config` と同じ（入力・検証の失敗と `secret_key` が鍵として読めないときは 400、設定ファイルと `remote-signer.json` の読み書きの失敗は 500）。
+- 成功してから再起動で `AppState` が作り直されるまでの 2 回目は、設定ファイルに触れず 409 `{"error": "setup is already done; swing is restarting"}`（`ConfigWrites.setup_done`。1 回目に返した `npub` の鍵がそのまま残る）。
 
 ```json
 { "ok": true, "npub": "npub1…", "restart": true }
@@ -293,6 +296,7 @@ Follow Set が無ければ `title: null`、`members: []`。
 
 - ペアリングが `ready` でなければ 409 `{"error": "no signer app is connected yet; scan the QR code first"}`。
 - 署名アプリがいまの公開鍵と別のアカウントで署名するなら 409（`... connect the same Nostr account`）。ファイルは書き換えない。
+- `remote-signer.json` の書き込みは設定ファイルを書く他の API と同じ Mutex の中で行い、失敗は 500（`error!` でログに出す）。
 - 成功したら `AppState.restart_required` を `true` にし、ペアリングの状態を捨てて `{ "ok": true, "npub": "npub1…", "restart": true }` を返す。
 
 ## POST /api/shutdown, POST /api/restart

@@ -36,6 +36,11 @@ const REQUEST_TIMEOUT: Duration = Duration::from_secs(120);
 const UPLOAD_TIMEOUT: Duration = Duration::from_secs(30 * 60);
 const INSTANCE_ID_BYTES: usize = 8;
 
+#[derive(Default)]
+pub struct ConfigWrites {
+    pub setup_done: bool,
+}
+
 pub struct AppState {
     relay: RwLock<Option<Arc<RelayClient>>>,
     ipfs: RwLock<Option<IpfsClient>>,
@@ -45,6 +50,7 @@ pub struct AppState {
     pub started_at: u64,
     pub instance: String,
     pub publish_lock: Mutex<()>,
+    pub config_writes: Mutex<ConfigWrites>,
     pub own_pubkey: Option<PublicKey>,
     pub signer: Option<Signer>,
     pub pairing: std::sync::Mutex<Option<Pairing>>,
@@ -79,6 +85,7 @@ impl AppState {
             started_at: Timestamp::now().as_secs(),
             instance: auth::random_hex(INSTANCE_ID_BYTES),
             publish_lock: Mutex::new(()),
+            config_writes: Mutex::new(ConfigWrites::default()),
             own_pubkey,
             signer,
             pairing: std::sync::Mutex::new(None),
