@@ -13,7 +13,7 @@ osxcross で SDK を入れる手はあるが、SDK の取り出しに macOS か 
 
 ## release ワークフロー
 
-`.github/workflows/release.yml`。構成の現状は [architecture.md のビルドとリリース](../architecture.md#ビルドとリリース)。
+`.github/workflows/release.yml`。構成の現状は [architecture/release.md](../architecture/release.md)。
 
 - **トリガはタグと手動実行だけ**: リポジトリは private なので、macOS ランナーは Linux の何倍も無料枠を減らす。push / PR ごとの CI はまだ作っていない（Linux だけの軽いものなら安い。要るなら別ワークフローで足す）。
 - **native ランナーで 3 OS**: macOS と Windows は native で `fmt` / `clippy --all-targets -D warnings` / `test` まで通す。macOS のコンパイル確認をここで兼ねる。`x86_64-apple-darwin` は macos-latest（arm64）からのクロスでビルドだけする。

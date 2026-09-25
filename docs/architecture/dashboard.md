@@ -1,125 +1,105 @@
-# ダッシュボード（src/dashboard/, web/）
+# ダッシュボード（src/dashboard/）
 
-[`architecture.md`](../architecture.md) の一部。agent 全体のループとシグナル・終了処理は [`agent.md`](agent.md)、Docker での公開は [`docker.md`](docker.md)。詳細は役割ごとに分けている:
+[`../architecture.md`](../architecture.md) の一部。agent 全体のループは [`agent.md`](agent.md)、シグナル・終了処理と起動順は [`up.md`](up.md)、Docker での公開は [`docker.md`](docker.md)。詳細は役割ごとに分けている:
 
 - [`dashboard/http-api.md`](dashboard/http-api.md) — HTTP API の入出力
 - [`dashboard/web.md`](dashboard/web.md) — 画面・フロントエンド（`web/*.js`）とCSSカスタマイズ
+- [`dashboard/desktop.md`](dashboard/desktop.md) — Desktop 画面（`web/desktop*`。`web.md` と並ぶ子ページ）
 
 ## 概要
 
-HTTP サーバー（axum 0.8）で、ダッシュボードのブラウザ向け管理画面（`[dashboard].ui = true` のとき）と、CLI の一部（`status`・`mirror add`・`mirror remove`・`stop`。[`../architecture/cli.md`](cli.md)）が叩く制御 API（`/api/*`、常に有効）の両方を兼ねる。`/api/*` は認証が要る（下記「認証」）。専用のサブコマンドは無く、`swing up`（`src/up.rs::run`）が起動する。API の寿命は `swing up` プロセスそのものと同じで、Kubo や mirror-agent が落ちて再起動している間も `/api/overview`・`/api/config`・`/api/shutdown`・`/api/restart` は動き続ける。
+HTTP サーバー（axum 0.8）で、ダッシュボードのブラウザ向け管理画面（`[dashboard].ui = true` のとき）と、CLI の一部（一覧は [`cli.md#共通`](cli.md#共通)）が叩く制御 API（`/api/*`、常に有効）の両方を兼ねる。`/api/*` は認証が要る（下記「認証」）。専用のサブコマンドは無く、`swing up`（`src/up.rs::run`）が起動する（寿命と起動・終了順は [`up.md`](up.md)）。
 
-- relay 接続（`Arc<RelayClient>`）と Kubo クライアント（`IpfsClient`、`Clone`）は agent が接続・確定させたものを `AppState::set_ready` で受け取り、`tokio::sync::RwLock<Option<...>>` に保持する。agent がまだ relay に接続していない、または Kubo の URL を確定していない間（起動直後、または agent が落ちて再起動待ちの間）は `None` で、agent が `run_until` を抜けるときに `set_not_ready` で `None` に戻す。
-  - relay・ipfs を使うエンドポイント（`/api/sites`・`/api/status`・`/api/mirror`・`/api/mirror/add`・`/api/mirror/remove`・`/api/webring`・`/api/replicas`・`/api/publish/sites`・`/api/publish/upload`）は `None` の間 `503 Service Unavailable`、body `{"error": "agent is not ready"}` を返す（`ApiError::NotReady`）。鍵が未設定（セットアップモード。下記「セットアップモードと `AppState::setup_mode`」）の間はこれらが常に `503`、body `{"error": "agent is not configured"}`（`ApiError::NotConfigured`）になる。
-  - `/api/overview`・`/api/config`・`/api/shutdown`・`/api/restart` は agent の準備状態に関わらず常に応答する。`/api/setup` はセットアップモードの間だけ応答する（それ以外は `409`）。
+- relay 接続（`Arc<RelayClient>`）と Kubo クライアント（`IpfsClient`、`Clone`）は agent から `AppState::set_ready` で受け取り、`tokio::sync::RwLock<Option<...>>` に保持する。`set_ready` の前と `set_not_ready` の後は `None`（呼ぶ時機は [`agent.md#全体の流れ`](agent.md#全体の流れ) と [`agent.md#シグナルと終了`](agent.md#シグナルと終了)）。その間とセットアップモードの間に `503` を返す API は [`dashboard/http-api.md#共通`](dashboard/http-api.md#共通)。
 - 保存状態は agent の `Mutex<State>` には触れず、CLI の各サブコマンドと同じく `state.json` をディスクから読み直す（`mirror::collect_sites`・`health::collect_status` など）。
 - `mirror add` / `mirror remove` が relay に受理されると `tokio::sync::Notify` で agent の待ち受けループに知らせ、poll tick と同じ `poll_once`（sweep → Follow Set の再取得 → レプリカ報告の同期）をその場で実行させる。
-- 署名の方法（`AppState.signer: Option<signer::Signer>`。秘密鍵か NIP-46 の署名アプリ。[`signer.md`](signer.md)）は `up::run` が起動時に 1 回だけ決めて渡す。agent はこれを使い回す。自分の公開鍵（`AppState.own_pubkey: Option<PublicKey>`）はそこから求めて保持する（署名アプリの場合もリクエストは送らない）。どちらも無ければ `None` で、`AppState::setup_mode()` はこれが `None` かどうかで判定する。
+- 署名の方法（`AppState.signer: Option<signer::Signer>`。秘密鍵か NIP-46 の署名アプリ。[`signer.md`](signer.md)）は `up::run` が決めて渡す（作り直す時機は [`signer.md#signer`](signer.md#signer)）。自分の公開鍵（`AppState.own_pubkey: Option<PublicKey>`）はそこから求めて保持する（署名アプリの場合もリクエストは送らない）。
 
 ### セットアップモードと `AppState::setup_mode`
 
-`[nostr].secret_key`（`SWING_NOSTR_SECRET_KEY`）も `<state_dir>/remote-signer.json` も無い状態で `swing up` を起動すると、`dashboard::AppState::new` に `signer: None` が渡り、`own_pubkey` も `None` になる。この状態（セットアップモード）の詳しい起動シーケンス（Kubo・agent を起動しない、ダッシュボードだけ動かす）は [`up.md#セットアップモード鍵未設定`](up.md#セットアップモード鍵未設定) を参照。ダッシュボード側で見えるのはこれだけ:
-
-- `GET /api/overview` の `setup: true`、`pubkey`／`npub` は `null`。
-- relay・Kubo を使うエンドポイントは常に `503 agent is not configured`。
-- `POST /api/setup` と `GET`／`POST /api/setup/signer` だけがこのモードで使える（`/api/setup/signer` は署名アプリで動いている間も、つなぎ直しのために使える）。`/api/setup/signer` は NIP-46 の署名アプリとのペアリングを始め、その状態を返す（ペアリングの状態は `AppState.pairing` に 1 つだけ持つ。[`signer.md#ペアリングpairing`](signer.md#ペアリングpairing)）。`POST /api/setup` は鍵（または署名アプリの接続情報）と初期設定を書いてプロセス内再起動をスケジュールする（下記「設定の読み込みと編集」、[`dashboard/http-api.md#post-apisetup`](dashboard/http-api.md#post-apisetup)）。それ以外の時期に叩くと `409`。
-- フロント（`web/app.js`）は `overview.setup` を見て、どの hash であっても Setup 画面（`#/setup`）に固定する（[`dashboard/web.md`](dashboard/web.md)）。
+セットアップモード（条件と起動の流れは [`up.md#セットアップモード鍵未設定`](up.md#セットアップモード鍵未設定)、`Signer::load` の規則は [`signer.md`](signer.md)）では `AppState::new` に `signer: None` が渡り、`own_pubkey` も `None` になる。`AppState::setup_mode()` は `own_pubkey` が `None` かどうかで判定する。このモードで使える API と `503`／`409` の条件は [`dashboard/http-api.md#共通`](dashboard/http-api.md#共通) を参照。ペアリング（署名アプリとの接続）は `AppState.pairing` に 1 つだけ持つ（[`signer.md#ペアリングpairing`](signer.md#ペアリングpairing)）。画面側の扱いは [`dashboard/web.md`](dashboard/web.md)。
 
 ### UI と API の分離（`[dashboard].ui`）
 
-`AppState.desktop: Option<DesktopAssets>` は `[dashboard].ui = true` のときだけ `DesktopAssets::load` で読み込む。`ui = false` なら `None` のままで、Desktop 画面用のハンドラ（`/desktop-page.html` など）は呼ばれない構成（ルート自体を登録しない）なので `expect` で守っている（`assets::desktop`）。
+`dashboard::router` は `[dashboard].ui` に応じてルーティングを分ける: 静的ファイルのルート（`/`・`/favicon.svg`・`/favicon-32.png`・`/apple-touch-icon.png`・`/*.css`・`/*.js`・`/desktop-*`・`/fonts/*`・`/custom.css`）とログインリンクの受け口 `/login` を `ui_router()` にまとめ、`ui = true` のときだけ `/api/*` のルータにマージする。`/api/*` は `ui` の値に関わらず常に登録する。`ui = false` のとき `/` などは `404`、`/api/*` は通常どおり応答する。
 
-`dashboard::router` は `[dashboard].ui` に応じてルーティングを分ける: 静的ファイルのルート（`/`・`/style.css`・`/*.js`・`/desktop-*`・`/fonts/*`・`/custom.css`）とログインリンクの受け口 `/login` を `ui_router()` にまとめ、`ui = true` のときだけ `/api/*` のルータにマージする。`/api/*` は `ui` の値に関わらず常に登録する。`ui = false` のとき `/` などは `404`、`/api/*` は通常どおり応答する。
+### 起動と終了
 
-### 起動
+`up::run`（`src/up.rs`）の中で行う。全体の起動順・サーバタスクを止める時機は [`up.md`](up.md) を参照。ダッシュボード固有の点は次の 2 つ:
 
-`up::run`（`src/up.rs`）の中で行う。全体の起動順は [`up.md`](up.md) を参照。
-
-1. `swing.lock` の取得・シグナルハンドラの設定の後、`<state_dir>/upload/` を掃除（`dashboard::cleanup_upload_dir`）する。
-2. `signer::Signer::load` で署名の方法を決め、`dashboard::AppState::new(config, notify, exit, signer, token)` に渡す（`signer: Option<Signer>`。秘密鍵も署名アプリも無ければ `None`、両方あれば `swing up` の起動失敗）。`token` は `auth::load_or_create_token(state_dir)` で `<state_dir>/dashboard.token` から読む（無ければ作る。下記「認証」）。`AppState::new` 自体の失敗（`ui = true` のときの `DesktopAssets::load` 失敗）は `swing up` の起動失敗として伝播する。
-3. `[dashboard].listen` に `TcpListener::bind` する。bind に失敗すると `swing up` の起動自体がエラーで終了する。bind したアドレスがループバック（`127.0.0.1`/`::1`）以外なら、前段に TLS を終端する HTTP リバースプロキシが無いとログインコードとセッション cookie が平文で流れることを `tracing::warn` で警告する（`allowed_hosts` だけを設定した構成は、ループバックで待ち受けて同じホストのプロキシから受ける使い方があるので警告しない）。bind できたら `dashboard listening; run `swing dashboard open` to log in` を info で出す。
-4. `dashboard::serve` を別タスクとして `tokio::spawn` する。この時点でダッシュボードは応答するが、relay・ipfs を使うエンドポイントは agent が起動して `set_ready` を呼ぶまで `503` を返す。
-5. この後 Kubo（`managed` なら）と mirror-agent（`agent::run_until`）の起動ループに入る。`agent::run_until` は relay 接続と Kubo の URL 確定が終わった時点で `dashboard.set_ready(relay, ipfs)` を呼び、`run_until` を抜けるとき（エラーでも正常終了でも）`dashboard.set_not_ready()` を呼ぶ。
-
-### 終了
-
-`up::run` がシグナル（SIGINT/SIGTERM）または `/api/shutdown` `/api/restart`（`ExitRequest`）でシャットダウンを開始すると、Kubo・agent 側の終了処理（[`agent.md`](agent.md#シグナルと終了)、[`up.md`](up.md)）と並行して、`up::run` がダッシュボードの `oneshot::Sender` に送り、サーバタスクの `JoinHandle` を最大 5 秒（`DASHBOARD_SHUTDOWN_TIMEOUT`）待つ。超えたら warn ログを出して待つのをやめ、残す。agent 側の終了自体はダッシュボードを止めない（agent は `set_not_ready` を呼ぶだけで、API サーバ自体は `swing up` プロセスが終わるまで動き続ける）。
+- `[dashboard].listen` に `TcpListener::bind` する。bind に失敗すると `swing up` の起動自体がエラーで終了する。`[dashboard].listen` の IP が `is_loopback()`（`127.0.0.0/8` と `::1`）でなければ、前段に TLS を終端する HTTP リバースプロキシが無いとログインコードとセッション cookie が平文で流れることを `tracing::warn` で警告する（判定は待ち受けアドレスだけで、`allowed_hosts` は見ない）。サーバが動き出すと `dashboard listening; run `swing dashboard open` to log in` を info で出す。
+- `dashboard::serve` を別タスクとして `tokio::spawn` する。
 
 ## 設定（`[dashboard]`）
 
-キー・環境変数・既定値は [`architecture.md`](../architecture.md#設定と環境変数) の設定カタログ・[`swing.example.toml`](../../swing.example.toml) を参照。
+キー・環境変数・既定値は [`../architecture.md`](../architecture.md#設定と環境変数) の設定カタログ・[`../../swing.example.toml`](../../swing.example.toml) を参照。
 
 - `listen`: 待ち受けアドレス。`SocketAddr` としてパースする（`config::parse_dashboard_listen`）。Web UI だけを止めたい場合は `ui = false` を使う。
-- `ui`: `true`（既定）なら静的な Web UI（`/`・`/style.css`・`/*.js`・`/desktop-*`・`/fonts/*`・`/custom.css`）を配信する。`false` なら配信せず（ルート自体を登録しない）、`/api/*` の制御 API だけを残す。
+- `ui`: `true`（既定）なら静的な Web UI を配信し、`false` なら配信しない。挙動の詳細は上記「UI と API の分離」を参照。
 - `allowed_hosts`: Host ヘッダで追加で許可するホスト名（ポート抜き、大文字小文字を区別しない）。環境変数はカンマ区切りで、前後の空白を取り除く。
-- `public_url`: ブラウザからダッシュボードを開くときのベース URL（`http(s)://host[:port]`。パス・クエリは不可、末尾の `/` は取り除く。`config::parse_public_url`）。`swing dashboard open` がログインリンクの頭に使うだけで、サーバの待ち受けや Host 検証には関わらない。未設定なら `listen` をループバックに直したもの。`editable: false`（ダッシュボードから書き換えられると、ログインコードを任意のホストへ送る CLI になってしまうため）。
+- `public_url`: ブラウザからダッシュボードを開くときのベース URL（`http(s)://host[:port]`。パス・クエリは不可、末尾の `/` は取り除く。`config::parse_public_url`）。使い道は 2 つで、`swing dashboard open` と `swing-tray` が作るログインリンクの頭（`login::request_link`。未設定なら `http://<listen>` で、`listen` が未指定アドレス `0.0.0.0`/`::` のときだけループバックに直す）と、`https://` で始まるときのセッション cookie の `Secure`（下記「認証」）。サーバの待ち受けや Host 検証には関わらない。`editable: false`（任意ホストへのログインコード送信防止）。
 - `gateway`: 保存済みサイトを開くリンクの IPFS Gateway のベース URL。空文字なら `gateway_url` を出さない。環境変数の空文字は未設定として扱うので、無効にするには TOML の `gateway = ""` を使う。
-- `custom_css`: `/custom.css` として配信する CSS ファイルのパス。未設定か読めなければ `/custom.css` は空の 200 を返す。
-- `desktop_page` / `desktop_page_css` / `desktop_banner`: Desktop 画面のリンク集ページ（`/desktop-page.html`）・その CSS（`/desktop-page.css`）・88×31 バナー（`/desktop-banner`）を差し替えるファイルのパス。未設定なら同梱のものを使う。`custom_css` と違い**起動時に 1 回だけ読んでメモリに載せる**ので、差し替えの反映には agent の再起動が要る。読めないパスを指定した場合は同梱版へのフォールバックはせず、agent の起動をエラーで止める。`desktop_banner` の Content-Type は拡張子から決める（`.png` `.gif` `.jpg` `.jpeg` `.webp` `.svg` のみ。それ以外は起動時エラー）。
-- `max_upload`: `POST /api/publish/upload` のリクエストボディ上限。`0` は設定エラー。
+- `custom_css`: `/custom.css` として配信する CSS ファイルのパス（下記「静的ファイルの配信」）。
+- `desktop_page` / `desktop_page_css` / `desktop_banner`: Desktop 画面のリンク集ページ（`/desktop-page.html`）・その CSS（`/desktop-page.css`）・88×31 バナー（`/desktop-banner`）を差し替えるファイルのパス。未設定なら同梱のものを使う。読み込みの時機は下記「静的ファイルの配信」で、差し替えの反映には `swing up` の再起動が要る。読めないパスや、`desktop_banner` の拡張子が対象外（`.png` `.gif` `.jpg` `.jpeg` `.webp` `.svg` 以外）のときは同梱版へのフォールバックはせず、`swing up` の起動をエラーで止める。`desktop_banner` の Content-Type は拡張子から決める。
+- `max_upload`: `POST /api/publish/upload` のリクエストボディ上限。
 
 ## ガード（`src/dashboard/guard.rs`）
 
-全リクエストに axum middleware（`security_middleware`）がかかる。以下の順に判定する:
+全リクエストに axum middleware（`security_middleware`）がかかる。以下の順に判定する（判定で返すエラーは `{"error": ...}` の JSON）:
 
-1. Host 検証: `Host` ヘッダが無ければ 403。あれば `extract_host`（IPv6 の `[...]` を考慮してポートを外し小文字化）した値が `localhost` / `127.0.0.1` / `::1` か `allowed_hosts` のいずれかでなければ 403。ループバック以外の名前で開くのは、下記「リバースプロキシ経由での公開」の構成で公開ホスト名を `allowed_hosts` に入れる場合に限ってサポートする。`[dashboard].listen` を未指定アドレス（`0.0.0.0` / `::`）で bind している構成では、CLI（`src/api_client.rs::ApiClient`）は接続先アドレスと `Host` ヘッダの両方をループバックの同じポートへ正規化してから送る（`0.0.0.0:8082` をそのまま `Host` に送るとこの検証に落ちるため）。
+1. Host 検証: `Host` ヘッダが無ければ 403。あれば `extract_host`（IPv6 の `[...]` を考慮してポートを外し小文字化）した値が `localhost` / `127.0.0.1` / `::1` か `allowed_hosts` のいずれかでなければ 403。ループバック以外の名前で開くのは、下記「リバースプロキシ経由での公開」の構成で公開ホスト名を `allowed_hosts` に入れる場合に限ってサポートする。CLI が未指定アドレス（`0.0.0.0` / `::`）の `listen` に接続するときの扱いは [`cli.md#共通`](cli.md#共通)。
 2. 書き込み系（GET/HEAD 以外）はさらに: `X-Swing-Dashboard: 1` ヘッダが無ければ 403（CORS ヘッダは一切返さない）。`Origin` ヘッダがあれば、その authority（スキームを外し末尾の `/` を削っただけ）が `Host` ヘッダと大文字小文字を無視して一致しなければ 403。
-3. 認証: パスが `/api/` で始まり、`/api/login` 以外なら `guard::authorized` を通らないと 401 `{"error": "missing or invalid dashboard token or session"}`。`Authorization: Bearer <token>` が付いていればそれだけで判定し（`auth::token_matches`）、無ければセッション cookie を見る（下記「認証」）。静的ファイル（`/`・`*.js`・`*.css` など）と `/login` は認証なしで返す（秘密を含まず、未ログインのブラウザにログイン画面を出すため）。
-4. レスポンスヘッダ（成功・失敗どちらにも付く）: `X-Content-Type-Options: nosniff`、`Content-Security-Policy: default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; frame-ancestors 'self'`、`Referrer-Policy: no-referrer`、`X-Frame-Options: SAMEORIGIN`。Desktop 画面のリンク集ページを同一オリジンの iframe で入れ子にするため、自分自身からの埋め込みだけを許している（他オリジンからの埋め込みは従来どおり不可）。`Cache-Control: no-store` は `/api/` 配下だけ middleware が付ける（`/custom.css` はハンドラ自身が付け、`/`・`/style.css`・ES module には付かない）。
-5. 秘密鍵: `Config` に `Serialize` を実装しないことで、`/api/config` を含めどの DTO にも秘密鍵の値が現れない（詳しくは下記「秘密鍵を出さない仕組み」）。
+3. 認証: パスが `/api/` で始まり、`/api/login` 以外なら `guard::authorized` を通らないと 401 `{"error": "missing or invalid dashboard token or session"}`。`Authorization: Bearer <token>` が付いていればそれだけで判定し（`auth::token_matches`）、無ければセッション cookie を見る（下記「認証」）。静的ファイル（`/`・`*.js`・`*.css` など）と `/login` は認証なしで返す。
+
+どのレスポンス（成功・失敗とも）にも次のヘッダを付ける: `X-Content-Type-Options: nosniff`、`Content-Security-Policy: default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; frame-ancestors 'self'`、`Referrer-Policy: no-referrer`、`X-Frame-Options: SAMEORIGIN`。Desktop 画面のリンク集ページの同一オリジン iframe 埋め込みのため、自分自身からの埋め込みだけを許可し、他オリジンからの埋め込みは不可（クリックジャッキング耐性）。`Cache-Control: no-store` は `/api/` 配下だけ middleware が付ける（`/custom.css` はハンドラ自身が付け、`/`・`/style.css`・ES module には付かない）。
+
+秘密鍵をレスポンスに出さない仕組みは、この middleware ではなく DTO の型自体で担保している（下記「秘密鍵を出さない仕組み」）。
 
 ## 認証（`src/auth.rs`, `src/dashboard/session.rs`）
 
-- トークン: `<state_dir>/dashboard.token` に 32 バイトの乱数を hex（64 文字）で 1 行置く。`swing up` が起動時に `auth::load_or_create_token` で読み、無ければ作る（再起動しても同じトークンを使い続ける）。書き込み（`auth::write_new_token`）は同じディレクトリの `dashboard.token.tmp` に書いて `sync_all` してから rename する。Unix ではパーミッション `0600` で作る。Windows は `state_dir` の ACL を継承する。メモリ上の値は `AppState` の `std::sync::RwLock<String>` に持つ（`AppState::token` / `set_token`）。`state_dir` 自体を swing が新規作成するとき（`auth::create_private_dir_all`。`auth::write_new_token`・`lock::acquire`・`signer::RemoteSignerFile::save` が共有する）は Unix なら `0700` で作る。すでにあるディレクトリはユーザーが作ったものとみなし、パーミッションは変更しない。
+- トークン: `<state_dir>/dashboard.token` に 32 バイトの乱数を hex（64 文字）で 1 行置く。`swing up` が起動時に `auth::load_or_create_token` で読み、無ければ作る（再起動しても同じトークンを使い続ける）。書き込み（`auth::write_new_token`）は `auth::write_private_file` で、同じディレクトリの `<名前>.tmp` に書いて `sync_all` してから rename する。Unix ではパーミッション `0600` で作る。Windows は `state_dir` の ACL を継承する。メモリ上の値は `AppState` の `std::sync::RwLock<String>` に持つ（`AppState::token` / `set_token`）。`state_dir` 自体を swing が新規作成するとき（`auth::create_private_dir_all`。`auth::write_new_token`・`lock::acquire`・`signer::RemoteSignerFile::save` が共有する）は Unix なら `0700` で作る。すでにあるディレクトリはユーザーが作ったものとみなし、パーミッションは変更しない。
 - CLI: `api_client::ApiClient::for_config` がトークンファイルを読み、すべてのリクエストに `Authorization: Bearer <token>` を付ける（ファイルが無ければ付けない）。
-- ブラウザ: 永続トークンはブラウザに渡さない。`swing dashboard open` が Bearer で `POST /api/login-code` を叩いて使い捨てのログインコード（16 バイトの乱数を hex で 32 文字、有効 5 分、1 回限り、`auth::LoginCodes`、メモリにだけ持つ）をもらい、`http://<listen>/login?code=<code>` を開く。`GET /login` はコードが有効なら（`LoginCodes::redeem` で消費）セッション cookie を付けて `303 /`、無効なら `303 /#/login/invalid`、`code` が無ければ `303 /#/login` を返す。ログイン画面に貼ったコードは `POST /api/login` `{"code": "..."}` で同じように交換する（成功で 200 と `Set-Cookie`、失敗で 401）。
-- セッション cookie: 名前は `swing_session_<port>`（`Host` ヘッダのポート。ポートが無ければ `swing_session`。cookie はポートを区別しないので、同じホストの別インスタンスどうしで上書きし合わないようにしている）。値は `<発行時刻（epoch 秒）>.<HMAC-SHA256 の hex>`。HMAC の鍵はトークン、メッセージは用途ラベル `dashboard-session`・`\0`・発行時刻の 10 進表記（`auth::sign_session`）。属性は `HttpOnly; SameSite=Strict; Path=/; Max-Age=2592000`。リクエストの `X-Forwarded-Proto` の先頭の値が `https`（大文字小文字は無視）か、`[dashboard].public_url` が `https://` で始まるときは `Secure` も付ける（`session::served_over_https`）。`X-Forwarded-Proto` は偽装できるが、cookie はリクエストした本人にしか返らないので、偽装しても本人の cookie が厳しく（または緩く）なるだけで他人には影響しない。
-- セッションの検証（`auth::verify_session`）: 発行時刻から 30 日（`auth::SESSION_TTL`）以上経ったもの、5 分より先の発行時刻のものは拒否する。期限はブラウザの `Max-Age` ではなくサーバ側で判定する。サーバ側にセッションの一覧は持たない。
-- トークンの作り直し: `POST /api/token/rotate` がファイルを書き換えてメモリ上の値も差し替え、未使用のログインコードを捨てる。HMAC の鍵が変わるので、既存のセッション cookie はすべてその場で無効になる。
-- CSRF: cookie で認証するようになったが、書き込み系は従来どおり `X-Swing-Dashboard` ヘッダと `Origin` の検証（上記「ガード」）を通す。cookie は `SameSite=Strict`。DNS rebinding は Host 検証で止める。
+- ブラウザ: 永続トークンはブラウザに渡さない。`swing dashboard open`（と `swing-tray`）が Bearer で `POST /api/login-code` を叩いて使い捨てのログインコード（16 バイトの乱数を hex で 32 文字、有効 5 分、1 回限り、`auth::LoginCodes`。プロセスのメモリにだけ持ち、再起動で消える）をもらい、`<public_url>/login?code=<code>` を開く（上記「設定」の `public_url`）。`GET /login` はコードが有効なら（`LoginCodes::redeem` で消費）セッション cookie を付けて `303 /`、無効なら `303 /#/login/invalid`、`code` が無ければ `303 /#/login` を返す。ログイン画面に貼ったコードは [`POST /api/login`](dashboard/http-api.md#post-apilogin) で同じように交換する。
+- セッション cookie: 名前は `swing_session_<port>`（`Host` ヘッダのポート。ポートが無ければ `swing_session`）。値は `<発行時刻（epoch 秒）>.<HMAC-SHA256 の hex>`。HMAC の鍵はトークン、メッセージは用途ラベル `dashboard-session`・`\0`・発行時刻の 10 進表記（`auth::sign_session`）。属性は `HttpOnly; SameSite=Strict; Path=/; Max-Age=2592000`。リクエストの `X-Forwarded-Proto` の先頭の値が `https`（大文字小文字は無視）か、`[dashboard].public_url` が `https://` で始まるときは `Secure` も付ける（`session::served_over_https`）。
+- セッションの検証（`auth::verify_session`）: 発行時刻から 30 日（`auth::SESSION_TTL`）以上経ったもの、5 分より先の発行時刻のものは拒否する。期限はブラウザの `Max-Age` ではなくサーバ側で判定する。
+- トークンの作り直し: `POST /api/token/rotate` がファイルを書き換えてメモリ上の値も差し替え、未使用のログインコードを捨てる。HMAC の鍵が変わるので、既存のセッション cookie はすべてその場で無効になる。`ApiClient::for_config` は作るたびにファイルを読むので、CLI は次のコマンドから新しいトークンを使う。
+- CSRF: 書き込み系は `X-Swing-Dashboard` ヘッダと `Origin` の検証（上記「ガード」）を通す。cookie は `SameSite=Strict`。DNS rebinding は Host 検証で止める。
 
 ## リバースプロキシ経由での公開
 
-ダッシュボードは平文の HTTP しか話さない。ループバックの外（別の端末・インターネット）から使うときは、TLS を終端する HTTP のリバースプロキシ（nginx・Caddy・Cloudflare Tunnel の cloudflared など）の裏に置く構成をサポートする。必要な設定:
-
-- プロキシは HTTP を解釈するものを使う。TCP をそのまま流すもの（socat、nginx の `stream`、HAProxy の TCP モード、SSH のポート転送）は、下記の DoS をそのまま通すので勧めない。
-- プロキシは `Host` ヘッダを書き換えずに転送する（cloudflared の `httpHostHeader` などで `127.0.0.1:8082` に書き換えると、ブラウザが送る `Origin: https://<公開ホスト>` と合わなくなり、書き込み系がすべて 403 になる）。
-- 公開ホスト名を `[dashboard].allowed_hosts`（`SWING_DASHBOARD_ALLOWED_HOSTS`）に入れる。Host 検証はこれで通り、Origin 検証（`https://<公開ホスト>` と `Host` の一致）も書き換えなしなら通る。
-- プロキシに `X-Forwarded-Proto: https` を付けさせる（Caddy と cloudflared は既定で付ける。nginx は `proxy_set_header X-Forwarded-Proto $scheme;`）。付けられない場合は `public_url` を `https://` にしておけば `Secure` が付く。
-- `[dashboard].public_url`（`SWING_DASHBOARD_PUBLIC_URL`）を `https://<公開ホスト>` にすると、`swing dashboard open --no-browser` が外の端末でそのまま開けるリンクを出す。
-- Cloudflare Tunnel なら、Cloudflare Access（メールのワンタイムコードなど）を前に重ねて、SWING の認証と二重にするのが望ましい。
+ダッシュボードは平文の HTTP しか話さない。ループバックの外から使うのは、TLS を終端する HTTP のリバースプロキシの裏に置く構成に限ってサポートする（プロキシ側の設定は README の「[ダッシュボードを外の端末から使う](../../README.md#ダッシュボードを外の端末から使う)」）。この構成で効くのは、上記「ガード」の Host 検証（`allowed_hosts`）と Origin 検証（プロキシが `Host` を書き換えると書き込み系がすべて 403 になる）、「認証」の cookie の `Secure`、「設定」の `public_url`。
 
 ### 既知の弱点
 
-- 未認証の相手からの DoS に弱い。ヘッダ読み取りのタイムアウトが無く（`axum::serve` は hyper にタイマーを渡さないので、ヘッダを少しずつ送り続ける接続を切れない。いわゆる Slowloris）、レート制限も同時接続数の制限も無い。HTTP のリバースプロキシはヘッダを受け取りきってから転送するので、プロキシ側のタイムアウト（nginx の `client_header_timeout` など）で止まる。平文のまま LAN に直接出す構成や、TCP パススルーの前段では止まらない。ボディを少しずつ送る場合はハンドラの中で読むので、`TimeoutLayer`（120 秒、アップロードは 30 分）で切れる。止められるのはダッシュボードだけで、agent と Kubo は動き続ける。
-- セッションを 1 つだけ取り消す手段が無い。サーバ側にセッションの一覧を持たない設計なので、端末をなくした場合は `swing dashboard rotate-token` で全セッションをまとめて無効にするしかない。それをしなければ、その端末の cookie は発行から 30 日間有効のまま。
+- 未認証の相手からの DoS に弱い。ヘッダ読み取りのタイムアウトが無く（`axum::serve` は hyper にタイマーを渡さないので、ヘッダを少しずつ送り続ける接続を切れない。いわゆる Slowloris）、レート制限も同時接続数の制限も無い。HTTP のリバースプロキシはヘッダを受け取りきってから転送するので、プロキシ側のタイムアウトで止まる。平文のまま LAN に直接出す構成や、TCP をそのまま流す前段では止まらない。ボディを少しずつ送る場合はハンドラの中で読むので、`TimeoutLayer` で切れる。止められるのはダッシュボードだけで、agent と Kubo は動き続ける。
+- セッションを 1 つだけ取り消す手段が無い。サーバ側にセッションの一覧を持たないので、端末をなくした場合は `swing dashboard rotate-token` で全セッションをまとめて無効にするしかない。それをしなければ、その端末の cookie は発行から 30 日間有効のまま。
 
 ## タイムアウト（`src/dashboard/mod.rs`）
 
 `tower_http::timeout::TimeoutLayer` を `router()` に掛けている。タイムアウトすると空ボディの `408 Request Timeout` を返す。
 
 - `POST /api/publish/upload` 以外の全ルート: 120 秒。
-- `POST /api/publish/upload`: 30 分。タイムアウト（またはクライアントの切断）はハンドラの `Future` を `.await` の途中で drop するので、`upload::handle_upload` 後段の「後片付け」コードは実行されない。展開先の一時ディレクトリ（`<state_dir>/upload/<id>/`）はそのために `upload::UploadDirGuard`（所有権を持つガード）で包んであり、`Drop` が同期的に `remove_dir_all` する（詳細は [`dashboard/http-api.md#post-apipublishupload`](dashboard/http-api.md#post-apipublishupload)）。
-- ヘッダー読み取り自体のタイムアウトは設定していない（`axum::serve` を使っている都合）。
+- `POST /api/publish/upload`: 30 分。タイムアウトやクライアント切断時の後片付け（展開先ディレクトリの削除）は [`dashboard/http-api.md#post-apipublishupload`](dashboard/http-api.md#post-apipublishupload) を参照。
+- ヘッダー読み取り自体のタイムアウトは無い（上記「既知の弱点」）。
 
 ## 静的ファイルの配信（`src/dashboard/assets.rs`）
 
-`[dashboard].ui = true` のときだけ配信する（`ui_router()`。上の「UI と API の分離」を参照）。差し替え不要なファイルは `assets.rs` の `STATIC_ASSETS`（パス・Content-Type・`include_str!`/`include_bytes!` で埋め込んだ本体の組）という 1 つの配列にまとめてあり、`assets::register()` がこれを 1 行ずつループしてルートに登録する。各エントリはテキスト用/バイナリ用の 2 つの小さな `macro_rules!`（`text_asset!(content_type, "web/ 以下のファイル名")` / `bytes_asset!(...)`。パスは `/` + ファイル名を自動で組み立てる）で 1 行にしてあるので、ファイルを 1 つ追加するときはこの配列に 1 行足すだけでよい。
+`[dashboard].ui = true` のときだけ配信する（`ui_router()`。上の「UI と API の分離」を参照）。差し替え不要なファイルは `assets.rs::STATIC_ASSETS`（パス・Content-Type・本体の配列）にまとめてあり、`assets::register()` がこれをそのままルートに登録する。
 
-例外は `/desktop-page.html`・`/desktop-page.css`・`/desktop-banner` の 3 つで、`[dashboard]` にパスが設定されていればそのファイルを起動時（`AppState::new` → `DesktopAssets::load`）に読んで `AppState.desktop` に持ち、以降はそこから配信する（設定が無ければ同梱のものを `Bytes::from_static` で持つ）。リクエストのたびにディスクを見るのは `/custom.css` だけ。
+例外は `/desktop-page.html`・`/desktop-page.css`・`/desktop-banner` の 3 つで、`ui = true` のときだけ、`[dashboard]` にパスが設定されていればそのファイルを起動時（`AppState::new` → `DesktopAssets::load`）に 1 回読んで `AppState.desktop` に持ち、以降はそこから配信する（設定が無ければ同梱のものを持つ）。リクエストのたびにディスクを見るのは `/custom.css` だけ。
 
 | ルート | Content-Type |
 |---|---|
 | `GET /` | `text/html; charset=utf-8`（`index.html`） |
-| `GET /favicon.svg` | `image/svg+xml`。Desktop 画面の Start ボタンと同じ SWING の 3 色マーク（`icon-desk-start` と同じ図形） |
-| `GET /favicon-32.png` `/apple-touch-icon.png` | `image/png`（`include_bytes!`）。`favicon.svg` から書き出した 32×32（透過、SVG 非対応ブラウザ向け）と 180×180（白背景、iOS のホーム画面向け） |
+| `GET /favicon.svg` | `image/svg+xml` |
+| `GET /favicon-32.png` `/apple-touch-icon.png` | `image/png`（`include_bytes!`） |
 | `GET /style.css` `/desktop.css` `/desktop-dialog.css` `/desktop-wallpaper.css` | `text/css; charset=utf-8` |
-| `GET /boot.js` `/app.js` `/graph.js` `/storage.js` `/i18n.js` `/util.js` `/ui.js` `/sites.js` `/webring.js` `/publish.js` `/settings.js` `/setup.js` `/login.js` `/desktop.js` `/desktop-window.js` `/desktop-settings.js` `/desktop-dialog.js` `/desktop-wallpaper.js` `/desktop-wallpaper-image.js` `/desktop-combobox.js` `/desktop-focus.js` `/desktop-drag.js` | `text/javascript; charset=utf-8` |
-| `GET /desktop-icons.svg` | `image/svg+xml`。Desktop 画面のピクセルアートアイコンのスプライト（`<symbol>` 集）。`index.html` から `<use href="/desktop-icons.svg#icon-desk-…">` で外部参照する |
-| `GET /desktop-page.html` `/desktop-page.css` | `text/html; charset=utf-8` / `text/css; charset=utf-8`。Desktop 画面の iframe に入るリンク集ページとその CSS |
-| `GET /desktop-frame.css` | `text/css; charset=utf-8`。同じ iframe に `desktop.js` が差し込む窓側の CSS（スクロールバー）。差し替え対象ではない |
-| `GET /desktop-banner` | 既定は `image/gif`。リンク集ページの 88×31 バナー画像。差し替えられるので拡張子はパスに持たせない |
-| `GET /fonts/pixelmplus12-regular.woff2` `/fonts/pixelmplus12-bold.woff2` | `font/woff2`。Desktop 画面の同梱フォント PixelMplus12（400/700、`include_bytes!`）。ライセンスは `web/fonts/LICENSE-PixelMplus.txt` |
+| `GET /*.js` | `text/javascript; charset=utf-8`。ファイルの一覧は `assets.rs::STATIC_ASSETS`（`web/*.js`）が正本 |
+| `GET /desktop-icons.svg` | `image/svg+xml` |
+| `GET /desktop-page.html` `/desktop-page.css` | `text/html; charset=utf-8` / `text/css; charset=utf-8`。Desktop 画面の iframe に入るリンク集ページとその専用 CSS（既定は `web/` の同名ファイル。ページの契約は [`dashboard/desktop.md#リンク集ページiframe`](dashboard/desktop.md#リンク集ページiframe)） |
+| `GET /desktop-frame.css` | `text/css; charset=utf-8`。差し替え対象ではない |
+| `GET /desktop-banner` | 既定は `image/gif`（`web/desktop-banner.gif`）。差し替えると拡張子から決める。差し替えられるので拡張子はパスに持たせない |
+| `GET /fonts/pixelmplus12-regular.woff2` `/fonts/pixelmplus12-bold.woff2` | `font/woff2` |
 | `GET /login?code=<code>` | ファイルではなくログインリンクの受け口（`session::login_page`）。`303` でリダイレクトする（上記「認証」） |
 | `GET /custom.css` | `[dashboard].custom_css` の中身をリクエストのたびにディスクから読んで返す（`text/css; charset=utf-8`、`Cache-Control: no-store`）。未設定・読み込み失敗なら空文字 |
 
@@ -129,7 +109,7 @@ HTTP サーバー（axum 0.8）で、ダッシュボードのブラウザ向け�
 
 すべての設定キーは `src/settings/mod.rs::SETTINGS`（`Setting` の配列。キー・セクション・TOML フィールド・環境変数・種類・`swing.example.toml` 上の見え方・編集可否・英日の説明を持つ）に 1 箇所のカタログとしてまとまっている（[`../architecture.md#設定と環境変数`](../architecture.md#設定と環境変数)）。`GET /api/config` はこのカタログをそのまま列挙するので、載っている項目（パス・待ち受けアドレス・ポート、kind 番号なども含め）はすべて `kind`/`description` を持つ。
 
-そのうち書き込める（`PUT /api/config`／`POST /api/setup` で受け付ける）キーはカタログの `editable: true` が付いているものだけに絞っている。`editable: false` のキー（パス・待ち受けアドレス・ポート、`kubo.binary`、`dashboard.ui`、`allowed_hosts`、`kubo.managed`、`ipfs.*`、kind 番号、`gateway.*` など）は、ダッシュボードにログインできる相手（盗まれたセッション cookie を含む）が任意のファイルパスやリスニングアドレスを差し替えられないようにするため、意図的に対象外にしている。現在編集可能なキー（`section.field`、種類）:
+そのうち書き込める（`PUT /api/config`／`POST /api/setup` で受け付ける）キーはカタログの `editable: true` が付いているものだけに絞っている。`editable: false` のキー（パス・待ち受けアドレス・ポート、`kubo.binary`、`dashboard.ui`、`allowed_hosts`、`kubo.managed`、`ipfs.*`、kind 番号、`gateway.*` など）は対象外（ログインできる相手によるファイルパス・リスニングアドレスの差し替え防止）。編集可能なキー（`section.field`、種類）:
 
 | キー | 種類 |
 |---|---|
@@ -146,19 +126,18 @@ HTTP サーバー（axum 0.8）で、ダッシュボードのブラウザ向け�
 | `kubo.storage_max` | size |
 | `dashboard.gateway` | string |
 
-このリストは、これがダッシュボードの書き込み範囲を決める安全境界であることに変わりはないが、実体は `settings::SETTINGS` の `editable` フィールドであり、`settings::find`・`settings::is_editable`・`settings::raw_value` はすべてこのカタログを引く（[`dashboard/http-api.md#get-apiconfig`](dashboard/http-api.md#get-apiconfig)）。カタログに載っていても `source: "env"`（環境変数由来）なら `editable: false` になり、`PUT`/`POST /api/setup` はそのキーを含む要求全体を 400 で拒否する（`settings::check_not_env_sourced`。1 つでも env 由来のキーが混ざっていれば、他のキーも含めて丸ごと拒否し、部分的な適用はしない）。`nostr.secret_key` はカタログ上 `editable: false` なので `PUT /api/config` からは絶対に書けず、`POST /api/setup` だけが書ける（下記）。
+この表はダッシュボードの書き込み範囲を決める安全境界で、実体は `settings::SETTINGS` の `editable` フィールドである。`settings::find`・`settings::is_editable` はこのカタログを引く。`settings::raw_value`（[`dashboard/http-api.md#get-apiconfig`](dashboard/http-api.md#get-apiconfig) の `raw`）は編集可能なキーを手で列挙した `match` で、カタログとの食い違いはテスト `raw_value_covers_every_editable_key` が検出する。カタログに載っていても `source: "env"`（環境変数由来）なら `editable: false` になる。`PUT`/`POST /api/setup` は、編集可能でないキーか env 由来のキーが 1 つでも混ざっていれば要求全体を 400 で拒否し、部分的な適用はしない（非公開の `settings::edit::check_not_env_sourced`）。`nostr.secret_key` はカタログ上 `editable: false` なので `PUT /api/config` からは絶対に書けず、`POST /api/setup` だけが書ける（下記）。
 
-書き込みは `settings::update`（`PUT /api/config`）と `settings::setup`（`POST /api/setup`）の 2 つだけで、どちらも同じ手順を踏む: 既存のファイルを `toml_edit::DocumentMut` として読む（無ければ空文書）→ 渡された項目だけを書き換える（`toml_edit` なのでコメントや他のキーはそのまま残る）→ `config::build_config_from_str` で組み立て直して妥当性を確認する（失敗したらファイルには一切触れない）→ 親ディレクトリが無ければ `auth::create_private_dir_all` で作る（unix なら `0700`。上記「認証」の `state_dir` 作成と同じ実装で、すでにあるディレクトリのパーミッションは変更しない）→ `auth::write_private_file`（上記「認証」の `dashboard.token` や [`signer.md`](signer.md) の `remote-signer.json` と同じ実装）で tmp ファイルに書いて `rename`（atomic）。既存ファイルの権限は引き継がず、unix では既存・新規を問わず常に `0600` にする。`config_path` は常に具体的なパスを持つ（`config::resolve_config_path` が `--config`／`SWING_CONFIG`／`<カレントディレクトリ>/swing.toml` のいずれかを必ず返すため。ファイルが無くても良く、その場合の書き込みは新規作成になる）。
+書き込みは `settings::update`（`PUT /api/config`）と `settings::setup`（`POST /api/setup`）の 2 つだけで、どちらも同じ手順を踏む: 既存のファイルを `toml_edit::DocumentMut` として読む（無ければ空文書）→ 渡された項目だけを書き換える（`toml_edit` なのでコメントや他のキーはそのまま残る）→ `config::build_config_from_str` で組み立て直して妥当性を確認する（失敗したらファイルには一切触れない）→ 親ディレクトリが無ければ `auth::create_private_dir_all` で作る → `auth::write_private_file` で書く（どちらも上記「認証」と同じ実装）。既存ファイルの権限は引き継がず、unix では既存・新規を問わず常に `0600` にする。書き込み先は設定ファイルの探索順（[`../architecture.md#設定と環境変数`](../architecture.md#設定と環境変数)）で決まるパスで、ファイルが無ければ新規作成になる。
 
 書き込み成功後の状態は 2 つに分かれる:
 
-- `AppState.restart_required: AtomicBool` — プロセスが起動してから一度でも書き込みが成功すれば `true` になり、実際にプロセスが再起動する（下記）までリセットされない。`GET`/`PUT /api/config` の `restart_required` はこれをそのまま返す。
-- `AppState.display_config: RwLock<Arc<Config>>` — 起動時は `AppState.config`（実際に relay・Kubo・agent が使っている設定）のコピーだが、書き込みが成功するたびに書き換え後の設定に差し替わる。`GET /api/config` は常に `display_config` を見るので、まだ再起動していなくても「再起動したらこうなる」設定を UI に見せられる。実際に動いている relay・Kubo・agent 側の設定（`AppState.config`）は再起動するまで変わらない。
+- `AppState.restart_required: AtomicBool` — `PUT /api/config` か `POST /api/signer/reconnect` が一度でも成功すれば `true` になり、プロセス内再起動で `AppState` が作り直されるまで戻らない（`POST /api/setup` は立てない）。`GET`/`PUT /api/config` の `restart_required` はこれをそのまま返す。
+- `AppState.display_config: RwLock<Arc<Config>>` — 起動時は `AppState.config`（実際に relay・Kubo・agent が使っている設定）のコピーだが、`PUT /api/config` が成功するたびに書き換え後の設定に差し替わる。`GET /api/config` は常に `display_config` を見るので、まだ再起動していなくても「再起動したらこうなる」設定を UI に見せられる。実際に動いている relay・Kubo・agent 側の設定（`AppState.config`）は再起動するまで変わらない。
 
-`POST /api/setup` は上と同じ書き込みに加えて `[nostr].secret_key` を書き（署名アプリを選んだときは書かず、代わりに `<state_dir>/remote-signer.json` を書く。設定ファイルを先に書き、その後で `remote-signer.json` を書く）、成功レスポンスを返した約 300ms 後に `ExitRequest::restart()` を呼んでプロセス内再起動をスケジュールする（[`up.md#セットアップモード鍵未設定`](up.md#セットアップモード鍵未設定)、[`dashboard/http-api.md#post-apisetup`](dashboard/http-api.md#post-apisetup)）。
+`POST /api/setup` は上と同じ書き込みに鍵（または `remote-signer.json`）の保存とプロセス内再起動が加わる（[`dashboard/http-api.md#post-apisetup`](dashboard/http-api.md#post-apisetup)）。
 
 ## 秘密鍵を出さない仕組み
 
 - `config::Config`（および `NostrConfig`）に `Serialize` を実装していない。DTO は手書きの構造体で、`secret_key` の実値を持つフィールドが型として存在しない。`/api/config` は常に固定文字列 `"(set, hidden)"`（未設定なら `"(not set)"`）を返す。
-- `Config` の `Debug` 実装も秘密鍵の値を `<redacted>` にする（ログにも出ない）。
-- 表示するのは `npub` / hex 公開鍵のみ。nsec・鍵の hex は API のどのレスポンスにも登場しない（`POST /api/setup` も `npub` だけを返す）。署名アプリとの接続に使うアプリ鍵（`remote-signer.json` の `app_secret_key`）もどの API にも出さない。`POST /api/setup/signer` が返す `nostrconnect://` URI にはアプリの公開鍵とペアリングの secret が入る（署名アプリに渡すためのもの）。鍵を書けるのは `POST /api/setup` だけで、`PUT /api/config` はホワイトリストに `nostr.secret_key` を含まないので書けない。
+- 表示するのは `npub` / hex 公開鍵のみ。nsec・鍵の hex は API のどのレスポンスにも登場しない（`POST /api/setup` も `npub` だけを返す）。署名アプリとの接続に使うアプリ鍵（`remote-signer.json` の `app_secret_key`）もどの API にも出さない。`POST /api/setup/signer` が返す `nostrconnect://` URI にはアプリの公開鍵とペアリングの secret が入る（署名アプリに渡すためのもの）。

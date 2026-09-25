@@ -1,6 +1,6 @@
 # release ワークフローのサードパーティ action・ツールの選定理由
 
-[release ワークフロー](2026-09-24-release-workflow-and-kubo-signature.md)の回では「それぞれの action の最新メジャーを使う」としか書いておらず、選定理由と信頼性の評価を記録していなかった。今回それを事後的にまとめる。現状の構成（一覧・ピン留めの方針）は [architecture.md のビルドとリリース](../architecture.md#ビルドとリリース)を参照。
+[release ワークフロー](2026-09-24-release-workflow-and-kubo-signature.md)の回では「それぞれの action の最新メジャーを使う」としか書いておらず、選定理由と信頼性の評価を記録していなかった。今回それを事後的にまとめる。現状の構成（一覧・ピン留めの方針）は [architecture/release.md](../architecture/release.md) を参照。
 
 ## 選定理由
 

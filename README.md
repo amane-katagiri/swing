@@ -45,7 +45,7 @@ Nostr は「更新の通知」と「誰のサイトを保存するか」を伝�
 
 次のどちらかで動かせます。
 
-- **バイナリで動かす場合**: `swing` バイナリと、IPFS ノードである Kubo のバイナリ（`ipfs`、v0.43.1）。今のところ配布物は用意していないので、`swing` は自分でビルド（Rust 1.97 で `cargo build --release`）し、Kubo は[公式の配布ページ](https://dist.ipfs.tech/kubo/v0.43.1/)から取得します。`ipfs` は `swing` と同じディレクトリに置くか PATH に通しておけば、`swing up` が自動で見つけます
+- **バイナリで動かす場合**: `swing` バイナリと、IPFS ノードである Kubo のバイナリ（`ipfs`、v0.43.1）。`swing` は GitHub のリリースに Linux・macOS・Windows 向けのビルド済みアーカイブ（Kubo は含みません）があればそれを使い、無ければ自分でビルド（Rust 1.97 で `cargo build --release`）します。Kubo は[公式の配布ページ](https://dist.ipfs.tech/kubo/v0.43.1/)から取得します。`ipfs` は `swing` と同じディレクトリに置くか PATH に通しておけば、`swing up` が自動で見つけます
 - **Docker Compose で動かす場合**: Docker と Docker Compose（`docker compose` コマンドが使えること）
 
 どちらの場合も、次が必要です。
@@ -71,7 +71,7 @@ cd swing
 
 ### バイナリで動かす
 
-`swing` バイナリをビルドします（Rust 1.97 が必要です。ビルド済みバイナリの配布は今のところありません。[`docs/todo.md`](docs/todo.md) を参照してください）。
+GitHub のリリースにビルド済みアーカイブがあればそれを展開して使います。無ければ `swing` バイナリをビルドします（Rust 1.97 が必要です）。
 
 ```bash
 cargo build --release
@@ -141,7 +141,25 @@ docker compose up -d
 
 `mirror` は既定で手元のソースからイメージをビルドします。リリースごとに公開しているイメージを使う場合は、`compose.yaml` の `mirror` の `build: .` をコメントアウトし、その下の `image: ghcr.io/amane-katagiri/swing` のコメントを外してください（最新のリリースが使われます。バージョンを固定するなら `ghcr.io/amane-katagiri/swing:0.1.0` のように書きます）。
 
-あとからバイナリの `swing up` に切り替える場合は、volume の中身（保存したサイトと agent の状態）をそのまま持っていけます。手順は [`docs/architecture/docker.md#compose-から-swing-up-への移行`](docs/architecture/docker.md#compose-から-swing-up-への移行) を参照してください。
+#### Docker Compose からバイナリの `swing up` に移る
+
+compose の 2 つの volume をホストにコピーすれば、同じ Kubo（PeerID・ブロック・MFS）と同じ agent の状態のまま `swing up`（`[kubo] managed = true`）に移れます。`swing-data`（`state.json`・`dashboard.token`・`remote-signer.json`・ダッシュボードで書いた `swing.toml`）を `<dir>/data` に、`ipfs-data`（Kubo の repo）を `<dir>/data/kubo` に置き、`swing.toml` だけ `<dir>` に出します。`<dir>` は `swing.toml` を置くディレクトリで、`[agent] state_dir` と `[kubo] repo` の既定値にそのまま合います。
+
+```sh
+docker compose stop                       # volume は消さない
+dest=~/swing                              # <dir>。data はまだ作らない（あると data/data に入る）
+mkdir -p "$dest"
+docker compose cp mirror:/data "$dest/data"
+docker compose cp ipfs:/data/ipfs "$dest/data/kubo"
+[ -f "$dest/data/swing.toml" ] && mv "$dest/data/swing.toml" "$dest/"
+```
+
+Windows（PowerShell）でも `docker compose cp` はそのまま使えます（`$dest` を `"$HOME\swing"` などに、最後の行を `Move-Item` に読み替えてください）。コピーしたファイルはコマンドを実行したユーザーの所有になります。
+
+- `.env` の設定は `<dir>/swing.toml` に移します（サービスとして登録した `swing up` は `.env` を読みません）。キー名の対応は [`swing.example.toml`](swing.example.toml) の各行のコメントにあります。`SWING_IPFS_API`・`SWING_STATE_DIR`・`SWING_KUBO_MANAGED`・`SWING_GATEWAY_UPSTREAM`・`SWING_DASHBOARD_LISTEN` は書きません。`SWING_DASHBOARD_BIND`・`SWING_KUBO_GATEWAY_BIND`・`SWING_GATEWAY_BIND` を変えていたら、その値をそれぞれ `[dashboard] listen`・`[kubo] gateway_listen`・`[gateway] listen` に書きます（gateway は `SWING_GATEWAY_LISTEN` を `off` 以外にしていた場合だけ）。`SWING_DASHBOARD_PUBLIC_URL` はホスト側のポートに合わせていただけなら要りません。
+- ホストの `ipfs` は compose のイメージと同じ v0.43.1 にします。古い Kubo は新しい repo を開けず、新しい Kubo は repo を移行するので、その後は compose に戻せません。
+- Kubo の設定は `swing up` が起動のたびに上書きします（API とゲートウェイは `127.0.0.1` で待ち受け直します）。PeerID や `Bootstrap` などはコピーした値のままです。
+- ポートは compose と同じなので、compose を止めてから `swing up` を起動します。`swing status` で保存済みの版が `[ok]` になることを確かめたら、`docker compose down -v` で volume を消してください。同じ PeerID と鍵で 2 つ動かすことになるので、移行後に compose をまた起動しないでください。
 
 ### ミラー対象を管理する・状態を見る
 
@@ -364,15 +382,27 @@ MFS に置いたサイトを他のノードから見つけてもらうには、K
 
 ## 設定一覧
 
-TOML の設定ファイル（`swing.toml`）を使う場合と、環境変数だけで動かす場合のどちらにも対応しています。優先順位は環境変数 > TOML > 既定値。キーごとの環境変数名・既定値・説明は [`swing.example.toml`](swing.example.toml) にすべて載っています（`swing config example` で生成、Docker Compose 用の `.env` は [`.env.example`](.env.example)、`swing config env-example` で生成）。設定ファイルの探索順や、容量・時間の書式（`"100GB"` や `"10m"` のような文字列）は [`docs/architecture.md`](docs/architecture.md) を参照してください。ダッシュボードから編集できるのはそのうちの一部（ホワイトリスト、[`docs/architecture/dashboard.md`](docs/architecture/dashboard.md#設定の読み込みと編集srcsettingsrs)）で、環境変数で設定した項目は編集できません。
+TOML の設定ファイル（`swing.toml`）を使う場合と、環境変数だけで動かす場合のどちらにも対応しています。優先順位は環境変数 > TOML > 既定値。キーごとの環境変数名・既定値・説明は [`swing.example.toml`](swing.example.toml) にすべて載っています（`swing config example` で生成、Docker Compose 用の `.env` は [`.env.example`](.env.example)、`swing config env-example` で生成）。設定ファイルの探索順や、容量・時間の書式（`"100GB"` や `"10m"` のような文字列）は [`docs/architecture.md`](docs/architecture.md) を参照してください。ダッシュボードから編集できるのはそのうちの一部（ホワイトリスト、[`docs/architecture/dashboard.md`](docs/architecture/dashboard.md#設定の読み込みと編集srcsettings)）で、環境変数で設定した項目は編集できません。
 
 ## プライバシーと注意点
 
 SWING は公開の IPFS Mainnet をそのまま使うため、匿名性は提供しません。他の IPFS peer から、あなたの Peer ID・IP アドレス・提供している CID などの関連を観測される可能性があります。もともと公開 Web サイトを保存することが前提のツールなので、この点は許容した上でご利用ください。
 
-一方で、Kubo の RPC やローカルのゲートウェイ、ダッシュボード（管理 UI）は外部に公開しません。外部に公開する必要があるのは IPFS swarm 用のポート（`4001`）だけです。バイナリで `swing up` が Kubo を管理する場合、RPC はループバックのランダムなポートで待ち受けるため外部から触ることはできません。Docker Compose の構成でも、Kubo の RPC（5001）はホストに公開されず、ゲートウェイ（`8080`）とダッシュボード（`8082`）はどちらも既定で `127.0.0.1` だけで待ち受けます。ダッシュボードは平文の HTTP なので、外の端末から使う場合は TLS を終端する HTTP のリバースプロキシ（nginx・Caddy・Cloudflare Tunnel など）の裏に置いてください。`SWING_DASHBOARD_BIND` を変えて平文のまま外部に出すと、ログインコードとログイン状態の cookie がそのまま流れます。プロキシ側の設定（`SWING_DASHBOARD_ALLOWED_HOSTS`・`SWING_DASHBOARD_PUBLIC_URL`・`Host` を書き換えないこと）と既知の弱点は [`docs/architecture/dashboard.md`](docs/architecture/dashboard.md#リバースプロキシ経由での公開) を参照してください。内蔵ゲートウェイで外部に配信するのは、設定した `SWING_GATEWAY_HOSTS`（または `gateway.hosts`）のホストの DNSLink だけです。
+一方で、Kubo の RPC やローカルのゲートウェイ、ダッシュボード（管理 UI）は外部に公開しません。外部に公開する必要があるのは IPFS swarm 用のポート（`4001`）だけです。バイナリで `swing up` が Kubo を管理する場合、RPC はループバックのランダムなポートで待ち受けるため外部から触ることはできません。Docker Compose の構成でも、Kubo の RPC（5001）はホストに公開されず、ゲートウェイ（`8080`）とダッシュボード（`8082`）はどちらも既定で `127.0.0.1` だけで待ち受けます。ダッシュボードは平文の HTTP なので、`SWING_DASHBOARD_BIND` を変えて平文のまま外部に出すと、ログインコードとログイン状態の cookie がそのまま流れます。外の端末から使う方法は下の「[ダッシュボードを外の端末から使う](#ダッシュボードを外の端末から使う)」、既知の弱点は [`docs/architecture/dashboard.md`](docs/architecture/dashboard.md#既知の弱点) を参照してください。内蔵ゲートウェイで外部に配信するのは、設定した `SWING_GATEWAY_HOSTS`（または `gateway.hosts`）のホストの DNSLink だけです。
 
 Nostr の秘密鍵は、Docker Compose で動かす場合は `.env` に、バイナリで `swing.toml` を使う場合は `swing.toml` の `secret_key` に、どちらも平文で保存されます。サイト公開・ミラー参加専用の鍵を新しく作り、他の用途の鍵とは分けて扱うことをおすすめします。`.env` や `swing.toml` を Git にコミットしないよう注意してください。
+
+### ダッシュボードを外の端末から使う
+
+別の端末やインターネットからダッシュボードを使うときは、TLS を終端する HTTP のリバースプロキシ（nginx・Caddy・Cloudflare Tunnel の cloudflared など）の裏に置き、次のように設定してください。
+
+- プロキシは HTTP を解釈するものを使ってください。TCP をそのまま流すもの（socat、nginx の `stream`、HAProxy の TCP モード、SSH のポート転送）は、ヘッダを少しずつ送り続ける DoS をそのまま通すのでおすすめしません。
+- `Host` ヘッダは書き換えずに転送してください。cloudflared の `httpHostHeader` などで `127.0.0.1:8082` に書き換えると、ブラウザが送る `Origin` と合わなくなり、設定の保存や publish などの操作がすべて 403 になります。
+- 公開ホスト名を `SWING_DASHBOARD_ALLOWED_HOSTS`（`[dashboard].allowed_hosts`）に入れてください。
+- プロキシに `X-Forwarded-Proto: https` を付けさせてください（Caddy と cloudflared は既定で付けます。nginx は `proxy_set_header X-Forwarded-Proto $scheme;`）。付けられない場合は、次の `SWING_DASHBOARD_PUBLIC_URL` を `https://` にしておけばログイン状態の cookie に `Secure` が付きます。
+- `SWING_DASHBOARD_PUBLIC_URL`（`[dashboard].public_url`）を `https://<公開ホスト>` にすると、`swing dashboard open --no-browser` が外の端末でそのまま開けるリンクを出します。
+- Cloudflare Tunnel なら、Cloudflare Access（メールのワンタイムコードなど）を前に重ねて、SWING のログインと二重にするのがおすすめです。
+- ヘッダの受信が遅い接続は、プロキシ側のタイムアウト（nginx の `client_header_timeout` など）で切ってください。
 
 ### 署名アプリ（NIP-46）で署名する
 

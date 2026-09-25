@@ -1,8 +1,109 @@
-# Kubo と MFS（ipfs.rs, mfs.rs）
+# Kubo と MFS（ipfs.rs, mfs.rs, kubo.rs）
 
-[`architecture.md`](../architecture.md) の一部。`swing up` による Kubo の起動・設定・監視は [`up.md`](up.md)、内蔵 gateway は [`gateway.md`](gateway.md)。
+[`../architecture.md`](../architecture.md) の一部。内蔵 gateway は [`gateway.md`](gateway.md)。[RPC](#rpc) と [MFS の使い方](#mfs-の使い方) は managed／unmanaged どちらの Kubo にも共通する。
 
-`[kubo].managed = true` のときは RPC アドレスが固定でない。`swing up` が起動のたびに空いているループバックポートを選んで Kubo の `Addresses.API` に設定し、Kubo が実際に listen したアドレスを `<repo>/api` に書き出す。`Config::ipfs_api_url()` はこのファイルを読んで URL を組み立てる（[`up.md#動的な-api-ポートとrepoapi`](up.md#動的な-api-ポートとrepoapi)）。以下の RPC の表は managed／unmanaged どちらの Kubo にも共通する。
+## Kubo プロセスの管理（kubo.rs）
+
+`swing up`（[`up.md`](up.md)）による Kubo の検出・起動・設定・監視・停止・孤児回収はここに集約する。
+
+### バイナリの検出（`kubo::locate_binary`）
+
+優先順位:
+
+1. `[kubo].binary` が指定されていればそのパス。存在しなければエラー。
+2. `swing` 実行ファイル（`current_exe()`）と同じディレクトリの `ipfs`（Windows は `ipfs.exe`）。
+3. `PATH` 上の `ipfs`（Windows も `PATHEXT` は見ず `ipfs.exe` 固定）。
+4. どれも無ければエラー（`Kubo binary not found: ...`）。
+
+2・3 で見つけたときは解決したパスを `tracing::info!` で 1 行残す（`[kubo].binary` を明示した場合は出さない）。
+
+### リポジトリの初期化（`kubo::ensure_repo`）
+
+`<repo>/config` が無ければ `IPFS_PATH=<repo>` で `ipfs init` を実行する（あれば何もしない）。呼び出し元にリポジトリを新規作成したかどうかを bool で返す。`<repo>` ディレクトリ自体は無ければ先に作る。
+
+### 適用する Kubo 設定（`kubo::apply_config`）
+
+`swing up` は Kubo を起動するたびに `IPFS_PATH=<repo>` で次の `ipfs config` を順に実行する。
+
+| キー | 値 | 備考 |
+|---|---|---|
+| `Datastore.StorageMax` | `[kubo].storage_max`（10 進バイト数の文字列、例 `"107374182400"`） | |
+| `Provide.Strategy` | `[kubo].provide_strategy` | `mfs` か `all` を含めないと、MFS にしか無いサイトが DHT に告知されない。知らない値を与えると daemon が起動しない |
+| `Gateway.NoFetch` | `true` | 毎回 `--json` で設定。応答の詳細は下記「[Kubo の Gateway](#kubo-の-gatewaynofetch)」 |
+| `Gateway.NoDNSLink` | `true` | 毎回 `--json` で設定 |
+| `Gateway.PublicGateways` | `[gateway].hosts` を `{"<host>": {"Paths": [], "UseSubdomains": false, "NoDNSLink": false}}` に変換したもの | hosts が空なら `{}` |
+| `Addresses.API` | `["/ip4/127.0.0.1/tcp/<api_port>"]` | `api_port` は起動のたびに動的に選ぶ（下記） |
+| `Addresses.Gateway` | `[kubo].gateway_listen` を multiaddr にしたもの（`/ip4/.../tcp/...` か `/ip6/.../tcp/...`） | |
+| `Addresses.Swarm` | `[kubo].swarm_port` が `Some` のときだけ、Kubo の既定の Swarm リスト 8 本のポートをすべてこの値に置き換えたもの | `None` なら触らない（Kubo の既定のまま） |
+
+`ipfs config` の実行が失敗したら stderr を含めてエラーにする。compose の外部 Kubo コンテナは `docker/kubo-init.d/001-swing-config.sh` で、このうち `Datastore.StorageMax`・`Provide.Strategy`・`Gateway.NoFetch`・`Gateway.NoDNSLink`・`Gateway.PublicGateways` の 5 つのキーを設定する（`Addresses.*` は設定しない。値の渡し方は [`docker.md#kubo-の設定`](docker.md#kubo-の設定)）。
+
+### Kubo の Gateway（`NoFetch`）
+
+`Gateway.NoFetch=true`（上記）により、Kubo の Gateway はローカルにあるブロックだけを返し、ネットワークからは取りに行かない。`Gateway.PublicGateways` に入れたホストでは DNSLink（`_dnslink.<host>`）の内容だけを返す。
+
+Kubo は `Host` と `X-Forwarded-Host` をそのまま信じるので、Kubo の Gateway ポートを外部に直接公開しない。内蔵 gateway（[`gateway.md`](gateway.md)）や compose の `mirror` コンテナを前段に置く。
+
+### 動的な API ポートと `<repo>/api`
+
+`kubo::pick_free_port()` が `127.0.0.1:0` を bind してすぐ解放し、空いている TCP ポートを 1 つ返す。`swing up` は Kubo を起動するたびにこれで API ポートを選び、`Addresses.API` に設定する。Kubo は起動時に実際に listen したアドレスを `<repo>/api` に multiaddr（例 `/ip4/127.0.0.1/tcp/54321`）で書き出す。
+
+- `kubo::api_url_from_repo(repo)`: `<repo>/api` を読んで `multiaddr_to_http_url` で HTTP URL に変換する。ファイルが無ければ「Kubo is not running（`swing up` を起動するか、`[kubo].managed = false` にして `[ipfs].api` で外部の Kubo を指すよう案内する）」という趣旨のエラーにする。
+- `kubo::multiaddr_to_http_url(addr)`: `/ip4/<ip>/tcp/<port>` → `http://<ip>:<port>`、`/ip6/<ip>/tcp/<port>` → `http://[<ip>]:<port>`（`[::1]` のように角括弧を付ける）。`/dns4`・`/dns6`・`/dns` も同様にホスト名をそのまま使う。それ以外のプロトコルや `tcp` 以外はエラー。
+- `Config::ipfs_api_url()`（`src/config/mod.rs`）は `[ipfs].api` が `Url` ならそのまま返し、`Managed` なら `api_url_from_repo(&config.kubo.repo)` を呼ぶ。CLI の `swing publish` はこれを経由して、`swing up` が管理している Kubo の実際のポートを見つける。agent（`agent/lifecycle.rs`）と unmanaged の `swing up` のヘルス待ちも同じ関数で URL を得る（managed の agent には `swing up` が `[ipfs].api` を実際の URL に差し替えた設定を渡す。[`up.md#managed`](up.md#managed)）。
+
+`kubo::wait_healthy` はこのファイルを読まない。起動直後はまだ `<repo>/api` が存在しないため、`swing up` は選んだポート番号から直接 `http://127.0.0.1:<api_port>` を組み立ててヘルスチェックする。
+
+### デーモンの起動（`kubo::Daemon::spawn`）
+
+```
+<bin> daemon --migrate=true --enable-gc --agent-version-suffix=swing
+```
+
+`Daemon::spawn(bin, repo, api_url)` は起動する Kubo の API URL（`Addresses.API` に設定したものと同じ、`http://127.0.0.1:<api_port>`）を受け取って `Daemon` に持たせる。`Daemon::stop`（下記）がこれを使って RPC シャットダウンを呼ぶ。
+
+- `IPFS_PATH=<repo>`。stdin は `/dev/null` 相当、stdout/stderr は pipe。
+- Linux（`cfg(target_os = "linux")`）のみ、`pre_exec` で `PR_SET_PDEATHSIG(SIGTERM)` を設定する。swing プロセスが SIGKILL 等で消えても、Linux では子の Kubo に SIGTERM が届く。
+- Windows（`cfg(windows)`）のみ、`JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` の Job Object に子プロセスを割り当てる。ハンドルは `Daemon` が持ち `Drop` で閉じるので、swing が強制終了されても Kubo は一緒に落ちる。macOS にはこの種の機構が無く、`kill_on_drop(true)` と次回起動時の孤児回収に頼る。
+- 標準出力・標準エラーは 1 行ずつ `target: "kubo"` のログ（`stream` フィールド付き）に流す。標準エラーに `"lock"` を含む行が出たら覚えておく（`Daemon::saw_repo_lock_error()`。下記「repo lock のヒント」）。
+
+### ヘルス待ち（`kubo::wait_healthy`）
+
+`POST <api_url>/api/v0/id` を 1 秒間隔で叩き、2xx が返れば成功。1 回ごとのリクエストタイムアウトは 5 秒。指定した `timeout` を超えたらエラー。
+
+`timeout` は `up.rs` の定数で決まる。
+
+- unmanaged: 30 秒（`UNMANAGED_HEALTH_TIMEOUT`）。
+- managed: 120 秒（`MANAGED_HEALTH_TIMEOUT`）。
+
+待機中も `CancellationToken` の cancel に即座に応答する（`tokio::select!` で `wait_healthy` と `token.cancelled()` を競走させる）。
+
+### 停止（`Daemon::stop(grace)`）
+
+まず Kubo の RPC（`ipfs shutdown` と同じ）を叩き、それでも `grace` 以内に終わらなければ段階的に強制する 3 段構え（1・2 段目は全 OS 共通、3 段目が OS 依存）:
+
+1. `POST <api_url>/api/v0/shutdown` をリクエストタイムアウト 5 秒で送る。レスポンスの成功・失敗・接続エラーのどれであっても「シャットダウンを要求した」ものとして次に進む（リトライしない）。
+2. 子プロセスの終了を `grace` 秒まで待つ。終了すればここで成功。
+3. まだ生きていれば: unix は SIGTERM を送って 10 秒待ち、それでも終わらなければ `kill()`（SIGKILL）。Windows（`cfg(unix)` に入らない経路）は待たずに直接 `kill()`。
+
+ログは SIGTERM の送信失敗と SIGTERM 後も終わらないことだけが warn で、他の段階は debug。`kill()` 自体の失敗はエラーとして返す。
+
+`swing up` は `DAEMON_STOP_GRACE = 30s`（`up.rs`）を渡す。`swing stop`（[`cli.md#stop`](cli.md#stop)）による停止もこの `Daemon::stop` を通る。シグナルによる停止では、この猶予を待ち切る前にプロセスが打ち切られることがある（[`up.md#shutdownshutdownrs`](up.md#shutdownshutdownrs)）。
+
+### `kubo.pid` と孤児 Kubo の回収（managed のみ）
+
+`start_kubo`（`up.rs`）は `Daemon::spawn` の直後に `<state_dir>/kubo.pid`（JSON: `pid`・`api_port`・`started_at`）を書く。`started_at` はその `pid` の開始時刻を OS ごとの方法（Linux は `/proc/<pid>/stat`、macOS は `ps -o lstart=`、Windows は `GetProcessTimes`）で取った比較専用の文字列。書けなければ warn を出して続行する（その回は孤児回収の対象にならない）。
+
+`kubo::recover_orphan` は `run_managed` の冒頭（バイナリの検出・バージョン確認の後、デーモンループの前）に 1 回呼ぶ。`swing.lock` を持っている間なので、記録にある Kubo が生きていればそれは前回の swing の孤児である。
+
+- `kubo.pid` が無ければ何もしない。読めなければ warn を出してファイルを消すだけで、何も kill しない。
+- まず記録の `api_port` に API でのシャットダウンを送り（タイムアウト 3 秒）、応答があればその `pid` の終了を最大 30 秒待つ。終われば完了。
+- API で終わらなければ、その `pid` の今の開始時刻を取り直し、記録と一致するときだけ強制終了する（unix は SIGTERM → 最大 30 秒 → SIGKILL → 最大 10 秒、Windows は `taskkill /T /F` → 最大 10 秒）。プロセスがもう無い、または開始時刻が一致しない（PID の再利用）なら kill せずにファイルを消す。
+- 強制終了しても終わらなければエラーを返し、`swing up` は Kubo を起動せずに終了する。
+
+#### repo lock のヒント
+
+`recover_orphan` が拾えるのは自分が書いた `kubo.pid` だけで、`swing up` の管理下に無い Kubo が同じ repo を使っていると起動が失敗し続ける。`wait_healthy` が失敗した時点で daemon が exit していて、標準エラーに `"lock"` を含む行が出ていたら、`another ipfs daemon seems to hold the Kubo repo lock; ...` を warn で出してから通常のバックオフに入る。
 
 ## MFS の使い方
 
@@ -26,7 +127,7 @@ MFS から消したコンテンツや打ち切った取得のブロックは、K
 
 | 操作 | リクエスト | タイムアウト |
 |---|---|---|
-| 取得 | `dag/export?arg={cid}&progress=false` | 全体 `SWING_FETCH_TIMEOUT`、無通信 `SWING_FETCH_IDLE_TIMEOUT` |
+| 取得 | `dag/export?arg={cid}&progress=false` | 全体 `[agent].fetch_timeout`、無通信 `[agent].fetch_idle_timeout` |
 | 実サイズ・完全性 | `dag/stat?arg={cid}[&arg={cid}...]&progress=false&offline=true` → `TotalSize` | 300 秒 |
 | ディレクトリ作成 | `files/mkdir?arg={path}&parents=true` | 60 秒 |
 | 配置 | `files/cp?arg=/ipfs/{cid}&arg={path}&offline=true` | 60 秒 |
@@ -41,7 +142,7 @@ MFS から消したコンテンツや打ち切った取得のブロックは、K
 - 配置は親ディレクトリを作り、同名の項目を消してから行う（同名があると `files/cp` が失敗する）。`offline=true` なのでルートのブロックがローカルに無ければ即エラー。
 - `files/rm` は失敗しても 200 でボディにメッセージを返すので、ボディが空でなければ失敗とする。存在しないパスは成功。
 - `files/ls` と `files/stat` の `file does not exist` は、それぞれ空の一覧、「無い」として扱う。
-- ディレクトリ判定は `/ipfs/{cid}` を `files/stat` に渡す（MFS のパスではなく取得したばかりの CID そのもの）。ブロックは `dag/export` 直後でローカルにあるので、ルートブロックだけ読む軽い呼び出しになる。`agent/store.rs::apply_site_event` が取得の直後・`mfs_put` の前に呼び、`directory` でなければ MFS には置かずに終わる（「保存の順序」は [`agent.md`](agent.md#保存の順序) 参照）。
+- ディレクトリ判定は MFS のパスではなく `/ipfs/{cid}` を `files/stat` に渡す。agent は取得の直後に呼ぶ（[`agent.md` の「保存の順序」](agent.md#保存の順序)）ので、ルートブロックはローカルにある。
 
 `add` の multipart:
 
@@ -49,15 +150,23 @@ MFS から消したコンテンツや打ち切った取得のブロックは、K
 - ファイルは `application/octet-stream` でストリーミング送信、ディレクトリは空ボディの `application/x-directory`。
 - シンボリックリンクは辿る。循環はエラー。
 - 最後の JSON 行の `Hash` がルート CID（`ipfs add -Qr --cid-version=1` と同じ）。
-- `to-files` のパスにルートディレクトリそのものが置かれる。親ディレクトリは先に作る。
+- `to-files` のパスにルートディレクトリそのものが置かれる。add の前に親ディレクトリを作り、同じパスの既存の項目を `files/rm` で消す。
 
 ## Kubo のバージョン
 
-compose の Kubo イメージは検証済みの `v0.43.1` に固定している。`swing up` が管理する Kubo（`[kubo].managed = true`）も同じバージョンを想定し、`kubo::KUBO_VERSION` 定数（`up.rs`/`kubo.rs`、[`up.md#バージョン確認`](up.md#バージョン確認)）にピン留めしている。実際にインストールされた `ipfs version --number` がこれと異なる場合は `swing up` が起動時に一度だけ warn を出すだけで、起動は止めない。バージョンをピン留めした場所は 2 か所（compose のイメージタグと `KUBO_VERSION`）あり、上げるときは両方を同時に揃える。次の挙動に依存しているので、上げると壊れうる。
+`swing up`（managed）は `run_managed` の始め（`up::run` が呼ばれるたび）に `ipfs version --number` を実行し、`kubo::KUBO_VERSION` と異なれば warn を出して続行する。`ipfs version` 自体が実行できなければ `swing up` はエラー終了する。
+
+上げるときに揃える場所:
+
+- `compose.yaml` の `ipfs` サービスのイメージタグ（`ipfs/kubo:v0.43.1`）
+- `kubo::KUBO_VERSION`（`src/kubo.rs`）
+- README と docs の版表記（`v0.43.1` で検索できる）
+
+次の Kubo の挙動に依存しているので、上げると壊れうる。
 
 - `file does not exist` の文面での判定（変わると、突き合わせが MFS から消えた版を取り直さず警告を出し続ける）
 - `files/rm` が失敗時も 200 を返すこと
 - 各 RPC の JSON の形（`TotalSize`、`Hash`、`Type`（`files/stat` は文字列、`Entries[].Type` は数値）など）と、`add` の multipart・`to-files`
 - MFS の保護・GC・`offline=true` の挙動
 
-上げるときは、新しいイメージで統合テスト（`kubo_integration` と `agent_stores_and_removes_through_real_kubo`）を通してから、`compose.yaml` と [テスト手順](../architecture.md#テスト) のタグを同時に上げる。既存の `ipfs-data` は `--migrate=true` で移行され、古いバージョンに戻せないことがある。
+これを確かめるテストは、統合テスト（`kubo_integration`・`agent_stores_and_removes_through_real_kubo`）と `kubo::tests` の `#[ignore]` テスト（`SWING_TEST_KUBO_BIN` が必要）。コマンドは [`../architecture.md#テスト`](../architecture.md#テスト)。

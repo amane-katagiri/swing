@@ -1,6 +1,6 @@
 # リリース時に ghcr.io へコンテナイメージを push する
 
-release ワークフローに `image` ジョブを足し、`v*` タグの push で `ghcr.io/<owner>/<repo>` にマルチアーキテクチャ（`linux/amd64`・`linux/arm64`）のイメージを push するようにした。現状の構成は [architecture.md のビルドとリリース](../architecture.md#ビルドとリリース)。
+release ワークフローに `image` ジョブを足し、`v*` タグの push で `ghcr.io/<owner>/<repo>` にマルチアーキテクチャ（`linux/amd64`・`linux/arm64`）のイメージを push するようにした。現状の構成は [architecture/release.md](../architecture/release.md)。
 
 ## 決めたこと
 

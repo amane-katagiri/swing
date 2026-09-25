@@ -1,6 +1,6 @@
 # mirror-agent（agent/, health.rs, policy.rs, state.rs）
 
-[`architecture.md`](../architecture.md) の一部。MFS のパスと Kubo RPC は [`kubo.md`](kubo.md)、NIP-05 は [`nip05.md`](nip05.md)、ダッシュボードは [`dashboard.md`](dashboard.md)、内蔵 gateway は [`gateway.md`](gateway.md)、`swing up`（Kubo の起動・監視、agent の再起動）は [`up.md`](up.md)。
+[`../architecture.md`](../architecture.md) の一部。MFS のパスと Kubo RPC は [`kubo.md`](kubo.md)、NIP-05 は [`nip05.md`](nip05.md)、ダッシュボードは [`dashboard.md`](dashboard.md)、内蔵 gateway は [`gateway.md`](gateway.md)、`swing up`（Kubo の起動・監視、agent の再起動）は [`up.md`](up.md)。
 
 ## agent/ の構成
 
@@ -11,44 +11,41 @@
 | `agent/follow.rs` | `refresh_follow_set`（Follow Set の取得・保存・再送は `choose_and_apply_follow_set`、対象の切り替え・サイトイベントの購読・取得は `resubscribe_and_backfill` に分かれた薄い呼び出し元）、`limit_sites_per_account` |
 | `agent/store.rs` | `Agent::submit`/`drain`（キューイングと直列実行）、`apply_site_event`（「保存の順序」の中核）、NIP-05 検証、`decide`/`version_infos` |
 | `agent/replicas.rs` | レプリカ報告の差分計算・送信（`SentReport`・`ReportBook`・`Held`・`reports_to_send`・`held`・`load_sent_reports`・`sync_reports`） |
-| `agent/test_support.rs` | ユニットテスト共通のフィクスチャ（`Fixture`・`FakeNip05`・`FakeRelay`、`test_config`）。`#[cfg(test)]`。`FakeKubo` 本体はクレート直下の `src/test_support.rs`（`health.rs` のテストとも共有）にあり、ここは `pub(super) use` で再公開するだけ |
+| `agent/test_support.rs` | ユニットテスト共通のフィクスチャ（`Fixture`・`FakeNip05`・`FakeRelay`、`test_config`）。`#[cfg(test)]`。`FakeKubo` は `src/test_support.rs` のものを `pub(super) use` で再公開する |
 
 外部からは `swing::agent::run_until` だけを公開する（`swing up` が Kubo・agent を協調させて起動・再起動するために使う。[`up.md`](up.md)）。テストは対応するモジュールの `#[cfg(test)] mod tests` に置く。
 
 ## 全体の流れ
 
-1. relay 群に接続し、state を読む。`[gateway].listen` が `off` でなければ内蔵 gateway の `TcpListener` を bind する（失敗したら agent 全体がエラーで終了する）。続けて `Agent` を組み立て、起動時の突き合わせを行う。ダッシュボードの bind・起動・`<state_dir>/upload/` の掃除は `run_until` の外、`swing up` プロセス自身（`up::run`）が `run_until` の呼び出しより前に済ませている（[`dashboard.md#起動`](dashboard.md#起動)）。`run_until` はその `Arc<dashboard::AppState>` を受け取るだけ。
-2. 突き合わせの完了前にシャットダウンが要求されたら、突き合わせを打ち切って即座に shutdown へ進む（relay を切断するだけで終わる。gateway はまだ起動していない。ダッシュボードは `run_until` の外で動いているのでここでは何もしない）。
+1. relay 群に接続し、state を読む。`[gateway].listen` が `off` でなければ内蔵 gateway の `TcpListener` を bind する（失敗したら agent 全体がエラーで終了する）。続けて `Agent` を組み立て、起動時の突き合わせを行う。
+2. 突き合わせの完了前にシャットダウンが要求されたら、突き合わせを打ち切って即座に shutdown へ進む（relay を切断するだけで終わる。gateway はまだ起動していない）。
 3. 突き合わせを終えたら、`dashboard.set_ready(relay, ipfs)` を呼んで relay・Kubo を使う API のエンドポイントを使えるようにし、bind できていれば `gateway::serve` を別タスクで起動する。
 4. `poll_interval` ごとの tick（最初の tick は起動直後）、およびダッシュボードでの mirror 変更（`Notify`）で `poll_once`（次を行う）を実行する。
    1. sweep
    2. Follow Set を決める。決まらなければ警告を出して 3 と 4 を飛ばす。
    3. unfollow
-   4. 対象 pubkey 群のサイトイベント（過去分を含む）を取得して購読し直し、`nostr::select_latest`（`created_at` が現在時刻より 900 秒（`nostr::MAX_FUTURE_SKEW`）を超えて先のイベントは無視する）でサイトごとの最新版を選び、pubkey ごとに、保存済みのサイトすべてと、それ以外のサイトを `created_at` の新しい順に合計 `max_sites_per_account` 件まで、タスクに投入する。一時的な取得・保存の失敗はここで再試行される。
+   4. 対象 pubkey 群のサイトイベントを購読し直してから過去分を取得し、`nostr::select_latest`（未来ずれの許容は [`nostr.md`](nostr.md#未来ずれの許容nostrmax_future_skew)）でサイトごとの最新版を選び、pubkey ごとに、保存済みのサイトすべてと、それ以外のサイトを `created_at` の新しい順に合計 `max_sites_per_account` 件まで、タスクに投入する。一時的な取得・保存の失敗はここで再試行される。
    5. レプリカ報告の同期（Follow Set が決まらなくても行う）
-5. 購読で届いたサイトイベントをタスクに投入する。送信元が今の Follow Set にいなければ warn を出して無視する。購読 ID と kind が一致しない通知は debug ログで捨てる。
+5. 購読で届いたサイトイベントをタスクに投入する（投入前に捨てる条件は下記「並行処理」の `submit`）。購読 ID と kind が一致しない通知は debug ログで捨てる。
 6. タスクはサイト単位で「保存の順序」に従って処理する。新版を記録したら、同時実行の枠を返してからレプリカ報告の同期を行う。
 
-relay の切断、Kubo のエラー、不正なイベントはログに出して続ける。relay への再接続と再購読は nostr-sdk が行う。nostr-sdk の通知チャネル（容量 2048）から溢れた分は 2.4 の取り直しで回収される。通知ストリーム自体が終わったらエラーで終了する。
+relay の切断、Kubo のエラー、不正なイベントはログに出して続ける。relay への再接続と再購読は nostr-sdk が行う。nostr-sdk の通知チャネルから溢れた分は、上の 4 の 4（poll ごとの過去分の取得）で回収される。通知ストリーム自体が終わったらエラーで終了する。
 
 ### シグナルと終了
 
-`swing up` は `shutdown::cancel_on_signal()`（[`up.md`](up.md#shutdownshutdownrs)）で作った `CancellationToken`（の子トークン）を `run_until(config, token)` に渡す。`run_until` 自体はシグナルを直接扱わない。
+`swing up` はシグナルから作った `CancellationToken`（の子トークン）を `run_until` に渡す（`cancel_on_signal` の詳細は [`up.md#shutdownshutdownrs`](up.md#shutdownshutdownrs)）。`run_until` 自体はシグナルを直接扱わない。起動時の突き合わせと `poll_once` はこのトークンの cancel と競争させ（`race_with_shutdown`）、cancel が先に届いたら処理中の I/O を打ち切って shutdown に進む。
 
-- `cancel_on_signal`: SIGINT（`ctrl_c`）を待つ。unix ではさらに SIGTERM も待ち、どちらか先に届いた方で `token.cancel()` する。受信から `FORCE_EXIT_GRACE_PERIOD`（10 秒）たってもプロセスが終わっていなければ `std::process::exit(1)` する watchdog を兼ねる。
-- 起動時の突き合わせと `poll_once` は `race_with_shutdown` でトークンの cancel と競争させ、cancel が先に届いたら処理中の I/O を打ち切って shutdown に進む。
-- shutdown・poll 中の停止検知・relay 通知ストリーム終了のいずれでループを抜けても（正常終了でもエラーでも）、ループを抜けた後に必ず `shutdown_gateway`（gateway の子トークンを cancel してサーバタスクを最大 5 秒待つ。超えたら warn を出して待つのをやめる）→ relay 切断 → `dashboard.set_not_ready()` の順で後始末する。`dashboard.set_not_ready()` は relay・Kubo を使う API のエンドポイントを 503 に戻す。ダッシュボードのサーバタスク自体の起動・終了は `run_until` の外（`up::run`）が担当するので、agent 側のこの後始末で API サーバが止まることはない（[`dashboard.md#終了`](dashboard.md#終了)）。
-- `main.rs` はランタイムを明示的に組み立て、`run()` の後に `shutdown_timeout(10s)` で畳む（ブロッキング呼び出しで詰まったスレッドがあっても drop で止まらない）。
+shutdown・poll 中の停止検知・relay 通知ストリーム終了のいずれでループを抜けても（正常終了でもエラーでも）、`run_until` はループを抜けた後に必ず `shutdown_gateway`（gateway の子トークンを cancel してサーバタスクを最大 5 秒待つ。超えたら warn を出して待つのをやめる）→ relay 切断 → `dashboard.set_not_ready()` の順で後始末する。ダッシュボードの API サーバは agent の外で動く（[`up.md`](up.md)）。
 
-ダッシュボードは agent のメモリ上の `Mutex<State>` を触らず、`state.json` を読み直す。relay・Kubo クライアントは `AppState` の `RwLock<Option<...>>` 経由で共有し、agent が接続・確定を終えた後（`set_ready` 以降）だけ使える（[`dashboard.md`](dashboard.md)）。内蔵 gateway は agent の state や Kubo RPC を一切使わず、Kubo の gateway へ透過的にプロキシするだけ（[`gateway.md`](gateway.md)）。
+ダッシュボードとの共有のしかたは [`dashboard.md#概要`](dashboard.md#概要)。内蔵 gateway は agent の state や Kubo RPC を一切使わず、Kubo の gateway へ透過的にプロキシするだけ（[`gateway.md`](gateway.md)）。
 
 ## Follow Set の選び方
 
 relay から取得した版と `state.follow_set` の版を比べて使う方を決める。
 
 - 候補は kind 30000・作者が自分・`d` が `mirror_set`・署名が正しいものだけ。保存済みの版も同じ条件で確かめる（`mirror_set` を変えると古い版は使わない）。
-- 新しさは NIP-01 の置き換え可能イベントの規則（`created_at` が大きい方、同じなら `id` が小さい方）で比べる。
-- `nostr::choose_follow_set` は、relay から取得した版・保存済みの版のどちらも、`created_at` が現在時刻より 900 秒（`nostr::MAX_FUTURE_SKEW`）を超えて先なら「無い」として扱ってから下の表の判定に入る。保存済みの版まで捨てるのは、先の時刻の Follow Set が一度 state に保存されると、以後まともな時刻の版が二度と「新しい」と判定されず、ミラー対象が凍結するのを防ぐため（保存済みを捨てても、relay から改めてまともな時刻の版が取れれば、それが保存されて復旧する）。`RelayClient::fetch_follow_set` / `fetch_follow_sets` 自身も取得直後に同じ基準でふるい落とすので、relay から先の時刻の版しか取れなかった場合は「見つからない」と同じ扱いになる。
+- 新しさの比べ方（NIP-01 の置き換え規則）は [`nostr.md`](nostr.md#未来ずれの許容nostrmax_future_skew)。
+- `nostr::choose_follow_set` は、relay から取得した版・保存済みの版のどちらも、未来ずれの許容（[`nostr.md`](nostr.md#未来ずれの許容nostrmax_future_skew)）を超えて先なら「無い」として扱ってから下の表の判定に入る。`RelayClient::fetch_follow_set` / `fetch_follow_sets` 自身も取得直後に同じ基準でふるい落とすので、relay から先の時刻の版しか取れなかった場合は「見つからない」と同じ扱いになる。
 
 | relay から | 保存済み | 使う版 | state に保存 | relay に再送 |
 |---|---|---|---|---|
@@ -60,28 +57,29 @@ relay から取得した版と `state.follow_set` の版を比べて使う方を
 | 取得に失敗 | ある | 保存済み | しない | しない |
 | 見つからない、または失敗 | 無い、または先の時刻で捨てた | 決まらない | — | — |
 
-再送は署名済みのイベントをそのまま全 relay に送り、どこにも受理されなければ warn を出す。NIP-09 で Follow Set を削除しても再送は続くので、ミラーをやめるときは `swing mirror remove` を使う。
+再送は署名済みのイベントをそのまま全 relay に送り、どこにも受理されなければ warn を出す。NIP-09 で relay から Follow Set が消えても、保存済みの版の再送は続く。
 
-決まった Follow Set から対象 pubkey を取り出すのは `nostr::follow_set_pubkeys_capped`（`extract_follow_set_pubkeys` はこれの薄いラッパ）で、`p` タグの重複を除いた先頭 `nostr::budget::MAX_FOLLOW_SET_ENTRIES`（500）件だけを対象にする。500 件を超える Follow Set（自分のものを含む）は、超えた分が対象から静かに外れるのではなく、`refresh_follow_set` が `warn!` を 1 回出してから続行する（[取得と表示の上限](../architecture.md#取得と表示の上限nostrbudget)）。
+対象 pubkey は決まった Follow Set の `p` のうち先頭 `MAX_FOLLOW_SET_ENTRIES` 件で、超えたら `resubscribe_and_backfill` が warn を出す（[取得と表示の上限](nostr.md#取得と表示の上限nostrbudget)）。
 
 ## unfollow
 
-Follow Set が決まった tick で行う。Follow Set の更新はこれより先に反映する。決まらない tick では何もせず、state に版か検証結果のあるアカウントが 1 つでもあれば `warn!(mirror_set, stored_accounts, "no follow set found yet; keeping stored sites until one is (did the key or mirror_set change?)")` を出す（無ければ `no follow set found yet; will retry`）。state に保存した Follow Set は今の鍵と `mirror_set` のものしか使わないので、鍵か `mirror_set` を変えて起動すると、新しい Follow Set ができるまで以前のアカウントは消えずに残る。
+Follow Set が決まった tick で行う。Follow Set の更新はこれより先に反映する。決まらない tick では何もせず、warn を出す（state に版か検証結果のあるアカウントがあれば、その数と、鍵か `mirror_set` を変えていないかの確認を添える）。state に保存した Follow Set は今の鍵と `mirror_set` のものしか使わないので、鍵か `mirror_set` を変えて起動すると、新しい Follow Set ができるまで以前のアカウントは消えずに残る。
 
 - `remove_on_unfollow = true`: `state.sites` か `state.verifications` にエントリがあり、今の Follow Set にいない pubkey を state から消して保存し、`<mfs_root>/agent/<pubkey hex>` を消す。state と比べるので、agent の停止中に外した相手や、設定を `true` に変える前に外した相手も消える。
 - `false`: 外れた相手の保存済みの版を残す。新しい版は取らない。保持期間の適用と容量の集計は続き、最新版は残る。起動時の突き合わせで壊れていた版は取り直さずに消える。
 
 ## 保存の順序
 
-1. 事前判定: `size` タグ（無ければ不明）で `policy::decide` する。skip なら終わる。
-2. NIP-05 検証（`[policy].nip05` が `off` 以外）。`require` で `Verified` でなければ終わる。
-3. 取得: `dag/export` の CAR を読み捨てながらバイト数を数え、`policy::fetch_limit`（`max_update_size`・`max_per_site`・`max_per_account` の最小値）を超えたら打ち切る。`SWING_FETCH_IDLE_TIMEOUT` か `SWING_FETCH_TIMEOUT` を超えたら失敗。いずれも state と MFS は変えない。
-4. ディレクトリ確認: `files/stat /ipfs/<cid>` の `Type` を見る。`directory` でなければ `reason = "not_a_directory"` で warn を出して終わる（MFS にはまだ何も置いていないので消すものは無く、取得したブロックは Kubo の GC に任せる）。`files/stat` 自体が失敗したら取得の失敗と同じ扱いで終わる（次の poll で取り直す）。
-5. 以降は state のロックの中で行う。作者が Follow Set から外れていれば終わる。
-6. 版のパスに CID を置く（既存の項目は先に消す）。失敗したら終わる。
-7. `dag/stat`（`offline=true`）の `TotalSize` を実サイズとする。ブロックが欠けていればエラーになるので、6 のパスを消して終わる。`size` タグより大きければ warn を出す。
-8. 実サイズで `policy::decide` する。skip なら 6 のパスを消して終わる。
-9. 新版を記録し、evict した版を `sites` から消して state を保存してから、evict した版のパスを消す。
+1. 作者が今の Follow Set にいなければ warn を出して終わる。
+2. 事前判定: `size` タグ（無い、または `u64` としてパースできなければ不明）で `policy::decide` する。skip なら終わる。
+3. NIP-05 検証（`[policy].nip05` が `off` 以外）。`require` で `Verified` でなければ終わる。
+4. 取得: `dag/export` の CAR を読み捨てながらバイト数を数え、`policy::fetch_limit`（`max_update_size`・`max_per_site`・`max_per_account` の最小値）を超えたら打ち切る。`[agent].fetch_idle_timeout` か `[agent].fetch_timeout` を超えたら失敗。いずれも state と MFS は変えない。
+5. ディレクトリ確認: `files/stat /ipfs/<cid>` の `Type` を見る。`directory` でなければ `reason = "not_a_directory"` で warn を出して終わる（MFS にはまだ何も置いていないので消すものは無く、取得したブロックは Kubo の GC に任せる）。`files/stat` 自体が失敗したら取得の失敗と同じ扱いで終わる（次の poll で取り直す）。
+6. 以降は state のロックの中で行う。作者が Follow Set から外れていれば終わる。
+7. 版のパスに CID を置く（既存の項目は先に消す）。失敗したら終わる。
+8. `dag/stat`（`offline=true`）の `TotalSize` を実サイズとする。ブロックが欠けていればエラーになるので、7 のパスを消して終わる。`size` タグより大きければ warn を出す。
+9. 実サイズで `policy::decide` する。skip なら 7 のパスを消して終わる。
+10. 新版を記録し、evict した版を `sites` から消して state を保存してから、evict した版のパスを消す。
 
 パスの削除に失敗しても state はそのままにし、sweep に任せる。
 
@@ -102,20 +100,20 @@ state のロックの中で行う。
 
 ## 並行処理
 
-- `submit`（購読通知・過去分の取得の両方から呼ばれる入口）は、対象判定（Follow Set にいるか）より前に `nostr::plausible_at` で `created_at` を確かめ、900 秒（`nostr::MAX_FUTURE_SKEW`）を超えて先なら `future_created_at` を理由に warn を出してその場で捨てる。キューにある実行中・待機中のイベントを置き換えることはない。続けて対象判定を行い、対象外の pubkey のイベントもその場で捨てる。relay がフィルタを無視して対象外のイベントを大量に送っても、キューやタスクは増えない。「保存の順序」5 の判定は、`submit` から実行までの間に対象から外れた場合に効く。
+- `submit`（購読通知・過去分の取得の両方から呼ばれる入口）は、対象判定（Follow Set にいるか）より前に `nostr::plausible_at` で `created_at` を確かめ、未来ずれの許容（[`nostr.md`](nostr.md#未来ずれの許容nostrmax_future_skew)）を超えて先なら `future_created_at` を理由に warn を出してその場で捨てる。キューにある実行中・待機中のイベントを置き換えることはない。続けて対象判定を行い、今の Follow Set にいない pubkey のイベントも warn を出してその場で捨てる。relay がフィルタを無視して対象外のイベントを大量に送っても、キューやタスクは増えない。「保存の順序」1・6 の判定は、`submit` から実行までの間に対象から外れた場合に効く。
 - 「保存の順序」を同時に実行するタスクは最大 `concurrency` 個。
 - 同じ pubkey のタスクは同時に `max_sites_per_account` 個まで。超えたイベントは捨て、次の poll で拾い直す。
 - 同じサイト（`pubkey:d`）のタスクは同時に 1 つ。実行中に来たイベントは、実行中・待機中のものより `created_at` が新しいときだけ待機に置き（1 件、上書き）、実行後に同じタスクで続けて処理する。
-- 保存の順序の 5〜9、sweep、unfollow、突き合わせは state のロックの中で直列に行う。レプリカ報告の同期どうしは報告用のロックで直列になる（取る順は報告用 → state）。取得中の一時的なディスク使用量は最大で `concurrency` × `fetch_limit`。
+- 保存の順序の 6〜10、sweep、unfollow、突き合わせは state のロックの中で直列に行う。レプリカ報告の同期どうしは報告用のロックで直列になる（取る順は報告用 → state）。取得中の一時的なディスク使用量は最大で `concurrency` × `fetch_limit`。
 
 ## レプリカ報告
 
-イベント形式は [`protocol.md`](../protocol.md#8-レプリカ報告)。同期は報告用のロックの中で直列に行う。state のロックは保存している CID を読む間だけ取る。
+イベント形式は [`../protocol.md`](../protocol.md#8-レプリカ報告)。同期は報告用のロックの中で直列に行う。state のロックは保存している CID を読む間だけ取る。
 
 保存している CID（サイト `<pubkey hex>:<d>` ごと）:
 
 - `state.sites` の各版の CID。
-- `<mfs_root>/publish/<自分の pubkey hex>/` の下のディレクトリ名を `d` に戻し（`site_name` で同じ名前に戻らないもの、`d` の条件を満たさないものは無視）、その下の名前が整数の項目の CID（`files/ls` の `Hash`）。同じサイトが `state.sites` にもあれば合わせる。同じ Kubo で `swing publish` した自分のサイトだけが対象で、別の Kubo で publish したサイトは報告しない。
+- `<mfs_root>/publish/<自分の pubkey hex>/` の下のディレクトリ名を `mfs::site_from_name` で `d` に戻し（エンコードし直して同じ名前にならないもの、`d` の条件を満たさないものは無視）、その下の名前が整数の項目の CID（`files/ls` の `Hash`）。同じサイトが `state.sites` にもあれば合わせる。同じ Kubo で `swing publish` した自分のサイトだけが対象で、別の Kubo で publish したサイトは報告しない。
 - `publish/<自分>/` の一覧に失敗したら自分が作者のサイトすべてを、`publish/<自分>/<site>/` の一覧に失敗したらそのサイトを「不明」とし、今回は送らない。
 
 送信済みの記録はメモリにだけ持つ（サイトごとに `cid` の集合と `created_at`）。まだ読めていなければ、同期のたびに relay から自分の報告（`replica_event_kind`、作者が自分）を取得し、`d` ごとの最新を記録に入れる（記録にある方が新しければそのまま）。取得に失敗したら warn を出し、送信は続ける。
@@ -131,30 +129,30 @@ state のロックの中で行う。
 
 - `created_at` は現在時刻。記録の `created_at` 以下になるときは記録の `created_at + 1` にする。`expiration` は `created_at + report_ttl`。
 - 全 relay に送り、どこかに受理されたら記録を更新する。受理されなければ warn を出し、次の同期で送り直す。
-- 署名（NIP-46 の署名アプリへのリクエストを含む。[`signer.md`](signer.md)）か送信がエラーになったら warn を出して、その回の残りの報告は送らずに打ち切る。残りは次の同期で送り直す。署名アプリがオフラインのとき、報告の件数ぶん署名のタイムアウト（90 秒）を待たないようにするため。
+- 署名（NIP-46 の署名アプリへのリクエストを含む）か送信がエラーになったら warn を出して、その回の残りの報告は送らずに打ち切る。残りは次の同期で送り直す（署名アプリがオフラインのときの扱いは [`signer.md#署名アプリがオフラインのとき`](signer.md#署名アプリがオフラインのとき)）。
 - 取り下げた記録は `cid` 無しで残り、出し直さない。
 
-受信側で報告を数える規則（`replicas::collect_reports` / `ReplicaReport::counts_at`）は agent 自身の動作ではなく [`cli.md`](cli.md#replicas) を参照。`report_ttl` の既定 `3d` に対し、数えるのをやめる期間（`nostr::MAX_REPORT_AGE`、7 日）はそれより長い。TTL を伸ばした他クライアントの報告も、期限切れ前に数えられなくなることがないようにするため。
+受信側で報告を数える規則（`replicas::collect_reports` / `ReplicaReport::counts_at`）は [「レプリカ報告の信頼度」](nostr.md#レプリカ報告の信頼度replicastier)。`report_ttl` の既定 `3d` に対し、数えるのをやめる期間（`nostr::MAX_REPORT_AGE`）はそれより長い（[取得と表示の上限](nostr.md#取得と表示の上限nostrbudget)）。
 
 ## ポリシー判定（policy.rs）
 
 `policy::decide` は純粋関数。入力は同サイトの既存版、使用量（他サイトの合計容量、同じ pubkey の他サイトの合計容量とサイト数）、候補（cid, size, created_at）、ポリシー設定、現在時刻。出力は `Decision { store: Option<String>, evict: Vec<String>, reason: String }`。
 
-1. `nostr::plausible_at` が false、つまり `created_at` が現在時刻より先で、ずれが 15 分（`nostr::MAX_FUTURE_SKEW`。`policy.rs` ではなく `nostr.rs` にある定数で、`select_latest` や Follow Set の選択（[Follow Set の選び方](#follow-set-の選び方)）でも同じ値を使う）を超えるなら skip（`future_created_at`）。
+1. `nostr::plausible_at` が false（`created_at` が未来ずれの許容を超えて先。[`nostr.md`](nostr.md#未来ずれの許容nostrmax_future_skew)）なら skip（`future_created_at`）。
 2. 同じ CID が同サイトに記録済みなら skip（`duplicate_cid`）。
 3. 新しいサイトで、同じ pubkey の記録済みのサイトが `max_sites_per_account` 個以上あれば skip（`max_sites_per_account`）。
 4. `created_at` が同サイトの最新版以下なら skip（`stale`）。
 5. 現在時刻が同サイトの最大の `stored_at` から `min_update_interval` 未満なら skip（`min_update_interval`）。
-6. `size` が `max_update_size` を超えるなら skip。
-7. 同サイト合計が `max_per_site` を超えるなら古い版から evict する。新版単体で超えるなら skip。
+6. `size` が `max_update_size` を超えるなら skip（`max_update_size`）。
+7. 同サイト合計が `max_per_site` を超えるなら古い版から evict する。新版単体で超えるなら skip（`max_per_site_exceeded_alone`）。
 8. `keep_versions`（最低 1 に丸める）を超える古い版を evict する。
-9. `keep_days` より古い版を evict する。最新版は残す。
+9. `keep_days` より古い版を evict する。最新版は残す。`keep_days = 0` なら何もしない。
 10. evict 後、同じ pubkey の全サイト合計が `max_per_account` を超えるなら skip（`max_per_account`）。他のサイトは削らない。
-11. evict 後の全サイト合計が `max_total_storage` を超えるなら skip。他のサイトは削らない。
+11. evict 後の全サイト合計が `max_total_storage` を超えるなら skip（`max_total_storage`）。他のサイトは削らない。
 
 `size` 不明の事前判定では 6 を飛ばし、新版を 0 バイトとして 7〜11 を評価する。
 
-`created_at` は作者の自己申告なので、間隔の判定（5）だけは自分が保存した実時刻（`stored_at`）で測る。1 と合わせて、`created_at` を先に振っても取り込みの頻度は上げられない。5 で見送った版は、`min_update_interval` が経ったあとの poll（全体の流れ 4.4）で同じイベントが改めて評価されて受理される。relay には `pubkey + kind + d` ごとに最新の 1 件しか残らないので、見送っている間の中間の版は取れないが、最新の内容には必ず追いつく。
+間隔（5）は `stored_at` で測る。見送った版は次の poll で再評価される。
 
 ## state.json（state.rs）
 
@@ -179,4 +177,3 @@ state のロックの中で行う。
 - `status` は `verified` / `mismatch` / `not_applicable` / `error`。`verifications` の扱いは [`nip05.md`](nip05.md)。
 - `follow_set` は最後に保存した署名済みの Follow Set。無ければ `null`（キーが無くても `null`）。
 - `sites` と `verifications` は必須キー。ファイルが無い、または空白だけなら空の state として扱う。
-- state を消すと、次の sweep で `<mfs_root>/agent` の下がすべて消え、次の poll で取り直しになる。

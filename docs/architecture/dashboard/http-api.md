@@ -1,21 +1,57 @@
 # ダッシュボード HTTP API（`src/dashboard/api.rs`, `src/dashboard/dto.rs`, `src/dashboard/config_dto.rs`）
 
-[`dashboard.md`](../dashboard.md) の一部。ガード・タイムアウトは [`dashboard.md`](../dashboard.md)、画面側からの使い方は [`web.md`](web.md) を参照。
+[`../dashboard.md`](../dashboard.md) の一部。ガード・タイムアウトは [`../dashboard.md`](../dashboard.md)、画面側からの使い方は [`web.md`](web.md) を参照。
 
 ## 共通
 
-- すべて JSON。公開鍵は `pubkey`（小文字 hex）と `npub` を併記する。時刻は epoch 秒の整数。無い値は `null`。
-- エラーは `{ "error": "<メッセージ>" }` とステータスコード。入力不正は 400、relay や Kubo が未準備（agent がまだ接続・確定していない）なら 503 `{"error": "agent is not ready"}`、鍵が未設定（セットアップモード。下記）なら同じ 503 で `{"error": "agent is not configured"}`、relay や Kubo・Nostr 発行の失敗は 502、publish の多重実行は 409。JSON の構文エラー・必須フィールド欠落・`Content-Type` 不一致はすべて 400（422 は publish の NIP-05 `require` 失敗専用。ボディが大きすぎる場合だけ 413）。`POST /api/publish/upload` だけ `multipart/form-data` を受ける。
-- `POST /api/login` 以外の `/api/*` は認証が要る。`Authorization: Bearer <token>` かセッション cookie が無い・合わなければ 401 `{"error": "missing or invalid dashboard token or session"}`（ガードが返す。[`../dashboard.md#認証srcauthrs-srcdashboardsessionrs`](../dashboard.md#認証srcauthrs-srcdashboardsessionrs)）。
+### 形式とエラー
+
+- すべて JSON。公開鍵は `pubkey`（小文字 hex）と `npub` を併記する。時刻は epoch 秒の整数。無い値は `null`。`POST /api/publish/upload` だけ `multipart/form-data` を受ける。
+- ハンドラが返すエラーは `{ "error": "<メッセージ>" }` とステータスコード。
+
+| ステータス | 条件 |
+|---|---|
+| 400 | 入力不正。JSON の構文エラー・必須フィールド欠落・`Content-Type` 不一致も 400（axum の既定の 422 にしない）。`POST /api/publish/upload` に multipart でない `Content-Type` を送ったときは axum の素の 400（本文は JSON ではない） |
+| 401 | 認証が通らない（下記） |
+| 403 | ガードの Host・`X-Swing-Dashboard`・Origin の検証に通らない（[`../dashboard.md#ガードsrcdashboardguardrs`](../dashboard.md#ガードsrcdashboardguardrs)） |
+| 404 | 存在しないルート（空ボディ。JSON ではない） |
+| 408 | リクエストタイムアウト（空ボディ。[`../dashboard.md#タイムアウトsrcdashboardmodrs`](../dashboard.md#タイムアウトsrcdashboardmodrs)） |
+| 409 | publish の多重実行、セットアップ・ペアリング・つなぎ直しを使えない状態（各エンドポイント） |
+| 413 | ボディが大きすぎる |
+| 422 | publish の NIP-05 `require` 失敗だけ |
+| 500 | ファイルの書き込みなど内部の失敗 |
+| 502 | relay・Kubo・Nostr 発行・署名アプリの失敗 |
+| 503 | agent の未準備・セットアップモード（下記） |
+
+### 認証とガード
+
+- `POST /api/login` 以外の `/api/*` は認証が要る。`Authorization: Bearer <token>` かセッション cookie が無い・合わなければ 401 `{"error": "missing or invalid dashboard token or session"}`（仕組みは [`../dashboard.md#認証srcauthrs-srcdashboardsessionrs`](../dashboard.md#認証srcauthrs-srcdashboardsessionrs)）。
+- GET 以外のエンドポイント（`POST /api/login` と `POST /api/publish/upload` を含む）は、`X-Swing-Dashboard: 1` ヘッダと Origin の検証を通す（[`../dashboard.md#ガードsrcdashboardguardrs`](../dashboard.md#ガードsrcdashboardguardrs)）。
+
+### agent の準備状態とセットアップモード
+
+API は `swing up` の寿命で動き続ける（[`../up.md`](../up.md)）。
+
+| エンドポイント | 使えないとき |
+|---|---|
+| relay・Kubo を使うもの（`/api/sites`・`/api/status`・`/api/mirror`・`/api/mirror/add`・`/api/mirror/remove`・`/api/webring`・`/api/replicas`・`/api/publish/sites`・`/api/publish/upload`） | agent が起動時の突き合わせ（保存量に比例して時間がかかる）を終えて `AppState::set_ready` を呼ぶまでと、agent が落ちて `set_not_ready` を呼んでから次に `set_ready` するまで（[`../agent.md#全体の流れ`](../agent.md#全体の流れ)）は 503 `{"error": "agent is not ready"}`。セットアップモード（[`../up.md#セットアップモード鍵未設定`](../up.md#セットアップモード鍵未設定)）の間は常に 503 `{"error": "agent is not configured"}` |
+| `/api/overview`・`/api/config`・`/api/shutdown`・`/api/restart`・`/api/login`・`/api/login-code`・`/api/token/rotate` | 無い（常に応答する） |
+| `/api/setup` | セットアップモードでなければ 409 |
+| `/api/setup/signer` | セットアップモードでも署名アプリを使っている間でもなければ 409 |
+| `/api/signer/reconnect` | 署名アプリを使っていなければ 409 |
+
+`/api/publish/upload` の判定の順は [下記](#post-apipublishupload)。署名を伴う API（`/api/mirror/add`・`/api/mirror/remove`・`/api/publish/upload`）は、NIP-46 の署名アプリを使っていると署名アプリの返事を待ち、署名できなければ 502 になる（待ち時間と署名アプリがオフラインのときの扱いは [`../signer.md`](../signer.md)）。
+
+### 件数と負荷
+
 - `keys`（mirror add/remove）・`root`（webring）・`key`（replicas）は 1 リクエストあたり最大 100 件、超えると 400。
 - relay を引く API（sites・mirror・webring・replicas）はサーバ側でキャッシュせず、同時実行数の制限やレート制限も無い。
-- API は `swing up` プロセスの寿命でずっと動く（[`../dashboard.md`](../dashboard.md#概要)）。relay・ipfs を使うエンドポイント（`/api/sites`・`/api/status`・`/api/mirror`・`/api/mirror/add`・`/api/mirror/remove`・`/api/webring`・`/api/replicas`・`/api/publish/sites`・`/api/publish/upload`）は agent が relay 接続と Kubo の URL 確定を終えるまで 503 を返す。鍵が未設定（セットアップモード。[`../up.md#セットアップモード鍵未設定`](../up.md#セットアップモード鍵未設定)）の間はこれらが常に 503 `agent is not configured` を返す（`dashboard::api::not_ready` が `AppState::setup_mode()` を見て `NotReady` と `NotConfigured` を切り替える）。`/api/overview`・`/api/config`・`/api/shutdown`・`/api/restart` は agent の準備状態に関わらず常に応答する。`/api/setup` はセットアップモードの間だけ、`/api/setup/signer` はセットアップモードの間と署名アプリを使っている間だけ使え、それ以外は `409`（下記）。`/api/signer/reconnect` は署名アプリを使っている間だけ使える。署名を伴う API（`/api/mirror/add`・`/api/mirror/remove`・`/api/publish/upload`）は、NIP-46 の署名アプリを使っていると署名アプリの返事（承認）を最大 90 秒待ち、署名できなければ 502 になる（[`../signer.md`](../signer.md)）。
-- CLI の `swing status`・`swing mirror add`・`swing mirror remove`・`swing stop`・`swing dashboard open`・`swing dashboard rotate-token` はこの API のクライアント（`src/api_client.rs::ApiClient`。`<state_dir>/dashboard.token` を Bearer トークンとして送る）で、それぞれ `/api/status`・`/api/mirror/add`・`/api/mirror/remove`・`/api/shutdown`（`--restart` なら `/api/restart`）・`/api/login-code`・`/api/token/rotate` を叩く。`swing sites`・`replicas`・`webring`・`mirror list`・`publish` はこの API を経由せず relay/Kubo に直接つなぐ（[`../cli.md`](../cli.md)）。
+- API を叩く CLI サブコマンドの一覧は [`../cli.md#共通`](../cli.md#共通)（クライアント実装は `src/api_client.rs::ApiClient`）。
 
 ## 既知の性質
 
 - `POST /api/publish/upload` の 409 はダッシュボード内で同時に来た publish リクエストどうしだけを排他する。同じホスト上の CLI `swing publish` とは排他されない。
-- `run_publish` の NIP-05 検証はプライベート/ループバック/リンクローカル等に解決されるホストへの接続を拒否する。接続エラーの詳細は `nip05.detail` に出さず、`unreachable`/`timeout`/`invalid_response` の粗い分類だけを返す（生のメッセージは `tracing::warn` にのみ出す）。
+- `run_publish` の NIP-05 検証の SSRF 対策と、`nip05.detail` がエラー時に粗い分類（`unreachable`/`timeout`/`invalid_response`）だけになる規則は [`../nip05.md`](../nip05.md) を参照。
 
 ## GET /api/overview
 
@@ -23,11 +59,16 @@
 { "version": "0.1.0", "setup": false, "pubkey": "ab12…", "npub": "npub1…", "relays": ["wss://relay.damus.io"], "mirror_set": "swing", "gateway": "http://localhost:8080", "started_at": 1790000000, "instance": "cdeee5bc85519f44", "max_upload": 2147483648, "signer": { "remote": true, "relays": ["wss://relay.primal.net"], "last_failure": { "at": 1790000100, "message": "the signer app did not answer in time; check that it is running and approve the request" } } }
 ```
 
-`gateway` は `[dashboard].gateway` が空なら `null`。`started_at` はダッシュボードが有効になった起動時刻。`instance` は `up::run` の回ごと（`AppState` を作るたび）に変わるランダムな 16 桁の 16 進文字列で、同じプロセスの中での再起動（`POST /api/restart`）も見分けられる（`started_at` は秒単位なので 1 秒以内の再起動では変わらない）。`swing stop --restart` が再起動の完了を待つのに使う（[`../service.md`](../service.md)）。`max_upload` は `[dashboard].max_upload` のバイト数。`signer` は署名の方法で、`remote` は NIP-46 の署名アプリを使っているかどうか、`relays` は署名アプリとのやりとりに使っている relay（秘密鍵なら空）、`last_failure` は署名アプリへの最後のリクエストが失敗したときの時刻とメッセージ（成功していれば・秘密鍵なら `null`。[`../signer.md`](../signer.md)）。`setup` は鍵も署名アプリも未設定（セットアップモード）かどうかで、そのときは `pubkey`／`npub`／`signer` も `null` になる（[`../up.md#セットアップモード鍵未設定`](../up.md#セットアップモード鍵未設定)）。フロント（`web/app.js`）はこれを見て、通常なら hash ルーティングするところをどのルートでも常に `#/setup` に固定する（[`web.md`](web.md)）。
+- `gateway`: `[dashboard].gateway` が空なら `null`。
+- `started_at`: ダッシュボードが有効になった起動時刻。
+- `instance`: `up::run` の回ごと（`AppState` を作るたび）に変わるランダムな 16 桁の 16 進文字列。同じプロセスの中での再起動（`POST /api/restart`）も見分けられる（`started_at` は秒単位なので 1 秒以内の再起動では変わらない）。`swing stop --restart` が再起動の完了を待つのに使う（[`../cli.md#stop`](../cli.md#stop)）。
+- `max_upload`: `[dashboard].max_upload` のバイト数。
+- `signer`: 署名の方法。`remote` は NIP-46 の署名アプリを使っているかどうか、`relays` は署名アプリとのやりとりに使っている relay（秘密鍵なら空）、`last_failure` は署名アプリへの最後のリクエストが失敗したときの時刻とメッセージ（成功していれば・秘密鍵なら `null`。[`../signer.md`](../signer.md)）。
+- `setup`: 鍵も署名アプリも未設定（セットアップモード）かどうか。そのときは `pubkey`／`npub`／`signer` も `null` になる。詳細は [`../up.md#セットアップモード鍵未設定`](../up.md#セットアップモード鍵未設定)。画面側の扱いは [`web.md`](web.md)。
 
 ## GET /api/sites
 
-`mirror::collect_sites` をそのまま JSON にしたもの（CLI の `swing sites` と同じ集計。[`architecture/cli.md#sites`](../cli.md#sites)）。
+`mirror::collect_sites` をそのまま JSON にしたもの（CLI の `swing sites` と同じ集計。[`../cli.md#sites`](../cli.md#sites)）。
 
 ```json
 { "follow_set": { "found": true, "note": null },
@@ -37,15 +78,15 @@
 ```
 
 - `follow_set.note`: CLI が括弧付きで出す注記から括弧を外した文字列。無ければ `null`。
-- `nip05`・`title`・`message`・`size` は値が無ければ `null`。`title` は作者の自己申告で受信側は信頼しない（`docs/protocol.md` 第 4 節）。`message` は生の `content`（サニタイズ・切り詰めはフロントの責務）。`title` も同様にサニタイズはフロントの責務。
-- `size` はイベントの自己申告の `size` タグ。`stored_size` は `cid` と一致する `state.json` の `VersionRecord.size`（保存時に `dag/stat` で測った値。この呼び出しのために改めて Kubo は呼ばない）で、一致する版が無ければ `null`。フロントは `stored_size` があればそれを実測値として出し、無ければ `size` を未確認の申告として括弧書きで出す（[`web.md`](web.md#sites-画面)）。版ごとの重複排除込みの実測合計は `/api/status` の `sites[].actual` にしかない。
-- `replicas`・`unverified_replicas`: レプリカ報告の取得に失敗すると全サイトで両方 `null` になり、`replicas_error` に理由が入る。`replicas` は報告者が作者自身か、作者かこちらの Follow Set に入っている報告者（信頼できる tier）の数、`unverified_replicas` はそれ以外（自称にすぎない tier）の数（[「レプリカ報告の信頼度」](../../architecture.md#レプリカ報告の信頼度replicastier)）。
+- `nip05`・`title`・`message`・`size` は値が無ければ `null`。`title` は作者の自己申告で受信側は信頼しない（[`protocol.md` 第 4 節](../../protocol.md#4-サイトイベント)）。`message` は生の `content`（サニタイズ・切り詰めはフロントの責務）。`title` も同様にサニタイズはフロントの責務。
+- `size` はイベントの自己申告の `size` タグ。`stored_size` は `cid` と一致する `state.json` の `VersionRecord.size`（保存時に `dag/stat` で測った値。この呼び出しのために改めて Kubo は呼ばない）で、一致する版が無ければ `null`。画面での出し方は [`web.md`](web.md#sites-画面)。版ごとの重複排除込みの実測合計は `/api/status` の `sites[].actual` にしかない。
+- `replicas`・`unverified_replicas`: レプリカ報告の取得に失敗すると全サイトで両方 `null` になり、`replicas_error` に理由が入る。`replicas` は報告者が作者自身か、作者かこちらの Follow Set に入っている報告者（信頼できる tier）の数、`unverified_replicas` はそれ以外（自称にすぎない tier）の数（[「レプリカ報告の信頼度」](../nostr.md#レプリカ報告の信頼度replicastier)）。
 - `gateway_url`: `stored` が true かつ gateway 設定がある版だけに付く。
-- `accounts[].sites` は 1 アカウントあたり `d` の昇順で先頭 50 件（`nostr::budget::MAX_SITES_PER_AUTHOR_LISTED`）まで（[取得と表示の上限](../../architecture.md#取得と表示の上限nostrbudget)）。`follow_set` の `p` も先頭 500 件まで。
+- `accounts[].sites` は 1 アカウントあたり `d` の昇順で先頭 `MAX_SITES_PER_AUTHOR_LISTED` 件まで、Follow Set の対象は先頭 `MAX_FOLLOW_SET_ENTRIES` 件まで（[取得と表示の上限](../nostr.md#取得と表示の上限nostrbudget)）。
 
 ## GET /api/status
 
-`health::collect_status` の結果（CLI の `swing status` と同じ集計。[`architecture/cli.md#status`](../cli.md#status)）。relay には接続しない。サイト単位で DAG をたどるので重く、フロントも自動では呼ばない。
+`health::collect_status` の結果（CLI の `swing status` と同じ集計。[`../cli.md#status`](../cli.md#status)）。relay には接続しない。[起動時の突き合わせ](../agent.md#起動時の突き合わせ)と同じ検査をするので重い。
 
 ```json
 { "versions": [
@@ -58,7 +99,7 @@
 
 `sites` はサイトごとの実容量。`actual` はそのサイトの全版をまとめた `dag/stat` の `TotalSize` で、版どうしで共有しているブロックは 1 回だけ数える。測れなかったサイトは `null`。`actual_bytes` は `actual` の合計で、`null` のサイトが 1 つでもあれば `null`。
 
-`health` は `ok`/`missing`/`cid_mismatch`/`incomplete`/`check_failed`/`invalid_key`（CLI の判定を snake_case で返す）。`ok` 以外は `detail` に理由が入る。`invalid_key` は `state.json` のキーが `<pubkey hex>:<d>` の形式として不正だった場合で、`pubkey`・`npub`・`d`・`path`・`size`・`created_at` は `null`、`cid` だけ分かれば入り、`detail` に元のキー文字列が入る。問題があっても HTTP は常に 200（`problems` の件数で分かる）。
+`health` は `ok`/`missing`/`cid_mismatch`/`incomplete`/`check_failed`/`invalid_key`（CLI の判定を snake_case で返す）。`ok` 以外は `detail` に理由が入る。`invalid_key` は `state.json` のキーが `<pubkey hex>:<d>` の形式として不正だった場合で、`pubkey`・`npub`・`d`・`path`・`size`・`created_at` は `null`、`cid` にはその版の CID が入り、`detail` に元のキー文字列が入る。問題があっても HTTP は常に 200（`problems` の件数で分かる）。
 
 `garbage[].list_failed_reason`: 一覧に失敗したディレクトリ（`list_failed: true`）だけ理由の文字列が入る。`list_failed: false` なら常に `null`。CLI（`swing status`）は `[list failed]: <理由>` として表示する。
 
@@ -72,7 +113,7 @@ Follow Set が無ければ `title: null`、`members: []`。
 
 ## POST /api/mirror/add, POST /api/mirror/remove
 
-リクエスト: `{ "keys": ["npub1…", "hex…", "nprofile1…"] }`。空、100 件超、パース不能のいずれかで 400。
+リクエスト: `{ "keys": ["npub1…", "hex…", "nprofile1…"] }`。空、100 件超、パース不能のいずれかで 400。`add` の結果の `p` タグ数が `MAX_FOLLOW_SET_ENTRIES`（[取得と表示の上限](../nostr.md#取得と表示の上限nostrbudget)）を超えるときは publish せず、そのエラーを relay の失敗と同じく 502 で返す（`mirror::apply_add` のエラーを `api::upstream` が 502 にする）。
 
 ```json
 { "changed": [ { "pubkey": "…", "npub": "…" } ], "unchanged": [ { "pubkey": "…", "npub": "…" } ], "published": true, "relays": [ { "relay": "wss://…", "ok": true, "error": null } ], "members": [ { "pubkey": "…", "npub": "…" } ], "note": null, "follow_set_found": true }
@@ -81,11 +122,11 @@ Follow Set が無ければ `title: null`、`members: []`。
 - `changed`: 実際に追加・削除したもの。`unchanged`: 既に追加済み／もともと未登録で no-op だったもの。
 - 変更が無ければ `published: false`、`relays: []`。`published: true` なのにどの relay にも受理されなければ 502。
 - 成功（1 relay 以上が accept）したら agent に即時 refresh を促す。
-- `note`: relay から取れた Follow Set より `state.json` に保存済みの版を使った場合の注記（`(relays returned an older follow set; ...)` / `(follow set not found on relays; ...)`）。括弧付きの文字列そのまま、無ければ `null`。`follow_set_found`: 操作前に Follow Set が見つかっていたか。CLI の `swing mirror remove` は Follow Set が無ければ（`follow_set_found: false`）`(no follow set found); no changes` とだけ表示して他のフィールドを見ない（[`../cli.md#mirror-list--add--remove`](../cli.md#mirror-list--add--remove)）。`add` はこの分岐を使わない（無い状態からの新規作成を許すため）。
+- `note`: relay から取れた Follow Set より `state.json` に保存済みの版を使った場合の注記（`(relays returned an older follow set; ...)` / `(follow set not found on relays; ...)`）。括弧付きの文字列そのまま、無ければ `null`。`follow_set_found`: 操作前に Follow Set が見つかっていたか。CLI の `swing mirror remove` は Follow Set が無ければ（`follow_set_found: false`）`(no follow set found); no changes` とだけ表示して他のフィールドを見ない（[`../cli.md#mirror-list--add--remove`](../cli.md#mirror-list--add--remove)）。`add` はこの分岐を使わない。
 
 ## GET /api/webring?root=\<key\>&depth=\<N\>
 
-`root` は繰り返し指定可、省略時は自分の pubkey 1 つ、100 件超で 400。`depth` は省略時 2、4 超か非数値で 400。たどり方・グラフの組み立ては CLI の `swing webring` と同じ（[`architecture/cli.md#webring`](../cli.md#webring)）。
+`root` は繰り返し指定可、省略時は自分の pubkey 1 つ、100 件超で 400。`depth` は省略時 2、4 超か非数値で 400。たどり方・グラフの組み立ては CLI の `swing webring` と同じ（[`../cli.md#webring`](../cli.md#webring)）。
 
 ```json
 { "depth": 2,
@@ -95,12 +136,14 @@ Follow Set が無ければ `title: null`、`members: []`。
   "text": "…swing webring と同じ text 出力…", "dot": "…同じ dot 出力…", "mermaid": "…同じ mermaid 出力…" }
 ```
 
-`root: true` は `depth == 0` のノード。双方向の組は `mutual: true` の辺 1 本、片方向は `mutual: false` の辺（`webring::split_links` を流用）。ノードの並びは（深さ、ラベル）順。`beyond` は深さの上限の外にいて表示していないアカウント数。`over_budget` はクロールの上限（`nostr::budget::MAX_CRAWL_NODES`、1000）を超えたために crawl に加えなかったアカウント数（[取得と表示の上限](../../architecture.md#取得と表示の上限nostrbudget)）。`names` も 1 アカウントあたり先頭 50 件まで。
-- `referencing`: `#p` で見つかった、起点を名指ししているだけでクロールには加えていないアカウント（[「レプリカ報告の信頼度」](../../architecture.md#レプリカ報告の信頼度replicastier)）。`accounts` は先頭 50 件（`nostr::budget::MAX_REFERENCING_LISTED`）まで、`more` は切り詰めで落ちた件数。`nodes`・`edges`・`dot`・`mermaid` には含まれない（グラフはフォロー先の辺だけで描く）。
+- `root: true` は `depth == 0` のノード。ノードの並びは（深さ、ラベル）順。`names` は 1 アカウントあたり `MAX_SITES_PER_AUTHOR_LISTED` 件まで。
+- 双方向の組は `mutual: true` の辺 1 本、片方向は `mutual: false` の辺（`webring::split_links` で分ける）。
+- `beyond` と `over_budget` は `swing webring` の同名のカウンタ（[`../cli.md#webring`](../cli.md#webring)、[取得と表示の上限](../nostr.md#取得と表示の上限nostrbudget)）。
+- `referencing`: `#p` で見つかった、起点を名指ししているだけでクロールには加えていないアカウント（[「レプリカ報告の信頼度」](../nostr.md#レプリカ報告の信頼度replicastier)）。`accounts` は先頭 `MAX_REFERENCING_LISTED` 件まで、`more` は切り詰めで落ちた件数。`nodes`・`edges`・`dot`・`mermaid` には含まれない（グラフはフォロー先の辺だけで描く）。
 
 ## GET /api/replicas?key=\<key\>
 
-`key` は繰り返し指定可、省略時は自分 1 つ、100 件超で 400。集計は CLI の `swing replicas` と同じ（[`architecture/cli.md#replicas`](../cli.md#replicas)）。
+`key` は繰り返し指定可、省略時は自分 1 つ、100 件超で 400。集計は CLI の `swing replicas` と同じ（[`../cli.md#replicas`](../cli.md#replicas)）。
 
 ```json
 { "authors": [ { "pubkey": "…", "npub": "…", "sites": [
@@ -108,27 +151,27 @@ Follow Set が無ければ `title: null`、`members: []`。
 ] } ] }
 ```
 
-`tier` は `"author"` / `"chosen"` / `"other"` のいずれか（`"other"` が CLI の `[unverified]` に相当する）。`replicas` は最新版を持つ報告者のうち tier が `author`・`chosen` の数、`unverified` は tier が `other` の数（[「レプリカ報告の信頼度」](../../architecture.md#レプリカ報告の信頼度replicastier)）。`reports`（＝ `reporters.length`）はサイトごとに（tier、`created_at` の新しい順）で先頭 200 件（`nostr::budget::MAX_REPORTS_PER_SITE`）までに切り詰めた後の件数、`dropped` は切り詰めで落ちた件数（[取得と表示の上限](../../architecture.md#取得と表示の上限nostrbudget)）。`reporters` の並びも（tier、`latest`、npub）順。`sites` も 1 作者あたり先頭 50 件まで。
+`tier` は `"author"` / `"chosen"` / `"other"` のいずれか（`"other"` が CLI の `[unverified]` に相当する）。`replicas` は最新版を持つ報告者のうち tier が `author`・`chosen` の数、`unverified` は tier が `other` の数（[「レプリカ報告の信頼度」](../nostr.md#レプリカ報告の信頼度replicastier)）。`reports`（＝ `reporters.length`）は `MAX_REPORTS_PER_SITE` で切り詰めた後の件数、`dropped` は切り詰めで落ちた件数。`reporters` の並びは tier（`author`→`chosen`→`other`）、同じ tier では `latest: true` が先、最後に hex の順。切り詰めと並びの規則は [取得と表示の上限](../nostr.md#取得と表示の上限nostrbudget) と [「レプリカ報告の信頼度」](../nostr.md#レプリカ報告の信頼度replicastier)。`sites` も 1 作者あたり `MAX_SITES_PER_AUTHOR_LISTED` 件まで。
 
 ## POST /api/publish/upload
 
-`multipart/form-data`。ガードは他の書き込み系と同じ（`X-Swing-Dashboard: 1` ヘッダと Origin 検証、multipart なので `AppJson` は使わない）。
+`multipart/form-data`。
 
 パート: `site`（必須）・`url`・`title`・`message`・`nip05`（省略可、`nip05` 省略時は `[publish].nip05`）。`site`/`url`/`title` は CLI と同じ規則で検証し違反は 400。`title` が空白のみなら未指定として扱う。`file`（1 個以上）: 各パートの `filename` がサイトルートからの相対パス（`/` 区切り。ブラウザは `webkitRelativePath` の先頭フォルダ名を取り除いて送る）。
 
-サーバの検証（`upload::validate_relative_path`、違反はすべて 400 で何も書かない）:
+サーバの検証（`upload::validate_relative_path` など。パートを受け取りながら順に検証し、違反は 400）:
 
 - パスは非空、`/` で始まらない、`\` や制御文字を含まない
 - 長さ `MAX_PATH_LEN`（4096 バイト）以下、セグメント数 `MAX_PATH_SEGMENTS`（32）以下、各セグメントは非空かつ `.`/`..` でない
-- 各セグメントは `.` や半角スペースで終わらない、Windows の予約デバイス名（`CON`・`PRN`・`AUX`・`NUL`・`COM1`〜`9`・`LPT1`〜`9`、大小文字無視、拡張子付き `nul.txt` も含む）でない（プラットフォームを問わず拒否。Windows 上でチェックアウトしたときに壊れないようにするため）
+- 各セグメントは `.` や半角スペースで終わらない、Windows の予約デバイス名（`CON`・`PRN`・`AUX`・`NUL`・`COM1`〜`9`・`LPT1`〜`9`、大小文字無視、拡張子付き `nul.txt` も含む）でない（プラットフォームを問わず拒否。他 OS での展開時の破損防止）
 - 同じパスの重複、`file` 0 個、`site` 無し、はいずれも 400
 - `file` パートの総数は `MAX_UPLOAD_FILES`（10,000）まで
 
-上限はすべて固定の定数（`src/dashboard/upload.rs`）で設定項目にはしていない。超過時はアップロード先の展開ディレクトリを丸ごと削除してから 400 を返す。
+上限はすべて固定の定数（`src/dashboard/upload.rs`）。違反や上限超過が見つかるまでに受け取ったファイルは展開先に書かれるが、400 を返す前に展開先ディレクトリを丸ごと削除する（下記 (3)）。
 
-同時に実行できる publish は 1 本だけ（`AppState.publish_lock`）。実行中にもう 1 本来たら 409。
+判定の順は、パートの受信とパスの検証（400・413）→ `site`/`url`/`title`/`nip05` の検証（400）→ 多重実行（409）→ セットアップモード（503 `agent is not configured`）→ NIP-05（422）→ agent の準備（503 `agent is not ready`）。同時に実行できる publish は 1 本だけ（`AppState.publish_lock`）で、本体を最後まで受け取ってから判定するので、実行中にもう 1 本来ても 409 はアップロードの後になる。
 
-処理: (1) `<state_dir>/upload/` 配下に一時ディレクトリを作り、各 `file` パートをストリーミングで書き込む。展開先ディレクトリとその中の各ディレクトリは unix では `0o700`、書き込むファイルは `0o600` で作成する（umask 任せにしない。Windows では no-op）。(2) `api::run_publish`（NIP-05 検証 → Kubo に add して MFS に置く → サイトイベントを署名して送信 → 古い版を `[publish].keep_versions` 個まで残して削除、処理順は CLI の `swing publish`（[`architecture/cli.md#publish`](../cli.md#publish)）と同じ）を、展開先ディレクトリをサイトのディレクトリとして呼ぶ。削除に失敗した版は `prune_error` に理由が入るだけでレスポンス全体は成功扱い。(3) 成功でも失敗でも展開先ディレクトリを削除する。ハンドラの途中（`handle_upload` の `.await` 中）でリクエストが打ち切られる場合（下記「タイムアウト」の 30 分超過、またはクライアントの切断）も、展開先ディレクトリの所有権を持つガード（`upload::UploadDirGuard`）の `Drop` がその場で（同期的に）削除するので残らない。取りこぼした分は `<state_dir>/upload/` ごと agent 起動時にも掃除される。(4) ボディが `[dashboard].max_upload` を超えたら 413（ストリーミング中に超えた場合も打ち切る）。
+処理: (1) `<state_dir>/upload/` 配下に一時ディレクトリを作り、各 `file` パートをストリーミングで書き込む。展開先ディレクトリとその中の各ディレクトリは unix では `0o700`、書き込むファイルは `0o600` で作成する（umask 任せにしない。Windows では no-op）。(2) `api::run_publish`（NIP-05 検証 → Kubo に add して MFS に置く → サイトイベントを署名して送信 → 古い版を `[publish].keep_versions` 個まで残して削除、処理順は CLI の `swing publish`（[`../cli.md#publish`](../cli.md#publish)）と同じ）を、展開先ディレクトリをサイトのディレクトリとして呼ぶ。削除に失敗した版は `prune_error` に理由が入るだけでレスポンス全体は成功扱い。(3) 成功でも失敗でも、ハンドラの途中でのリクエスト打ち切り（[`../dashboard.md` のタイムアウト](../dashboard.md#タイムアウトsrcdashboardmodrs)の 30 分超過、またはクライアントの切断）を含めて、展開先ディレクトリは `upload::UploadDirGuard` の `Drop` により必ず削除される。取りこぼした分は `<state_dir>/upload/` ごと `up::run` の起動時（プロセス内再起動を含む。[`../up.md`](../up.md)）に掃除される。(4) ボディが `[dashboard].max_upload` を超えたら 413（ストリーミング中に超えた場合も打ち切る）。
 
 ```json
 { "site": "example.com", "url": "…", "title": "…", "message": "note", "nip05": { "status": "verified", "detail": null },
@@ -149,7 +192,7 @@ Follow Set が無ければ `title: null`、`members: []`。
 { "sites": [ { "d": "example.com", "url": "https://example.com/", "cid": "bafy…", "size": 123, "created_at": 1790000000, "title": null, "message": null, "gateway_url": "http://localhost:8080/ipfs/bafy…/" } ] }
 ```
 
-`gateway_url` は gateway 設定があれば付ける（`stored` 判定はしない）。relay の取得に失敗したら 502。state.json は見ないので、`/api/sites` の `stored_size` に相当するフィールドは無く、`size` は常に自己申告の値。`sites` も `d` の昇順で先頭 50 件（`nostr::budget::MAX_SITES_PER_AUTHOR_LISTED`）まで。
+`gateway_url` は gateway 設定があれば付ける（`stored` 判定はしない）。relay の取得に失敗したら 502。state.json は見ないので、`/api/sites` の `stored_size` に相当するフィールドは無く、`size` は常に自己申告の値。`sites` も `d` の昇順で先頭 `MAX_SITES_PER_AUTHOR_LISTED` 件まで（[取得と表示の上限](../nostr.md#取得と表示の上限nostrbudget)）。
 
 ## GET /api/config
 
@@ -157,39 +200,38 @@ Follow Set が無ければ `title: null`、`members: []`。
 { "config_path": "/path/to/swing.toml", "config_exists": true, "writable": true, "restart_required": false, "sections": [
   { "name": "nostr", "items": [
     { "key": "secret_key", "env": "SWING_NOSTR_SECRET_KEY", "value": "(set, hidden)", "source": "file", "editable": false, "kind": "secret", "description": { "en": "Signing secret key (nsec or hex)...", "ja": "署名用の秘密鍵（nsec または hex）..." } },
-    { "key": "relays", "env": "SWING_NOSTR_RELAYS", "value": ["wss://relay.damus.io"], "source": "default", "editable": true, "kind": "list", "raw": ["wss://relay.damus.io", "wss://nos.lol", "wss://relay.primal.net", "wss://yabu.me", "wss://relay-jp.nostr.wirednet.jp"], "description": { "en": "Nostr relays to connect to...", "ja": "接続する Nostr relay（カンマ区切り）" } },
+    { "key": "relays", "env": "SWING_NOSTR_RELAYS", "value": ["wss://relay.damus.io", "wss://nos.lol", "wss://relay.primal.net", "wss://yabu.me", "wss://relay-jp.nostr.wirednet.jp"], "source": "default", "editable": true, "kind": "list", "raw": ["wss://relay.damus.io", "wss://nos.lol", "wss://relay.primal.net", "wss://yabu.me", "wss://relay-jp.nostr.wirednet.jp"], "description": { "en": "Nostr relays to connect to...", "ja": "接続する Nostr relay（カンマ区切り）" } },
     { "key": "max_total_storage", "env": "SWING_MAX_TOTAL_STORAGE", "value": 107374182400, "display": "100 GB", "source": "env", "editable": false, "kind": "size", "raw": "100 GB", "description": { "en": "Total storage cap...", "ja": "保存する全サイト合計の容量上限" } } ] } ] }
 ```
 
-- `sections` は `nostr`/`ipfs`/`policy`/`agent`/`publish`/`dashboard`/`kubo`/`gateway` の順で、`settings::SETTINGS`（[`architecture.md`](../../architecture.md#設定と環境変数)）の宣言順そのままを列挙する（そちらが正本）。カタログの設定はすべて TOML フィールドを持つので、`key` が無い項目は無い（`SWING_FETCH_TIMEOUT`/`SWING_FETCH_IDLE_TIMEOUT` も `agent.fetch_timeout`/`agent.fetch_idle_timeout` という通常のキーとして入る）。
-- `secret_key` の値は常に `"(set, hidden)"` か `"(not set)"`（[`dashboard.md`](../dashboard.md#秘密鍵を出さない仕組み) を参照）。`secret_key` はカタログ上 `editable: false` なので `editable` は常に `false`（値そのものはダッシュボードからは変更できず、セットアップ時にしか書けない。下記 `POST /api/setup`）。
-- `ipfs.api` は `[kubo].managed = true` のとき固定文字列 `"managed"` になる（動的なポートを含む実際の URL ではなく、`swing up` が `<repo>/api` から解決した値であることを示す。[`up.md`](../up.md#動的な-api-ポートとrepoapi)）。`managed = false` なら実際の URL（`[ipfs].api` の値）。
-- `kubo.binary`/`kubo.repo` はパスを文字列で返す（`binary` が未設定なら空文字）。`kubo.swarm_port` は未設定なら文字列 `"-"`（他のセクションと違い、数値でなく文字列で返る）。
-- `value` は文字列・真偽・数値・文字列配列のいずれか（常に生の値）。容量・時間の項目は読みやすい文字列を `display` に添える: 容量は 1024 基数の最大単位に割り切れれば整数（`"100 GB"`）、割り切れなければ小数第 1 位まで、KB 未満はバイト表記。時間は日/時/分のどれかで割り切れれば大きい単位優先（`"5m"`）、割り切れなければ秒。個数系（`keep_versions` など）には `display` が付かず、無い項目はフィールドごと出ない。
-- `config_path` は常に何か文字列が入る（環境変数だけで動いている、かつ設定ファイルが無くても `null` にはならない。下記の「設定ファイルのパス解決」）。`config_exists` はそのパスに実際にファイルがあるかどうか。
-- `writable`: `config_exists` なら（`std::fs::OpenOptions::append(true)` で）そのファイルを開けるかどうか、`config_exists` が `false` なら親ディレクトリの `Permissions::readonly()` を見て判定する（`src/dashboard/config_dto.rs::is_config_writable`。副作用は無い）。`false` なら Settings／Setup 画面は編集フォームを出さず、読み取り専用表示にする（[`web.md`](web.md)）。
-- `restart_required`: この `swing up` プロセスが起動してから一度でも `PUT /api/config` か `POST /api/setup` が成功していれば `true`（`AppState.restart_required`、`AtomicBool`。プロセスが実際に再起動する—`Exit::Restart` を経て `up::run` が呼び直される—までリセットされない）。
+- `sections` は `nostr`/`ipfs`/`policy`/`agent`/`publish`/`dashboard`/`kubo`/`gateway` の順で、`settings::SETTINGS`（[`../../architecture.md`](../../architecture.md#設定と環境変数)）の宣言順そのままを列挙する（そちらが正本）。カタログの設定はすべて TOML フィールドを持つので、`key` が無い項目は無い。
+- `secret_key` の値は常に `"(set, hidden)"` か `"(not set)"`（[`../dashboard.md`](../dashboard.md#秘密鍵を出さない仕組み) を参照）。`editable` は常に `false`（書けるのは `POST /api/setup` だけ）。
+- `ipfs.api` は `[kubo].managed = true` のとき固定文字列 `"managed"` になる（動的なポートを含む実際の URL ではなく、`swing up` が `<repo>/api` から解決した値であることを示す。[`../kubo.md`](../kubo.md#動的な-api-ポートと-repoapi)）。`managed = false` なら実際の URL（`[ipfs].api` の値）。
+- `kubo.binary`/`kubo.repo` はパスを文字列で返す（`binary` が未設定なら空文字）。`kubo.swarm_port` は常に文字列で、未設定なら `"-"`。`gateway.listen` は無効なら `"off"`。
+- `value` は文字列・真偽・数値・文字列配列のいずれか（常に生の値）。容量・時間の項目は読みやすい文字列を `display` に添える（`crate::format::format_bytes`・`format_duration_secs`。値を正確に（小数は 1 桁まで）表せるいちばん大きい単位で、容量は 1024 基数の `"100 GB"`・`"1.5 KB"`、時間は `"5m"` など）。個数系（`keep_versions` など）には `display` が付かず、無い項目はフィールドごと出ない。
+- `config_path` は常に何か文字列が入る（環境変数だけで動いている、かつ設定ファイルが無くても `null` にはならない。パスの決め方は [`../../architecture.md#設定と環境変数`](../../architecture.md#設定と環境変数) が正本）。`config_exists` はそのパスに実際にファイルがあるかどうか。
+- `writable`: `config_exists` なら（`std::fs::OpenOptions::append(true)` で）そのファイルを開けるかどうか、`config_exists` が `false` なら親ディレクトリの `Permissions::readonly()` を見て判定する（`src/dashboard/config_dto.rs::is_config_writable`。副作用は無い）。画面での扱いは [`web.md#設定編集`](web.md#設定編集)。
+- `restart_required`: `AppState.restart_required` の値（立つ条件は [`../dashboard.md#設定の読み込みと編集srcsettings`](../dashboard.md#設定の読み込みと編集srcsettings)）。
 - `dashboard` セクションに `ui`（真偽値、`SWING_DASHBOARD_UI`）が入る。`listen` は常に `SocketAddr` の文字列。
 - 各 `items[]` は追加で次のフィールドを持つ:
   - `source`: `"env"` / `"file"` / `"default"`（`config::Config::sources`、キーは `"<section>.<フィールド名>"`。`ConfigDto` はこれをそのまま `Source::Env`→`"env"` のように文字列化する）。
   - `editable`: カタログ上そのキーが `editable: true` で、かつ `source` が `"env"` ではないときだけ `true`。
-  - `kind`: カタログの全キーに付く（`source` や `editable` に関わらず）。`"size"` / `"duration"` / `"bool"` / `"integer"` / `"string"` / `"list"` / `"nip05"` / `"path"` / `"socket_addr"` / `"port"` / `"url"` / `"secret"` / `"listen"` のいずれか。編集フォームが分岐するのは前者 7 種のみ（下記「設定の読み込みと編集」に同じ）。
-  - `raw`: 編集可能な 20 キーだけに付く、現在の値を `PUT /api/config`／`POST /api/setup` の `items` にそのまま送り返せる形にしたもの（`size`/`duration` は `parse_size`/`parse_duration_secs` が受け付ける文字列、`list` は文字列配列、それ以外は文字列）。
+  - `kind`: カタログの全キーに付く（`source` や `editable` に関わらず）。`"size"` / `"duration"` / `"bool"` / `"integer"` / `"string"` / `"list"` / `"nip05"` / `"path"` / `"socket_addr"` / `"port"` / `"url"` / `"secret"` / `"listen"` のいずれか。編集可能なキー（[`../dashboard.md#設定の読み込みと編集srcsettings`](../dashboard.md#設定の読み込みと編集srcsettings) の表）の種類は前者 7 種だけ。画面の入力欄の出し分けは [`web.md#設定編集`](web.md#設定編集)。
+  - `raw`: 編集可能なキー（一覧は [`../dashboard.md#設定の読み込みと編集srcsettings`](../dashboard.md#設定の読み込みと編集srcsettings)）だけに付く、現在の値を `PUT /api/config`／`POST /api/setup` の `items` にそのまま送り返せる形にしたもの（`size`/`duration` は `parse_size`/`parse_duration_secs` が受け付ける文字列、`list` は文字列配列、それ以外は文字列）。
   - `options`: `kind: "nip05"` のときだけ付く。取りうる値の一覧 `["off", "warn", "require"]`（`config::NIP05_MODE_NAMES`）。
   - `description`: `{ "en": ..., "ja": ... }`。カタログの `Setting.description`（`settings::SETTINGS`）をそのまま返す、1 文の英語・日本語の説明。環境変数名は含まない（`env` フィールドと別出し）。
 
 ## PUT /api/config
 
-設定ファイルの値を書き換える。ガードは他の書き込み系と同じ（`X-Swing-Dashboard: 1` ヘッダと Origin 検証）。
+設定ファイルの値を書き換える。
 
 ```json
 { "items": { "policy.max_total_storage": "20GB", "nostr.relays": ["wss://relay.damus.io", "wss://nos.lol"] } }
 ```
 
-- キーは `"<section>.<フィールド名>"`（`GET /api/config` の `raw` が付くキーと同じ）で、カタログ上 `editable: true` ではないキー、または現在 `source: "env"` のキーが 1 つでも含まれていれば、ファイルには一切触れずに 400 で拒否する（`settings::check_not_env_sourced`。部分適用はしない）。値の形式は `raw` と同じ（`nostr.relays` は空配列だと 400）。
-- 適用順（`settings::update`）: 既存のファイルを `toml_edit::DocumentMut` として読む（無ければ空文書）→ 渡された `items` だけをその場で書き換える（`toml_edit` なのでコメントや他のキーはそのまま残る）→ `config::build_config_from_str` で妥当性を確認する（ここで失敗したらファイルには書かない。他の設定項目との整合や `parse_size`/`parse_duration_secs` などのバリデーションを全部通す）→ tmp ファイルに書いて `rename`（atomic）。ファイルが元から存在していればその権限を引き継ぎ、新規作成なら unix で `0600`。
-- 成功したら `AppState.restart_required` を `true` にし、`AppState.display_config`（[`dashboard.md`](../dashboard.md#概要)）を書き換え後の設定に差し替えてから、`GET /api/config` と同じ形の `ConfigDto`（`restart_required: true`）を返す。実際に動いている relay・Kubo・agent はまだ古い設定のままで、値が反映されるのは次の再起動から（`display_config` はあくまで「再起動したらこうなる」を見せるための、表示専用のコピー）。
-- 失敗（400）した場合はファイルもプロセスの状態も変わらない。
+- キーは `"<section>.<フィールド名>"`（`GET /api/config` の `raw` が付くキーと同じ）。値の形式は `raw` と同じ（`nostr.relays` は空配列だと 400）。受け付けないキーの規則と書き込み手順は [`../dashboard.md#設定の読み込みと編集srcsettings`](../dashboard.md#設定の読み込みと編集srcsettings)。
+- 成功したら `restart_required: true` の `ConfigDto`（`GET /api/config` と同じ形）を返す。実際に動いている relay・Kubo・agent への反映は次の再起動から（[`../dashboard.md#設定の読み込みと編集srcsettings`](../dashboard.md#設定の読み込みと編集srcsettings)）。
+- 失敗は 400（書き込みの失敗も含む）。ファイルもプロセスの状態も変わらない。
 
 ## POST /api/setup
 
@@ -201,8 +243,8 @@ Follow Set が無ければ `title: null`、`members: []`。
 
 - `remote_signer`（省略時 `false`）: `true` なら秘密鍵を書かず、`POST /api/setup/signer`（下記）で済ませたペアリングの結果を `<state_dir>/remote-signer.json` に保存する（[`../signer.md#remote-signerjson`](../signer.md#remote-signerjson)）。ペアリングが `ready` になっていなければ 409 `{"error": "no signer app is connected yet; scan the QR code first"}`。`true` のとき `secret_key` は見ない。
 - `secret_key`: `null`（または省略・空文字）なら `nostr_sdk::Keys::generate()` で新しい鍵を作る。nsec か hex の文字列を渡せば `Keys::parse` でその鍵を使う。
-- `items` は `PUT /api/config` と同じホワイトリスト・同じ env 由来チェックを通す（`settings::setup` も内部で `check_not_env_sourced` を呼ぶ）。セットアップ画面（`web/setup.js`）は relays と 3 つの保存上限だけをフォームに出す。
-- 成功したら `[nostr].secret_key` に鍵の hex を書き、`items` と合わせて 1 回の書き込みで保存する（`settings::setup`。バリデーション・atomic write は `PUT /api/config` と同じ。ファイルが無ければ `config_path`—常に決まっている、下記—に新規作成する）。`remote_signer: true` のときは `items` だけを書いてから `remote-signer.json` を書き、ペアリングの状態を捨てる。
+- `items` は `PUT /api/config` と同じ規則で受け付ける。
+- 成功したら `[nostr].secret_key` に鍵の hex を書き、`items` と合わせて 1 回の書き込みで保存する（`settings::setup`。手順は [`../dashboard.md#設定の読み込みと編集srcsettings`](../dashboard.md#設定の読み込みと編集srcsettings)）。`remote_signer: true` のときは `items` だけを書いてから `remote-signer.json` を書き、ペアリングの状態を捨てる。
 - `npub` は、秘密鍵ならその鍵の、署名アプリならペアリングで受け取ったユーザーの公開鍵。
 
 ```json
@@ -210,7 +252,7 @@ Follow Set が無ければ `title: null`、`members: []`。
 ```
 
 - 秘密鍵の値そのものは応答に含めない（`npub` だけ）。
-- レスポンスを返した後、約 300ms 待ってから `shutdown::ExitRequest::restart()` を呼ぶ（`tokio::spawn` した別タスクで。レスポンスの送出をブロックしない）。これは `POST /api/restart`（下記）と同じ経路で、プロセスを終了させずに `swing up` をプロセス内で再起動する（[`up.md#終了要求と-exit-codeshutdownexitrequest-shutdownexit`](../up.md#終了要求と-exit-codeshutdownexitrequest-shutdownexit)）。`web/setup.js` は成功表示を出した後、`GET /api/overview` を 1 秒間隔でポーリングして `setup: false` に変わるのを待つ。
+- 成功したら `tokio::spawn` した別タスクで約 300ms 待ってから `shutdown::ExitRequest::restart()` を呼ぶ（`api::schedule_restart`。レスポンスの送出をブロックしない）。これは `POST /api/restart`（下記）と同じ経路で、プロセスを終了させずに `swing up` をプロセス内で再起動する（[`../up.md#終了要求と-exit-codeshutdownexitrequest-shutdownexit`](../up.md#終了要求と-exit-codeshutdownexitrequest-shutdownexit)）。
 
 ## POST /api/setup/signer
 
@@ -227,7 +269,7 @@ Follow Set が無ければ `title: null`、`members: []`。
 { "uri": "nostrconnect://<アプリの公開鍵>?relay=…&secret=…&perms=…&name=SWING&metadata=…", "qr_svg": "<svg …>" }
 ```
 
-`qr_svg` は `uri` を QR コードにした SVG（黒と白、余白付き、256px 以上）。`web/setup.js` はこれを `data:` URI にして `<img>` に入れる（CSP の `img-src 'self' data:` の範囲）。
+`qr_svg` は `uri` を QR コードにした SVG（黒と白、余白付き、256px 以上）。
 
 ## GET /api/setup/signer
 
@@ -247,21 +289,17 @@ Follow Set が無ければ `title: null`、`members: []`。
 
 ## POST /api/signer/reconnect
 
-署名アプリを使っている間だけ使える（秘密鍵で動いている・セットアップモードのときは 409 `{"error": "swing does not use a signer app"}`）。ボディは無し。`POST /api/setup/signer` で済ませたペアリングの結果で `<state_dir>/remote-signer.json` を書き換え、プロセス内再起動をスケジュールする（`POST /api/setup` と同じく約 300ms 後に `ExitRequest::restart()`）。
+署名アプリを使っている間だけ使える（秘密鍵で動いている・セットアップモードのときは 409 `{"error": "swing does not use a signer app"}`）。ボディは無し。`POST /api/setup/signer` で済ませたペアリングの結果で `<state_dir>/remote-signer.json` を書き換え、プロセス内再起動をスケジュールする（[`POST /api/setup`](#post-apisetup) と同じ）。
 
 - ペアリングが `ready` でなければ 409 `{"error": "no signer app is connected yet; scan the QR code first"}`。
 - 署名アプリがいまの公開鍵と別のアカウントで署名するなら 409（`... connect the same Nostr account`）。ファイルは書き換えない。
 - 成功したら `AppState.restart_required` を `true` にし、ペアリングの状態を捨てて `{ "ok": true, "npub": "npub1…", "restart": true }` を返す。
 
-### 設定ファイルのパス解決
-
-`config::resolve_config_path`（`--config` → `SWING_CONFIG`（空文字は未設定扱い）→ `<カレントディレクトリ>/swing.toml`）は、ファイルが無くても常にパスを返す。そのため `swing.toml` が無い状態で `swing up` を起動しても `Config.config_path` は必ず何か具体的なパスを指し、セットアップ画面はそこに新規作成する（`config_exists: false` のときの Settings 画面は `configWillBeCreated` の注記を出す）。
-
 ## POST /api/shutdown, POST /api/restart
 
-エージェントプロセス（`swing up`）を止める／再起動する。ガードは他の書き込み系と同じ（`X-Swing-Dashboard: 1` ヘッダと Origin 検証）。ボディは不要（送っても無視する）。
+エージェントプロセス（`swing up`）を止める／再起動する。ボディは不要（送っても無視する）。
 
-`202 Accepted` を即座に返してから（レスポンスの送出をブロックせずに）`shutdown::ExitRequest`（[`../up.md#終了要求と-exit-codeshutdownexitrequest-shutdownexit`](../up.md#終了要求と-exit-codeshutdownexitrequest-shutdownexit)）の `stop()`／`restart()` を呼ぶ。実際の終了は agent のループが次に cancel を検知したタイミング（通常は即座）。
+`shutdown::ExitRequest`（[`../up.md#終了要求と-exit-codeshutdownexitrequest-shutdownexit`](../up.md#終了要求と-exit-codeshutdownexitrequest-shutdownexit)）の `stop()`／`restart()` を呼んでから `202 Accepted` を返す。どちらもトークンを cancel するだけでブロックしないので、応答はすぐ返る。実際の終了は `up::run` の中でトークンの cancel が伝わったとき（セットアップモードなら `token.cancelled()` を待っているだけなので即座）。
 
 ```json
 { "ok": true, "action": "stop" }
@@ -270,11 +308,11 @@ Follow Set が無ければ `title: null`、`members: []`。
 { "ok": true, "action": "restart" }
 ```
 
-`restart` はプロセスを終了させない。`ExitRequest.restart()` → 最上位トークンの cancel → `run_managed`／`run_unmanaged`（と `agent::run_until`）がグレースフルに終わる → `up::run` が `Exit::Restart` を返す → `main.rs` のループが設定を読み直して同じプロセス・同じ PID のまま `up::run` を呼び直す。以前あった「exit code 3 で終了し、サービスマネージャの再起動ポリシー任せにする」経路は無くなった（[`up.md`](../up.md#終了要求と-exit-codeshutdownexitrequest-shutdownexit)）。`AppState.exit` は常に存在する（`Option` ではない）。
+`restart` はプロセスを終了させない。プロセス内再起動の流れ（同じプロセス・同じ PID のまま `up::run` を呼び直す）は [`../up.md#終了要求と-exit-codeshutdownexitrequest-shutdownexit`](../up.md#終了要求と-exit-codeshutdownexitrequest-shutdownexit) が正本。
 
 ## POST /api/login-code
 
-使い捨てのログインコードを発行する（`swing dashboard open` が使う）。ボディは不要。コードは 1 回だけ使え、5 分で期限が切れる。発行済みのコードはプロセスのメモリにだけ持ち、再起動で消える。
+使い捨てのログインコードを発行する（`swing dashboard open` と `swing-tray` が使う）。ボディは不要。`expires_in` は有効期限の秒数（コードの性質は [`../dashboard.md#認証srcauthrs-srcdashboardsessionrs`](../dashboard.md#認証srcauthrs-srcdashboardsessionrs)）。
 
 ```json
 { "code": "cc2455ac565b74586b0628e1d7bda4c3", "expires_in": 300 }
@@ -282,8 +320,8 @@ Follow Set が無ければ `title: null`、`members: []`。
 
 ## POST /api/login
 
-認証なしで受け付ける唯一の API。ボディは `{"code": "<ログインコード>"}`（前後の空白は無視、大文字小文字は区別しない）。ガードは他の書き込み系と同じ（`X-Swing-Dashboard: 1` と Origin 検証）。コードが有効なら消費して `200 {"ok": true}` とセッション cookie（`Set-Cookie: swing_session_<port>=...`）を返す。無効・期限切れ・使用済みなら 401 `{"error": "invalid or expired login code"}`。同じ交換をブラウザのリンクから行う `GET /login?code=` は [`../dashboard.md#認証srcauthrs-srcdashboardsessionrs`](../dashboard.md#認証srcauthrs-srcdashboardsessionrs)。
+認証なしで受け付ける唯一の API。ボディは `{"code": "<ログインコード>"}`（前後の空白は無視、大文字小文字は区別しない）。コードが有効なら消費して `200 {"ok": true}` とセッション cookie（`Set-Cookie`。属性は [`../dashboard.md#認証srcauthrs-srcdashboardsessionrs`](../dashboard.md#認証srcauthrs-srcdashboardsessionrs)）を返す。無効・期限切れ・使用済みなら 401 `{"error": "invalid or expired login code"}`。
 
 ## POST /api/token/rotate
 
-`<state_dir>/dashboard.token` を新しい乱数で書き換え、メモリ上のトークンも差し替える。既存のセッション cookie と未使用のログインコードはすべて無効になる。呼んだ CLI は古いトークンのままなので、次の呼び出しではファイルを読み直す。成功で `200 {"ok": true}`、ファイルが書けなければ 500。
+トークンを作り直す（効果は [`../dashboard.md#認証srcauthrs-srcdashboardsessionrs`](../dashboard.md#認証srcauthrs-srcdashboardsessionrs)）。成功で `200 {"ok": true}`、ファイルが書けなければ 500。
