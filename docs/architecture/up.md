@@ -19,14 +19,31 @@
 
 ## shutdown（shutdown.rs）
 
-`cancel_on_signal() -> Result<CancellationToken>` がシグナル監視の入口。`main.rs` が `swing up` のループに入る前に 1 回だけ呼び、`up::run(config, token)` にはその `child_token()` を毎回渡す。Windows ではもう 1 つ `cancel_when_parent_exits(token)` があり、`swing up --exit-with-parent`（隠しオプション、Windows のみ。タスクスケジューラ登録が付ける。[`service.md`](service.md)）のときに同じトークンに対して呼ぶ。
+`cancel_on_signal(grace) -> Result<SignalWatch>` がシグナル監視の入口。`main.rs` が `swing up` のループに入る前に `up::FORCE_EXIT_GRACE`（下記「停止の時間予算」）を渡して 1 回だけ呼び、`SignalWatch::token()` のトークンの `child_token()` を `up::run(config, token)` に毎回渡す。`cancel_on_signal` を使うのは `swing up` だけ。Windows ではもう 1 つ `SignalWatch::cancel_when_parent_exits()` があり、`swing up --exit-with-parent`（隠しオプション、Windows のみ。タスクスケジューラ登録が付ける。[`service.md`](service.md)）のときに呼ぶ。
 
-- unix では SIGINT（`tokio::signal::ctrl_c`）と SIGTERM（`tokio::signal::unix::signal(SignalKind::terminate())`）を待ち、先に届いた方で進む。Windows では `ctrl_c`（`signal = "ctrl-c"`）だけを待つ。
-- `cancel_when_parent_exits` は親プロセスを開いて専用の OS スレッドで終了を待ち、親が終わったら `signal = "parent exited"` で下と同じ処理に入る。親を開けなければ `swing up` 自体がエラーで終わる。
-- 受信したら `info!(signal, "shutdown requested")` を出して `token.cancel()` する。
-- 続けて `FORCE_EXIT_GRACE_PERIOD`（10 秒）待ち、まだプロセスが生きていれば（＝グレースフルシャットダウンが終わらず main の runtime が畳まれていなければ）`error!` を出して `std::process::exit(1)` する。正常終了時はプロセスごと終わるのでこのコードには到達しない。managed では agent の停止待ち（最大 15 秒）と Kubo の停止の猶予（30 秒。[`kubo.md`](kubo.md#停止daemonstopgrace)）がこの 10 秒より長いので、それらを待ち切る前に終了コード 1 で打ち切られることがある。ダッシュボード API からの停止（`POST /api/shutdown`、`swing stop`）は `on_signal` を通らないので、この打ち切りを受けない。
+- unix では SIGINT と SIGTERM（どちらも `tokio::signal::unix::signal`）を、Windows では `ctrl_c`（`tokio::signal::windows::ctrl_c`、`signal = "ctrl-c"`）を、runtime が動いている間ずっと待ち続ける。
+- `cancel_when_parent_exits` は親プロセスを開いて専用の OS スレッドで終了を待ち、親が終わったら `reason = "parent exited"` で 1 回目のシグナルと同じ処理に入る。親を開けなければ `swing up` 自体がエラーで終わる。
+- 1 回目（シグナルでも親の終了でも、先に来た方）: `info!(reason, grace_period, "shutdown requested")` を出して `token.cancel()` し、専用の OS スレッドで `grace` 待つ watchdog を起こす。`grace` たってもプロセスが残っていれば `error!` を出して `std::process::exit(1)` する。watchdog は tokio のタスクではないので、`run` を抜けた後の runtime の畳み込み（下記 `RUNTIME_SHUTDOWN_TIMEOUT`）の間も効き続け、シグナルからプロセス終了までの時間全体を `grace` で抑える。正常終了時はプロセスごと終わるので到達しない。
+- 2 回目以降のシグナル（1 回目の後、runtime が動いている間）: `error!(signal, "received another signal during graceful shutdown; exiting immediately")` を出してすぐ `std::process::exit(1)` する。1 回目の後に親が終わっても何もしない（2 回目扱いにしない）。
+- ダッシュボード API からの停止（`POST /api/shutdown`、`swing stop`）は `up::run` の子トークンを cancel するだけで `SignalWatch` を通らないので、watchdog も 2 回目の判定も無い。
 
-`main.rs` は tokio の runtime を自前で組み、`run` を抜けた後に `shutdown_timeout(RUNTIME_SHUTDOWN_TIMEOUT)`（10 秒）で畳む。終わらない blocking タスクが残っていても、10 秒でプロセスは終わる。
+`main.rs` は tokio の runtime を自前で組み、`run` を抜けた後に `shutdown_timeout(shutdown::RUNTIME_SHUTDOWN_TIMEOUT)`（10 秒）で畳む。終わらない blocking タスクが残っていても、10 秒でプロセスは終わる。
+
+### 停止の時間予算
+
+シグナルを受けてからプロセスが終わるまでの最悪時間は、`up.rs` の定数から次のように決まる（`up::tests::stop_budget_fits_within_force_exit_and_service_manager_limits` で固定）。
+
+| 段階 | 最悪 | 定数 |
+|---|---|---|
+| agent の停止待ち（超えたら managed は `abort()`、unmanaged は future を捨てる） | 15 秒 | `AGENT_STOP_TIMEOUT` |
+| Kubo の停止（`Daemon::stop`、[`kubo.md`](kubo.md#停止daemonstopgrace)）: RPC 5 秒 + 猶予 20 秒 + unix は SIGTERM 後 10 秒（Windows は 0 秒） | 35 秒 | `kubo::daemon_stop_budget(DAEMON_STOP_GRACE)` |
+| ダッシュボードの停止待ち | 5 秒 | `DASHBOARD_SHUTDOWN_TIMEOUT` |
+| 上の合計（managed の最悪。unmanaged は agent + ダッシュボードの 20 秒、セットアップモードはダッシュボードの 5 秒） | 55 秒 | `STOP_BUDGET` |
+| runtime の畳み込み | 10 秒 | `shutdown::RUNTIME_SHUTDOWN_TIMEOUT` |
+| 強制終了までの猶予 = `STOP_BUDGET` + `RUNTIME_SHUTDOWN_TIMEOUT` + 余裕 5 秒 | 70 秒 | `FORCE_EXIT_GRACE` |
+| サービスマネージャの上限（systemd の `TimeoutStopSec`、launchd の `ExitTimeOut`、[`service.md`](service.md)） | 90 秒 | `service::STOP_TIMEOUT` |
+
+関係は「`STOP_BUDGET` + `RUNTIME_SHUTDOWN_TIMEOUT` < `FORCE_EXIT_GRACE` < `service::STOP_TIMEOUT`」。停止手順が予算内で終われば exit 0 で終わり、watchdog の exit 1 は予算を超えて何かが詰まったときだけになる。サービスマネージャはそれより後にしか SIGKILL を送らない。署名アプリとの接続を閉じる `Signer::shutdown` と、`ensure_repo`・`apply_config` などが起動する短命の `ipfs` コマンドは時間の上限を持たず、予算に入れていない（詰まったときは watchdog が止める）。
 
 ## 多重起動の防止（lock.rs）
 
@@ -49,22 +66,23 @@ Kubo バイナリの検出・バージョン確認・リポジトリの初期化
 loop {
     wait_healthy(config.ipfs_api_url(), 30s)   // cancel されたら即終了
     agent::run_until(config, token.child_token())
+    // cancel されたら agent の終了を最大 15 秒（AGENT_STOP_TIMEOUT）待ち、超えたら warn を出して future を捨てて終了
     // Ok(()) なら終了。Err ならバックオフして最初から
 }
 ```
 
 ### managed
 
-`run_managed` の始めに（`up::run` が呼ばれるたびに）`locate_binary` + `version`（不一致は warn）、続けて [`recover_orphan`](kubo.md#kubopid-と孤児-kubo-の回収managed-のみ) を行う。どれかが失敗したら `up::run` ごとエラーで終わる。以後ループ:
+`run_managed` の始めに（`up::run` が呼ばれるたびに）`locate_binary` + `version`（不一致は warn）、続けて [`recover_orphan`](kubo.md#kubopid-と孤児-kubo-の回収managed-のみ) を行う。どれかが失敗したら `up::run` ごとエラーで終わる。`recover_orphan` はトークンの cancel と競争させ、cancel が先なら回収を途中でやめて `Ok(())` を返す（`kubo.pid` は残るので、次の起動で回収し直す）。以後ループ:
 
 1. `ensure_repo` → `pick_free_port` → `apply_config` → `Daemon::spawn` → `wait_healthy("http://127.0.0.1:<api_port>", 120s)`。
    - いずれかの手順が失敗したら（`wait_healthy` が失敗した場合は daemon を `stop` してから）バックオフして 1 からやり直す。
 2. `config.ipfs.api` を `IpfsApi::Url(api_url)` に差し替えたコピーで `agent::run_until`（共有の `Arc<dashboard::AppState>` と `Arc<Notify>` を渡す）を子トークンとともに `tokio::spawn` する。`agent::run_until` は `Result<()>` を返すだけで、終了要求の種別（stop/restart）は持たない（下記「終了要求と exit code」）。
 3. `tokio::select!` で次のいずれかを待つ:
    - **Kubo が exit** → `error!` を出し、agent を cancel して最大 15 秒（`AGENT_STOP_TIMEOUT`）待つ（超えたら `abort()`）。`kubo.pid` を消し、バックオフして 1 からやり直す（Kubo・agent の両方を再起動）。
-   - **agent が Err（または panic）** → `warn!`／`error!` を出し、バックオフしてから **agent だけ**を同じ Kubo に対して再起動する（Kubo はそのまま）。バックオフ中に cancel されたら `Daemon::stop(30s)` して（失敗は無視）`Ok(())` を返す。
-   - **agent が Ok**（cancel による正常終了） → `Daemon::stop(30s)` して（失敗は無視）`Ok(())` を返す。
-   - **親トークンが cancel** → agent を cancel して最大 15 秒待ち（超えたら `abort()`）、`Daemon::stop(30s)` する。`Daemon::stop` が失敗したらそのエラーを返し、成功すれば `Ok(())` を返す。
+   - **agent が Err（または panic）** → `warn!`／`error!` を出し、バックオフしてから **agent だけ**を同じ Kubo に対して再起動する（Kubo はそのまま）。バックオフ中に cancel されたら `Daemon::stop(20s)` して（失敗は無視）`Ok(())` を返す。
+   - **agent が Ok**（cancel による正常終了） → `Daemon::stop(20s)` して（失敗は無視）`Ok(())` を返す。
+   - **親トークンが cancel** → agent を cancel して最大 15 秒待ち（超えたら `abort()`）、`Daemon::stop(20s)` する。`Daemon::stop` が失敗したらそのエラーを返し、成功すれば `Ok(())` を返す。
 
 `run_managed` が `Ok(())` を返したときの `swing up` 全体の終わり方は `up::run` が別途持つ `ExitRequest` から決める（下記）。
 
@@ -82,7 +100,7 @@ loop {
 
 1. `POST /api/restart`・`POST /api/setup`・`POST /api/signer/reconnect`（[`dashboard/http-api.md`](dashboard/http-api.md)）が `ExitRequest::restart()` を呼ぶ。
 2. その回のトークンが cancel される。Kubo・`agent::run_until` のトークンはその子なので、シグナルを受けたときと同じ経路でグレースフルシャットダウンが始まる。
-3. `run_managed`／`run_unmanaged` と `agent::run_until` がグレースフルに終了する（managed なら `Daemon::stop(30s)` で Kubo も止める。上記「managed」参照）。セットアップモードなら `token.cancelled()` を抜けるだけ。
+3. `run_managed`／`run_unmanaged` と `agent::run_until` がグレースフルに終了する（managed なら `Daemon::stop(20s)` で Kubo も止める。上記「managed」参照）。セットアップモードなら `token.cancelled()` を抜けるだけ。
 4. `up::run` が `exit.exit()`（`restart_requested()` を見て `Exit::Restart`／`Exit::Stop` を組み立てる）を返す。
 5. `main.rs` のループが `config::Config::load` で設定を読み直し、同じプロセス・同じ PID のまま `up::run` を再度呼ぶ（新しい `swing.lock` の取得からやり直し）。
 

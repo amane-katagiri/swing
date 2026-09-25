@@ -82,13 +82,13 @@ Kubo は `Host` と `X-Forwarded-Host` をそのまま信じるので、Kubo の
 
 まず Kubo の RPC（`ipfs shutdown` と同じ）を叩き、それでも `grace` 以内に終わらなければ段階的に強制する 3 段構え（1・2 段目は全 OS 共通、3 段目が OS 依存）:
 
-1. `POST <api_url>/api/v0/shutdown` をリクエストタイムアウト 5 秒で送る。レスポンスの成功・失敗・接続エラーのどれであっても「シャットダウンを要求した」ものとして次に進む（リトライしない）。
+1. `POST <api_url>/api/v0/shutdown` をリクエストタイムアウト 5 秒（`SHUTDOWN_RPC_TIMEOUT`）で送る。レスポンスの成功・失敗・接続エラーのどれであっても「シャットダウンを要求した」ものとして次に進む（リトライしない）。
 2. 子プロセスの終了を `grace` 秒まで待つ。終了すればここで成功。
-3. まだ生きていれば: unix は SIGTERM を送って 10 秒待ち、それでも終わらなければ `kill()`（SIGKILL）。Windows（`cfg(unix)` に入らない経路）は待たずに直接 `kill()`。
+3. まだ生きていれば: unix は SIGTERM を送って 10 秒（`SIGTERM_GRACE`）待ち、それでも終わらなければ `kill()`（SIGKILL）。Windows（`cfg(unix)` に入らない経路）は待たずに直接 `kill()`。
 
 ログは SIGTERM の送信失敗と SIGTERM 後も終わらないことだけが warn で、他の段階は debug。`kill()` 自体の失敗はエラーとして返す。
 
-`swing up` は `DAEMON_STOP_GRACE = 30s`（`up.rs`）を渡す。`swing stop`（[`cli.md#stop`](cli.md#stop)）による停止もこの `Daemon::stop` を通る。シグナルによる停止では、この猶予を待ち切る前にプロセスが打ち切られることがある（[`up.md#shutdownshutdownrs`](up.md#shutdownshutdownrs)）。
+`kubo::daemon_stop_budget(grace)` はこの 3 段の最悪時間（5 秒 + `grace` + unix は 10 秒、Windows は 0 秒。SIGKILL 後の終了待ちは数えない）を返す。`swing up` は `DAEMON_STOP_GRACE = 20s`（`up.rs`）を渡すので最悪 35 秒（Windows は 25 秒）。`swing stop`（[`cli.md#stop`](cli.md#stop)）による停止もシグナルによる停止もこの `Daemon::stop` を通り、どちらもこの 3 段を待ち切れる（シグナル時の時間予算は [`up.md#停止の時間予算`](up.md#停止の時間予算)）。
 
 ### `kubo.pid` と孤児 Kubo の回収（managed のみ）
 
@@ -100,6 +100,7 @@ Kubo は `Host` と `X-Forwarded-Host` をそのまま信じるので、Kubo の
 - まず記録の `api_port` に API でのシャットダウンを送り（タイムアウト 3 秒）、応答があればその `pid` の終了を最大 30 秒待つ。終われば完了。
 - API で終わらなければ、その `pid` の今の開始時刻を取り直し、記録と一致するときだけ強制終了する（unix は SIGTERM → 最大 30 秒 → SIGKILL → 最大 10 秒、Windows は `taskkill /T /F` → 最大 10 秒）。プロセスがもう無い、または開始時刻が一致しない（PID の再利用）なら kill せずにファイルを消す。
 - 強制終了しても終わらなければエラーを返し、`swing up` は Kubo を起動せずに終了する。
+- `run_managed` は回収中にトークンが cancel されたら（シグナルなど）回収を途中でやめて終わる。`kubo.pid` は残り、次の起動でもう一度回収する。
 
 #### repo lock のヒント
 

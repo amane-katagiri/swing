@@ -6,7 +6,7 @@ use anyhow::Result;
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info};
 
-const FORCE_EXIT_GRACE_PERIOD: Duration = Duration::from_secs(10);
+pub const RUNTIME_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(10);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Exit {
@@ -50,45 +50,98 @@ impl ExitRequest {
     }
 }
 
-pub fn cancel_on_signal() -> Result<CancellationToken> {
-    let token = CancellationToken::new();
-    spawn_watcher(token.clone())?;
-    Ok(token)
+#[derive(Clone)]
+pub struct SignalWatch {
+    token: CancellationToken,
+    grace: Duration,
+    started: Arc<AtomicBool>,
+}
+
+impl SignalWatch {
+    pub fn token(&self) -> CancellationToken {
+        self.token.clone()
+    }
+
+    fn request(&self, reason: &'static str) -> bool {
+        if self.started.swap(true, Ordering::SeqCst) {
+            return false;
+        }
+        info!(reason, grace_period = ?self.grace, "shutdown requested");
+        self.token.cancel();
+        let grace = self.grace;
+        // A std thread, unlike a tokio task, survives Runtime::shutdown_timeout, so the deadline also covers it.
+        std::thread::spawn(move || {
+            std::thread::sleep(grace);
+            error!(
+                grace_period = ?grace,
+                "graceful shutdown did not finish within the grace period; forcing exit"
+            );
+            std::process::exit(1);
+        });
+        true
+    }
+
+    fn on_signal(&self, signal: &'static str) {
+        if !self.request(signal) {
+            error!(
+                signal,
+                "received another signal during graceful shutdown; exiting immediately"
+            );
+            std::process::exit(1);
+        }
+    }
+
+    // Task Scheduler's `/End` only kills `conhost.exe --headless`, leaving swing running as its orphan.
+    #[cfg(windows)]
+    pub fn cancel_when_parent_exits(&self) -> Result<()> {
+        let parent = parent_process::open()?;
+        let watch = self.clone();
+        std::thread::spawn(move || {
+            parent.wait();
+            watch.request("parent exited");
+        });
+        Ok(())
+    }
+}
+
+pub fn cancel_on_signal(grace: Duration) -> Result<SignalWatch> {
+    let watch = SignalWatch {
+        token: CancellationToken::new(),
+        grace,
+        started: Arc::new(AtomicBool::new(false)),
+    };
+    spawn_watcher(watch.clone())?;
+    Ok(watch)
 }
 
 #[cfg(unix)]
-fn spawn_watcher(token: CancellationToken) -> Result<()> {
+fn spawn_watcher(watch: SignalWatch) -> Result<()> {
     use anyhow::Context;
     use tokio::signal::unix::{SignalKind, signal};
 
+    let mut sigint = signal(SignalKind::interrupt()).context("registering SIGINT handler")?;
     let mut sigterm = signal(SignalKind::terminate()).context("registering SIGTERM handler")?;
     tokio::spawn(async move {
-        let signal = tokio::select! {
-            _ = tokio::signal::ctrl_c() => "SIGINT",
-            _ = sigterm.recv() => "SIGTERM",
-        };
-        on_signal(token, signal).await;
+        loop {
+            let signal = tokio::select! {
+                _ = sigint.recv() => "SIGINT",
+                _ = sigterm.recv() => "SIGTERM",
+            };
+            watch.on_signal(signal);
+        }
     });
     Ok(())
 }
 
-#[cfg(not(unix))]
-fn spawn_watcher(token: CancellationToken) -> Result<()> {
-    tokio::spawn(async move {
-        let _ = tokio::signal::ctrl_c().await;
-        on_signal(token, "ctrl-c").await;
-    });
-    Ok(())
-}
-
-// Task Scheduler's `/End` only kills `conhost.exe --headless`, leaving swing running as its orphan.
 #[cfg(windows)]
-pub fn cancel_when_parent_exits(token: CancellationToken) -> Result<()> {
-    let parent = parent_process::open()?;
-    let runtime = tokio::runtime::Handle::current();
-    std::thread::spawn(move || {
-        parent.wait();
-        runtime.spawn(on_signal(token, "parent exited"));
+fn spawn_watcher(watch: SignalWatch) -> Result<()> {
+    use anyhow::Context;
+
+    let mut ctrl_c = tokio::signal::windows::ctrl_c().context("registering the ctrl-c handler")?;
+    tokio::spawn(async move {
+        while ctrl_c.recv().await.is_some() {
+            watch.on_signal("ctrl-c");
+        }
     });
     Ok(())
 }
@@ -167,15 +220,4 @@ mod parent_process {
             }
         }
     }
-}
-
-async fn on_signal(token: CancellationToken, signal: &'static str) {
-    info!(signal, "shutdown requested");
-    token.cancel();
-    tokio::time::sleep(FORCE_EXIT_GRACE_PERIOD).await;
-    error!(
-        grace_period = ?FORCE_EXIT_GRACE_PERIOD,
-        "graceful shutdown did not finish within the grace period; forcing exit"
-    );
-    std::process::exit(1);
 }

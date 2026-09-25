@@ -4,6 +4,8 @@ use anyhow::{Context, Result, bail};
 
 use crate::config::resolve_config_path;
 
+pub(crate) const STOP_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(90);
+
 fn resolve_service_paths(config_path: Option<&Path>) -> Result<(PathBuf, PathBuf, PathBuf)> {
     let config = resolve_config_path(config_path);
     if !config.exists() {
@@ -80,11 +82,12 @@ WorkingDirectory={workdir}\n\
 Restart=on-failure\n\
 RestartSec=5\n\
 KillSignal=SIGTERM\n\
-TimeoutStopSec=60\n\
+TimeoutStopSec={stop_timeout}\n\
 \n\
 [Install]\n\
 WantedBy={wanted_by}\n",
         workdir = escape_systemd_specifiers(&workdir.to_string_lossy()),
+        stop_timeout = STOP_TIMEOUT.as_secs(),
     )
 }
 
@@ -125,6 +128,8 @@ pub fn launchd_plist(exe: &Path, config: &Path, workdir: &Path, log: &Path) -> S
         <key>SuccessfulExit</key>
         <false/>
     </dict>
+    <key>ExitTimeOut</key>
+    <integer>{exit_timeout}</integer>
     <key>StandardOutPath</key>
     <string>{log}</string>
     <key>StandardErrorPath</key>
@@ -136,7 +141,8 @@ pub fn launchd_plist(exe: &Path, config: &Path, workdir: &Path, log: &Path) -> S
     </dict>
 </dict>
 </plist>
-"#
+"#,
+        exit_timeout = STOP_TIMEOUT.as_secs(),
     )
 }
 
@@ -1092,7 +1098,7 @@ mod tests {
         assert!(unit.contains("Restart=on-failure"));
         assert!(unit.contains("RestartSec=5"));
         assert!(unit.contains("KillSignal=SIGTERM"));
-        assert!(unit.contains("TimeoutStopSec=60"));
+        assert!(unit.contains("TimeoutStopSec=90\n"));
         assert!(unit.contains("WantedBy=default.target"));
     }
 
@@ -1161,6 +1167,7 @@ mod tests {
         assert!(plist.contains("<true/>"));
         assert!(plist.contains("<key>KeepAlive</key>"));
         assert!(plist.contains("<key>SuccessfulExit</key>\n        <false/>"));
+        assert!(plist.contains("<key>ExitTimeOut</key>\n    <integer>90</integer>"));
         assert!(plist.contains("<key>StandardOutPath</key>"));
         assert!(plist.contains("<string>/Users/u/Library/Logs/swing.log</string>"));
         assert!(plist.contains("<key>StandardErrorPath</key>"));

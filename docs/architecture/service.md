@@ -30,7 +30,7 @@
 | `WorkingDirectory` | 設定ファイルの親ディレクトリ |
 | 起動の順序と有効化 | `After=`・`Wants=network-online.target`、`WantedBy=default.target`（`--system` なら `multi-user.target`） |
 | 再起動 | `Restart=on-failure`、`RestartSec=5` |
-| 停止 | `KillSignal=SIGTERM`、`TimeoutStopSec=60` |
+| 停止 | `KillSignal=SIGTERM`、`TimeoutStopSec=90`（`service::STOP_TIMEOUT`。`swing up` の強制終了までの猶予 70 秒より長い。[`up.md#停止の時間予算`](up.md#停止の時間予算)） |
 | ログ | journal（`journalctl [--user] -u swing -f`） |
 
 `ExecStart` の各パスは systemd の指定子（`%`）と環境変数の展開（`$`）が効かないよう引用・エスケープする（`quote_systemd_arg`）。
@@ -38,7 +38,7 @@
 - `install`: unit を書き出し → `systemctl [--user] daemon-reload` → `systemctl [--user] enable [--now] swing`（`--no-start` なら `--now` を付けない）。`--system` でなければ続けて UID を明示して `loginctl enable-linger <uid>` を試み、失敗したら `` Warning: could not run `loginctl enable-linger`. ... `` を標準出力に出す（インストール自体は失敗にしない）。
 - `start`: `systemctl [--user] start swing`。
 - `uninstall`: `systemctl [--user] disable --now swing`（失敗は「未登録だったかもしれない」旨の注記のみ）→ unit ファイル削除 → `systemctl [--user] daemon-reload`。
-- `stop`: `systemctl [--user] stop swing`。SIGTERM で停止シーケンス（[`up.md#shutdownshutdownrs`](up.md#shutdownshutdownrs)）に入り、登録は残る（次のログイン/`systemctl start swing` で再び動く）。`systemctl stop` による終了なので、打ち切りで終了コードが 1 になっても systemd は再起動しない。
+- `stop`: `systemctl [--user] stop swing`。SIGTERM で停止シーケンス（[`up.md#shutdownshutdownrs`](up.md#shutdownshutdownrs)）に入り、登録は残る（次のログイン/`systemctl start swing` で再び動く）。停止シーケンスは最悪でも 70 秒の watchdog までに終わるので `TimeoutStopSec` の SIGKILL には届かない。`systemctl stop` による終了なので、watchdog や 2 回目のシグナルで終了コードが 1 になっても systemd は再起動しない。
 - `status`: unit ファイルが無ければ `not installed` と出して終わる。あれば `systemctl [--user] status swing --no-pager` をそのまま実行し、標準入出力をそのまま引き継ぐ（終了コードは呼び出し元に伝播しない）。
 
 ## macOS（launchd）
@@ -51,6 +51,7 @@
 | `WorkingDirectory` | 設定ファイルの親ディレクトリ |
 | 起動 | `RunAtLoad = true`（ログイン時に起動） |
 | 再起動 | `KeepAlive = { SuccessfulExit = false }`（0 以外で終わったときだけ再起動） |
+| 停止の上限 | `ExitTimeOut = 90`（`service::STOP_TIMEOUT`。launchd が自分で止めるとき（`bootout` など）に SIGTERM から SIGKILL までを待つ秒数。既定の 20 秒では `swing up` の停止シーケンスが終わらないため） |
 | ログ | `StandardOutPath`・`StandardErrorPath` とも `~/Library/Logs/swing.log` |
 | `EnvironmentVariables.PATH` | `/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin`（Homebrew の bin を含める） |
 
@@ -59,7 +60,7 @@
 - `install`: 既に `launchctl print gui/<uid>/jp.ne.ama.swing` が成功する（＝ロード済み）なら先に `bootout` してから、plist を書き出す。`--no-start` でなければ `launchctl bootstrap gui/<uid> <plist>` でロードする。
 - `start`: ロード済み（`launchctl print` が成功する）なら `launchctl kickstart gui/<uid>/jp.ne.ama.swing`。ロードされていなければ `launchctl bootstrap gui/<uid> <plist>`（plist が無ければ「swing is not registered as a service」でエラー）。
 - `uninstall`: `launchctl bootout gui/<uid>/jp.ne.ama.swing`（失敗は無視）→ plist ファイル削除。
-- `stop`: `launchctl kill SIGTERM gui/<uid>/jp.ne.ama.swing`（bootout ではなくプロセスに直接 SIGTERM を送るだけ。停止シーケンスは [`up.md#shutdownshutdownrs`](up.md#shutdownshutdownrs)）。停止シーケンスが終われば exit 0 なので、`KeepAlive` により止まったままになる（次のログインで `RunAtLoad` により再び起動する）。停止シーケンスが打ち切られて exit 1 になると、launchd が再起動しうる。
+- `stop`: `launchctl kill SIGTERM gui/<uid>/jp.ne.ama.swing`（bootout ではなくプロセスに直接 SIGTERM を送るだけ。停止シーケンスは [`up.md#shutdownshutdownrs`](up.md#shutdownshutdownrs)）。停止シーケンスは強制終了までの猶予（70 秒、[`up.md#停止の時間予算`](up.md#停止の時間予算)）の内に終わるように組んであり、終われば exit 0 なので、`KeepAlive` により止まったままになる（次のログインで `RunAtLoad` により再び起動する）。停止シーケンスが猶予を超えて watchdog に打ち切られたときと、停止中にもう一度 SIGINT/SIGTERM を送って即時終了させたときだけ exit 1 になり、launchd が再起動しうる。
 - `status`: plist が無ければ `not installed`。あれば `launchctl print gui/<uid>/jp.ne.ama.swing` をそのまま実行。
 
 ## Windows（タスクスケジューラ）

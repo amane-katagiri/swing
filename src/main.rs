@@ -11,9 +11,6 @@ use swing::{
 use tracing::info;
 use tracing_subscriber::EnvFilter;
 
-// Not #[tokio::main]: shutdown_timeout keeps a stuck blocking thread from holding the process open.
-const RUNTIME_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(10);
-
 #[derive(Args)]
 struct ConfigArg {
     #[arg(long, help = "Config file (default: $SWING_CONFIG or ./swing.toml)")]
@@ -342,7 +339,8 @@ fn main() -> Result<()> {
         .build()?;
     let logs_to_file = log_file.is_some();
     let result = runtime.block_on(run(cli));
-    runtime.shutdown_timeout(RUNTIME_SHUTDOWN_TIMEOUT);
+    // Not #[tokio::main]: shutdown_timeout keeps a stuck blocking thread from holding the process open.
+    runtime.shutdown_timeout(shutdown::RUNTIME_SHUTDOWN_TIMEOUT);
     if logs_to_file && let Err(e) = &result {
         tracing::error!("{e:#}");
     }
@@ -357,11 +355,12 @@ async fn run(cli: Cli) -> Result<()> {
             exit_with_parent,
             ..
         } => {
-            let signal = shutdown::cancel_on_signal()?;
+            let watch = shutdown::cancel_on_signal(up::FORCE_EXIT_GRACE)?;
             #[cfg(windows)]
             if exit_with_parent {
-                shutdown::cancel_when_parent_exits(signal.clone())?;
+                watch.cancel_when_parent_exits()?;
             }
+            let signal = watch.token();
             loop {
                 let cfg = config::Config::load(config.as_deref())?;
                 match up::run(cfg, signal.child_token()).await? {

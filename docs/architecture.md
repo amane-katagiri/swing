@@ -71,7 +71,7 @@ swing/
     service.rs       `swing service install/uninstall/start/stop/status`（systemd / launchd / タスクスケジューラ）。詳細は architecture/service.md
     settings/        全設定キーのカタログ（mod.rs）、`swing.example.toml`/`.env.example` の生成（example.rs）、`PUT /api/config`・`POST /api/setup` の書き込み（edit.rs）。詳細は下記「設定と環境変数」と architecture/dashboard.md
     stop.rs          `swing stop`（動いている `swing up` のダッシュボード API 経由。API に到達できなければ「動いていない」として終了する）。詳細は architecture/up.md, architecture/service.md
-    shutdown.rs      `cancel_on_signal`（SIGINT/SIGTERM → CancellationToken、force-exit watchdog）、`ExitRequest`/`Exit`（停止・再起動の要求と、`up::run` が返す `Exit::Stop`/`Exit::Restart`）。up/agent 共通
+    shutdown.rs      `cancel_on_signal(grace)`（SIGINT/SIGTERM → CancellationToken、force-exit watchdog、2 回目のシグナルで即時終了）、`RUNTIME_SHUTDOWN_TIMEOUT`、`ExitRequest`/`Exit`（停止・再起動の要求と、`up::run` が返す `Exit::Stop`/`Exit::Restart`）。up/agent 共通
     dashboard/       `swing up` 常駐の Web ダッシュボード兼制御 API（mod.rs, guard.rs, api.rs, session.rs, dto.rs, config_dto.rs, assets.rs, upload.rs, test_support.rs）。詳細は architecture/dashboard.md
     api_client.rs    ダッシュボード API を呼ぶ CLI 共通クライアント（`ApiClient`。`<state_dir>/dashboard.token` を Bearer トークンとして送る）。使うサブコマンドは architecture/cli.md の「共通」
     test_support.rs  `#[cfg(test)]` のクレート共通フィクスチャ（`FakeKubo`、CID・鍵・イベントのテストヘルパ）

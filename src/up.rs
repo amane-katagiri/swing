@@ -13,14 +13,23 @@ use crate::config::{Config, IpfsApi};
 use crate::dashboard;
 use crate::kubo;
 use crate::lock;
-use crate::shutdown::{Exit, ExitRequest};
+use crate::shutdown::{Exit, ExitRequest, RUNTIME_SHUTDOWN_TIMEOUT};
 use crate::signer::Signer;
 
 const UNMANAGED_HEALTH_TIMEOUT: Duration = Duration::from_secs(30);
 const MANAGED_HEALTH_TIMEOUT: Duration = Duration::from_secs(120);
-const DAEMON_STOP_GRACE: Duration = Duration::from_secs(30);
+const DAEMON_STOP_GRACE: Duration = Duration::from_secs(20);
 const AGENT_STOP_TIMEOUT: Duration = Duration::from_secs(15);
 const DASHBOARD_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
+const FORCE_EXIT_MARGIN: Duration = Duration::from_secs(5);
+
+const STOP_BUDGET: Duration = AGENT_STOP_TIMEOUT
+    .saturating_add(kubo::daemon_stop_budget(DAEMON_STOP_GRACE))
+    .saturating_add(DASHBOARD_SHUTDOWN_TIMEOUT);
+
+pub const FORCE_EXIT_GRACE: Duration = STOP_BUDGET
+    .saturating_add(RUNTIME_SHUTDOWN_TIMEOUT)
+    .saturating_add(FORCE_EXIT_MARGIN);
 
 struct Backoff {
     delay: Duration,
@@ -271,14 +280,24 @@ async fn run_unmanaged(
         info!(api = %api_url, "external Kubo is ready");
 
         let started = Instant::now();
-        match agent::run_until(
+        let agent = agent::run_until(
             config.clone(),
             token.child_token(),
             Arc::clone(&dashboard),
             Arc::clone(&notify),
-        )
-        .await
-        {
+        );
+        tokio::pin!(agent);
+        let result = tokio::select! {
+            result = &mut agent => result,
+            _ = token.cancelled() => match tokio::time::timeout(AGENT_STOP_TIMEOUT, &mut agent).await {
+                Ok(result) => result,
+                Err(_) => {
+                    warn!(timeout = ?AGENT_STOP_TIMEOUT, "agent did not stop in time during shutdown");
+                    return Ok(());
+                }
+            },
+        };
+        match result {
             Ok(()) => return Ok(()),
             Err(e) => {
                 warn!(error = %e, "agent exited with an error; restarting");
@@ -304,7 +323,10 @@ async fn run_managed(
         );
     }
 
-    kubo::recover_orphan(&config.agent.state_dir, &config.kubo.repo).await?;
+    tokio::select! {
+        result = kubo::recover_orphan(&config.agent.state_dir, &config.kubo.repo) => result?,
+        _ = token.cancelled() => return Ok(()),
+    }
 
     let mut backoff = Backoff::new();
 
@@ -391,6 +413,20 @@ async fn run_managed(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn stop_budget_fits_within_force_exit_and_service_manager_limits() {
+        let unmanaged = AGENT_STOP_TIMEOUT + DASHBOARD_SHUTDOWN_TIMEOUT;
+        assert!(unmanaged <= STOP_BUDGET);
+        assert_eq!(
+            STOP_BUDGET,
+            AGENT_STOP_TIMEOUT
+                + kubo::daemon_stop_budget(DAEMON_STOP_GRACE)
+                + DASHBOARD_SHUTDOWN_TIMEOUT
+        );
+        assert!(STOP_BUDGET + RUNTIME_SHUTDOWN_TIMEOUT < FORCE_EXIT_GRACE);
+        assert!(FORCE_EXIT_GRACE < crate::service::STOP_TIMEOUT);
+    }
 
     #[test]
     fn backoff_doubles_and_caps() {

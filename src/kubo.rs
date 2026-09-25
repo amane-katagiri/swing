@@ -13,6 +13,20 @@ use tokio::process::{Child, Command};
 
 pub const KUBO_VERSION: &str = "0.43.1";
 
+const SHUTDOWN_RPC_TIMEOUT: Duration = Duration::from_secs(5);
+#[cfg(unix)]
+const SIGTERM_GRACE: Duration = Duration::from_secs(10);
+#[cfg(unix)]
+const ESCALATION: Duration = SIGTERM_GRACE;
+#[cfg(not(unix))]
+const ESCALATION: Duration = Duration::ZERO;
+
+pub const fn daemon_stop_budget(grace: Duration) -> Duration {
+    SHUTDOWN_RPC_TIMEOUT
+        .saturating_add(grace)
+        .saturating_add(ESCALATION)
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct KuboSettings {
     pub storage_max: u64,
@@ -646,7 +660,7 @@ impl Daemon {
         let client = reqwest::Client::new();
         match client
             .post(&shutdown_url)
-            .timeout(Duration::from_secs(5))
+            .timeout(SHUTDOWN_RPC_TIMEOUT)
             .send()
             .await
         {
@@ -685,7 +699,7 @@ impl Daemon {
                     }
                 }
             }
-            match tokio::time::timeout(Duration::from_secs(10), self.child.wait()).await {
+            match tokio::time::timeout(SIGTERM_GRACE, self.child.wait()).await {
                 Ok(Ok(_)) => {
                     tracing::debug!("kubo exited after SIGTERM");
                     return Ok(());
