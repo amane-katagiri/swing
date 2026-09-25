@@ -87,11 +87,11 @@ export function formatBytes(n) {
   const units = ['B', 'KiB', 'MiB', 'GiB', 'TiB'];
   let v = n;
   let i = 0;
-  while (v >= 1024 && i < units.length - 1) {
+  while ((i === 0 ? v >= 1024 : v >= 1023.95) && i < units.length - 1) {
     v /= 1024;
     i += 1;
   }
-  return `${i === 0 ? v : v.toFixed(1)} ${units[i]}`;
+  return `${i === 0 ? v : v.toFixed(1).replace(/\.0$/, '')} ${units[i]}`;
 }
 
 export function formatSiteSize(site) {
