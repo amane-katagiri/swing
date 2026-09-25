@@ -1,3 +1,5 @@
+import { toDeskPx } from './desktop-scale.js';
+
 function clamp(v, lo, hi) {
   return Math.min(hi, Math.max(lo, v));
 }
@@ -23,9 +25,9 @@ export function createCombobox({ field, list, onChange }) {
 
   function position() {
     const rect = field.getBoundingClientRect();
-    list.style.left = `${Math.round(rect.left)}px`;
-    list.style.top = `${Math.round(rect.bottom + 2)}px`;
-    list.style.width = `${Math.round(rect.width)}px`;
+    list.style.left = `${Math.round(toDeskPx(rect.left))}px`;
+    list.style.top = `${Math.round(toDeskPx(rect.bottom) + 2)}px`;
+    list.style.width = `${Math.round(toDeskPx(rect.width))}px`;
   }
 
   function highlight(index) {

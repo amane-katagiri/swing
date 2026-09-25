@@ -1,5 +1,6 @@
 import { focusableIn, keepFocusOnDisable, refocusIfDropped, registerFrame, scheduleActiveSync, tabAcrossEdge } from './desktop-focus.js';
 import { clampPosition, screenSize, trackPointer } from './desktop-drag.js';
+import { toDeskPx } from './desktop-scale.js';
 
 const FLASH_TOGGLES = 6;
 const FLASH_INTERVAL_MS = 90;
@@ -146,7 +147,12 @@ export function createDialog({ root, returnFocus, onOpen, onOk, onCancel, onAppl
       userPositioned = true;
       const size = screenSize(screen);
       const w = root.offsetWidth;
-      const pos = clampPosition(start.origX + (mv.clientX - start.startX), start.origY + (mv.clientY - start.startY), w, size);
+      const pos = clampPosition(
+        start.origX + toDeskPx(mv.clientX - start.startX),
+        start.origY + toDeskPx(mv.clientY - start.startY),
+        w,
+        size,
+      );
       setPos(pos.x, pos.y);
     });
   });

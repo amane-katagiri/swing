@@ -6,8 +6,7 @@ export function clampNum(v, lo, hi) {
 }
 
 export function screenSize(screen) {
-  const rect = screen.getBoundingClientRect();
-  return { width: rect.width, height: rect.height };
+  return { width: screen.clientWidth, height: screen.clientHeight };
 }
 
 export function clampPosition(x, y, w, size) {

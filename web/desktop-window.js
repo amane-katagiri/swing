@@ -1,5 +1,6 @@
 import { FOCUSABLE, keepFocusOnDisable, registerFrame, scheduleActiveSync } from './desktop-focus.js';
 import { TITLEBAR_H, MIN_VISIBLE_TITLEBAR, clampNum, screenSize, trackPointer } from './desktop-drag.js';
+import { toDeskPx } from './desktop-scale.js';
 
 const MIN_W = 320;
 const MIN_H = 240;
@@ -185,15 +186,15 @@ function wireWindowChrome() {
         if (Math.hypot(mv.clientX - drag.startX, mv.clientY - drag.startY) < UNMAXIMIZE_DRAG_THRESHOLD) return;
         const rect = winEls.screen.getBoundingClientRect();
         const ratio = clampNum((drag.startX - rect.left) / Math.max(1, rect.width), 0, 1);
-        drag.origX = drag.startX - rect.left - winState.geom.w * ratio;
-        drag.origY = drag.startY - rect.top - TITLEBAR_H / 2;
+        drag.origX = toDeskPx(drag.startX - rect.left) - winState.geom.w * ratio;
+        drag.origY = toDeskPx(drag.startY - rect.top) - TITLEBAR_H / 2;
         drag.fromMaximized = false;
         winState.maximized = false;
         renderWindow();
       }
       winState.userPositioned = true;
       winState.geom = clampGeometry(
-        { ...winState.geom, x: drag.origX + (mv.clientX - drag.startX), y: drag.origY + (mv.clientY - drag.startY) },
+        { ...winState.geom, x: drag.origX + toDeskPx(mv.clientX - drag.startX), y: drag.origY + toDeskPx(mv.clientY - drag.startY) },
         size,
       );
       applyWindowGeometry();
@@ -210,8 +211,8 @@ function wireWindowChrome() {
       const startX = ev.clientX;
       const startY = ev.clientY;
       trackPointer(handle, ev, (mv) => {
-        const dx = mv.clientX - startX;
-        const dy = mv.clientY - startY;
+        const dx = toDeskPx(mv.clientX - startX);
+        const dy = toDeskPx(mv.clientY - startY);
         let { x, y, w, h } = start;
         if (dir.includes('e')) w = start.w + dx;
         if (dir.includes('s')) h = start.h + dy;

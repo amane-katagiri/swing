@@ -9,6 +9,7 @@
 | 低 | CLI の出力に nostr-sdk の INFO ログ（`Connected to '<relay>'`・`Relay '<relay>' has been shutdown.`）が標準エラーに混ざる。`swing signer pair` では QR とメッセージの間に挟まって読みにくい。`swing up` 以外のコマンドでは既定のログレベルを下げるか、`nostr_sdk` を warn にする | [CLI からのペアリング](log/2026-09-25-cli-signer-pair.md) |
 | 低 | NIP-46: 署名アプリが作った `bunker://` URI を貼って接続する方法（署名アプリ起点）。今は SWING が出す `nostrconnect://` の QR コードだけ | [NIP-46 対応](log/2026-09-24-nip46-remote-signer.md) |
 | 低 | `signer::tests::answers_from_a_signer_whose_clock_runs_behind_are_received` がまれに落ちる（`src/signer.rs` の `remote.sign(...).await.unwrap()`）。`RemoteSigner` の応答待ちが 5 秒なので、マシンが重いと間に合わない可能性がある。`cargo test --workspace` を 1 回だけ回したときに 1 度落ち、直後の単独実行と全体の再実行では通った | [タスクトレイ](log/2026-09-24-tray-icon.md)の検証中に見つけた |
+| 低 | Desktop 画面の表示倍率: WebKit では `zoom` の内側の文字サイズが整数 px に丸められ（175% で 12px が 12.25 デバイスピクセルになる）、150% では文字の位置が半ピクセルずれて、親のデスクトップもリンク集ページもぶれる。Linux の Playwright WebKit で確かめただけなので、Mac の Safari 実機（Retina で 110%〜175% にズームしたとき）でも起きるか確かめ、起きるなら対策を考える | [表示倍率を整数倍に揃える](log/2026-09-26-desktop-integer-scale.md) |
 | 中 | NIP-05 の実 HTTP 経路の統合テスト（ローカル TLS エンドポイント相手、`#[ignore]`） | レビュー |
 | 中 | 取得に失敗した CID を覚えて指数バックオフで再試行する。今は poll ごとに同じ CID の取得を試み、そのたびに最大 `SWING_FETCH_IDLE_TIMEOUT` の間、並行枠を 1 つ使う | レビュー（DoS） |
 | 低 | レプリカ報告 1 件が持てる `cid` タグの数に上限が無い。誰でも 1 件の報告に大量の `cid` タグを詰め込める（サイトイベント・レプリカ報告・Follow Set の取得件数、1 作者が持つ `d` の数、Follow Set 1 件の `p` タグ数、`webring::crawl` のノード総数には [取得と表示の上限](log/2026-09-23-fetch-and-display-budgets.md) で上限を入れた） | レビュー（DoS） |

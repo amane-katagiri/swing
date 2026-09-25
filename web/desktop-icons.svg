@@ -5,22 +5,16 @@
       <path d="M10 11v6M14 11v6"></path>
     </symbol>
     <path id="swing-se-s" d="M22.93,8.86C20.98,6.54 17.9,5.52 14.96,6.22C12.01,6.91 9.71,9.21 9.02,12.16C8.32,15.1 9.34,18.18 11.66,20.13C17.82,25.3 23.06,17.17 29.23,22.34C32.12,24.77 33.4,28.63 32.53,32.31C31.66,35.99 28.79,38.86 25.11,39.73C21.43,40.6 17.57,39.32 15.14,36.43"></path>
-    <path id="swing-se-e" d="M37.8,28.5V61.5M37.8,32H58.8M37.8,45H53.8M37.8,58H58.8"></path>
-    <mask id="swing-se-gap" maskUnits="userSpaceOnUse" x="0" y="0" width="64" height="64">
-      <rect width="64" height="64" fill="#ffffff"></rect>
-      <use href="#swing-se-s" fill="none" stroke="#000000" stroke-width="10.5"></use>
-    </mask>
+    <path id="swing-se-e" d="M58.80,28.50 37.97,28.50 38.05,30.04 37.97,31.59 37.86,32.41 37.72,33.17 37.32,34.66 36.78,36.10 36.09,37.48 35.71,38.13 35.26,38.80 34.30,40.02 34.30,61.50 58.80,61.50 58.80,54.50 41.30,54.50 41.30,48.50 53.80,48.50 53.80,41.50 41.30,41.50 41.30,35.50 58.80,35.50Z"></path>
     <linearGradient id="swing-se-gold" x1="0" y1="0" x2="0.8" y2="1">
       <stop offset="0" stop-color="#ffe680"></stop><stop offset="1" stop-color="#f0a010"></stop>
     </linearGradient>
-    <linearGradient id="swing-se-blue" x1="0" y1="0" x2="0.8" y2="1">
+    <linearGradient id="swing-se-blue" gradientUnits="userSpaceOnUse" x1="37.8" y1="28.5" x2="54.6" y2="61.5">
       <stop offset="0" stop-color="#8fd4ff"></stop><stop offset="1" stop-color="#3a86f0"></stop>
     </linearGradient>
     <symbol id="icon-desk-swing-color" viewBox="5 2 54 60">
-      <g fill="none" stroke-width="7" stroke-linecap="butt">
-        <use href="#swing-se-e" stroke="url(#swing-se-blue)" mask="url(#swing-se-gap)"></use>
-        <use href="#swing-se-s" stroke="url(#swing-se-gold)"></use>
-      </g>
+      <use href="#swing-se-e" fill="url(#swing-se-blue)"></use>
+      <use href="#swing-se-s" fill="none" stroke="url(#swing-se-gold)" stroke-width="7" stroke-linecap="butt"></use>
     </symbol>
     <symbol id="icon-desk-start" viewBox="72 24 432 432">
       <circle cx="256" cy="256" r="62" fill="#ffcc33"></circle>
@@ -32,10 +26,8 @@
       </g>
     </symbol>
     <symbol id="icon-desk-swing" viewBox="5 2 54 60">
-      <g fill="none" stroke="currentColor" stroke-width="7" stroke-linecap="butt">
-        <use href="#swing-se-e" mask="url(#swing-se-gap)"></use>
-        <use href="#swing-se-s"></use>
-      </g>
+      <use href="#swing-se-e" fill="currentColor"></use>
+      <use href="#swing-se-s" fill="none" stroke="currentColor" stroke-width="7" stroke-linecap="butt"></use>
     </symbol>
     <symbol id="icon-desk-tray-volume" viewBox="0 0 16 16" shape-rendering="crispEdges">
       <rect x="12" y="3" width="1" height="1" fill="#000000"></rect>

@@ -83,6 +83,7 @@ const STATIC_ASSETS: &[StaticAsset] = &[
     text_asset!(JS, "desktop-combobox.js"),
     text_asset!(JS, "desktop-focus.js"),
     text_asset!(JS, "desktop-drag.js"),
+    text_asset!(JS, "desktop-scale.js"),
     text_asset!("image/svg+xml", "desktop-icons.svg"),
     bytes_asset!("font/woff2", "fonts/pixelmplus12-regular.woff2"),
     bytes_asset!("font/woff2", "fonts/pixelmplus12-bold.woff2"),

@@ -409,6 +409,7 @@ button.desk-toolbtn:active {
 }
 
 .desk-page-frame {
+  position: relative;
   display: block;
   width: 100%;
   height: 100%;

@@ -9,6 +9,7 @@ Desktop 画面専用のモジュール（依存は下から上への一方向。
 | ファイル | 役割 |
 |---|---|
 | `desktop-focus.js` | ウィンドウ/ダイアログの登録（`registerFrame`）とタイトルバーのアクティブ表示の同期（`scheduleActiveSync`）、開いているモーダルの判定（`isModalOpen`）、Tab の折り返し（`tabAcrossEdge`）、フォーカスを失ったときの戻し先の補助 |
+| `desktop-scale.js` | 表示倍率の整数倍への補正と左上のデバイスピクセルへの位置合わせ（`initDeskScale`）、ビューポート座標から `#view-desktop` 内の座標への換算（`toDeskPx`） |
 | `desktop-drag.js` | ウィンドウ/ダイアログのドラッグ・リサイズで共有するポインタ操作と座標のクランプ |
 | `desktop-combobox.js` | Win95 風コンボボックス（`createCombobox`） |
 | `desktop-wallpaper-image.js` | 壁紙の色・画像の量子化とダウンスケール（ファイルの読み込み・canvas への描画を含む） |
@@ -25,7 +26,7 @@ Desktop 画面専用のモジュール（依存は下から上への一方向。
 | `desktop.css`・`desktop-dialog.css`・`desktop-wallpaper.css` | `index.html` が読む CSS（それぞれフォント・シェル・`--desk-*` 変数、ダイアログの枠・汎用部品、「背景」タブ固有）。読み込み順は [`web.md#css-カスタマイズのインターフェース`](web.md#css-カスタマイズのインターフェース) |
 | `desktop-frame.css` | 窓側のスクロールバーの見た目。`desktop.js` がリンク集ページ（iframe）に差し込む（下記「[リンク集ページ（iframe）](#リンク集ページiframe)」） |
 | `desktop-page.html`・`desktop-page.css`・`desktop-banner.gif` | リンク集ページ・その専用 CSS・88×31 バナーの同梱版。設定で差し替えられる（[`../dashboard.md#設定dashboard`](../dashboard.md#設定dashboard)） |
-| `desktop-icons.svg` | ピクセルアートアイコンのスプライト。`index.html` から `<use>` で参照する |
+| `desktop-icons.svg` | ピクセルアートアイコンのスプライト。`index.html` から `<use>` で参照する。SE ロゴの E は S との隙間を切り欠いた塗りの図形で持つ（外部ファイルの `<symbol>` の `mask` は、Firefox では CSS `zoom` の内側でずれるため使わない） |
 | `fonts/` | 同梱フォント PixelMplus12 とそのライセンス |
 
 ## 画面
@@ -35,6 +36,14 @@ Win95/98 風デスクトップ（背景・デスクトップアイコン・タ�
 ### フォント
 
 PixelMplus12（`web/fonts/`）を使う。フォントの読み込みが終わるまで `.desk-window` を隠し、Desktop 画面を初めて表示したときだけ待つ（上限あり）。
+
+### 表示倍率
+
+ドット絵フォントと 1px のベベルを崩さないため、`#view-desktop` の 1 CSS px が常に整数個のデバイスピクセルになるよう、`desktop-scale.js` が `devicePixelRatio` から `#view-desktop` の CSS `zoom` を決める。整数倍率 `n = max(1, floor(devicePixelRatio))` に対して `zoom = n / devicePixelRatio`。たとえば 125%・150% は 1 倍、200%〜299% は 2 倍で描く（100% 未満のときも 1 倍）。ブラウザのズームと OS の表示スケールのどちらにも効き、倍率が変わったら（`resolution` メディアクエリの変化と `resize`）計算し直す。リンク集ページ（iframe）は、中の `devicePixelRatio` が整数倍率になっていて、中の文書の高さ（`documentElement.clientHeight`）が `innerHeight` から縮んでいなければ（Chromium のように親の `zoom` がそのまま伝わっていれば）何もしない。どちらかが崩れていれば（Firefox は前者、WebKit は後者）、iframe 要素に `zoom = 1 / 補正値` をかけて親の `zoom` を打ち消し、iframe の文書のルート（`<html>`）に同じ補正値の `zoom` をかける。判定と適用は倍率の変化・大きさの変化・iframe の読み込みのたびにやり直す。
+
+整数倍にしても、`#view-desktop` と iframe の左上がデバイスピクセルの途中にあると全体がにじむ（サイドバーの幅や iframe より上の文字の高さによって起きる）。そのため、左上がデバイスピクセルの境目に来るよう、両方の `left`/`top` を 1 デバイスピクセル未満だけずらす。`.desk-page-frame` が `position: relative` なのはこのため。倍率が変わったときと、どちらかの大きさが変わったとき（`ResizeObserver`）にやり直す。
+
+`zoom` の内側では `style.left` などの長さは補正前の値、`getBoundingClientRect()` やポインタイベントの座標は補正後の値になる。ドラッグ・リサイズ・コンボボックスのリストの配置は、ビューポート座標を `toDeskPx()` で換算してから使う。スクリーンの大きさ（`desktop-drag.js::screenSize`）は `clientWidth`/`clientHeight`（補正前の値）から取る。
 
 ### 装飾 vs 実機能
 

@@ -2,6 +2,7 @@ import { storage } from './storage.js';
 import { cache, el, apiFetch, describeError, createLoadGuard, setBusy, sanitizeMessage, sanitizeDisplayText, maybeLink } from './util.js';
 import { DesktopWindow } from './desktop-window.js';
 import { DesktopSettings } from './desktop-settings.js';
+import { initDeskScale } from './desktop-scale.js';
 import { tabAcrossEdge, focusableIn, isModalOpen, scheduleActiveSync } from './desktop-focus.js';
 
 const DESK_TEXT = {
@@ -369,6 +370,7 @@ function revealWindowWhenReady() {
 
 export const DesktopView = {
   init() {
+    initDeskScale();
     wirePageFrame();
     wireIconLaunchers();
     warmDeskFonts();
