@@ -990,8 +990,18 @@ body[data-view="sites"][data-style="table"] .swing-site-set {
   padding: var(--swing-space-1) var(--swing-space-2);
   border-bottom: 1px solid var(--swing-border);
   vertical-align: top;
-  overflow-wrap: anywhere;
+  overflow-wrap: break-word;
   unicode-bidi: isolate;
+}
+
+.swing-table .swing-break-anywhere {
+  min-width: 16ch;
+  overflow-wrap: anywhere;
+}
+
+.swing-table th,
+.swing-table .swing-nowrap {
+  white-space: nowrap;
 }
 
 .swing-table th {
@@ -1052,6 +1062,7 @@ body[data-view="sites"][data-style="table"] .swing-site-set {
 
 #status-check-result {
   margin-top: var(--swing-space-3);
+  overflow-x: auto;
 }
 
 #status-check-result h3 {

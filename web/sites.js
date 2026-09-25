@@ -105,21 +105,21 @@ function buildSiteTable(sites) {
   for (const site of sites) {
     const tr = el('tr', { 'data-stored': String(!!site.stored) });
     tr.append(el('td', { dir: 'auto' }, sanitizeDisplayText(site.d)));
-    tr.append(el('td', {}, storedBadge(site)));
+    tr.append(el('td', { class: 'swing-nowrap' }, storedBadge(site)));
     tr.append(el('td', {}, site.nip05 ? nip05Badge(site.nip05) : '–'));
-    tr.append(el('td', {}, replicaCountText(site)));
+    tr.append(el('td', { class: 'swing-nowrap' }, replicaCountText(site)));
     tr.append(
-      el('td', { class: 'swing-mono' }, [
+      el('td', { class: 'swing-mono swing-nowrap' }, [
         document.createTextNode(`${shortenMiddle(site.cid, 8, 6)} `),
         copyButton(site.cid),
       ]),
     );
-    tr.append(el('td', {}, formatSiteSize(site)));
-    tr.append(el('td', {}, formatTime(site.created_at)));
+    tr.append(el('td', { class: 'swing-nowrap' }, formatSiteSize(site)));
+    tr.append(el('td', { class: 'swing-nowrap' }, formatTime(site.created_at)));
     const linksTd = el('td', {});
-    if (site.url) linksTd.append(maybeLink(site.url, t('openSite')));
+    if (site.url) linksTd.append(el('span', { class: 'swing-nowrap' }, maybeLink(site.url, t('openSite'))));
     if (site.url && site.gateway_url) linksTd.append(document.createTextNode(' '));
-    if (site.gateway_url) linksTd.append(maybeLink(site.gateway_url, t('openGateway')));
+    if (site.gateway_url) linksTd.append(el('span', { class: 'swing-nowrap' }, maybeLink(site.gateway_url, t('openGateway'))));
     if (!site.url && !site.gateway_url) linksTd.append(document.createTextNode('–'));
     tr.append(linksTd);
     tbody.append(tr);
@@ -152,12 +152,12 @@ export function renderStatusCheck(status) {
     const tbody = el('tbody');
     for (const v of status.versions) {
       const tr = el('tr', { 'data-health': v.health });
-      tr.append(el('td', {}, v.npub ? shortenMiddle(v.npub, 10, 4) : '–'));
+      tr.append(el('td', { class: 'swing-nowrap' }, v.npub ? shortenMiddle(v.npub, 10, 4) : '–'));
       tr.append(el('td', { dir: 'auto' }, v.d ? sanitizeDisplayText(v.d) : '–'));
-      tr.append(el('td', { class: 'swing-mono' }, v.path || '–'));
-      tr.append(el('td', { class: 'swing-mono' }, v.cid ? shortenMiddle(v.cid, 8, 6) : '–'));
-      tr.append(el('td', {}, formatBytes(v.size)));
-      tr.append(el('td', {}, formatTime(v.created_at)));
+      tr.append(el('td', { class: 'swing-mono swing-break-anywhere' }, v.path || '–'));
+      tr.append(el('td', { class: 'swing-mono swing-nowrap' }, v.cid ? shortenMiddle(v.cid, 8, 6) : '–'));
+      tr.append(el('td', { class: 'swing-nowrap' }, formatBytes(v.size)));
+      tr.append(el('td', { class: 'swing-nowrap' }, formatTime(v.created_at)));
       tr.append(
         el('td', {}, [
           el('span', { class: 'swing-badge', 'data-health': v.health }, v.health),
@@ -178,9 +178,9 @@ export function renderStatusCheck(status) {
     const tbody = el('tbody');
     for (const site of status.sites) {
       const tr = el('tr');
-      tr.append(el('td', {}, shortenMiddle(site.npub, 10, 4)));
+      tr.append(el('td', { class: 'swing-nowrap' }, shortenMiddle(site.npub, 10, 4)));
       tr.append(el('td', { dir: 'auto' }, sanitizeDisplayText(site.d)));
-      tr.append(el('td', {}, site.actual == null ? '–' : formatBytes(site.actual)));
+      tr.append(el('td', { class: 'swing-nowrap' }, site.actual == null ? '–' : formatBytes(site.actual)));
       tbody.append(tr);
     }
     table.append(tbody);
