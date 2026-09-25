@@ -85,6 +85,7 @@ export function createDialog({ root, returnFocus, onOpen, onOk, onCancel, onAppl
 
   /* Runs before Tab/Escape/Enter so a page's own popup (e.g. a combobox) can claim the keystroke first. */
   function onKeydown(ev) {
+    if (!root.contains(document.activeElement)) return;
     if (onKey && onKey(ev)) return;
     if (ev.key === 'Escape') {
       ev.preventDefault();
@@ -134,6 +135,7 @@ export function createDialog({ root, returnFocus, onOpen, onOk, onCancel, onAppl
     if (ev.target.closest('.desk-tbtn')) return;
     if (ev.button !== 0) return;
     ev.preventDefault();
+    if (!root.contains(document.activeElement)) root.focus();
     const start = {
       startX: ev.clientX,
       startY: ev.clientY,
