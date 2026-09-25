@@ -5,6 +5,7 @@
 - [`dashboard/http-api.md`](dashboard/http-api.md) — HTTP API の入出力
 - [`dashboard/web.md`](dashboard/web.md) — 画面・フロントエンド（`web/*.js`）とCSSカスタマイズ
 - [`dashboard/desktop.md`](dashboard/desktop.md) — Desktop 画面（`web/desktop*`。`web.md` と並ぶ子ページ）
+  - [`dashboard/mascot.md`](dashboard/mascot.md) — Desktop 画面のマスコット（`web/desktop-mascot*`・`web/mascots/`。`desktop.md` の子ページ）
 
 ## 概要
 
@@ -110,12 +111,13 @@ HTTP サーバー（axum 0.8）で、ダッシュボードのブラウザ向け�
 | `GET /` | `text/html; charset=utf-8`（`index.html`） |
 | `GET /favicon.svg` | `image/svg+xml` |
 | `GET /favicon-32.png` `/apple-touch-icon.png` | `image/png`（`include_bytes!`） |
-| `GET /style.css` `/desktop.css` `/desktop-dialog.css` `/desktop-wallpaper.css` | `text/css; charset=utf-8` |
+| `GET /style.css` `/desktop.css` `/desktop-dialog.css` `/desktop-wallpaper.css` `/desktop-mascot-settings.css` | `text/css; charset=utf-8` |
 | `GET /*.js` | `text/javascript; charset=utf-8`。ファイルの一覧は `assets.rs::STATIC_ASSETS`（`web/*.js`）が正本 |
 | `GET /desktop-icons.svg` | `image/svg+xml` |
 | `GET /desktop-page.html` `/desktop-page.css` | `text/html; charset=utf-8` / `text/css; charset=utf-8`。Desktop 画面の iframe に入るリンク集ページとその専用 CSS（既定は `web/` の同名ファイル。ページの契約は [`dashboard/desktop.md#リンク集ページiframe`](dashboard/desktop.md#リンク集ページiframe)） |
 | `GET /desktop-frame.css` | `text/css; charset=utf-8`。差し替え対象ではない |
 | `GET /desktop-banner` | 既定は `image/gif`（`web/desktop-banner.gif`）。差し替えると拡張子から決める。差し替えられるので拡張子はパスに持たせない |
+| `GET /desktop-mascot.css` | `text/css; charset=utf-8` |
 | `GET /mascots/index.json` `/mascots/<id>/manifest.json` | `application/json`。Desktop 画面のマスコットのパック一覧と各パックのマニフェスト（同梱パックと `mascots_dir` のユーザー定義パック。詳細は上記「[マスコットのパック配信](#マスコットのパック配信srcdashboardmascotsrs)」、パック形式は [`dashboard/mascot.md#パック形式-1`](dashboard/mascot.md#パック形式-1)） |
 | `GET /mascots/<id>/<sprite>` | `image/png`/`image/gif`/`image/webp`（拡張子から決める）。各パックのスプライトシート |
 | `GET /fonts/pixelmplus12-regular.woff2` `/fonts/pixelmplus12-bold.woff2` | `font/woff2` |

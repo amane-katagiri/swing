@@ -6,7 +6,7 @@
 </p>
 
 <p align="center">
-  <img src="docs/assets/dashboard-desktop.png" alt="ダッシュボードの Desktop 画面。Windows 風デスクトップの上のブラウザウィンドウに、保存中のサイトのリンク集が並び、右下にデスクトップの背景を設定するコントロール パネルのダイアログが開いている" width="900">
+  <img src="docs/assets/dashboard-desktop.png" alt="ダッシュボードの Desktop 画面。Windows 風デスクトップの上のブラウザウィンドウに、保存中のサイトのリンク集が並び、右下にデスクトップの背景を設定するコントロール パネルのダイアログが開いている。タスクバーの上にはマスコットが 2 体立っている" width="900">
   <br>
   <sub>Desktop 画面（<a href="docker/demo/README.md">デモ環境</a>のサンプルデータ）</sub>
 </p>
@@ -237,6 +237,12 @@ SWING_DASHBOARD_UI=false
 ```
 
 見た目は `--swing-*` の CSS 変数と `SWING_DASHBOARD_CUSTOM_CSS`（`/custom.css` として配信される追加スタイルシート）でカスタマイズできます。Desktop 画面のリンク集ページは、`SWING_DASHBOARD_DESKTOP_PAGE`（ページ本体の HTML）・`SWING_DASHBOARD_DESKTOP_PAGE_CSS`（そのページ専用の CSS）・`SWING_DASHBOARD_DESKTOP_BANNER`（88×31 バナー画像）で丸ごと自分のものに差し替えられます（いずれも起動時に読み込みます）。このページは同一オリジンの iframe に入っているので、ダッシュボードのスタイルは一切当たらず、こちらのスタイルも外に漏れません。ページに `desk-link-list` などの決まった `id` を置いておくと、そこにリンク一覧が描画されます（詳しくは [`docs/architecture/dashboard/web.md`](docs/architecture/dashboard/web.md)）。API の詳しい仕様やガード（Host 検証、CSRF 対策など）は [`docs/architecture/dashboard.md`](docs/architecture/dashboard.md) を参照してください。
+
+### 自分のマスコットを追加する
+
+Desktop 画面を歩き回るマスコットは、同梱の 2 体（`mochi`・`neko`）に加えて自分で追加できます。`SWING_DASHBOARD_MASCOTS_DIR` にディレクトリを指定し、その直下に `manifest.json` とスプライト画像を入れたサブディレクトリ（1 つがそのまま 1 パック、ディレクトリ名がパックの id）を置いて `swing up` を再起動してください。マニフェストの書き方・検証規則は [`docs/architecture/dashboard/mascot.md#パック形式-1`](docs/architecture/dashboard/mascot.md#パック形式-1) を参照してください。
+
+どのマスコットを出すか・動き・更新の確認の間隔は、Desktop 画面の「コントロール パネル」の「マスコット」タブで選べます。
 
 ## 自分のサイトを公開する
 

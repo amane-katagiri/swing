@@ -5,6 +5,7 @@ import { DesktopSettings } from './desktop-settings.js';
 import { initDeskScale } from './desktop-scale.js';
 import { tabAcrossEdge, focusableIn, isModalOpen, scheduleActiveSync } from './desktop-focus.js';
 import { createUpdateWatcher } from './desktop-updates.js';
+import { DesktopMascots } from './desktop-mascot.js';
 
 const DESK_TEXT = {
   loading: 'よみこみちゅう…',
@@ -255,6 +256,7 @@ function wirePageFrame() {
     if (doc) {
       doc.addEventListener('click', () => selectIcon(null));
       doc.addEventListener('keydown', onFrameKeydown, true);
+      DesktopMascots.watchFrame(doc);
     }
     scheduleActiveSync();
     if (cache.sites) DesktopView.render();
@@ -265,7 +267,7 @@ function wirePageFrame() {
 }
 
 function outerDesktopFocusable() {
-  return focusableIn(document.getElementById('view-desktop'));
+  return focusableIn(document.getElementById('view-desktop'), { links: true });
 }
 
 function innerDesktopFocusable() {
@@ -394,8 +396,9 @@ export const DesktopView = {
     updateClock();
     setInterval(updateClock, 30000);
     DesktopWindow.init();
-    DesktopSettings.init();
+    DesktopSettings.init({ updates: desktopUpdates });
     desktopUpdates.start();
+    DesktopMascots.init({ updates: desktopUpdates });
     document.addEventListener('keydown', onDesktopKeydown, true);
     document.addEventListener('focusin', scheduleActiveSync);
     document.addEventListener('focusout', scheduleActiveSync);
@@ -405,6 +408,7 @@ export const DesktopView = {
   },
   onShow() {
     revealWindowWhenReady();
+    DesktopMascots.onShow();
     DesktopSettings.boot();
     if (cache.sites) this.render();
     const loaded = cache.sites ? Promise.resolve() : this.load();

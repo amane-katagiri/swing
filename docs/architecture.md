@@ -20,6 +20,7 @@
 | [`architecture/dashboard/http-api.md`](architecture/dashboard/http-api.md) | ダッシュボードの HTTP API |
 | [`architecture/dashboard/web.md`](architecture/dashboard/web.md) | ダッシュボードの画面（Desktop 以外）と CSS カスタマイズ（`dashboard.md` の子ページ） |
 | [`architecture/dashboard/desktop.md`](architecture/dashboard/desktop.md) | ダッシュボードの Desktop 画面（`dashboard.md` の子ページで `web.md` と並列） |
+| [`architecture/dashboard/mascot.md`](architecture/dashboard/mascot.md) | Desktop 画面のマスコット: パック形式・ふるまい・当たり判定・吹き出し・おしらせ（`desktop.md` の子ページ） |
 | [`architecture/release.md`](architecture/release.md) | ビルド（Windows 向けのクロスビルドを含む）とリリース（`.github/workflows/release.yml`） |
 
 ## 構成要素

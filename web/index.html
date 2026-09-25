@@ -13,6 +13,8 @@
 <link rel="stylesheet" href="/desktop.css">
 <link rel="stylesheet" href="/desktop-dialog.css">
 <link rel="stylesheet" href="/desktop-wallpaper.css">
+<link rel="stylesheet" href="/desktop-mascot-settings.css">
+<link rel="stylesheet" href="/desktop-mascot.css">
 <link rel="stylesheet" href="/custom.css">
 <style id="user-css"></style>
 </head>
@@ -267,6 +269,10 @@
           <div class="desk-resize desk-resize-se" data-dir="se"></div>
         </div>
 
+        <div class="desk-mascots" id="desk-mascots" hidden>
+          <div class="desk-sr-only" id="desk-mascot-live" aria-live="polite"></div>
+        </div>
+
         <div class="desk-window desk-dialog" id="desk-dialog-control-panel" role="dialog" aria-modal="true" aria-labelledby="desk-dialog-title" tabindex="-1" hidden>
           <div class="desk-titlebar desk-dialog-titlebar" id="desk-dialog-titlebar">
             <svg class="desk-titlebar-icon" aria-hidden="true"><use href="/desktop-icons.svg#icon-desk-control-panel-color"></use></svg>
@@ -285,6 +291,7 @@
           </div>
           <div class="desk-dialog-tabs" role="tablist" aria-label="コントロール パネルのタブ">
             <button type="button" class="desk-dialog-tab is-active" id="desk-tab-background" data-tab="background" role="tab" aria-selected="true" aria-controls="desk-tabpanel-background">背景</button>
+            <button type="button" class="desk-dialog-tab" id="desk-tab-mascot" data-tab="mascot" role="tab" aria-selected="false" aria-controls="desk-tabpanel-mascot" tabindex="-1">マスコット</button>
           </div>
           <div class="desk-dialog-body">
             <div class="desk-tabpanel" id="desk-tabpanel-background" role="tabpanel" aria-labelledby="desk-tab-background">
@@ -333,6 +340,49 @@
                 <p class="desk-wp-image-error" id="desk-wp-image-error" hidden></p>
               </fieldset>
               <p class="desk-wp-storage-error" id="desk-wp-storage-error" hidden></p>
+            </div>
+            <div class="desk-tabpanel" id="desk-tabpanel-mascot" role="tabpanel" aria-labelledby="desk-tab-mascot" hidden>
+              <div class="desk-wp-preview-wrap">
+                <div class="desk-wp-monitor">
+                  <div class="desk-wp-monitor-screen desk-ms-preview" id="desk-ms-preview"></div>
+                </div>
+              </div>
+              <fieldset class="desk-fieldset">
+                <legend>表示するマスコット</legend>
+                <ul class="desk-ms-list" id="desk-ms-list" aria-label="表示するマスコット"></ul>
+                <p class="desk-ms-list-status" id="desk-ms-list-status">よみこみちゅう…</p>
+              </fieldset>
+              <fieldset class="desk-fieldset">
+                <legend>更新の確認</legend>
+                <div class="desk-ms-row">
+                  <span id="desk-ms-interval-label">確認の間隔:</span>
+                  <div class="desk-combobox">
+                    <button type="button" class="desk-combobox-field" id="desk-ms-interval-field" role="combobox" aria-haspopup="listbox" aria-expanded="false" aria-controls="desk-ms-interval-list" aria-labelledby="desk-ms-interval-label desk-ms-interval-value">
+                      <span class="desk-combobox-value" id="desk-ms-interval-value">1 分</span>
+                      <span class="desk-combobox-arrow" aria-hidden="true"></span>
+                    </button>
+                    <ul class="desk-combobox-list" id="desk-ms-interval-list" role="listbox" aria-label="確認の間隔" hidden>
+                      <li class="desk-combobox-option" role="option" id="desk-ms-interval-opt-60" data-value="60" aria-selected="true">1 分</li>
+                      <li class="desk-combobox-option" role="option" id="desk-ms-interval-opt-300" data-value="300" aria-selected="false">5 分</li>
+                      <li class="desk-combobox-option" role="option" id="desk-ms-interval-opt-900" data-value="900" aria-selected="false">15 分</li>
+                      <li class="desk-combobox-option" role="option" id="desk-ms-interval-opt-1800" data-value="1800" aria-selected="false">30 分</li>
+                      <li class="desk-combobox-option" role="option" id="desk-ms-interval-opt-off" data-value="off" aria-selected="false">確認しない</li>
+                    </ul>
+                  </div>
+                </div>
+              </fieldset>
+              <fieldset class="desk-fieldset">
+                <legend>動き</legend>
+                <label class="desk-check">
+                  <input type="checkbox" class="desk-check-input" id="desk-ms-walk">
+                  <span class="desk-check-label">歩きまわる</span>
+                </label>
+                <label class="desk-check">
+                  <input type="checkbox" class="desk-check-input" id="desk-ms-chatter">
+                  <span class="desk-check-label">ひとりごとを言う</span>
+                </label>
+              </fieldset>
+              <p class="desk-wp-storage-error" id="desk-ms-storage-error" hidden></p>
             </div>
           </div>
           <div class="desk-dialog-buttons">

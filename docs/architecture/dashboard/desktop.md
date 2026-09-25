@@ -1,6 +1,6 @@
 # ダッシュボードの Desktop 画面（`web/desktop*.js`）
 
-[`../dashboard.md`](../dashboard.md) の子ページで、[`web.md`](web.md) と並列。ダッシュボード全体の構成・ルーティング・他画面は [`web.md`](web.md)、サーバ側は [`../dashboard.md`](../dashboard.md) を参照。
+[`../dashboard.md`](../dashboard.md) の子ページで、[`web.md`](web.md) と並列。ダッシュボード全体の構成・ルーティング・他画面は [`web.md`](web.md)、サーバ側は [`../dashboard.md`](../dashboard.md)、デスクトップのマスコットは子ページの [`mascot.md`](mascot.md) を参照。
 
 ## 構成
 
@@ -9,26 +9,33 @@ Desktop 画面専用のモジュール（依存は下から上への一方向。
 | ファイル | 役割 |
 |---|---|
 | `desktop-focus.js` | ウィンドウ/ダイアログの登録（`registerFrame`）とタイトルバーのアクティブ表示の同期（`scheduleActiveSync`）、開いているモーダルの判定（`isModalOpen`）、Tab の折り返し（`tabAcrossEdge`）、フォーカスを失ったときの戻し先の補助 |
-| `desktop-scale.js` | 表示倍率の整数倍への補正と左上のデバイスピクセルへの位置合わせ（`initDeskScale`）、ビューポート座標から `#view-desktop` 内の座標への換算（`toDeskPx`） |
+| `desktop-scale.js` | 表示倍率の整数倍への補正と左上のデバイスピクセルへの位置合わせ（`initDeskScale`）、ビューポート座標から `#view-desktop` 内の座標への換算（`toDeskPx`）、リンク集ページ（iframe）の中の座標からトップの文書のビューポート座標への換算（`frameToViewport`） |
 | `desktop-drag.js` | ウィンドウ/ダイアログのドラッグ・リサイズで共有するポインタ操作と座標のクランプ |
 | `desktop-combobox.js` | Win95 風コンボボックス（`createCombobox`） |
 | `desktop-wallpaper-image.js` | 壁紙の色・画像の量子化とダウンスケール（ファイルの読み込み・canvas への描画を含む） |
 | `desktop-dialog.js` | 任意のモーダルダイアログの共通の殻（`createDialog`。開閉・オーバーレイのクリックでのタイトルバー明滅・ドラッグ・Tab トラップ・フォーカス復帰） |
 | `desktop-window.js` | 「SWING Explorer」ウィンドウの移動・リサイズ・最小化・最大化・ジオメトリ計算（`DesktopWindow`） |
 | `desktop-wallpaper.js` | 「コントロール パネル」の「背景」タブ本体（`WallpaperPage`）。保存キーもここで定義する |
-| `desktop-settings.js` | 「コントロール パネル」の殻（`PAGES` を `desktop-dialog.js` に結び付ける、`DesktopSettings`） |
 | `desktop-updates.js` | 保存した版の更新の確認（`createUpdateWatcher`・`collectNotices`）。下記「[更新の確認](#更新の確認)」 |
+| `desktop-mascot-pack.js` | マスコットのパックの読み込み（`loadPacks`）。`/mascots/index.json` と各パックの `manifest.json` を取得し、検証・正規化してスプライトシートと当たり判定用のマスクを読み込む。以下マスコットの詳細は [`mascot.md`](mascot.md) |
+| `desktop-mascot-sprite.js` | 1 体の描画（`createSprite`）。土台と重ね絵のレイヤー、コマ送り（`createPlayer`）、左右反転、配置、不透明な画素での当たり判定、吹き出しを向ける点 |
+| `desktop-mascot-behavior.js` | 1 体のふるまいの状態機械（`createBehavior`）。DOM に触れず、乱数を差し込める |
+| `desktop-mascot-balloon.js` | 吹き出し（`createBalloon`）。文字送り・リンク・「とじる」・配置 |
+| `desktop-mascot.js` | マスコット全体の進行（`DesktopMascots`）。表示するパックごとに 1 体を出し、共有の `requestAnimationFrame` ループ・おしらせの振り分け・ポインタ操作と当たり判定の切り替えを持つ。`desktop.js` の `init`/`onShow` から呼ぶ。読み込んだパックの一覧（`packs()`・`whenLoaded()`）と設定の反映（`applySettings`）を「マスコット」タブに出す |
+| `desktop-mascot-settings.js` | 「コントロール パネル」の「マスコット」タブ本体（`MascotSettingsPage`）。保存キーもここで定義する |
+| `desktop-settings.js` | 「コントロール パネル」の殻（`PAGES` を `desktop-dialog.js` に結び付ける、`DesktopSettings`） |
 | `desktop.js` | 画面のロジック本体（デスクトップアイコンの選択・起動、リンク集ページへの書き込み、共通のクリック/フォーカス処理） |
 
 そのほかのファイル:
 
 | ファイル | 役割 |
 |---|---|
-| `desktop.css`・`desktop-dialog.css`・`desktop-wallpaper.css` | `index.html` が読む CSS（それぞれフォント・シェル・`--desk-*` 変数、ダイアログの枠・汎用部品、「背景」タブ固有）。読み込み順は [`web.md#css-カスタマイズのインターフェース`](web.md#css-カスタマイズのインターフェース) |
+| `desktop.css`・`desktop-dialog.css`・`desktop-wallpaper.css`・`desktop-mascot-settings.css`・`desktop-mascot.css` | `index.html` がこの順に読む CSS（それぞれフォント・シェル・`--desk-*` 変数、ダイアログの枠・汎用部品（チェックボックスを含む）、「背景」タブ固有、「マスコット」タブ固有、マスコットと吹き出し）。読み込み順は [`web.md#css-カスタマイズのインターフェース`](web.md#css-カスタマイズのインターフェース) |
 | `desktop-frame.css` | 窓側のスクロールバーの見た目。`desktop.js` がリンク集ページ（iframe）に差し込む（下記「[リンク集ページ（iframe）](#リンク集ページiframe)」） |
 | `desktop-page.html`・`desktop-page.css`・`desktop-banner.gif` | リンク集ページ・その専用 CSS・88×31 バナーの同梱版。設定で差し替えられる（[`../dashboard.md#設定dashboard`](../dashboard.md#設定dashboard)） |
 | `desktop-icons.svg` | ピクセルアートアイコンのスプライト。`index.html` から `<use>` で参照する。SE ロゴの E は S との隙間を切り欠いた塗りの図形で持つ（外部ファイルの `<symbol>` の `mask` は、Firefox では CSS `zoom` の内側でずれるため使わない） |
 | `fonts/` | 同梱フォント PixelMplus12 とそのライセンス |
+| `mascots/` | 同梱のマスコットのパック（`mochi/`・`neko/`。`index.json` は静的ファイルではなく実行時に生成する。[`mascot.md`](mascot.md)） |
 
 ## 画面
 
@@ -58,6 +65,7 @@ PixelMplus12（`web/fonts/`）を使う。フォントの読み込みが終わ�
 | `.desk-resize` ハンドル（8 個） | ウィンドウのリサイズ。最大化中は非表示 |
 | タスクバーのタスクボタン | 最小化⇄復元。ウィンドウを閉じると消える |
 | デスクトップアイコン（4 個） | シングルクリックで選択（常に 1 つだけ）。「SWING Explorer」「コントロール パネル」はダブルクリック/Enter/Space で開ける。「マイ コンピュータ」「ごみ箱」は選択のみ |
+| マスコット・吹き出し | 絵の不透明な画素だけがドラッグで移動、クリックでせりふ（透明な画素のところは下の要素に届く）。吹き出しのリンク・「とじる」（[`mascot.md`](mascot.md)） |
 
 残りは全部装飾（Start ボタン、アドレスバー、ステータスバー、タスクバーの背景、トレイのアイコン+時計）。
 
@@ -67,13 +75,15 @@ PixelMplus12（`web/fonts/`）を使う。フォントの読み込みが終わ�
 
 ### キーボードフォーカス
 
-SWING Explorer ウィンドウ・「コントロール パネル」ダイアログ・デスクトップアイコン・タスクバーは同じフォーカス表示を共有する。フォーカス表示は実機能コントロールだけに付け、ウィンドウ/ダイアログのアクティブ・非アクティブはタイトルバーの配色で示す（フォーカスを含むもの、モーダルが開いていればそれだけがアクティブ）。フォーカスがウィンドウ/ダイアログの中に入るとアイコンの選択を解除する。Tab は、モーダルが開いていなければ `#view-desktop` の実機能コントロール全体（iframe 内のリンクを含む）の先頭/末尾で、開いていればそのダイアログの中で折り返す。モーダルが開いていないときの Esc はサイドナビの「Desktop」リンクへフォーカスを移す。
+SWING Explorer ウィンドウ・「コントロール パネル」ダイアログ・デスクトップアイコン・タスクバーは同じフォーカス表示を共有する。フォーカス表示は実機能コントロールだけに付け、ウィンドウ/ダイアログのアクティブ・非アクティブはタイトルバーの配色で示す（フォーカスを含むもの、モーダルが開いていればそれだけがアクティブ）。フォーカスがウィンドウ/ダイアログの中に入るとアイコンの選択を解除する。Tab は、モーダルが開いていなければ `#view-desktop` の実機能コントロール全体（マスコットの吹き出しのリンクと iframe 内のリンクを含む）の先頭/末尾で、開いていればそのダイアログの中で折り返す。モーダルが開いていないときの Esc はサイドナビの「Desktop」リンクへフォーカスを移す。
 
 ### コントロール パネル
 
-デスクトップアイコン「コントロール パネル」をダブルクリックまたは Enter/Space でモーダルダイアログ「コントロール パネル」を開く。ロジックは 3 層（ダイアログ一般の機能を持つ `desktop-dialog.js`、タブ切り替えの殻 `desktop-settings.js`、各タブの中身の `desktop-wallpaper.js::WallpaperPage`）に分かれる。
+デスクトップアイコン「コントロール パネル」をダブルクリックまたは Enter/Space でモーダルダイアログ「コントロール パネル」を開く。タブは「背景」「マスコット」の 2 つ。ロジックは 3 層（ダイアログ一般の機能を持つ `desktop-dialog.js`、タブ切り替えの殻 `desktop-settings.js`、各タブの中身の `desktop-wallpaper.js::WallpaperPage`・`desktop-mascot-settings.js::MascotSettingsPage`）に分かれる。
 
-**Page のインターフェース**: `desktop-settings.js` の `PAGES` の各要素は、`id`（`data-tab` と一致）・`init({changed, dialog})`・`open()`・`isDirty()`・`save()`・`discard()` を持つオブジェクト（任意で `onKey(ev)`・`boot()`）。ドラッグ・Tab トラップ・Esc/Enter・OK/キャンセル/適用ボタンは `createDialog` が全ページ共通で持つ（フォーカス表示は CSS）。
+**Page のインターフェース**: `desktop-settings.js` の `PAGES` の各要素は、`id`（`data-tab` と一致）・`init({changed, dialog, updates})`（`updates` は `desktop.js` の `desktopUpdates`）・`open()`・`isDirty()`・`save()`・`discard()` を持つオブジェクト（任意で `onKey(ev)`・`boot()`）。ドラッグ・Tab トラップ・Esc/Enter・OK/キャンセル/適用ボタンは `createDialog` が全ページ共通で持つ（フォーカス表示は CSS）。
+
+**タブ**: タブのボタンはクリックか、フォーカスしたタブで ←/→（端で折り返す）・Home/End で切り替える。Tab で止まるのは選択中のタブだけ（他は `tabindex="-1"`）。選んだタブはダイアログを閉じて開き直しても保つ（ページを読み込み直すと「背景」に戻る）。
 
 **ボタン**: OK は変更のあるページを全部保存してから閉じる（保存に失敗したページがあれば閉じない）。キャンセル/×/Esc は全ページ破棄してから閉じる。適用は変更のあるページだけ保存し、ダイアログは開いたまま。
 
@@ -84,6 +94,8 @@ SWING Explorer ウィンドウ・「コントロール パネル」ダイアロ�
 - **永続化**: `web/storage.js` 経由で `swing:desktop:wallpaper` キー（`desktop-wallpaper.js` で定義）に JSON で保存する（`color`・`image` は独立で、どちらか一方・両方・どちらも無し、いずれも正当な状態）。壊れた/想定外の値はキー単位で既定へ落とす。
 - **画像の形**: `image` は `{dataUrl, width, height, display, filename}`（`dataUrl` は `data:image/` で始まる文字列、`display` は上の 5 つのどれか）。
 - **適用先**: `#desk-wallpaper`（アイコンより下・ウィンドウより下の層）。保存値はページ読み込み時に 1 回 `localStorage` から読み、以後はメモリ上の保存値を Desktop 画面の表示のたびに当て直す（別のタブで保存した値は読み直さない）。保存に失敗したらエラーを出し、保存値は変えない。
+
+**マスコットタブ（`MascotSettingsPage`）**: 表示するマスコットの選択・更新の確認の間隔（下記「[更新の確認](#更新の確認)」）・動き（「歩きまわる」「ひとりごとを言う」）を選び、`swing:desktop:mascot` キーに保存する。詳細は [`mascot.md#マスコットタブ`](mascot.md#マスコットタブ)。
 
 ### レイアウト
 
@@ -118,11 +130,11 @@ Desktop 画面では `.swing-main` の幅制限と余白を外して画面いっ
 
 ### 更新の確認
 
-`desktop-updates.js::createUpdateWatcher` が、新しく保存した版を見つけておしらせ（イベント）を流す。`desktop.js` が 1 つだけ作って `desktopUpdates` として公開し、受け手は `subscribe(fn)` で登録する。
+`desktop-updates.js::createUpdateWatcher` が、新しく保存した版を見つけておしらせ（イベント）を流す。`desktop.js` が 1 つだけ作って `desktopUpdates` として公開し、受け手（マスコット。[`mascot.md#おしらせ`](mascot.md#おしらせ)）は `subscribe(fn)` で登録する。
 
-- **確認の時機**: 60 秒ごと、Desktop 画面を表示したとき（`/api/sites` の初回読み込みの後）、タブが前面に戻ったとき（`visibilitychange`）。Desktop 画面が表示されていない・タブが裏にあるときは何もしない。同時には 1 回しか走らない。
+- **確認の時機**: 一定の間隔ごと（「マスコット」タブで選ぶ。既定 60 秒。`setInterval(ms)` で変える）、Desktop 画面を表示したとき（`/api/sites` の初回読み込みの後）、タブが前面に戻ったとき（`visibilitychange`）。Desktop 画面が表示されていない・タブが裏にあるときは何もしない。同時には 1 回しか走らない。「確認しない」（`setInterval(null)`）のときはタイマーを止め、表示時・前面に戻ったときも含めて一切確認しない（`/api/activity` を呼ばない）。
 - **確認の中身**: [`GET /api/activity`](http-api.md#get-apiactivity) の `latest_stored_at` だけを見る。これが前回おしらせした値を超えたときだけ、手元の `cache.sites` に同じかより新しい `stored_at` が無ければ `DesktopView.load(true)` で `/api/sites` を取り直す（Explorer の一覧と Sites 画面の表示もこの結果で更新される）。
-- **おしらせの対象**（`collectNotices`）: `accounts` と `unfollowed.accounts` のうち `stored === true` で、リンク先（`gateway_url` か `url`）があり、`stored_at` が前回おしらせした値より新しい版。`stored_at` の昇順に並べる。
+- **おしらせの対象**（`collectNotices`）: `accounts` と `unfollowed.accounts` のうち `stored === true` で、リンク先（`gateway_url`、無ければ `url`）が `http://`・`https://` で始まり（`util.js::isHttpUrl`）、`stored_at` が前回おしらせした値より新しい版。`stored_at` の昇順に並べる。
 - **既読**: 受け手が `acknowledge(storedAt)` を呼ぶと `localStorage["swing:desktop:seen"]` をその値まで進める（戻しはしない）。ページを読み込み直すと、おしらせ済みでも既読になっていない版はもう一度おしらせする。値が無いとき（初めて開いたとき）は、その時点の `latest_stored_at`（無ければ 0）を既読として記録するだけで、おしらせはしない。
 - **流すイベント**: `{kind: 'sites-stored', notices}`（`notices` の各要素は `{pubkey, npub, site, href, storedAt}`。`site` は `/api/sites` のサイト）、`{kind: 'fetch-error', error}`（失敗が続く間は最初の 1 回だけ）、`{kind: 'recovered'}`（失敗の後に最初に成功したとき）。
 

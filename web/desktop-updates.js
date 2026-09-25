@@ -1,8 +1,7 @@
 import { storage } from './storage.js';
-import { apiFetch } from './util.js';
+import { apiFetch, isHttpUrl } from './util.js';
 
 export const SEEN_KEY = 'swing:desktop:seen';
-const INTERVAL_MS = 60000;
 
 function readSeen() {
   const n = Number.parseInt(storage.get(SEEN_KEY, ''), 10);
@@ -32,8 +31,8 @@ function newestStoredAt(data) {
 export function collectNotices(data, since) {
   const notices = [];
   for (const { acct, site } of storedSites(data)) {
-    const href = site.gateway_url || site.url || null;
-    if (!href || site.stored_at == null || site.stored_at <= since) continue;
+    const href = site.gateway_url || site.url;
+    if (!isHttpUrl(href) || site.stored_at == null || site.stored_at <= since) continue;
     notices.push({ pubkey: acct.pubkey, npub: acct.npub, site, href, storedAt: site.stored_at });
   }
   notices.sort((a, b) => a.storedAt - b.storedAt);
@@ -46,6 +45,8 @@ export function createUpdateWatcher({ currentSites, reloadSites, isActive }) {
   let seen = readSeen();
   let announced = seen;
   let timer = null;
+  let intervalMs = 60000;
+  let started = false;
   let inFlight = false;
   let failing = false;
 
@@ -65,7 +66,7 @@ export function createUpdateWatcher({ currentSites, reloadSites, isActive }) {
   }
 
   async function check() {
-    if (inFlight || !isActive()) return;
+    if (intervalMs == null || inFlight || !isActive()) return;
     inFlight = true;
     try {
       const { latest_stored_at: latest } = await apiFetch('/api/activity');
@@ -102,10 +103,12 @@ export function createUpdateWatcher({ currentSites, reloadSites, isActive }) {
 
   function schedule() {
     clearTimeout(timer);
+    timer = null;
+    if (intervalMs == null) return;
     timer = setTimeout(async () => {
       await check();
       schedule();
-    }, INTERVAL_MS);
+    }, intervalMs);
   }
 
   return {
@@ -113,7 +116,12 @@ export function createUpdateWatcher({ currentSites, reloadSites, isActive }) {
       document.addEventListener('visibilitychange', () => {
         if (!document.hidden) check();
       });
+      started = true;
       schedule();
+    },
+    setInterval(ms) {
+      intervalMs = ms;
+      if (started) schedule();
     },
     checkNow() {
       return check();

@@ -1,6 +1,6 @@
 # ダッシュボードの画面（`web/index.html`, `web/*.js`, `web/*.css`）
 
-[`../dashboard.md`](../dashboard.md) の一部。サーバ側の起動・ガード・タイムアウト・静的ファイル配信は [`../dashboard.md`](../dashboard.md)、HTTP API の入出力は [`http-api.md`](http-api.md)、Desktop 画面の詳細は [`desktop.md`](desktop.md) を参照。
+[`../dashboard.md`](../dashboard.md) の一部。サーバ側の起動・ガード・タイムアウト・静的ファイル配信は [`../dashboard.md`](../dashboard.md)、HTTP API の入出力は [`http-api.md`](http-api.md)、Desktop 画面の詳細は [`desktop.md`](desktop.md)（マスコットは [`mascot.md`](mascot.md)）を参照。
 
 ## 構成
 
@@ -20,7 +20,7 @@
 
 Desktop 画面専用のモジュール（`desktop*.js`）とその CSS は [`desktop.md#構成`](desktop.md#構成) を参照。
 
-`index.html` が読む CSS は `style.css`（全画面共通）と Desktop 画面用の 3 ファイル（[`desktop.md#構成`](desktop.md#構成)）。アイコンは `index.html` の `<link>` で `favicon-32.png`・`favicon.svg`・`apple-touch-icon.png` の 3 つを指定する。Desktop 画面のアイコンは `web/desktop-icons.svg`（[`desktop.md#構成`](desktop.md#構成)）。
+`index.html` が読む CSS は `style.css`（全画面共通）と Desktop 画面用の 5 ファイル（[`desktop.md#構成`](desktop.md#構成)）。アイコンは `index.html` の `<link>` で `favicon-32.png`・`favicon.svg`・`apple-touch-icon.png` の 3 つを指定する。Desktop 画面のアイコンは `web/desktop-icons.svg`（[`desktop.md#構成`](desktop.md#構成)）。
 
 ### ルーティング
 
@@ -152,6 +152,7 @@ NIP-05 の検証結果はバッジで `OK`（`verified`）/ `NG`（`mismatch`）
 | `swing:user-css` | 文字列（CSS） | Settings のカスタム CSS 欄の内容 |
 | `swing:desktop:visits` | 整数の文字列 | Desktop 画面の来訪者カウンタ（[`desktop.md`](desktop.md#リンク集ページiframe)） |
 | `swing:desktop:wallpaper` | JSON（`{color?, image?}`、両方省略可。詳細は [`desktop.md`「コントロール パネル」](desktop.md#コントロール-パネル)） | Desktop 画面の壁紙設定 |
+| `swing:desktop:mascot` | JSON（`{packs?, interval, walk, chatter}`。詳細は [`mascot.md`「マスコットタブ」](mascot.md#マスコットタブ)） | Desktop 画面のマスコットと更新の確認の設定 |
 
 ## 表示言語（i18n）
 
@@ -163,7 +164,7 @@ Desktop 画面は UI 表示言語の設定に関わらず全部固定の日本�
 
 ## CSS カスタマイズのインターフェース
 
-読み込み順は `style.css` → Desktop 系 3 ファイル（[`desktop.md#構成`](desktop.md#構成)） → `/custom.css`（サーバ設定、[`../dashboard.md`](../dashboard.md#静的ファイルの配信srcdashboardassetsrs)） → `<style id="user-css">`（ブラウザの `localStorage`、後勝ち）の順。Desktop 画面は `--swing-*` 変数を参照せず、iframe のリンク集ページにはどれも届かない（[`desktop.md`](desktop.md)）。
+読み込み順は `style.css` → Desktop 系 5 ファイル（[`desktop.md#構成`](desktop.md#構成)） → `/custom.css`（サーバ設定、[`../dashboard.md`](../dashboard.md#静的ファイルの配信srcdashboardassetsrs)） → `<style id="user-css">`（ブラウザの `localStorage`、後勝ち）の順。Desktop 画面は `--swing-*` 変数を参照せず、iframe のリンク集ページにはどれも届かない（[`desktop.md`](desktop.md)）。
 
 `--swing-root`（webring の root ノードの色）と `--swing-focus` は `var(--swing-accent)` を参照するので、アクセントを変えるだけで揃って変わる。
 

@@ -149,8 +149,12 @@ export function shortenMiddle(str, head, tail) {
   return `${str.slice(0, h)}…${str.slice(-t2)}`;
 }
 
+export function isHttpUrl(url) {
+  return typeof url === 'string' && /^https?:\/\//i.test(url);
+}
+
 export function maybeLink(url, text) {
-  if (typeof url === 'string' && /^https?:\/\//i.test(url)) {
+  if (isHttpUrl(url)) {
     return el('a', { href: url, target: '_blank', rel: 'noopener noreferrer' }, text || sanitizeDisplayText(url));
   }
   return el('span', {}, text || sanitizeDisplayText(url) || '');

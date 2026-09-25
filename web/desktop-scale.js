@@ -8,6 +8,13 @@ export function toDeskPx(viewportPx) {
   return viewportPx / scale;
 }
 
+export function frameToViewport(frameEl, x, y) {
+  const rect = frameEl.getBoundingClientRect();
+  const win = frameEl.contentWindow;
+  const ratio = win && win.innerWidth > 0 ? rect.width / win.innerWidth : 1;
+  return { x: rect.left + x * ratio, y: rect.top + y * ratio };
+}
+
 function zoomValue(z) {
   return Math.abs(z - 1) < 1e-6 ? '' : String(z);
 }

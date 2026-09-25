@@ -1,0 +1,147 @@
+/* Above the icons and the SWING Explorer window, below the control panel overlay (20) and dialog (21). */
+.desk-mascots {
+  position: absolute;
+  inset: 0;
+  z-index: 10;
+  pointer-events: none;
+}
+
+.desk-mascots[hidden] {
+  display: none;
+}
+
+.desk-mascot {
+  position: absolute;
+  pointer-events: none;
+  touch-action: none;
+}
+
+.desk-mascot.is-hot {
+  pointer-events: auto;
+  cursor: grab;
+}
+
+.desk-mascot[hidden] {
+  display: none;
+}
+
+.desk-mascot-flip {
+  position: absolute;
+  inset: 0;
+}
+
+.desk-mascot-flip.is-flipped {
+  transform: scaleX(-1);
+}
+
+.desk-mascot-layer {
+  position: absolute;
+  inset: 0;
+  background-repeat: no-repeat;
+  image-rendering: pixelated;
+  pointer-events: none;
+}
+
+.desk-balloon {
+  position: absolute;
+  box-sizing: border-box;
+  width: max-content;
+  max-width: min(240px, calc(100% - 8px));
+  padding: 4px 6px;
+  background: #ffffe1;
+  border: 1px solid #000000;
+  color: #000000;
+  font-family: var(--desk-font-ui);
+  font-size: 12px;
+  line-height: 16px;
+  pointer-events: auto;
+  cursor: default;
+}
+
+.desk-balloon[hidden] {
+  display: none;
+}
+
+.desk-balloon-text {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.desk-balloon-rest {
+  visibility: hidden;
+}
+
+.desk-balloon-links {
+  margin: 4px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.desk-balloon-links[hidden],
+.desk-balloon-more[hidden],
+.desk-balloon-buttons[hidden] {
+  display: none;
+}
+
+.desk-balloon-links li {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.desk-balloon-links li::before {
+  content: "▸ ";
+}
+
+.desk-balloon-link {
+  color: #0000ee;
+  text-decoration: underline;
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+.desk-balloon-link:visited {
+  color: #551a8b;
+}
+
+.desk-balloon-link:focus-visible {
+  outline: 1px dotted #000000;
+  outline-offset: 0;
+}
+
+.desk-balloon-more {
+  margin: 2px 0 0;
+}
+
+.desk-balloon-buttons {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 6px;
+}
+
+.desk-balloon-tail {
+  position: absolute;
+  top: 100%;
+  margin-top: -1px;
+  display: block;
+}
+
+.desk-balloon[data-placement="below"] .desk-balloon-tail {
+  top: auto;
+  bottom: 100%;
+  margin-top: 0;
+  margin-bottom: -1px;
+  transform: scaleY(-1);
+}
+
+.desk-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}

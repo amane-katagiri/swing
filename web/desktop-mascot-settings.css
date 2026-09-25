@@ -1,0 +1,89 @@
+.desk-ms-preview {
+  position: relative;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  overflow: hidden;
+}
+
+.desk-ms-preview > .desk-ms-still {
+  margin-bottom: 8px;
+}
+
+.desk-ms-still {
+  display: block;
+  flex: none;
+  background-repeat: no-repeat;
+  image-rendering: pixelated;
+}
+
+.desk-ms-list {
+  max-height: 156px;
+  margin: 0;
+  padding: 2px;
+  overflow-y: auto;
+  list-style: none;
+  background: #ffffff;
+  box-shadow:
+    inset 1px 1px 0 var(--desk-shadow),
+    inset -1px -1px 0 var(--desk-highlight),
+    inset 2px 2px 0 var(--desk-dark-shadow),
+    inset -2px -2px 0 var(--desk-face-light);
+}
+
+.desk-ms-list[hidden],
+.desk-ms-list-status[hidden] {
+  display: none;
+}
+
+.desk-ms-item {
+  padding: 2px 4px;
+}
+
+.desk-ms-item.is-selected {
+  background: var(--desk-navy);
+}
+
+.desk-ms-item.is-selected .desk-ms-name {
+  color: #ffffff;
+}
+
+.desk-ms-item.is-selected .desk-check-input:focus-visible ~ .desk-ms-name {
+  outline-color: #ffffff;
+}
+
+.desk-ms-thumb {
+  display: flex;
+  flex: none;
+  align-items: flex-start;
+  justify-content: center;
+  width: 48px;
+  height: 48px;
+  overflow: hidden;
+}
+
+.desk-ms-name {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.desk-ms-list-status {
+  margin: 0;
+  font-size: 12px;
+}
+
+.desk-ms-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 8px;
+  align-items: center;
+  min-width: 0;
+  font-size: 12px;
+}
+
+#desk-ms-interval-label {
+  flex: none;
+}
