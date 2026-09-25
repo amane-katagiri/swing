@@ -3,6 +3,7 @@ mod assets;
 mod config_dto;
 pub(crate) mod dto;
 pub mod guard;
+mod mascots;
 mod session;
 #[cfg(test)]
 mod test_support;
@@ -55,6 +56,7 @@ pub struct AppState {
     pub signer: Option<Signer>,
     pub pairing: std::sync::Mutex<Option<Pairing>>,
     pub desktop: Option<DesktopAssets>,
+    mascots: Option<mascots::MascotRegistry>,
     pub exit: ExitRequest,
     pub restart_required: std::sync::atomic::AtomicBool,
     token: std::sync::RwLock<String>,
@@ -75,6 +77,13 @@ impl AppState {
         } else {
             None
         };
+        let mascots = if config.dashboard.ui {
+            Some(mascots::MascotRegistry::load(
+                config.dashboard.mascots_dir.as_deref(),
+            ))
+        } else {
+            None
+        };
         let display_config = RwLock::new(config.clone());
         Ok(Self {
             relay: RwLock::new(None),
@@ -90,6 +99,7 @@ impl AppState {
             signer,
             pairing: std::sync::Mutex::new(None),
             desktop,
+            mascots,
             exit,
             restart_required: std::sync::atomic::AtomicBool::new(false),
             token: std::sync::RwLock::new(token),
@@ -150,6 +160,8 @@ fn ui_router() -> Router<Arc<AppState>> {
         .route("/desktop-page.css", get(assets::desktop_page_css))
         .route("/desktop-banner", get(assets::desktop_banner))
         .route("/custom.css", get(assets::custom_css))
+        .route("/mascots/index.json", get(mascots::index))
+        .route("/mascots/{id}/{file}", get(mascots::file))
         .route("/login", get(session::login_page))
 }
 

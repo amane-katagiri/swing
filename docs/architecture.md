@@ -72,10 +72,10 @@ swing/
     settings/        全設定キーのカタログ（mod.rs）、`swing.example.toml`/`.env.example` の生成（example.rs）、`PUT /api/config`・`POST /api/setup` の書き込み（edit.rs）。詳細は下記「設定と環境変数」と architecture/dashboard.md
     stop.rs          `swing stop`（動いている `swing up` のダッシュボード API 経由。API に到達できなければ「動いていない」として終了する）。詳細は architecture/up.md, architecture/service.md
     shutdown.rs      `cancel_on_signal(grace)`（SIGINT/SIGTERM → CancellationToken、force-exit watchdog、2 回目のシグナルで即時終了）、`RUNTIME_SHUTDOWN_TIMEOUT`、`ExitRequest`/`Exit`（停止・再起動の要求と、`up::run` が返す `Exit::Stop`/`Exit::Restart`）。up/agent 共通
-    dashboard/       `swing up` 常駐の Web ダッシュボード兼制御 API（mod.rs, guard.rs, api.rs, session.rs, dto.rs, config_dto.rs, assets.rs, upload.rs, test_support.rs）。詳細は architecture/dashboard.md
+    dashboard/       `swing up` 常駐の Web ダッシュボード兼制御 API（mod.rs, guard.rs, api.rs, session.rs, dto.rs, config_dto.rs, assets.rs, mascots.rs, upload.rs, test_support.rs）。詳細は architecture/dashboard.md
     api_client.rs    ダッシュボード API を呼ぶ CLI 共通クライアント（`ApiClient`。`<state_dir>/dashboard.token` を Bearer トークンとして送る）。使うサブコマンドは architecture/cli.md の「共通」
     test_support.rs  `#[cfg(test)]` のクレート共通フィクスチャ（`FakeKubo`、CID・鍵・イベントのテストヘルパ）
-  web/               ダッシュボードのフロント（index.html, style.css, ES modules（setup.js を含む）, 画像・フォントなどの静的アセット一式）。ビルド工程なしで include_str!/include_bytes! によりバイナリへ埋め込む。desktop-page.html / desktop-page.css / desktop-banner.gif（Desktop 画面のリンク集ページ）だけは設定で差し替えられる。詳細は architecture/dashboard.md
+  web/               ダッシュボードのフロント（index.html, style.css, ES modules（setup.js を含む）, 画像・フォントなどの静的アセット一式）。ビルド工程なしで include_str!/include_bytes! によりバイナリへ埋め込む。desktop-page.html / desktop-page.css / desktop-banner.gif（Desktop 画面のリンク集ページ）だけは設定で差し替えられ、mascots/（同梱の Desktop マスコットパック）は `[dashboard].mascots_dir` で指すディレクトリのユーザー定義パックを追加できる。詳細は architecture/dashboard.md
     fonts/           Desktop 画面の同梱フォント PixelMplus12（woff2）とそのライセンス
   build.rs           Windows 向けのとき、exe にアイコン（assets/swing.ico）とバージョン情報を埋め込む（winresource）
   assets/swing.ico   swing.exe のファイルアイコン（web/favicon.svg から書き出した 16〜256px）

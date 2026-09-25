@@ -648,6 +648,13 @@ fn resolve_dashboard(
         settings::env_of("dashboard.desktop_banner"),
         file.desktop_banner,
     );
+    let mascots_dir = resolve_opt_path(
+        sources,
+        "dashboard.mascots_dir",
+        get_env,
+        settings::env_of("dashboard.mascots_dir"),
+        file.mascots_dir,
+    );
 
     let max_upload = resolve(
         sources,
@@ -674,6 +681,7 @@ fn resolve_dashboard(
         desktop_page,
         desktop_page_css,
         desktop_banner,
+        mascots_dir,
         max_upload,
     })
 }
@@ -1178,6 +1186,7 @@ mod tests {
         assert_eq!(cfg.dashboard.desktop_page, None);
         assert_eq!(cfg.dashboard.desktop_page_css, None);
         assert_eq!(cfg.dashboard.desktop_banner, None);
+        assert_eq!(cfg.dashboard.mascots_dir, None);
         assert_eq!(cfg.dashboard.max_upload, 2 * (1u64 << 30));
     }
 
@@ -1266,6 +1275,7 @@ mod tests {
                 desktop_page: Some("/etc/swing/page.html".into()),
                 desktop_page_css: Some("/etc/swing/page.css".into()),
                 desktop_banner: Some("/etc/swing/banner.png".into()),
+                mascots_dir: Some("/etc/swing/mascots".into()),
                 max_upload: Some("4GB".into()),
             },
             ..Default::default()
@@ -1278,6 +1288,7 @@ mod tests {
             "SWING_DASHBOARD_DESKTOP_PAGE" => Some("/env/page.html".into()),
             "SWING_DASHBOARD_DESKTOP_PAGE_CSS" => Some("/env/page.css".into()),
             "SWING_DASHBOARD_DESKTOP_BANNER" => Some("/env/banner.gif".into()),
+            "SWING_DASHBOARD_MASCOTS_DIR" => Some("/env/mascots".into()),
             _ => None,
         })
         .unwrap();
@@ -1306,6 +1317,10 @@ mod tests {
         assert_eq!(
             cfg.dashboard.desktop_banner,
             Some(PathBuf::from("/env/banner.gif"))
+        );
+        assert_eq!(
+            cfg.dashboard.mascots_dir,
+            Some(PathBuf::from("/env/mascots"))
         );
     }
 

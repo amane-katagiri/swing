@@ -133,6 +133,7 @@ pub struct DashboardFile {
     pub desktop_page: Option<String>,
     pub desktop_page_css: Option<String>,
     pub desktop_banner: Option<String>,
+    pub mascots_dir: Option<String>,
     pub max_upload: Option<String>,
 }
 
@@ -300,6 +301,7 @@ pub struct DashboardConfig {
     pub desktop_page: Option<PathBuf>,
     pub desktop_page_css: Option<PathBuf>,
     pub desktop_banner: Option<PathBuf>,
+    pub mascots_dir: Option<PathBuf>,
     pub max_upload: u64,
 }
 

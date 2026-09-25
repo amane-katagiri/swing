@@ -1,0 +1,33 @@
+{
+  "format": 1,
+  "name": "もち",
+  "sprite": "sprite.png",
+  "frame": { "width": 48, "height": 48 },
+  "scale": 2,
+  "anchor": { "x": 24, "y": 48 },
+  "balloon": { "x": 28, "y": 9 },
+  "facing": "right",
+  "speed": 20,
+  "animations": {
+    "idle": { "frames": [0, 1], "fps": 2 },
+    "walk": { "frames": [2, 3, 4, 5], "fps": 6 },
+    "talk": { "frames": [0, 1], "fps": 2 },
+    "sleep": { "frames": [6, 7], "fps": 1, "flip": false },
+    "surprise": { "frames": [8], "fps": 1, "loop": false },
+    "drag": { "frames": [9], "fps": 1 },
+    "fall": { "frames": [9], "fps": 1 }
+  },
+  "overlays": {
+    "blink": { "frames": [{ "index": 10, "ms": 60 }, { "index": 11, "ms": 110 }, { "index": 10, "ms": 60 }], "interval": [2500, 6000], "on": ["idle", "walk", "talk"] },
+    "mouth": { "frames": [12, 13], "fps": 8, "on": ["talk"] }
+  },
+  "lines": {
+    "greet": ["やっほー！", "おかえり〜！", "今日もよろしくね！"],
+    "site-stored": ["{title} が更新されたよ！", "{title} に新しい版がきたよ〜"],
+    "sites-stored-many": ["新しい更新が {count} 件あるよ！"],
+    "fetch-error": ["サーバにつながらないみたい…"],
+    "recovered": ["つながったよ！"],
+    "idle": ["ひまだね〜", "リンク集、見てみる？", "ふぁ〜あ…"],
+    "click": ["なあに？", "くすぐったいよ〜", "えへへ"]
+  }
+}

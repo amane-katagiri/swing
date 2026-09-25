@@ -107,7 +107,7 @@ pub(super) fn register(router: Router<Arc<AppState>>) -> Router<Arc<AppState>> {
     })
 }
 
-fn bytes_asset(content_type: &str, body: Bytes) -> Response {
+pub(super) fn bytes_asset(content_type: &str, body: Bytes) -> Response {
     ([(header::CONTENT_TYPE, content_type.to_string())], body).into_response()
 }
 

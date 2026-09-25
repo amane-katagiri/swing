@@ -21,7 +21,7 @@ HTTP サーバー（axum 0.8）で、ダッシュボードのブラウザ向け�
 
 ### UI と API の分離（`[dashboard].ui`）
 
-`dashboard::router` は `[dashboard].ui` に応じてルーティングを分ける: 静的ファイルのルート（`/`・`/favicon.svg`・`/favicon-32.png`・`/apple-touch-icon.png`・`/*.css`・`/*.js`・`/desktop-*`・`/fonts/*`・`/custom.css`）とログインリンクの受け口 `/login` を `ui_router()` にまとめ、`ui = true` のときだけ `/api/*` のルータにマージする。`/api/*` は `ui` の値に関わらず常に登録する。`ui = false` のとき `/` などは `404`、`/api/*` は通常どおり応答する。
+`dashboard::router` は `[dashboard].ui` に応じてルーティングを分ける: 静的ファイルのルート（`/`・`/favicon.svg`・`/favicon-32.png`・`/apple-touch-icon.png`・`/*.css`・`/*.js`・`/desktop-*`・`/mascots/*`・`/fonts/*`・`/custom.css`）とログインリンクの受け口 `/login` を `ui_router()` にまとめ、`ui = true` のときだけ `/api/*` のルータにマージする。`/api/*` は `ui` の値に関わらず常に登録する。`ui = false` のとき `/` などは `404`、`/api/*` は通常どおり応答する。
 
 ### 起動と終了
 
@@ -41,6 +41,7 @@ HTTP サーバー（axum 0.8）で、ダッシュボードのブラウザ向け�
 - `gateway`: 保存済みサイトを開くリンクの IPFS Gateway のベース URL。空文字なら `gateway_url` を出さない。環境変数の空文字は未設定として扱うので、無効にするには TOML の `gateway = ""` を使う。
 - `custom_css`: `/custom.css` として配信する CSS ファイルのパス（下記「静的ファイルの配信」）。
 - `desktop_page` / `desktop_page_css` / `desktop_banner`: Desktop 画面のリンク集ページ（`/desktop-page.html`）・その CSS（`/desktop-page.css`）・88×31 バナー（`/desktop-banner`）を差し替えるファイルのパス。未設定なら同梱のものを使う。読み込みの時機は下記「静的ファイルの配信」で、差し替えの反映には `swing up` の再起動が要る。読めないパスや、`desktop_banner` の拡張子が対象外（`.png` `.gif` `.jpg` `.jpeg` `.webp` `.svg` 以外）のときは同梱版へのフォールバックはせず、`swing up` の起動をエラーで止める。`desktop_banner` の Content-Type は拡張子から決める。
+- `mascots_dir`: ユーザー定義の Desktop マスコットパックを置くディレクトリ（1 サブディレクトリ = 1 パック。パック形式は [`dashboard/mascot.md#パック形式-1`](dashboard/mascot.md#パック形式-1)）。`ui = true` のときだけ、`AppState::new`（`DesktopAssets::load` と並んで）で起動時に 1 回スキャンする。未設定なら同梱の 2 パック（`mochi`・`neko`）だけを配信する。差し替え・追加の反映には `swing up` の再起動が要る。読み込みの規則は下記「静的ファイルの配信」。
 - `max_upload`: `POST /api/publish/upload` のリクエストボディ上限。
 
 ## ガード（`src/dashboard/guard.rs`）
@@ -86,7 +87,23 @@ HTTP サーバー（axum 0.8）で、ダッシュボードのブラウザ向け�
 
 `[dashboard].ui = true` のときだけ配信する（`ui_router()`。上の「UI と API の分離」を参照）。差し替え不要なファイルは `assets.rs::STATIC_ASSETS`（パス・Content-Type・本体の配列）にまとめてあり、`assets::register()` がこれをそのままルートに登録する。
 
-例外は `/desktop-page.html`・`/desktop-page.css`・`/desktop-banner` の 3 つで、`ui = true` のときだけ、`[dashboard]` にパスが設定されていればそのファイルを起動時（`AppState::new` → `DesktopAssets::load`）に 1 回読んで `AppState.desktop` に持ち、以降はそこから配信する（設定が無ければ同梱のものを持つ）。リクエストのたびにディスクを見るのは `/custom.css` だけ。
+例外は `/desktop-page.html`・`/desktop-page.css`・`/desktop-banner` の 3 つで、`ui = true` のときだけ、`[dashboard]` にパスが設定されていればそのファイルを起動時（`AppState::new` → `DesktopAssets::load`）に 1 回読んで `AppState.desktop` に持ち、以降はそこから配信する（設定が無ければ同梱のものを持つ）。`/mascots/*`（下記）も同じく起動時に 1 回読む例外だが、`assets.rs` ではなく `mascots.rs` が持つ。リクエストのたびにディスクを見るのは `/custom.css` だけ。
+
+### マスコットのパック配信（`src/dashboard/mascots.rs`）
+
+`/mascots/index.json` と `/mascots/{id}/{file}` は `assets::register()` の対象外で、`ui_router()` に直接ルートを持つ。`AppState::new` が `ui = true` のときだけ `mascots::MascotRegistry::load(config.dashboard.mascots_dir)` を呼び、結果を `AppState.mascots` に持つ（`DesktopAssets::load` と並ぶ起動時 1 回読み込み。設定の再反映には再起動が要る）。
+
+- 同梱の `mochi`・`neko`（`web/mascots/<id>/`、`include_str!`/`include_bytes!` でバイナリに埋め込み）は常に読み込める。
+- `mascots_dir` が設定されていれば、次の順に読む。読み飛ばすものは `warn!` でエントリ名（`Debug` 形式でエスケープ）と理由を出す（`swing up` は止めない。`mascots_dir` 自体が無い・読めない場合も同梱パックだけで続行する）。読み飛ばしの `warn!` は 1 回の読み込みで 10 件まで個別に出し、残りは件数だけを 1 行にまとめる。
+  1. **候補を集める**: `mascots_dir` 直下のエントリを最大 1024 個まで見る（超えた分は 1 行の `warn!` を出して見ない）。この段階ではファイルを開かず、名前とエントリの種類（リンクを辿らない）だけで次を満たすものを候補にする: 名前（= パック id）が UTF-8 で `^[a-z0-9][a-z0-9-]{0,31}$` に一致し、同梱の id（`mochi`・`neko`）と重ならず、シンボリックリンクではないディレクトリである。
+  2. **上限で切る**: 候補を id の昇順に並べ、先頭の 32 個だけを残す。超えた分は中身を読まずに読み飛ばす（候補に残ったパックが後の検証で落ちても、33 個目以降は繰り上がらない）。
+  3. **各パックを読む**: 残った候補ごとに次をすべて満たさなければ読み飛ばす。
+     - パックディレクトリ・`manifest.json`・スプライトファイルを、リンクを辿らずに開けて、開いたハンドルから取ったメタデータで判定する（パスで確かめてから別に開くことはしない）。Unix では `mascots_dir` を開いたディレクトリを基準に `openat(O_NOFOLLOW | O_NONBLOCK)` でパックディレクトリ（`O_DIRECTORY` 付き）を、さらにそれを基準にファイルを開くので、途中でどこかをシンボリックリンクに差し替えられても外を読まない。FIFO は開くときに待たず、通常ファイルでないとして落ちる。Windows では `FILE_FLAG_OPEN_REPARSE_POINT` で開いてリパースポイント（シンボリックリンク・ジャンクション）なら落とし、開いたハンドルの実パス（`GetFinalPathNameByHandleW`）の親が、`canonicalize` した `mascots_dir`（パックディレクトリなら）かパックディレクトリの実パス（ファイルなら）と一致することを確かめる。
+     - `manifest.json` とスプライトが通常ファイルで、Unix ではハードリンクの数が 1（`nlink() > 1` なら読み飛ばす）。
+     - `manifest.json` が 64 KiB 以下、JSON オブジェクトとしてパースでき、`format` が `1`、`sprite` がプレーンなファイル名（`/`・`\`・`..` を含まず `.` で始まらない、拡張子が大文字小文字を問わず `.png`/`.gif`/`.webp`）。マニフェストのそれ以上の検証（`animations.idle` の有無、値の範囲など）はフロントエンド（`desktop-mascot-pack.js::normalizeManifest`）に任せる。
+     - スプライトが 1 MiB 以下。大きさはハンドルのメタデータで確かめたうえで、読むときも上限 + 1 バイトまでしか読まず、読んでいる間に上限を超えたら落とす。
+     - スプライトの先頭のヘッダ（PNG の `IHDR`、GIF の論理画面記述子、WebP の `VP8 `・`VP8L`・`VP8X` チャンク）を読んで得た形式が拡張子と一致し、幅・高さがどちらも 1〜4096 px で、幅 × 高さが 4,194,304（2048 × 2048）ピクセル以下。
+- 読み込んだ `manifest.json`・スプライトのバイト列はそのままメモリに持つ。`GET /mascots/index.json` の本文（`{"packs":[{"id","base"}]}`）も `load()` で 1 回だけ組み立てて持ち、リクエストごとにはそれを返す。並び順は同梱パック（`mochi`・`neko`）→ ユーザー定義パック（id 昇順）。`GET /mascots/{id}/manifest.json` と `GET /mascots/{id}/{sprite}`（`sprite` はそのパックのマニフェストが指すファイル名そのもの）だけを返し、それ以外の `{id}`・`{file}` の組み合わせは `404`。
 
 | ルート | Content-Type |
 |---|---|
@@ -99,6 +116,8 @@ HTTP サーバー（axum 0.8）で、ダッシュボードのブラウザ向け�
 | `GET /desktop-page.html` `/desktop-page.css` | `text/html; charset=utf-8` / `text/css; charset=utf-8`。Desktop 画面の iframe に入るリンク集ページとその専用 CSS（既定は `web/` の同名ファイル。ページの契約は [`dashboard/desktop.md#リンク集ページiframe`](dashboard/desktop.md#リンク集ページiframe)） |
 | `GET /desktop-frame.css` | `text/css; charset=utf-8`。差し替え対象ではない |
 | `GET /desktop-banner` | 既定は `image/gif`（`web/desktop-banner.gif`）。差し替えると拡張子から決める。差し替えられるので拡張子はパスに持たせない |
+| `GET /mascots/index.json` `/mascots/<id>/manifest.json` | `application/json`。Desktop 画面のマスコットのパック一覧と各パックのマニフェスト（同梱パックと `mascots_dir` のユーザー定義パック。詳細は上記「[マスコットのパック配信](#マスコットのパック配信srcdashboardmascotsrs)」、パック形式は [`dashboard/mascot.md#パック形式-1`](dashboard/mascot.md#パック形式-1)） |
+| `GET /mascots/<id>/<sprite>` | `image/png`/`image/gif`/`image/webp`（拡張子から決める）。各パックのスプライトシート |
 | `GET /fonts/pixelmplus12-regular.woff2` `/fonts/pixelmplus12-bold.woff2` | `font/woff2` |
 | `GET /login?code=<code>` | ファイルではなくログインリンクの受け口（`session::login_page`）。`303` でリダイレクトする（上記「認証」） |
 | `GET /custom.css` | `[dashboard].custom_css` の中身をリクエストのたびにディスクから読んで返す（`text/css; charset=utf-8`、`Cache-Control: no-store`）。未設定・読み込み失敗なら空文字 |

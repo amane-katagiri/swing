@@ -1,0 +1,36 @@
+{
+  "format": 1,
+  "name": "ねこ",
+  "sprite": "sprite.png",
+  "frame": { "width": 32, "height": 32 },
+  "scale": 1,
+  "anchor": { "x": 16, "y": 31 },
+  "balloon": { "x": 19, "y": 8 },
+  "facing": "right",
+  "animations": {
+    "idle": { "frames": [0, 0, 0, 1], "fps": 3 },
+    "walk": {
+      "frames": [
+        { "index": 2, "ms": 75, "dx": 2 },
+        { "index": 3, "ms": 75, "dx": 2 },
+        { "index": 4, "ms": 75, "dx": 2 },
+        { "index": 5, "ms": 75, "dx": 2 },
+        { "index": 6, "ms": 75, "dx": 2 },
+        { "index": 7, "ms": 75, "dx": 2 }
+      ]
+    },
+    "sleep": { "frames": [8, 9], "fps": 1, "flip": false },
+    "surprise": { "frames": [10], "fps": 1, "loop": false },
+    "drag": { "frames": [11], "fps": 1 },
+    "fall": { "frames": [11], "fps": 1 }
+  },
+  "lines": {
+    "greet": ["にゃー"],
+    "site-stored": ["にゃっ（{title} が更新されたみたい）"],
+    "sites-stored-many": ["にゃにゃっ（更新が {count} 件あるみたい）"],
+    "fetch-error": ["…にゃ？（サーバにつながらない）"],
+    "recovered": ["にゃーん（つながった）"],
+    "idle": ["ごろごろ…", "にゃあ"],
+    "click": ["にゃ？", "ふしゃー！"]
+  }
+}

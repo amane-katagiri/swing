@@ -197,6 +197,10 @@ fn config_value(
             ConfigValue::Str(opt_path_str(&config.dashboard.desktop_banner)),
             None,
         ),
+        "dashboard.mascots_dir" => (
+            ConfigValue::Str(opt_path_str(&config.dashboard.mascots_dir)),
+            None,
+        ),
         "dashboard.max_upload" => (
             ConfigValue::Num(config.dashboard.max_upload),
             Some(format_bytes(config.dashboard.max_upload)),

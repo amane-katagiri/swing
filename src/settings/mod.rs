@@ -533,6 +533,19 @@ pub const SETTINGS: &[Setting] = &[
         },
     },
     Setting {
+        key: "dashboard.mascots_dir",
+        section: "dashboard",
+        field: "mascots_dir",
+        env: "SWING_DASHBOARD_MASCOTS_DIR",
+        kind: Kind::Path,
+        example: Example::Commented("\"/path/to/mascots\""),
+        editable: false,
+        description: Text {
+            en: "Directory of user-defined Desktop mascot packs (one subdirectory per pack); read once at startup in addition to the two bundled packs.",
+            ja: "ユーザー定義の Desktop マスコットパックを置くディレクトリ（1 サブディレクトリ = 1 パック）。同梱の 2 パックに加えて起動時に 1 回読み込む",
+        },
+    },
+    Setting {
         key: "dashboard.max_upload",
         section: "dashboard",
         field: "max_upload",
