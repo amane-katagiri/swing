@@ -1,8 +1,8 @@
 const BYTE_UNITS: [(u64, &str); 4] = [
-    (1u64 << 40, "TB"),
-    (1u64 << 30, "GB"),
-    (1u64 << 20, "MB"),
-    (1u64 << 10, "KB"),
+    (1u64 << 40, "TiB"),
+    (1u64 << 30, "GiB"),
+    (1u64 << 20, "MiB"),
+    (1u64 << 10, "KiB"),
 ];
 
 pub fn format_bytes(n: u64) -> String {
@@ -37,10 +37,10 @@ mod tests {
 
     #[test]
     fn format_bytes_prefers_the_largest_exact_unit() {
-        assert_eq!(format_bytes(107_374_182_400), "100 GB");
-        assert_eq!(format_bytes(512 * (1u64 << 20)), "512 MB");
+        assert_eq!(format_bytes(107_374_182_400), "100 GiB");
+        assert_eq!(format_bytes(512 * (1u64 << 20)), "512 MiB");
         assert_eq!(format_bytes(0), "0 B");
-        assert_eq!(format_bytes(1536), "1.5 KB");
+        assert_eq!(format_bytes(1536), "1.5 KiB");
         assert_eq!(format_bytes(300), "300 B");
     }
 

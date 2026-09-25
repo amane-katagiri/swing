@@ -80,9 +80,11 @@ loop {
 2. `config.ipfs.api` を `IpfsApi::Url(api_url)` に差し替えたコピーで `agent::run_until`（共有の `Arc<dashboard::AppState>` と `Arc<Notify>` を渡す）を子トークンとともに `tokio::spawn` する。`agent::run_until` は `Result<()>` を返すだけで、終了要求の種別（stop/restart）は持たない（下記「終了要求と exit code」）。
 3. `tokio::select!` で次のいずれかを待つ:
    - **Kubo が exit** → `error!` を出し、agent を cancel して最大 15 秒（`AGENT_STOP_TIMEOUT`）待つ（超えたら `abort()`）。`kubo.pid` を消し、バックオフして 1 からやり直す（Kubo・agent の両方を再起動）。
-   - **agent が Err（または panic）** → `warn!`／`error!` を出し、バックオフしてから **agent だけ**を同じ Kubo に対して再起動する（Kubo はそのまま）。バックオフ中に cancel されたら `Daemon::stop(20s)` して（失敗は無視）`Ok(())` を返す。
-   - **agent が Ok**（cancel による正常終了） → `Daemon::stop(20s)` して（失敗は無視）`Ok(())` を返す。
-   - **親トークンが cancel** → agent を cancel して最大 15 秒待ち（超えたら `abort()`）、`Daemon::stop(20s)` する。`Daemon::stop` が失敗したらそのエラーを返し、成功すれば `Ok(())` を返す。
+   - **agent が Err（または panic）** → `warn!`／`error!` を出し、バックオフしてから **agent だけ**を同じ Kubo に対して再起動する（Kubo はそのまま）。バックオフ中に cancel されたら `Daemon::stop(20s)` して `Ok(())` を返す。
+   - **agent が Ok**（cancel による正常終了） → `Daemon::stop(20s)` して `Ok(())` を返す。
+   - **親トークンが cancel** → agent を cancel して最大 15 秒待ち（超えたら `abort()`）、`Daemon::stop(20s)` して `Ok(())` を返す。
+
+Kubo の停止（`stop_daemon`）は、1 の `wait_healthy` の失敗・その待機中の cancel も含めどの経路でも同じ扱いで、`Daemon::stop` が失敗しても warn を出すだけで経路どおりに続ける（エラーにはしない）。親トークンの cancel は SIGTERM のほか `swing stop`・トレイ（`/api/shutdown`）、`/api/restart`、setup 後の再起動も通るので、停止の失敗で exit 1（サービスマネージャによる再起動）になったり、プロセス内再起動がプロセス終了になったりしない。`kubo.pid` は `Daemon::stop` が成功したときだけ消し、失敗したときは残して次回の [`recover_orphan`](kubo.md#kubopid-と孤児-kubo-の回収managed-のみ) に回収を任せる。
 
 `run_managed` が `Ok(())` を返したときの `swing up` 全体の終わり方は `up::run` が別途持つ `ExitRequest` から決める（下記）。
 

@@ -59,7 +59,7 @@ Desktop 画面専用のモジュール（`desktop*.js`）とその CSS は [`des
 
 NIP-05 の検証結果はバッジで `OK`（`verified`）/ `NG`（`mismatch`）/ `ERR`（`error`）/ `N/A`（`not_applicable`）と短く表示し、意味は `title` 属性（マウスオーバー）に表示言語で出す。カードはサイト名の下の行に保存状態・NIP-05・レプリカ数のバッジ（`.swing-site-badges`）をまとめ、NIP-05 には `nip05: ` を前に付け、テーブルでは NIP-05 列にラベルだけを出す。
 
-サイズの表示（`util.js` の `formatSiteSize`）: `stored_size` があれば `formatBytes` で、無ければ `size` を `(12.3 MB)` のように括弧書きで、どちらも無ければ `–`（値の意味は [`http-api.md#get-apisites`](http-api.md#get-apisites)）。
+サイズの表示（`util.js` の `formatSiteSize`）: `stored_size` があれば `formatBytes`（1024 基数で `KiB`・`MiB`・`GiB`・`TiB`）で、無ければ `size` を `(12.3 MiB)` のように括弧書きで、どちらも無ければ `–`（値の意味は [`http-api.md#get-apisites`](http-api.md#get-apisites)）。
 
 `Unfollowed but still stored` セクションも同じ並び順ロジックを共有する。セクションの注記は `unfollowed.remove_on_unfollow` が `false` なら `unfollowedKeepNote`、`true` で `follow_set.found` が `true` なら `unfollowedRemoveNote`（次の更新で消える）、`false` なら `unfollowedNoFollowSetNote`（Follow Set が見つかるまで消えない。[agent の unfollow](../agent.md#unfollow)）。「Stored only」チェックボックスの状態は `localStorage["swing:sites:stored-only"]`。
 

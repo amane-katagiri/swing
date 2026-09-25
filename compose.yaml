@@ -4,7 +4,7 @@ services:
     command: ["daemon", "--migrate=true", "--agent-version-suffix=docker", "--enable-gc"]
     restart: unless-stopped
     environment:
-      SWING_KUBO_STORAGE_MAX: ${SWING_KUBO_STORAGE_MAX:-${SWING_MAX_TOTAL_STORAGE:-100GB}}
+      SWING_KUBO_STORAGE_MAX: ${SWING_KUBO_STORAGE_MAX:-${SWING_MAX_TOTAL_STORAGE:-100GiB}}
       SWING_KUBO_PROVIDE_STRATEGY: ${SWING_KUBO_PROVIDE_STRATEGY:-pinned+mfs}
       SWING_GATEWAY_HOSTS: ${SWING_GATEWAY_HOSTS:-}
     volumes:

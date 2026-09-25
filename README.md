@@ -223,7 +223,7 @@ Windows と macOS では、`swing-tray` を起動するとタスクトレイ（m
 - **Desktop**: 保存中のサイトを、懐かしい Windows 風デスクトップ上のブラウザウィンドウに表示される「リンク集」ページ風に眺められます。
 - **Sites**: `swing sites` と同じ内容を一覧表示し、そのまま「mirror に追加」「mirror から外す」を操作できます。ボタンひとつで `swing status` 相当のストレージチェックも実行できます。
 - **Webring**: `swing webring` のグラフを、ドラッグ・パン・ズームできる図として表示します。ノードを選ぶとレプリカ数の詳細が見られ、そこから mirror への追加もできます。
-- **Publish**: これまでに公開したサイトの一覧（「My sites」）から選び直したり、新しく publish したりできます。ブラウザから直接フォルダを選んでアップロードする方式なので、**Docker Compose でも volume のマウントは不要**です（既定の上限は 2GB、`SWING_DASHBOARD_MAX_UPLOAD` で変更可）。
+- **Publish**: これまでに公開したサイトの一覧（「My sites」）から選び直したり、新しく publish したりできます。ブラウザから直接フォルダを選んでアップロードする方式なので、**Docker Compose でも volume のマウントは不要**です（既定の上限は 2GiB、`SWING_DASHBOARD_MAX_UPLOAD` で変更可）。
 - **Settings**: 現在の設定を表示します（秘密鍵の値は一切表示されません）。環境変数で設定した項目を除き、その場で編集して保存できます（保存後、エージェントを再起動すると反映されます）。ブラウザ側のテーマ・表示言語（日本語/English）・カスタム CSS もここで設定します。
 - **Setup**: 鍵も署名アプリも未設定のとき（セットアップモード）だけ表示される導入画面です。上記「はじめかた」を参照してください。
 
@@ -372,7 +372,7 @@ SWING_GATEWAY_HOSTS=example.com,blog.example.net
 
 サイズはイベントの `size` タグではなく、実際に取得したデータ量で判定します。取得中に上限（`max_update_size`・`max_per_site`・`max_per_account` の最小値）を超えた時点で取得を打ち切ります。
 
-打ち切った取得や削除した版のデータは、Kubo の GC が走るまでディスクに残ります。Kubo は `--enable-gc` で起動し、GC の基準になる `Datastore.StorageMax` を起動のたびに設定します。バイナリで `swing up` が管理する Kubo では `[kubo].storage_max`（`SWING_KUBO_STORAGE_MAX`。未設定なら `[policy].max_total_storage` と同じ値）を、Docker Compose の `ipfs` コンテナでは `.env` の `SWING_KUBO_STORAGE_MAX`（未設定なら `SWING_MAX_TOTAL_STORAGE`）を使います。GC はこの値の 90% を超えたときに走るので、少し余裕を足した値にしておくことをおすすめします。
+打ち切った取得や削除した版のデータは、Kubo の GC が走るまでディスクに残ります。Kubo は `--enable-gc` で起動し、GC の基準になる `Datastore.StorageMax` を起動のたびに設定します。バイナリで `swing up` が管理する Kubo では `[kubo].storage_max`（`SWING_KUBO_STORAGE_MAX`。未設定なら `[policy].max_total_storage` と同じ値）を、Docker Compose の `ipfs` コンテナでは `.env` の `SWING_KUBO_STORAGE_MAX`（未設定なら `SWING_MAX_TOTAL_STORAGE`）を使います。GC はこの値の 90% を超えたときに走るので、少し余裕を足した値にしておくことをおすすめします。容量は `100GiB` のように `GiB` 系の単位で書いてください。swing は `GB` も `GiB` と同じ 1024 基数で読みますが、Docker Compose の Kubo は `GB` を 10 進（1GB = 10^9 バイト）で読むため、`GiB` 系で書いたときだけ両者が同じ値になります。
 
 SWING は Kubo の pin を使わず、MFS の `/swing`（`SWING_MFS_ROOT` で変更可）の下だけを使います。手動で付けた pin や、MFS の他の場所に置いたものには触れません。一方で、`/swing/agent` の下は SWING が管理する場所なので、手で置いたものは消されます。
 
@@ -382,7 +382,7 @@ MFS に置いたサイトを他のノードから見つけてもらうには、K
 
 ## 設定一覧
 
-TOML の設定ファイル（`swing.toml`）を使う場合と、環境変数だけで動かす場合のどちらにも対応しています。優先順位は環境変数 > TOML > 既定値。キーごとの環境変数名・既定値・説明は [`swing.example.toml`](swing.example.toml) にすべて載っています（`swing config example` で生成、Docker Compose 用の `.env` は [`.env.example`](.env.example)、`swing config env-example` で生成）。設定ファイルの探索順や、容量・時間の書式（`"100GB"` や `"10m"` のような文字列）は [`docs/architecture.md`](docs/architecture.md) を参照してください。ダッシュボードから編集できるのはそのうちの一部（ホワイトリスト、[`docs/architecture/dashboard.md`](docs/architecture/dashboard.md#設定の読み込みと編集srcsettings)）で、環境変数で設定した項目は編集できません。
+TOML の設定ファイル（`swing.toml`）を使う場合と、環境変数だけで動かす場合のどちらにも対応しています。優先順位は環境変数 > TOML > 既定値。キーごとの環境変数名・既定値・説明は [`swing.example.toml`](swing.example.toml) にすべて載っています（`swing config example` で生成、Docker Compose 用の `.env` は [`.env.example`](.env.example)、`swing config env-example` で生成）。設定ファイルの探索順や、容量・時間の書式（`"100GiB"` や `"10m"` のような文字列）は [`docs/architecture.md`](docs/architecture.md) を参照してください。ダッシュボードから編集できるのはそのうちの一部（ホワイトリスト、[`docs/architecture/dashboard.md`](docs/architecture/dashboard.md#設定の読み込みと編集srcsettings)）で、環境変数で設定した項目は編集できません。
 
 ## プライバシーと注意点
 

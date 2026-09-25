@@ -84,7 +84,7 @@ export function describeError(err) {
 
 export function formatBytes(n) {
   if (n == null) return '–';
-  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+  const units = ['B', 'KiB', 'MiB', 'GiB', 'TiB'];
   let v = n;
   let i = 0;
   while (v >= 1024 && i < units.length - 1) {

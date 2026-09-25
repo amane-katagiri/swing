@@ -174,7 +174,7 @@ pub const SETTINGS: &[Setting] = &[
         field: "max_total_storage",
         env: "SWING_MAX_TOTAL_STORAGE",
         kind: Kind::Size,
-        example: Example::Value("\"100GB\""),
+        example: Example::Value("\"100GiB\""),
         editable: true,
         description: Text {
             en: "Total storage cap across all saved sites.",
@@ -187,7 +187,7 @@ pub const SETTINGS: &[Setting] = &[
         field: "max_per_site",
         env: "SWING_MAX_PER_SITE",
         kind: Kind::Size,
-        example: Example::Value("\"10GB\""),
+        example: Example::Value("\"10GiB\""),
         editable: true,
         description: Text {
             en: "Per-site storage cap; the oldest versions are dropped once it is exceeded, and an update that alone exceeds it is not saved.",
@@ -200,7 +200,7 @@ pub const SETTINGS: &[Setting] = &[
         field: "max_per_account",
         env: "SWING_MAX_PER_ACCOUNT",
         kind: Kind::Size,
-        example: Example::Value("\"20GB\""),
+        example: Example::Value("\"20GiB\""),
         editable: true,
         description: Text {
             en: "Per-account storage cap across all of its sites; updates that would exceed it are not saved.",
@@ -226,7 +226,7 @@ pub const SETTINGS: &[Setting] = &[
         field: "max_update_size",
         env: "SWING_MAX_UPDATE_SIZE",
         kind: Kind::Size,
-        example: Example::Value("\"2GB\""),
+        example: Example::Value("\"2GiB\""),
         editable: true,
         description: Text {
             en: "Size cap for a single update (one version); larger updates are not saved.",
@@ -538,7 +538,7 @@ pub const SETTINGS: &[Setting] = &[
         field: "max_upload",
         env: "SWING_DASHBOARD_MAX_UPLOAD",
         kind: Kind::Size,
-        example: Example::Value("\"2GB\""),
+        example: Example::Value("\"2GiB\""),
         editable: false,
         description: Text {
             en: "Body size limit for POST /api/publish/upload; 0 is an error.",
@@ -590,11 +590,11 @@ pub const SETTINGS: &[Setting] = &[
         field: "storage_max",
         env: "SWING_KUBO_STORAGE_MAX",
         kind: Kind::Size,
-        example: Example::Derived("\"100GB\""),
+        example: Example::Derived("\"100GiB\""),
         editable: true,
         description: Text {
-            en: "Kubo's Datastore.StorageMax; defaults to the same value as [policy].max_total_storage.",
-            ja: "Kubo の Datastore.StorageMax。既定: [policy].max_total_storage と同じ値",
+            en: "Kubo's Datastore.StorageMax; defaults to the same value as [policy].max_total_storage. Write it in GiB-style units so the compose Kubo reads the same value (it reads GB as decimal).",
+            ja: "Kubo の Datastore.StorageMax。既定: [policy].max_total_storage と同じ値。GiB 系で書くと compose の Kubo でも同じ値になる（Kubo は GB を 10 進で解釈する）",
         },
     },
     Setting {

@@ -61,12 +61,22 @@ impl Backoff {
     }
 }
 
-async fn stop_daemon(daemon: kubo::Daemon, config: &Config, grace: Duration) -> Result<()> {
-    let result = daemon.stop(grace).await;
-    if let Err(e) = kubo::remove_pid_file(&config.agent.state_dir) {
-        warn!(error = %e, "failed to remove kubo.pid");
+async fn stop_daemon(daemon: kubo::Daemon, config: &Config, grace: Duration) {
+    settle_stop(daemon.stop(grace).await, &config.agent.state_dir);
+}
+
+fn settle_stop(result: Result<()>, state_dir: &Path) {
+    match result {
+        Ok(()) => {
+            if let Err(e) = kubo::remove_pid_file(state_dir) {
+                warn!(error = %e, "failed to remove kubo.pid");
+            }
+        }
+        Err(e) => warn!(
+            error = %e,
+            "failed to stop the Kubo daemon; keeping kubo.pid so the next start can recover it"
+        ),
     }
-    result
 }
 
 fn spawn_agent(
@@ -150,7 +160,7 @@ async fn start_kubo(
     };
     let health = match health {
         None => {
-            let _ = stop_daemon(daemon, config, DAEMON_STOP_GRACE).await;
+            stop_daemon(daemon, config, DAEMON_STOP_GRACE).await;
             return Ok(StartOutcome::Cancelled);
         }
         Some(h) => h,
@@ -163,7 +173,7 @@ async fn start_kubo(
                 "another ipfs daemon seems to hold the Kubo repo lock; stop it or point [kubo].repo elsewhere"
             );
         }
-        let _ = stop_daemon(daemon, config, DAEMON_STOP_GRACE).await;
+        stop_daemon(daemon, config, DAEMON_STOP_GRACE).await;
         backoff.wait(Duration::ZERO, token).await;
         return Ok(StartOutcome::Retry);
     }
@@ -376,7 +386,7 @@ async fn run_managed(
                     match result {
                         Ok(Ok(())) => {
                             agent_token.cancel();
-                            let _ = stop_daemon(daemon, &config, DAEMON_STOP_GRACE).await;
+                            stop_daemon(daemon, &config, DAEMON_STOP_GRACE).await;
                             return Ok(());
                         }
                         Ok(Err(e)) => warn!(error = %e, "agent exited with an error; restarting agent"),
@@ -384,7 +394,7 @@ async fn run_managed(
                     }
                     backoff.wait(ran_for, &token).await;
                     if token.is_cancelled() {
-                        let _ = stop_daemon(daemon, &config, DAEMON_STOP_GRACE).await;
+                        stop_daemon(daemon, &config, DAEMON_STOP_GRACE).await;
                         return Ok(());
                     }
                     agent_token = token.child_token();
@@ -402,7 +412,7 @@ async fn run_managed(
                         warn!(timeout = ?AGENT_STOP_TIMEOUT, "agent did not stop in time during shutdown");
                         agent_handle.abort();
                     }
-                    stop_daemon(daemon, &config, DAEMON_STOP_GRACE).await?;
+                    stop_daemon(daemon, &config, DAEMON_STOP_GRACE).await;
                     return Ok(());
                 }
             }
@@ -426,6 +436,19 @@ mod tests {
         );
         assert!(STOP_BUDGET + RUNTIME_SHUTDOWN_TIMEOUT < FORCE_EXIT_GRACE);
         assert!(FORCE_EXIT_GRACE < crate::service::STOP_TIMEOUT);
+    }
+
+    #[test]
+    fn failed_stop_keeps_kubo_pid_for_orphan_recovery() {
+        let dir = tempfile::tempdir().unwrap();
+        let pid_file = dir.path().join("kubo.pid");
+        kubo::write_pid_file(dir.path(), std::process::id(), 5001).unwrap();
+
+        settle_stop(Err(anyhow::anyhow!("kill failed")), dir.path());
+        assert!(pid_file.exists());
+
+        settle_stop(Ok(()), dir.path());
+        assert!(!pid_file.exists());
     }
 
     #[test]

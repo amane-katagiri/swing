@@ -38,11 +38,13 @@
 
 | 環境変数 | 設定先 | 既定 |
 |---|---|---|
-| `SWING_KUBO_STORAGE_MAX` | `Datastore.StorageMax`（GC の基準）。`100GB` のような文字列のまま渡し、Kubo が解釈する（managed の `swing up` は swing の容量パーサで 1024 基数のバイト数にしてから渡す） | `SWING_MAX_TOTAL_STORAGE`、それも無ければ `100GB` |
+| `SWING_KUBO_STORAGE_MAX` | `Datastore.StorageMax`（GC の基準）。`100GiB` のような文字列のまま渡し、Kubo が解釈する（下記） | `SWING_MAX_TOTAL_STORAGE`、それも無ければ `100GiB` |
 | `SWING_KUBO_PROVIDE_STRATEGY` | `Provide.Strategy` | `pinned+mfs` |
 | `SWING_GATEWAY_HOSTS` | `Gateway.PublicGateways` | 空 |
 
 `SWING_GATEWAY_HOSTS` 以外の値が空の場合と、`SWING_GATEWAY_HOSTS` に不正なホスト名がある場合（規則は `[gateway].hosts` と同じ。[`../architecture.md#設定と環境変数`](../architecture.md#設定と環境変数)）はコンテナは起動しない。ほかに毎回 `Gateway.NoFetch=true` と `Gateway.NoDNSLink=true` を設定する。
+
+`SWING_KUBO_STORAGE_MAX` は、managed の `swing up` では swing の容量パーサが 1024 基数のバイト数にしてから渡すのに対し、compose では Kubo が文字列のまま解釈する。Kubo は `GiB` 系を 1024 基数、`GB` 系を 10 進で読むので、`GiB` 系で書けば両者は同じ値になる。`GB` 系で書くと compose だけ 10 進になり、managed より約 7% 小さくなる（`100GB` なら 10^11 バイトと 100×2^30 バイト）。
 
 キーの意味は managed の `swing up` が適用する設定と同じで、正本は [`kubo.md#適用する-kubo-設定kuboapply_config`](kubo.md#適用する-kubo-設定kuboapply_config)。
 

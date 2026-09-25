@@ -100,6 +100,7 @@ Kubo は `Host` と `X-Forwarded-Host` をそのまま信じるので、Kubo の
 - まず記録の `api_port` に API でのシャットダウンを送り（タイムアウト 3 秒、`ORPHAN_SHUTDOWN_RPC_TIMEOUT`）、応答があればその `pid` の終了を最大 30 秒（`ORPHAN_SHUTDOWN_GRACE`）待つ。終われば完了。
 - API で終わらなければ、その `pid` の今の開始時刻を取り直し、記録と一致するときだけ強制終了する（unix は SIGTERM → 最大 30 秒（`ORPHAN_SIGTERM_GRACE`）→ SIGKILL → 最大 10 秒（`ORPHAN_KILL_WAIT`）、Windows は `taskkill /T /F` → 最大 10 秒（`ORPHAN_KILL_WAIT`））。プロセスがもう無い、または開始時刻が一致しない（PID の再利用）なら kill せずにファイルを消す。
 - 強制終了しても終わらなければエラーを返し、`swing up` は Kubo を起動せずに終了する。
+- `swing up` が Kubo を止めるとき（`up.rs` の `stop_daemon`）は、`Daemon::stop` が成功したときだけ `kubo.pid` を消す。失敗したら（Kubo が残っているかもしれないので）warn を出してファイルを残し、次の起動の `recover_orphan` に任せる。Kubo が自分で exit したとき（[`up.md#managed`](up.md#managed)）は消す。
 - `run_managed` は回収中にトークンが cancel されたら（シグナルなど）回収を途中でやめて終わる。`kubo.pid` は残り、次の起動でもう一度回収する。
 
 #### repo lock のヒント

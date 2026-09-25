@@ -354,19 +354,21 @@ pub fn parse_size(input: &str) -> Result<u64> {
         bail!("empty size value");
     }
     let upper = s.to_ascii_uppercase();
-    let (num_part, mult): (&str, u64) = if let Some(p) = upper.strip_suffix("TB") {
-        (p, 1u64 << 40)
-    } else if let Some(p) = upper.strip_suffix("GB") {
-        (p, 1u64 << 30)
-    } else if let Some(p) = upper.strip_suffix("MB") {
-        (p, 1u64 << 20)
-    } else if let Some(p) = upper.strip_suffix("KB") {
-        (p, 1u64 << 10)
-    } else if let Some(p) = upper.strip_suffix('B') {
-        (p, 1)
-    } else {
-        (upper.as_str(), 1)
-    };
+    const UNITS: [(&str, u64); 8] = [
+        ("TIB", 1u64 << 40),
+        ("GIB", 1u64 << 30),
+        ("MIB", 1u64 << 20),
+        ("KIB", 1u64 << 10),
+        ("TB", 1u64 << 40),
+        ("GB", 1u64 << 30),
+        ("MB", 1u64 << 20),
+        ("KB", 1u64 << 10),
+    ];
+    let (num_part, mult): (&str, u64) = UNITS
+        .iter()
+        .find_map(|&(unit, mult)| upper.strip_suffix(unit).map(|p| (p, mult)))
+        .or_else(|| upper.strip_suffix('B').map(|p| (p, 1)))
+        .unwrap_or((upper.as_str(), 1));
     let num_part = num_part.trim();
     if !num_part.chars().all(|c| c.is_ascii_digit() || c == '.') {
         bail!("invalid size value: {input}");
@@ -483,6 +485,20 @@ mod tests {
         assert_eq!(parse_size("100gb").unwrap(), 100 * (1u64 << 30));
         assert_eq!(parse_size("100Gb").unwrap(), 100 * (1u64 << 30));
         assert_eq!(parse_size(" 100GB ").unwrap(), 100 * (1u64 << 30));
+    }
+
+    #[test]
+    fn parse_size_binary_units_match_the_legacy_units() {
+        assert_eq!(parse_size("100GiB").unwrap(), 100 * (1u64 << 30));
+        assert_eq!(parse_size("100GiB").unwrap(), parse_size("100GB").unwrap());
+        assert_eq!(parse_size("512MiB").unwrap(), 512 * (1u64 << 20));
+        assert_eq!(parse_size("1TiB").unwrap(), 1u64 << 40);
+        assert_eq!(parse_size("2KiB").unwrap(), 2 * (1u64 << 10));
+        assert_eq!(parse_size("1.5KiB").unwrap(), 1536);
+        assert_eq!(parse_size("100gib").unwrap(), 100 * (1u64 << 30));
+        assert_eq!(parse_size("100 GIB").unwrap(), 100 * (1u64 << 30));
+        assert!(parse_size("GiB").is_err());
+        assert!(parse_size("5iB").is_err());
     }
 
     #[test]

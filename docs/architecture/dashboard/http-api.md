@@ -201,14 +201,14 @@ Follow Set が無ければ `title: null`、`members: []`。
   { "name": "nostr", "items": [
     { "key": "secret_key", "env": "SWING_NOSTR_SECRET_KEY", "value": "(set, hidden)", "source": "file", "editable": false, "kind": "secret", "description": { "en": "Signing secret key (nsec or hex)...", "ja": "署名用の秘密鍵（nsec または hex）..." } },
     { "key": "relays", "env": "SWING_NOSTR_RELAYS", "value": ["wss://relay.damus.io", "wss://nos.lol", "wss://relay.primal.net", "wss://yabu.me", "wss://relay-jp.nostr.wirednet.jp"], "source": "default", "editable": true, "kind": "list", "raw": ["wss://relay.damus.io", "wss://nos.lol", "wss://relay.primal.net", "wss://yabu.me", "wss://relay-jp.nostr.wirednet.jp"], "description": { "en": "Nostr relays to connect to...", "ja": "接続する Nostr relay（カンマ区切り）" } },
-    { "key": "max_total_storage", "env": "SWING_MAX_TOTAL_STORAGE", "value": 107374182400, "display": "100 GB", "source": "env", "editable": false, "kind": "size", "raw": "100 GB", "description": { "en": "Total storage cap...", "ja": "保存する全サイト合計の容量上限" } } ] } ] }
+    { "key": "max_total_storage", "env": "SWING_MAX_TOTAL_STORAGE", "value": 107374182400, "display": "100 GiB", "source": "env", "editable": false, "kind": "size", "raw": "100 GiB", "description": { "en": "Total storage cap...", "ja": "保存する全サイト合計の容量上限" } } ] } ] }
 ```
 
 - `sections` は `nostr`/`ipfs`/`policy`/`agent`/`publish`/`dashboard`/`kubo`/`gateway` の順で、`settings::SETTINGS`（[`../../architecture.md`](../../architecture.md#設定と環境変数)）の宣言順そのままを列挙する（そちらが正本）。カタログの設定はすべて TOML フィールドを持つので、`key` が無い項目は無い。
 - `secret_key` の値は常に `"(set, hidden)"` か `"(not set)"`（[`../dashboard.md`](../dashboard.md#秘密鍵を出さない仕組み) を参照）。`editable` は常に `false`（書けるのは `POST /api/setup` だけ）。
 - `ipfs.api` は `[kubo].managed = true` のとき固定文字列 `"managed"` になる（動的なポートを含む実際の URL ではなく、`swing up` が `<repo>/api` から解決した値であることを示す。[`../kubo.md`](../kubo.md#動的な-api-ポートと-repoapi)）。`managed = false` なら実際の URL（`[ipfs].api` の値）。
 - `kubo.binary`/`kubo.repo` はパスを文字列で返す（`binary` が未設定なら空文字）。`kubo.swarm_port` は常に文字列で、未設定なら `"-"`。`gateway.listen` は無効なら `"off"`。
-- `value` は文字列・真偽・数値・文字列配列のいずれか（常に生の値）。容量・時間の項目は読みやすい文字列を `display` に添える（`crate::format::format_bytes`・`format_duration_secs`。値を正確に（小数は 1 桁まで）表せるいちばん大きい単位で、容量は 1024 基数の `"100 GB"`・`"1.5 KB"`、時間は `"5m"` など）。個数系（`keep_versions` など）には `display` が付かず、無い項目はフィールドごと出ない。
+- `value` は文字列・真偽・数値・文字列配列のいずれか（常に生の値）。容量・時間の項目は読みやすい文字列を `display` に添える（`crate::format::format_bytes`・`format_duration_secs`。値を正確に（小数は 1 桁まで）表せるいちばん大きい単位で、容量は 1024 基数の `"100 GiB"`・`"1.5 KiB"`、時間は `"5m"` など）。個数系（`keep_versions` など）には `display` が付かず、無い項目はフィールドごと出ない。
 - `config_path` は常に何か文字列が入る（環境変数だけで動いている、かつ設定ファイルが無くても `null` にはならない。パスの決め方は [`../../architecture.md#設定と環境変数`](../../architecture.md#設定と環境変数) が正本）。`config_exists` はそのパスに実際にファイルがあるかどうか。
 - `writable`: `config_exists` なら（`std::fs::OpenOptions::append(true)` で）そのファイルを開けるかどうか、`config_exists` が `false` なら親ディレクトリの `Permissions::readonly()` を見て判定する（`src/dashboard/config_dto.rs::is_config_writable`。副作用は無い）。画面での扱いは [`web.md#設定編集`](web.md#設定編集)。
 - `restart_required`: `AppState.restart_required` の値（立つ条件は [`../dashboard.md#設定の読み込みと編集srcsettings`](../dashboard.md#設定の読み込みと編集srcsettings)）。
@@ -226,7 +226,7 @@ Follow Set が無ければ `title: null`、`members: []`。
 設定ファイルの値を書き換える。
 
 ```json
-{ "items": { "policy.max_total_storage": "20GB", "nostr.relays": ["wss://relay.damus.io", "wss://nos.lol"] } }
+{ "items": { "policy.max_total_storage": "20GiB", "nostr.relays": ["wss://relay.damus.io", "wss://nos.lol"] } }
 ```
 
 - キーは `"<section>.<フィールド名>"`（`GET /api/config` の `raw` が付くキーと同じ）。値の形式は `raw` と同じ（`nostr.relays` は空配列だと 400）。受け付けないキーの規則と書き込み手順は [`../dashboard.md#設定の読み込みと編集srcsettings`](../dashboard.md#設定の読み込みと編集srcsettings)。
@@ -239,7 +239,7 @@ Follow Set が無ければ `title: null`、`members: []`。
 セットアップモード（[`../up.md#セットアップモード鍵未設定`](../up.md#セットアップモード鍵未設定)）の間だけ使える。それ以外のとき（`AppState::setup_mode() == false`）は 409 `{"error": "swing is already configured; setup is no longer available"}`。
 
 ```json
-{ "secret_key": null, "remote_signer": false, "items": { "nostr.relays": ["wss://relay.damus.io"], "policy.max_total_storage": "100GB", "policy.max_per_site": "10GB", "policy.max_per_account": "20GB" } }
+{ "secret_key": null, "remote_signer": false, "items": { "nostr.relays": ["wss://relay.damus.io"], "policy.max_total_storage": "100GiB", "policy.max_per_site": "10GiB", "policy.max_per_account": "20GiB" } }
 ```
 
 - `remote_signer`（省略時 `false`）: `true` なら秘密鍵を書かず、`POST /api/setup/signer`（下記）で済ませたペアリングの結果を `<state_dir>/remote-signer.json` に保存する（[`../signer.md#remote-signerjson`](../signer.md#remote-signerjson)）。ペアリングが `ready` になっていなければ 409 `{"error": "no signer app is connected yet; scan the QR code first"}`。`true` のとき `secret_key` は見ない。

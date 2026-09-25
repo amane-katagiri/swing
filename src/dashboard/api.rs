@@ -995,7 +995,7 @@ mod tests {
             .find(|i| i["key"] == "max_total_storage")
             .unwrap();
         assert_eq!(item["source"], "file");
-        assert_eq!(item["raw"], "20 GB");
+        assert_eq!(item["raw"], "20 GiB");
 
         let get_req = Request::builder()
             .uri("/api/config")
