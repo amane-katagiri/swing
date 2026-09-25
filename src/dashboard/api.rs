@@ -189,6 +189,13 @@ fn finish_mirror_change(
     Ok(Json(dto::mirror_change_dto(&change)))
 }
 
+fn mirror_add_error(e: anyhow::Error) -> ApiError {
+    match e.downcast_ref::<mirror::FollowSetCapExceeded>() {
+        Some(cap) => ApiError::Conflict(cap.to_string()),
+        None => upstream(e),
+    }
+}
+
 pub async fn mirror_add(
     State(state): State<Arc<AppState>>,
     AppJson(req): AppJson<MirrorKeysRequest>,
@@ -197,7 +204,7 @@ pub async fn mirror_add(
     let relay = state.require_relay().await?;
     let change = mirror::apply_add(&relay, &state.config, &req.keys)
         .await
-        .map_err(upstream)?;
+        .map_err(mirror_add_error)?;
     finish_mirror_change(&state, change)
 }
 
@@ -627,7 +634,7 @@ mod tests {
     use super::AppState;
     use axum::body::Body;
     use axum::http::{Request, StatusCode};
-    use nostr_sdk::prelude::{Keys, PublicKey};
+    use nostr_sdk::prelude::{Client, EventBuilder, FinalizeEvent, Keys, Kind, PublicKey, Tag};
     use std::sync::Arc;
     use std::time::Duration;
 
@@ -787,6 +794,72 @@ mod tests {
             .unwrap();
         let resp = call(app, req).await;
         assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
+    }
+
+    async fn ready_state_with_relays(
+        state_dir: &std::path::Path,
+        relays: &[String],
+    ) -> (Arc<AppState>, Keys) {
+        let (mut config, secret_hex) = test_config(true);
+        config.agent.state_dir = state_dir.to_path_buf();
+        let state = build_state(config, test_exit(), test_keys(&secret_hex), TEST_TOKEN);
+        let relay = crate::nostr::RelayClient::connect(test_keys(&secret_hex).unwrap(), relays)
+            .await
+            .unwrap();
+        let ipfs = crate::ipfs::IpfsClient::new("http://127.0.0.1:1".to_string());
+        state.set_ready(Arc::new(relay), ipfs).await;
+        (state, Keys::parse(&secret_hex).unwrap())
+    }
+
+    #[tokio::test]
+    async fn mirror_add_past_the_follow_set_cap_is_conflict_not_bad_gateway() {
+        let local = nostr_sdk::prelude::LocalRelay::new();
+        local.run().await.unwrap();
+        let url = local.url().await.to_string();
+        let dir = tempfile::tempdir().unwrap();
+        let (state, keys) = ready_state_with_relays(dir.path(), std::slice::from_ref(&url)).await;
+
+        let mut tags = vec![Tag::identifier(state.config.nostr.mirror_set.clone())];
+        tags.extend(
+            (0..crate::nostr::budget::MAX_FOLLOW_SET_ENTRIES)
+                .map(|_| Tag::public_key(Keys::generate().public_key())),
+        );
+        let full = EventBuilder::new(Kind::Custom(30000), "")
+            .tags(tags)
+            .finalize(&keys)
+            .unwrap();
+        let client = Client::default();
+        client.add_relay(url.as_str()).await.unwrap();
+        client.connect().await;
+        client.send_event(&full).await.unwrap();
+
+        let extra = Keys::generate().public_key().to_hex();
+        let (status, body) = send_json(
+            router(state),
+            "POST",
+            "/api/mirror/add",
+            Some(serde_json::json!({ "keys": [extra] })),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CONFLICT);
+        let message = body["error"].as_str().unwrap();
+        assert!(message.contains("-entry limit"), "{message}");
+    }
+
+    #[tokio::test]
+    async fn mirror_add_relay_failure_stays_bad_gateway() {
+        let dir = tempfile::tempdir().unwrap();
+        let (state, _) = ready_state_with_relays(dir.path(), &[]).await;
+        let extra = Keys::generate().public_key().to_hex();
+        let (status, body) = send_json(
+            router(state),
+            "POST",
+            "/api/mirror/add",
+            Some(serde_json::json!({ "keys": [extra] })),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_GATEWAY);
+        assert!(body["error"].is_string());
     }
 
     fn test_state_with_exit(exit: ExitRequest) -> Arc<AppState> {

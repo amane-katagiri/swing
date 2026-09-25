@@ -243,12 +243,27 @@ enum MirrorOp {
     Remove,
 }
 
-fn ensure_within_follow_set_cap(total: usize) -> Result<()> {
-    if total > nostr::budget::MAX_FOLLOW_SET_ENTRIES {
-        anyhow::bail!(
-            "would grow the follow set to {total} entries, over the {}-entry limit; remove some first",
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FollowSetCapExceeded {
+    pub total: usize,
+}
+
+impl std::fmt::Display for FollowSetCapExceeded {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "would grow the follow set to {} entries, over the {}-entry limit; remove some first",
+            self.total,
             nostr::budget::MAX_FOLLOW_SET_ENTRIES
-        );
+        )
+    }
+}
+
+impl std::error::Error for FollowSetCapExceeded {}
+
+fn ensure_within_follow_set_cap(total: usize) -> Result<(), FollowSetCapExceeded> {
+    if total > nostr::budget::MAX_FOLLOW_SET_ENTRIES {
+        return Err(FollowSetCapExceeded { total });
     }
     Ok(())
 }

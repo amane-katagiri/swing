@@ -16,7 +16,7 @@
 | 403 | ガードの Host・`X-Swing-Dashboard`・Origin の検証に通らない（[`../dashboard.md#ガードsrcdashboardguardrs`](../dashboard.md#ガードsrcdashboardguardrs)） |
 | 404 | 存在しないルート（空ボディ。JSON ではない） |
 | 408 | リクエストタイムアウト（空ボディ。[`../dashboard.md#タイムアウトsrcdashboardmodrs`](../dashboard.md#タイムアウトsrcdashboardmodrs)） |
-| 409 | publish の多重実行、セットアップ・ペアリング・つなぎ直しを使えない状態（各エンドポイント） |
+| 409 | publish の多重実行、セットアップ・ペアリング・つなぎ直しを使えない状態、`mirror/add` で Follow Set が上限を超える（各エンドポイント） |
 | 413 | ボディが大きすぎる |
 | 422 | publish の NIP-05 `require` 失敗だけ |
 | 500 | ファイルの書き込みなど内部の失敗 |
@@ -113,7 +113,7 @@ Follow Set が無ければ `title: null`、`members: []`。
 
 ## POST /api/mirror/add, POST /api/mirror/remove
 
-リクエスト: `{ "keys": ["npub1…", "hex…", "nprofile1…"] }`。空、100 件超、パース不能のいずれかで 400。`add` の結果の `p` タグ数が `MAX_FOLLOW_SET_ENTRIES`（[取得と表示の上限](../nostr.md#取得と表示の上限nostrbudget)）を超えるときは publish せず、そのエラーを relay の失敗と同じく 502 で返す（`mirror::apply_add` のエラーを `api::upstream` が 502 にする）。
+リクエスト: `{ "keys": ["npub1…", "hex…", "nprofile1…"] }`。空、100 件超、パース不能のいずれかで 400。`add` の結果の `p` タグ数が `MAX_FOLLOW_SET_ENTRIES`（[取得と表示の上限](../nostr.md#取得と表示の上限nostrbudget)）を超えるときは publish せず 409（`{"error": "would grow the follow set to <N> entries, over the 500-entry limit; remove some first"}`）。`mirror::apply_add` はこのとき `mirror::FollowSetCapExceeded` を返し、`api::mirror_add_error` がそれを downcast して 409 に、それ以外のエラーは `api::upstream` で 502 にする。
 
 ```json
 { "changed": [ { "pubkey": "…", "npub": "…" } ], "unchanged": [ { "pubkey": "…", "npub": "…" } ], "published": true, "relays": [ { "relay": "wss://…", "ok": true, "error": null } ], "members": [ { "pubkey": "…", "npub": "…" } ], "note": null, "follow_set_found": true }
