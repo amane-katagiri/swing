@@ -4,6 +4,7 @@ import { DesktopWindow } from './desktop-window.js';
 import { DesktopSettings } from './desktop-settings.js';
 import { initDeskScale } from './desktop-scale.js';
 import { tabAcrossEdge, focusableIn, isModalOpen, scheduleActiveSync } from './desktop-focus.js';
+import { createUpdateWatcher } from './desktop-updates.js';
 
 const DESK_TEXT = {
   loading: 'よみこみちゅう…',
@@ -368,6 +369,15 @@ function revealWindowWhenReady() {
   Promise.race([ready, fallback]).then(DesktopWindow.reveal, DesktopWindow.reveal);
 }
 
+export const desktopUpdates = createUpdateWatcher({
+  currentSites: () => cache.sites,
+  reloadSites: async () => {
+    await DesktopView.load(true);
+    return cache.sites;
+  },
+  isActive: () => document.body.dataset.view === 'desktop' && !document.hidden,
+});
+
 export const DesktopView = {
   init() {
     initDeskScale();
@@ -385,6 +395,7 @@ export const DesktopView = {
     setInterval(updateClock, 30000);
     DesktopWindow.init();
     DesktopSettings.init();
+    desktopUpdates.start();
     document.addEventListener('keydown', onDesktopKeydown, true);
     document.addEventListener('focusin', scheduleActiveSync);
     document.addEventListener('focusout', scheduleActiveSync);
@@ -396,7 +407,8 @@ export const DesktopView = {
     revealWindowWhenReady();
     DesktopSettings.boot();
     if (cache.sites) this.render();
-    else this.load();
+    const loaded = cache.sites ? Promise.resolve() : this.load();
+    loaded.then(() => desktopUpdates.checkNow());
     requestAnimationFrame(() => DesktopWindow.reflow());
   },
   async load(force, reloadBtn) {

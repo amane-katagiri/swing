@@ -77,6 +77,7 @@ const STATIC_ASSETS: &[StaticAsset] = &[
     text_asset!(JS, "desktop.js"),
     text_asset!(JS, "desktop-window.js"),
     text_asset!(JS, "desktop-settings.js"),
+    text_asset!(JS, "desktop-updates.js"),
     text_asset!(JS, "desktop-dialog.js"),
     text_asset!(JS, "desktop-wallpaper.js"),
     text_asset!(JS, "desktop-wallpaper-image.js"),

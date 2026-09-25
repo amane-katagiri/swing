@@ -17,6 +17,7 @@ Desktop 画面専用のモジュール（依存は下から上への一方向。
 | `desktop-window.js` | 「SWING Explorer」ウィンドウの移動・リサイズ・最小化・最大化・ジオメトリ計算（`DesktopWindow`） |
 | `desktop-wallpaper.js` | 「コントロール パネル」の「背景」タブ本体（`WallpaperPage`）。保存キーもここで定義する |
 | `desktop-settings.js` | 「コントロール パネル」の殻（`PAGES` を `desktop-dialog.js` に結び付ける、`DesktopSettings`） |
+| `desktop-updates.js` | 保存した版の更新の確認（`createUpdateWatcher`・`collectNotices`）。下記「[更新の確認](#更新の確認)」 |
 | `desktop.js` | 画面のロジック本体（デスクトップアイコンの選択・起動、リンク集ページへの書き込み、共通のクリック/フォーカス処理） |
 
 そのほかのファイル:
@@ -114,6 +115,16 @@ Desktop 画面では `.swing-main` の幅制限と余白を外して画面いっ
 データは `cache.sites`（[`web.md`](web.md) の Sites 画面と共有）の `accounts` と `unfollowed.accounts` の両方から `stored === true` の版だけを集め、`created_at` 降順で並べる。各行のステータスアイコン（`.desk-status-icon`、`data-status`）は次の優先順で 1 個だけ選ぶ: (1) `nip05 === "mismatch"` → `ng`。(2) `nip05 === "error"`・未知の文字列 → `err`。(3) それ以外は更新の新しさで `new`（7 日以内）/`up`（30 日以内）/`default`（`not_applicable` は NIP-05 の問題扱いにせず新しさ判定に乗る）。
 
 タイトルは自己申告の `title`（サニタイズ済み、最大 120 文字）があればそれを、無ければ `d` を表示し、`title` を出すときは必ず `d` も括弧付きで併記する。リンク先は `gateway_url` を一次リンク（無ければ `url`）にし、両方あれば `url` を `[本家]` の第二リンクにする。npub・cid・size・replicas は表示しない。来訪者カウンタは、ページ読み込みのたびに 1 増やす `localStorage["swing:desktop:visits"]` に、保存中サイト数から求めた基準値を足して表示する。
+
+### 更新の確認
+
+`desktop-updates.js::createUpdateWatcher` が、新しく保存した版を見つけておしらせ（イベント）を流す。`desktop.js` が 1 つだけ作って `desktopUpdates` として公開し、受け手は `subscribe(fn)` で登録する。
+
+- **確認の時機**: 60 秒ごと、Desktop 画面を表示したとき（`/api/sites` の初回読み込みの後）、タブが前面に戻ったとき（`visibilitychange`）。Desktop 画面が表示されていない・タブが裏にあるときは何もしない。同時には 1 回しか走らない。
+- **確認の中身**: [`GET /api/activity`](http-api.md#get-apiactivity) の `latest_stored_at` だけを見る。これが前回おしらせした値を超えたときだけ、手元の `cache.sites` に同じかより新しい `stored_at` が無ければ `DesktopView.load(true)` で `/api/sites` を取り直す（Explorer の一覧と Sites 画面の表示もこの結果で更新される）。
+- **おしらせの対象**（`collectNotices`）: `accounts` と `unfollowed.accounts` のうち `stored === true` で、リンク先（`gateway_url` か `url`）があり、`stored_at` が前回おしらせした値より新しい版。`stored_at` の昇順に並べる。
+- **既読**: 受け手が `acknowledge(storedAt)` を呼ぶと `localStorage["swing:desktop:seen"]` をその値まで進める（戻しはしない）。ページを読み込み直すと、おしらせ済みでも既読になっていない版はもう一度おしらせする。値が無いとき（初めて開いたとき）は、その時点の `latest_stored_at`（無ければ 0）を既読として記録するだけで、おしらせはしない。
+- **流すイベント**: `{kind: 'sites-stored', notices}`（`notices` の各要素は `{pubkey, npub, site, href, storedAt}`。`site` は `/api/sites` のサイト）、`{kind: 'fetch-error', error}`（失敗が続く間は最初の 1 回だけ）、`{kind: 'recovered'}`（失敗の後に最初に成功したとき）。
 
 ### Desktop 画面は丸ごと日本語固定
 
