@@ -29,7 +29,7 @@ swing-tray [--config <path>]
 | ダッシュボードを開く | `login::request_link`（`POST /api/login-code`、`swing dashboard open` と同じ URL の組み立て）→ `login::open_browser` | 動作中で、`[dashboard].ui = true` |
 | 再起動 | `POST /api/restart`（プロセス内の再起動） | 動作中 |
 | 停止 | 確認のダイアログ（はい / いいえ）を出し、「はい」なら `POST /api/shutdown` | 動作中 |
-| 起動 | `service::start(false)`。`swing service start`（[`service.md`](service.md)）と同じ関数を呼ぶ。サービスとして登録していない `swing up` は、トレイからは起動できない | 停止中で、サービスとして登録済み |
+| 起動 | `service::start(false)`。`swing service start`（[`service.md`](service.md)）と同じ関数を呼ぶ。サービスとして登録していない `swing up` は、トレイからは起動できない | 停止中で、サービスとして未登録と確認できていない（登録済み、または登録状態が分からない） |
 | 終了 | トレイを閉じる。動作中なら、SWING も止めるかをダイアログ（はい / いいえ / キャンセル）で聞く（下記） | 「終了」で SWING が止まるのを待っている間でなければ常に |
 
 「再起動」「停止」「起動」「終了（はい）」を押してから状態が変わりきるまでの間の表示と無効にする項目は、下記「[操作の途中の表示](#操作の途中の表示)」。
@@ -50,7 +50,7 @@ swing-tray [--config <path>]
 
 ## 起動したときの自動起動
 
-起動して最初の状態の確認で、`swing up` が止まっていて、しかもサービスとして登録済みなら、`service::start(false)` で起動する。表示は下記の「起動しています…」になる。最初の 1 回だけ行い、その後に止まっても起動しない。ログイン時は、サービス（Windows のログオン時トリガー、launchd の `RunAtLoad`）とトレイがほぼ同時に起動するので、両方から起動することがある。その場合も、Windows はタスクの `MultipleInstancesPolicy = IgnoreNew`、macOS は `kickstart`（`-k` なし）が 2 つ目を起こさない。万一 2 つ目が立ち上がっても `swing.lock`（[`up.md`](up.md#多重起動の防止lockrs)）ですぐ終わる。
+起動して最初の状態の確認で、`swing up` が止まっていて、しかもサービスとして登録済みと確認できたなら（登録状態が分からないときは起動しない）、`service::start(false)` で起動する。表示は下記の「起動しています…」になる。最初の 1 回だけ行い、その後に止まっても起動しない。ログイン時は、サービス（Windows のログオン時トリガー、launchd の `RunAtLoad`）とトレイがほぼ同時に起動するので、両方から起動することがある。その場合も、Windows はタスクの `MultipleInstancesPolicy = IgnoreNew`、macOS は `kickstart`（`-k` なし）が 2 つ目を起こさない。万一 2 つ目が立ち上がっても `swing.lock`（[`up.md`](up.md#多重起動の防止lockrs)）ですぐ終わる。
 
 ## 状態の表示
 
@@ -59,10 +59,10 @@ swing-tray [--config <path>]
 | 状態 | 条件 | 表示 | アイコン |
 |---|---|---|---|
 | 動作中 | `/api/overview` が返った | `SWING: 動作中`。`setup: true` なら `セットアップ待ち`、`signer.last_failure`（NIP-46 の署名アプリへの最後のリクエストが、時間切れ・拒否・接続できないなどで失敗した。次に成功すると消える。[`signer.md`](signer.md)）があれば `動作中（前回の署名に失敗しました）` | ロゴ |
-| 停止中 | API に接続できない（`ApiClientError::Unreachable`） | `SWING: 停止中`。サービスとして登録されていなければ `停止中（サービス未登録）` | 灰色で半透明のロゴ（macOS は薄いロゴ。下記「アイコン」） |
+| 停止中 | API に接続できない（`ApiClientError::Unreachable`） | `SWING: 停止中`。サービスとして未登録と確認できたときだけ `停止中（サービス未登録）` | 灰色で半透明のロゴ（macOS は薄いロゴ。下記「アイコン」） |
 | エラー | 設定を読めない、トークンが合わない（401）、応答が無いなど | `SWING: エラー: <メッセージの 1 行目>` | 灰色で半透明のロゴ（macOS は薄いロゴ。下記「アイコン」） |
 
-サービスとして登録済みかどうか（`service::is_installed`）は、状態の確認のたびに、設定ファイルを読む前に調べる（設定ファイルが読めなくても下記の判定が狂わないように）。結果は 10 秒覚えておく（`schtasks` や `launchctl` を起動するため、1 秒ごとには呼ばない）。操作に失敗したら、状態の行を `操作に失敗しました: <メッセージ>` に 15 秒間差し替える。次の操作が成功したら元に戻す。ツールチップにも同じ文字列を出す。メッセージは 1 行目だけにし、80 文字を超えるときは先頭 79 文字に `…` を付けた 80 文字にする。
+サービスとして登録済みかどうか（`service::is_installed`）は、状態の確認のたびに、設定ファイルを読む前に調べる（設定ファイルが読めなくても下記の判定が狂わないように）。結果は「登録済み／未登録／分からない」の三値で、分からないときも含めて 10 秒覚えておく（`schtasks` や `launchctl` を起動するため、1 秒ごとには呼ばない）。Windows の判定と、`schtasks` の 10 秒のタイムアウトは [`service.md`](service.md) の「Windows」。`spawn_blocking` の join に失敗したときも分からないとする。操作に失敗したら、状態の行を `操作に失敗しました: <メッセージ>` に 15 秒間差し替える。次の操作が成功したら元に戻す。ツールチップにも同じ文字列を出す。メッセージは 1 行目だけにし、80 文字を超えるときは先頭 79 文字に `…` を付けた 80 文字にする。
 
 ### 操作の途中の表示
 
@@ -83,7 +83,7 @@ swing-tray [--config <path>]
 
 ## サービスの登録が消えたら終了する
 
-`status::RegistrationWatch` は `swing` 本体のサービス登録（`service::is_installed`。Windows はタスク `swing`、macOS は `jp.ne.ama.swing.plist`）を見る。一度でも登録済みと確認した後で、登録が無いと確認したら、`swing service uninstall` されたとみなしてトレイを閉じる。最初から登録が無いまま手で起動したトレイは、この判定では閉じない。
+`status::RegistrationWatch` は `swing` 本体のサービス登録（`service::is_installed`。Windows はタスク `swing`、macOS は `jp.ne.ama.swing.plist`）を見る。一度でも登録済み（`Some(true)`）と確認した後で、未登録（`Some(false)`）と確認したら、`swing service uninstall` されたとみなしてトレイを閉じる。分からない（`None`。Windows で `schtasks` が起動できない・失敗した・時間切れになった）ときは無視して前の状態を保つので、`schtasks` の一時的な失敗ではトレイは閉じない。最初から登録が無いまま手で起動したトレイは、この判定では閉じない。
 
 - Windows の `uninstall` はトレイのプロセスには触らない。タスクの削除から最大で約 15 秒（登録確認のキャッシュ 10 秒 + ポーリング間隔 5 秒）でトレイが閉じる。`install --no-tray` でトレイの自動起動の登録（Run キーの値）だけを消しても、タスクは残るので動いているトレイは閉じない。
 - macOS の `uninstall` はトレイの LaunchAgent を `bootout` するので、その時点でトレイも止まる。

@@ -58,7 +58,7 @@ impl Status {
 pub struct Snapshot {
     pub status: Status,
     pub ui: bool,
-    pub service_installed: bool,
+    pub service_installed: Option<bool>,
 }
 
 pub fn is_running(snapshot: Option<&Snapshot>) -> bool {
@@ -71,10 +71,15 @@ pub struct RegistrationWatch {
 }
 
 impl RegistrationWatch {
-    pub fn removed(&mut self, installed: bool) -> bool {
-        let removed = self.seen && !installed;
-        self.seen |= installed;
-        removed
+    pub fn removed(&mut self, installed: Option<bool>) -> bool {
+        match installed {
+            Some(true) => {
+                self.seen = true;
+                false
+            }
+            Some(false) => self.seen,
+            None => false,
+        }
     }
 }
 
@@ -152,7 +157,7 @@ pub fn menu_state(
         open: idle && running && snapshot.ui,
         restart: idle && running,
         stop: idle && running,
-        start: idle && stopped && snapshot.service_installed,
+        start: idle && stopped && snapshot.service_installed != Some(false),
         quit: pending != Some(&Pending::Quitting),
         active_icon: running,
     }
@@ -167,8 +172,10 @@ fn status_text(snapshot: &Snapshot, lang: Lang) -> String {
             ..
         } => l.signer_failed.to_owned(),
         Status::Running { .. } => l.running.to_owned(),
-        Status::Stopped if snapshot.service_installed => l.stopped.to_owned(),
-        Status::Stopped => l.stopped_not_installed.to_owned(),
+        Status::Stopped if snapshot.service_installed == Some(false) => {
+            l.stopped_not_installed.to_owned()
+        }
+        Status::Stopped => l.stopped.to_owned(),
         Status::Error(e) => format!("{}{}", l.error, shorten(e)),
     }
 }
@@ -245,7 +252,7 @@ mod tests {
         Snapshot {
             status,
             ui: true,
-            service_installed: true,
+            service_installed: Some(true),
         }
     }
 
@@ -322,10 +329,15 @@ mod tests {
         assert_eq!(s.status_text, "SWING: 停止中");
 
         let mut snap = snapshot(Status::Stopped);
-        snap.service_installed = false;
+        snap.service_installed = Some(false);
         let s = menu_state(&snap, None, None, Lang::Ja);
         assert!(!s.start);
         assert_eq!(s.status_text, "SWING: 停止中（サービス未登録）");
+
+        snap.service_installed = None;
+        let s = menu_state(&snap, None, None, Lang::Ja);
+        assert!(s.start);
+        assert_eq!(s.status_text, "SWING: 停止中");
     }
 
     #[test]
@@ -410,11 +422,23 @@ mod tests {
     #[test]
     fn registration_counts_as_removed_only_after_it_was_seen() {
         let mut watch = RegistrationWatch::default();
-        assert!(!watch.removed(false));
-        assert!(!watch.removed(false));
-        assert!(!watch.removed(true));
-        assert!(!watch.removed(true));
-        assert!(watch.removed(false));
+        assert!(!watch.removed(Some(false)));
+        assert!(!watch.removed(None));
+        assert!(!watch.removed(Some(false)));
+        assert!(!watch.removed(Some(true)));
+        assert!(!watch.removed(Some(true)));
+        assert!(watch.removed(Some(false)));
+    }
+
+    #[test]
+    fn an_unknown_registration_keeps_the_tray_open() {
+        let mut watch = RegistrationWatch::default();
+        assert!(!watch.removed(Some(true)));
+        assert!(!watch.removed(None));
+        assert!(!watch.removed(None));
+        assert!(!watch.removed(Some(true)));
+        assert!(!watch.removed(None));
+        assert!(watch.removed(Some(false)));
     }
 
     #[test]

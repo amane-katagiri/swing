@@ -9,7 +9,7 @@
 - 作業ディレクトリは設定ファイルの親ディレクトリ（相対な `state_dir = "./data"` がそのまま使える）。
 - `--system` は Linux でのみ有効で、他 OS で指定すると「--system is only supported on Linux」でエラー。`--no-start` は登録だけ行い起動しない（`install` のみ）。
 - 生成する unit / plist / タスク XML / トレイの登録内容の文字列は純粋関数（`systemd_unit`・`launchd_plist`・`launchd_tray_plist`・`schtasks_xml`・`tray_run_command`）で作り、ユニットテストで検証している。以下の表は動作に効く値だけを挙げ、全文はこれらの関数が正本。OS 依存の実行部分（ファイル書き込み・`systemctl`/`launchctl`/`schtasks` の呼び出し）だけ `cfg(target_os = ...)` で分岐し、対象 3 OS 以外では `install`/`uninstall`/`start`/`status`/`stop` すべて「service management is not supported on this OS」でエラーになる。
-- `service::is_installed(system)` は `swing` 本体が登録済みかどうかを返す（Linux は unit ファイル、macOS は plist の有無、Windows は `schtasks /Query /TN swing` が成功するか）。CLI からは使わず、`swing-tray` が使う（[`tray.md`](tray.md)）。
+- `service::is_installed(system)` は `swing` 本体が登録済みかどうかを `Option<bool>` で返す（`Some(true)` 登録済み、`Some(false)` 未登録、`None` 分からない）。Linux は unit ファイル、macOS は plist の有無で決まり、`None` は返さない。Windows は下記「Windows」の `schtasks` による判定。CLI からは使わず、`swing-tray` が使う（[`tray.md`](tray.md)）。
 
 ## タスクトレイの自動起動（Windows と macOS）
 
@@ -79,8 +79,14 @@
 
 - `install`: XML を一時ファイルに書き、`schtasks /Create /TN swing /XML <tmpfile> /F` で登録してから一時ファイルを削除する。`schtasks` の出力は OEM コードページ（日本語環境では CP932）なので、失敗時の標準エラーと `status` の標準出力は UTF-8 として読めなければ OEM コードページとして変換して表示する。`--no-start` でなければ `schtasks /Run /TN swing` で即時起動する。
 - `start`: `schtasks /Run /TN swing`。
-- `uninstall`: トレイの登録を消した後、`stop`（下記）と同じグレースフルな停止を試みる（設定の解決や読み込みの失敗も含めて無視して続ける）。続けて `schtasks /End /TN swing`（失敗は無視、既にグレースフルに止まっていれば no-op）→ `schtasks /Delete /TN swing /F`。
-- `stop`: 設定ファイルを `resolve_service_paths`（`--config` は取らず、`install` と同じ規則で探す）で見つけて `Config::load` し、`stop::run`（[`cli.md#stop`](cli.md#stop)）を 60 秒のタイムアウトで呼ぶ。設定の解決や `Config::load` が失敗したらそのままエラー終了し、`/End` はしない。`stop::run` が失敗したときだけ `` Warning: graceful stop failed (...); falling back to `schtasks /End`. `` を標準出力に出して `schtasks /End /TN swing` にフォールバックする（`/End` が終わらせるのは `conhost.exe` で、`swing` は `--exit-with-parent` で親の終了を検知してグレースフルに止まる）。タスクの登録自体は残る。素の `stop` も `/End` によるフォールバックも、次のログオン時トリガーまで再起動しない。
-- `status`: `schtasks /Query /TN swing /FO LIST /V` を実行し、標準出力をそのまま表示する。失敗（未登録など）なら `not installed` と出す。
+- `uninstall`: トレイの登録を消した後、`stop`（下記）と同じグレースフルな停止を試みる。設定ファイルが見つからない・読めない・`stop::run` が失敗したときは `stop` と同じ `Warning: …` を出して続ける。続けて `schtasks /End /TN swing`（失敗は無視、既にグレースフルに止まっていれば no-op）→ `schtasks /Delete /TN swing /F`。
+- `stop`: 設定ファイルを `resolve_config_path(None)`（`--config` は取らない。`SWING_CONFIG`、無ければカレントディレクトリの `swing.toml`）で探して `Config::load` し、`stop::run`（[`cli.md#stop`](cli.md#stop)）を 60 秒のタイムアウトで呼ぶ。`install` と違って実行ファイルのパスは解決しない。次のときは `Warning: …` を標準出力に出して `schtasks /End /TN swing` にフォールバックする（`/End` が終わらせるのは `conhost.exe` で、`swing` は `--exit-with-parent` で親の終了を検知してグレースフルに止まる）。
+  - 設定ファイルが無い: `` Warning: could not find the config file (swing.toml) at <path> to stop swing through its dashboard; set SWING_CONFIG or run this from the directory containing swing.toml. Falling back to `schtasks /End`. ``
+  - 設定ファイルを読めない（`Config::load` の失敗）: `` Warning: could not read the config file <path> to stop swing through its dashboard (<error>). Falling back to `schtasks /End`. ``
+  - `stop::run` が失敗した: `` Warning: graceful stop failed (...); falling back to `schtasks /End`. ``
+
+  タスクの登録自体は残る。素の `stop` も `/End` によるフォールバックも、次のログオン時トリガーまで再起動しない。
+- 登録の判定（`is_installed` と `status`）: `schtasks` はどのエラーでも終了コード 1 を返し、メッセージはロケールで変わるので、終了コードやメッセージからは「タスクが無い」を見分けられない。そこで `schtasks /Query /TN swing` が成功すれば登録済み、失敗したら `schtasks /Query /FO CSV /NH` で全タスクを列挙し、その一覧取得が成功して先頭列に `"\swing"`（大文字小文字は区別しない。サブフォルダのタスクは含めない）が無いときだけ未登録とする。起動の失敗、一覧取得の失敗、10 秒のタイムアウト（超えたら `schtasks` を kill する）はすべて「分からない」（`is_installed` は `None`）。
+- `status`: 上の判定で未登録なら `not installed`、分からなければエラー終了する。登録済みなら `schtasks /Query /TN swing /FO LIST /V`（10 秒のタイムアウト付き）の標準出力をそのまま表示し、失敗したらエラー終了する。
 
 `schtasks` はすべて `CREATE_NO_WINDOW` を付けて起動する（`swing-tray`（[`tray.md`](tray.md)）から呼んでもコンソールウィンドウは開かない）。出力はパイプで受け取るので、CLI から呼んだときの表示は変わらない。

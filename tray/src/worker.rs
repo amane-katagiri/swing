@@ -38,7 +38,7 @@ pub enum Update {
 }
 
 struct Poller {
-    installed: Option<(bool, Instant)>,
+    installed: Option<(Option<bool>, Instant)>,
 }
 
 impl Poller {
@@ -74,7 +74,7 @@ impl Poller {
         }
     }
 
-    async fn service_installed(&mut self) -> bool {
+    async fn service_installed(&mut self) -> Option<bool> {
         if let Some((installed, at)) = self.installed
             && at.elapsed() < INSTALLED_CACHE
         {
@@ -82,7 +82,8 @@ impl Poller {
         }
         let installed = tokio::task::spawn_blocking(|| service::is_installed(false))
             .await
-            .unwrap_or(false);
+            .ok()
+            .flatten();
         self.installed = Some((installed, Instant::now()));
         installed
     }
@@ -104,7 +105,7 @@ pub async fn run(
                 let snapshot = poller.snapshot(config_path.as_deref()).await;
                 let auto_start = first_poll
                     && snapshot.status == Status::Stopped
-                    && snapshot.service_installed;
+                    && snapshot.service_installed == Some(true);
                 first_poll = false;
                 let removed = registration.removed(snapshot.service_installed);
                 send(Update::Snapshot(snapshot));
