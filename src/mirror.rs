@@ -129,7 +129,7 @@ fn print_mirror_set(mirror_set_name: &str, set: &MirrorSet) {
     }
 }
 
-async fn load_state(config: &Config) -> Result<State> {
+pub async fn load_state(config: &Config) -> Result<State> {
     let state_path = config.agent.state_dir.join("state.json");
     if state_path.exists() {
         State::load(&state_path).await
@@ -438,6 +438,7 @@ pub struct SiteRow {
     pub url: Option<String>,
     pub size: Option<u64>,
     pub stored_size: Option<u64>,
+    pub stored_at: Option<u64>,
     pub created_at: u64,
     pub title: Option<String>,
     pub message: Option<String>,
@@ -551,26 +552,26 @@ fn build_site_row(
     cid: String,
     url: Option<String>,
     size: Option<u64>,
-    stored_size: Option<u64>,
+    stored_version: Option<&VersionRecord>,
     created_at: u64,
     title: Option<String>,
     message: Option<String>,
     nip05: Option<String>,
     replicas: Option<replicas::ReplicaCounts>,
-    stored: bool,
 ) -> SiteRow {
     SiteRow {
         d,
         cid,
         url,
         size,
-        stored_size,
+        stored_size: stored_version.map(|v| v.size),
+        stored_at: stored_version.map(|v| v.stored_at),
         created_at,
         title,
         message,
         nip05,
         replicas,
-        stored,
+        stored: stored_version.is_some(),
     }
 }
 
@@ -635,21 +636,18 @@ pub async fn collect_sites(relay: &RelayClient, config: &Config) -> Result<Sites
                     .sites
                     .get(&key)
                     .and_then(|versions| versions.iter().find(|v| v.cid == ev.cid));
-                let stored = stored_version.is_some();
-                let stored_size = stored_version.map(|v| v.size);
                 let replicas = replica_counts(&replica_data, ev);
                 build_site_row(
                     ev.d.clone(),
                     ev.cid.clone(),
                     ev.url.clone(),
                     ev.size,
-                    stored_size,
+                    stored_version,
                     ev.created_at,
                     ev.title.clone(),
                     ev.message.clone(),
                     nip05_status(&state, &key),
                     replicas,
-                    stored,
                 )
             })
             .collect();
@@ -668,16 +666,15 @@ pub async fn collect_sites(relay: &RelayClient, config: &Config) -> Result<Sites
                 let nip05 = nip05_status(&state, &key);
                 build_site_row(
                     d,
-                    version.cid,
+                    version.cid.clone(),
                     None,
                     Some(version.size),
-                    Some(version.size),
+                    Some(&version),
                     version.created_at,
                     None,
                     None,
                     nip05,
                     None,
-                    true,
                 )
             })
             .collect();
@@ -837,6 +834,7 @@ mod tests {
             url: None,
             size,
             stored_size,
+            stored_at: stored_size.map(|_| 0),
             created_at: 0,
             title: None,
             message: None,

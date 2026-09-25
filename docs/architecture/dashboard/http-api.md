@@ -19,7 +19,7 @@
 | 409 | publish の多重実行、セットアップ・ペアリング・つなぎ直しを使えない状態（セットアップが済んで再起動を待っている間の 2 回目の `POST /api/setup` を含む）、`mirror/add` で Follow Set が上限を超える（各エンドポイント） |
 | 413 | ボディが大きすぎる |
 | 422 | publish の NIP-05 `require` 失敗だけ |
-| 500 | ファイルの書き込みなど内部の失敗 |
+| 500 | ファイルの読み書きなど内部の失敗 |
 | 502 | relay・Kubo・Nostr 発行・署名アプリの失敗 |
 | 503 | agent の未準備・セットアップモード（下記） |
 
@@ -35,7 +35,7 @@ API は `swing up` の寿命で動き続ける（[`../up.md`](../up.md)）。
 | エンドポイント | 使えないとき |
 |---|---|
 | relay・Kubo を使うもの（`/api/sites`・`/api/status`・`/api/mirror`・`/api/mirror/add`・`/api/mirror/remove`・`/api/webring`・`/api/replicas`・`/api/publish/sites`・`/api/publish/upload`） | agent が起動時の突き合わせ（保存量に比例して時間がかかる）を終えて `AppState::set_ready` を呼ぶまでと、agent が落ちて `set_not_ready` を呼んでから次に `set_ready` するまで（[`../agent.md#全体の流れ`](../agent.md#全体の流れ)）は 503 `{"error": "agent is not ready"}`。セットアップモード（[`../up.md#セットアップモード鍵未設定`](../up.md#セットアップモード鍵未設定)）の間は常に 503 `{"error": "agent is not configured"}` |
-| `/api/overview`・`/api/config`・`/api/shutdown`・`/api/restart`・`/api/login`・`/api/login-code`・`/api/token/rotate` | 無い（常に応答する） |
+| `/api/overview`・`/api/activity`・`/api/config`・`/api/shutdown`・`/api/restart`・`/api/login`・`/api/login-code`・`/api/token/rotate` | 無い（常に応答する） |
 | `/api/setup` | セットアップモードでなければ 409。セットアップが一度成功してから再起動するまでも 409 |
 | `/api/setup/signer` | セットアップモードでも署名アプリを使っている間でもなければ 409 |
 | `/api/signer/reconnect` | 署名アプリを使っていなければ 409 |
@@ -66,13 +66,23 @@ API は `swing up` の寿命で動き続ける（[`../up.md`](../up.md)）。
 - `signer`: 署名の方法。`remote` は NIP-46 の署名アプリを使っているかどうか、`relays` は署名アプリとのやりとりに使っている relay（秘密鍵なら空）、`last_failure` は署名アプリへの最後のリクエストが失敗したときの時刻とメッセージ（成功していれば・秘密鍵なら `null`。[`../signer.md`](../signer.md)）。
 - `setup`: 鍵も署名アプリも未設定（セットアップモード）かどうか。そのときは `pubkey`／`npub`／`signer` も `null` になる。詳細は [`../up.md#セットアップモード鍵未設定`](../up.md#セットアップモード鍵未設定)。画面側の扱いは [`web.md`](web.md)。
 
+## GET /api/activity
+
+```json
+{ "latest_stored_at": 1790000000 }
+```
+
+- `latest_stored_at`: `state.json` に記録された全版の `stored_at` の最大値。版が 1 つも無い（`state.json` が無い場合を含む）と `null`。
+- `state.json` を読むだけで relay にも Kubo にも接続しないので、定期的に呼んでも軽い。Desktop 画面の更新確認はこれを見て、値が進んだときだけ `/api/sites` を取り直す（[`desktop.md`](desktop.md)）。
+- agent の準備状態に関わらず応答する。`state.json` の読み込み・解釈に失敗したら 500（`error!` でログに出す）。
+
 ## GET /api/sites
 
 `mirror::collect_sites` をそのまま JSON にしたもの（CLI の `swing sites` と同じ集計。[`../cli.md#sites`](../cli.md#sites)）。
 
 ```json
 { "follow_set": { "found": true, "note": null },
-  "accounts": [ { "pubkey": "…", "npub": "…", "sites": [ { "d": "example.com", "cid": "bafy…", "url": "…", "size": 12345, "stored_size": 12300, "created_at": 1790000000, "title": "…", "message": "…", "nip05": "verified", "replicas": 3, "unverified_replicas": 0, "stored": true, "gateway_url": "…" } ] } ],
+  "accounts": [ { "pubkey": "…", "npub": "…", "sites": [ { "d": "example.com", "cid": "bafy…", "url": "…", "size": 12345, "stored_size": 12300, "stored_at": 1790000100, "created_at": 1790000000, "title": "…", "message": "…", "nip05": "verified", "replicas": 3, "unverified_replicas": 0, "stored": true, "gateway_url": "…" } ] } ],
   "replicas_error": null,
   "unfollowed": { "remove_on_unfollow": true, "accounts": [ { "...": "同じ形。ただし url・title・message・replicas・unverified_replicas は常に null、stored は常に true、stored_size は size と同じ値" } ] } }
 ```
@@ -80,6 +90,7 @@ API は `swing up` の寿命で動き続ける（[`../up.md`](../up.md)）。
 - `follow_set.note`: CLI が括弧付きで出す注記から括弧を外した文字列。無ければ `null`。
 - `nip05`・`title`・`message`・`size` は値が無ければ `null`。`title` は作者の自己申告で受信側は信頼しない（[`protocol.md` 第 4 節](../../protocol.md#4-サイトイベント)）。`message` は生の `content`（サニタイズ・切り詰めはフロントの責務）。`title` も同様にサニタイズはフロントの責務。
 - `size` はイベントの自己申告の `size` タグ。`stored_size` は `cid` と一致する `state.json` の `VersionRecord.size`（保存時に `dag/stat` で測った値。この呼び出しのために改めて Kubo は呼ばない）で、一致する版が無ければ `null`。画面での出し方は [`web.md`](web.md#sites-画面)。版ごとの重複排除込みの実測合計は `/api/status` の `sites[].actual` にしかない。
+- `stored_at`: `stored_size` と同じ版の `VersionRecord.stored_at`（その版を保存した時刻）。一致する版が無ければ `null`。
 - `replicas`・`unverified_replicas`: レプリカ報告の取得に失敗すると全サイトで両方 `null` になり、`replicas_error` に理由が入る。`replicas` は報告者が作者自身か、作者かこちらの Follow Set に入っている報告者（信頼できる tier）の数、`unverified_replicas` はそれ以外（自称にすぎない tier）の数（[「レプリカ報告の信頼度」](../nostr.md#レプリカ報告の信頼度replicastier)）。
 - `gateway_url`: `stored` が true かつ gateway 設定がある版だけに付く。
 - `accounts[].sites` は 1 アカウントあたり `d` の昇順で先頭 `MAX_SITES_PER_AUTHOR_LISTED` 件まで、Follow Set の対象は先頭 `MAX_FOLLOW_SET_ENTRIES` 件まで（[取得と表示の上限](../nostr.md#取得と表示の上限nostrbudget)）。

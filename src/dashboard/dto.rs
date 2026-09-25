@@ -69,6 +69,11 @@ pub struct LoginCodeDto {
 }
 
 #[derive(Debug, Serialize)]
+pub struct ActivityDto {
+    pub latest_stored_at: Option<u64>,
+}
+
+#[derive(Debug, Serialize)]
 pub struct OverviewDto {
     pub version: String,
     pub setup: bool,
@@ -157,6 +162,7 @@ pub struct SiteDto {
     pub url: Option<String>,
     pub size: Option<u64>,
     pub stored_size: Option<u64>,
+    pub stored_at: Option<u64>,
     pub created_at: u64,
     pub title: Option<String>,
     pub message: Option<String>,
@@ -181,6 +187,7 @@ fn site_dto(site: &mirror::SiteRow, gateway: Option<&str>) -> SiteDto {
         url: site.url.clone(),
         size: site.size,
         stored_size: site.stored_size,
+        stored_at: site.stored_at,
         created_at: site.created_at,
         title: site.title.clone(),
         message: site.message.clone(),

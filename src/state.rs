@@ -159,6 +159,10 @@ impl State {
         self.sites.entry(key.clone()).or_default().push(record);
     }
 
+    pub fn latest_stored_at(&self) -> Option<u64> {
+        self.sites.values().flatten().map(|v| v.stored_at).max()
+    }
+
     pub fn remove_versions(&mut self, key: &SiteKey, cids: &[String]) -> Vec<VersionRecord> {
         let Some(versions) = self.sites.get_mut(key) else {
             return Vec::new();
@@ -186,6 +190,22 @@ impl State {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn latest_stored_at_is_the_newest_across_all_sites() {
+        let mut state = State::default();
+        assert_eq!(state.latest_stored_at(), None);
+        let record = |cid: &str, stored_at| VersionRecord {
+            cid: cid.into(),
+            size: 1,
+            created_at: 1,
+            stored_at,
+        };
+        state.apply_store(&site_key("aa", "x.example"), record("one", 30));
+        state.apply_store(&site_key("aa", "x.example"), record("two", 10));
+        state.apply_store(&site_key("bb", "y.example"), record("three", 20));
+        assert_eq!(state.latest_stored_at(), Some(30));
+    }
 
     #[tokio::test]
     async fn round_trip_save_load() {

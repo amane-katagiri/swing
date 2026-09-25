@@ -166,6 +166,7 @@ pub fn router(state: Arc<AppState>) -> Router {
 
     let mut app: Router<Arc<AppState>> = Router::new()
         .route("/api/overview", get(api::overview))
+        .route("/api/activity", get(api::activity))
         .route("/api/sites", get(api::sites))
         .route("/api/status", get(api::status))
         .route("/api/mirror", get(api::mirror_list))

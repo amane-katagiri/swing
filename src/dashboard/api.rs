@@ -126,6 +126,17 @@ pub async fn overview(
     }))
 }
 
+pub async fn activity(
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<dto::ActivityDto>, ApiError> {
+    let saved = mirror::load_state(&state.config)
+        .await
+        .map_err(|e| internal("reading state.json", e))?;
+    Ok(Json(dto::ActivityDto {
+        latest_stored_at: saved.latest_stored_at(),
+    }))
+}
+
 pub async fn sites(State(state): State<Arc<AppState>>) -> Result<Json<dto::SitesDto>, ApiError> {
     let relay = state.require_relay().await?;
     let view = mirror::collect_sites(&relay, &state.config)
@@ -1424,6 +1435,38 @@ mod tests {
         assert!(json["pubkey"].is_null());
         assert!(json["npub"].is_null());
         assert!(json["signer"].is_null());
+    }
+
+    #[tokio::test]
+    async fn activity_reads_the_newest_stored_at_without_the_agent() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut config, _secret_hex) = test_config_in_dir(dir.path(), true, false);
+        config.agent.state_dir = dir.path().join("state");
+        let state_path = config.agent.state_dir.join("state.json");
+        let state = build_state(config, test_exit(), None, TEST_TOKEN);
+
+        let (status, json) =
+            send_json(router(Arc::clone(&state)), "GET", "/api/activity", None).await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(json["latest_stored_at"].is_null());
+
+        let mut saved = crate::state::State::default();
+        for (d, stored_at) in [("x.example", 20), ("y.example", 50)] {
+            saved.apply_store(
+                &crate::state::site_key("aa", d),
+                crate::state::VersionRecord {
+                    cid: format!("bafy{d}"),
+                    size: 1,
+                    created_at: 1,
+                    stored_at,
+                },
+            );
+        }
+        saved.save(&state_path).await.unwrap();
+
+        let (status, json) = send_json(router(state), "GET", "/api/activity", None).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(json["latest_stored_at"], 50);
     }
 
     #[tokio::test]
