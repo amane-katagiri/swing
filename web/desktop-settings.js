@@ -261,7 +261,10 @@ function removeImage() {
   const next = { ...pendingState };
   delete next.image;
   pendingState = next;
+  const hadFocus = settingsEls.dialog.contains(document.activeElement);
   syncImagePanel();
+  /* Disabling the focused button drops focus to body. */
+  if (hadFocus && !settingsEls.dialog.contains(document.activeElement)) settingsEls.browseBtn.focus();
   updatePreview();
   updateDirtyUI();
 }
@@ -381,8 +384,6 @@ function syncImagePanel() {
   settingsEls.comboField.disabled = !image;
   closeCombo();
   renderComboValue(image ? image.display : 'center');
-  /* Disabling the just-clicked control (e.g. 削除) blurs it to body; keep focus in the dialog. */
-  if (!settingsEls.dialog.hidden && !settingsEls.dialog.contains(document.activeElement)) settingsEls.dialog.focus();
 }
 
 function syncFormFromState() {
@@ -506,6 +507,8 @@ function stopFlash() {
     flashTimer = null;
   }
   settingsEls.titlebar.classList.remove('is-inactive');
+  /* The overlay click dropped focus to body. */
+  if (!settingsEls.dialog.hidden && !settingsEls.dialog.contains(document.activeElement)) settingsEls.dialog.focus();
 }
 
 function flashTitlebar() {
@@ -650,7 +653,10 @@ function okAndClose() {
 }
 
 function applyOnly() {
+  const hadFocus = settingsEls.dialog.contains(document.activeElement);
   tryApply();
+  /* Disabling the focused button drops focus to body. */
+  if (hadFocus && !settingsEls.dialog.contains(document.activeElement)) settingsEls.okBtn.focus();
 }
 
 function cancelAndClose() {
@@ -727,6 +733,13 @@ function wireEvents() {
 
   settingsEls.overlay.addEventListener('click', () => flashTitlebar());
   settingsEls.dialog.addEventListener('focusin', () => selectIcon(null));
+  /* Keyed on `disabled` so an ordinary blur such as an overlay click is left alone. */
+  settingsEls.dialog.addEventListener('focusout', (ev) => {
+    if (!(ev.target instanceof HTMLElement) || !ev.target.disabled) return;
+    requestAnimationFrame(() => {
+      if (!settingsEls.dialog.hidden && !settingsEls.dialog.contains(document.activeElement)) settingsEls.dialog.focus();
+    });
+  });
 
   settingsEls.closeBtn.addEventListener('click', cancelAndClose);
   settingsEls.cancelBtn.addEventListener('click', cancelAndClose);

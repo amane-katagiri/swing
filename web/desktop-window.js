@@ -325,6 +325,14 @@ function wireWindowChrome() {
     winEls.win.focus();
   });
 
+  /* Keyed on `disabled` so an ordinary blur such as a desktop click is left alone. */
+  winEls.win.addEventListener('focusout', (ev) => {
+    if (!(ev.target instanceof HTMLElement) || !ev.target.disabled) return;
+    requestAnimationFrame(() => {
+      if (!winEls.win.hidden && !winEls.win.contains(document.activeElement)) winEls.win.focus();
+    });
+  });
+
   new ResizeObserver(() => reflowWindow()).observe(winEls.screen);
 }
 
