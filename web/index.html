@@ -11,6 +11,8 @@
 <link rel="preload" href="/fonts/pixelmplus12-bold.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="/style.css">
 <link rel="stylesheet" href="/desktop.css">
+<link rel="stylesheet" href="/desktop-dialog.css">
+<link rel="stylesheet" href="/desktop-wallpaper.css">
 <link rel="stylesheet" href="/custom.css">
 <style id="user-css"></style>
 </head>
@@ -291,7 +293,7 @@
                   <div class="desk-wp-monitor-screen" id="desk-wp-preview"></div>
                 </div>
               </div>
-              <fieldset class="desk-wp-fieldset">
+              <fieldset class="desk-fieldset">
                 <legend>背景色</legend>
                 <div class="desk-wp-swatches" id="desk-wp-swatches" role="group" aria-label="色見本"></div>
                 <div class="desk-wp-color-row">
@@ -302,7 +304,7 @@
                   <button type="button" class="desk-dialog-btn desk-dialog-btn-sm" id="desk-wp-color-reset">既定の色に戻す</button>
                 </div>
               </fieldset>
-              <fieldset class="desk-wp-fieldset">
+              <fieldset class="desk-fieldset">
                 <legend>壁紙</legend>
                 <div class="desk-wp-image-row">
                   <button type="button" class="desk-dialog-btn desk-dialog-btn-sm" id="desk-wp-browse">参照...</button>
@@ -314,17 +316,17 @@
                 <input type="file" accept="image/*" id="desk-wp-file-input" class="desk-wp-file-input" hidden>
                 <div class="desk-wp-display-row">
                   <span id="desk-wp-display-label">表示方法:</span>
-                  <div class="desk-wp-combobox">
-                    <button type="button" class="desk-wp-combobox-field" id="desk-wp-display-field" role="combobox" aria-haspopup="listbox" aria-expanded="false" aria-controls="desk-wp-display-list" aria-labelledby="desk-wp-display-label desk-wp-display-value" disabled>
-                      <span class="desk-wp-combobox-value" id="desk-wp-display-value">中央に表示</span>
-                      <span class="desk-wp-combobox-arrow" aria-hidden="true"></span>
+                  <div class="desk-combobox">
+                    <button type="button" class="desk-combobox-field" id="desk-wp-display-field" role="combobox" aria-haspopup="listbox" aria-expanded="false" aria-controls="desk-wp-display-list" aria-labelledby="desk-wp-display-label desk-wp-display-value" disabled>
+                      <span class="desk-combobox-value" id="desk-wp-display-value">中央に表示</span>
+                      <span class="desk-combobox-arrow" aria-hidden="true"></span>
                     </button>
-                    <ul class="desk-wp-combobox-list" id="desk-wp-display-list" role="listbox" aria-label="表示方法" hidden>
-                      <li class="desk-wp-combobox-option" role="option" id="desk-wp-display-opt-center" data-value="center" aria-selected="true">中央に表示</li>
-                      <li class="desk-wp-combobox-option" role="option" id="desk-wp-display-opt-tile" data-value="tile" aria-selected="false">並べて表示</li>
-                      <li class="desk-wp-combobox-option" role="option" id="desk-wp-display-opt-contain" data-value="contain" aria-selected="false">ページ幅に合わせる</li>
-                      <li class="desk-wp-combobox-option" role="option" id="desk-wp-display-opt-cover" data-value="cover" aria-selected="false">画面に合わせて伸縮</li>
-                      <li class="desk-wp-combobox-option" role="option" id="desk-wp-display-opt-stretch" data-value="stretch" aria-selected="false">拡大して表示</li>
+                    <ul class="desk-combobox-list" id="desk-wp-display-list" role="listbox" aria-label="表示方法" hidden>
+                      <li class="desk-combobox-option" role="option" id="desk-wp-display-opt-center" data-value="center" aria-selected="true">中央に表示</li>
+                      <li class="desk-combobox-option" role="option" id="desk-wp-display-opt-tile" data-value="tile" aria-selected="false">並べて表示</li>
+                      <li class="desk-combobox-option" role="option" id="desk-wp-display-opt-contain" data-value="contain" aria-selected="false">ページ幅に合わせる</li>
+                      <li class="desk-combobox-option" role="option" id="desk-wp-display-opt-cover" data-value="cover" aria-selected="false">画面に合わせて伸縮</li>
+                      <li class="desk-combobox-option" role="option" id="desk-wp-display-opt-stretch" data-value="stretch" aria-selected="false">拡大して表示</li>
                     </ul>
                   </div>
                 </div>

@@ -57,6 +57,8 @@ const STATIC_ASSETS: &[StaticAsset] = &[
     bytes_asset!("image/png", "apple-touch-icon.png"),
     text_asset!(CSS, "style.css"),
     text_asset!(CSS, "desktop.css"),
+    text_asset!(CSS, "desktop-dialog.css"),
+    text_asset!(CSS, "desktop-wallpaper.css"),
     text_asset!(CSS, "desktop-frame.css"),
     text_asset!(JS, "boot.js"),
     text_asset!(JS, "app.js"),

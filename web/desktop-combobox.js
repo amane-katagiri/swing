@@ -5,7 +5,7 @@ function clamp(v, lo, hi) {
 /* Win95-style listbox popup: a plain `<select>` can't be restyled to match, so this is a hand-rolled combobox. */
 export function createCombobox({ field, list, onChange }) {
   const options = Array.from(list.querySelectorAll('[role="option"]'));
-  const valueEl = field.querySelector('.desk-wp-combobox-value');
+  const valueEl = field.querySelector('.desk-combobox-value');
   let open = false;
   let activeIndex = 0;
 

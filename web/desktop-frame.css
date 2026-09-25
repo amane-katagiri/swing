@@ -1,10 +1,4 @@
-/*
- * The window's own furniture, injected into the link page's document by
- * desktop.js. The scrollbar belongs to the fake browser window rather than to
- * the page inside it, so it stays out of the replaceable page stylesheet --
- * and a parent document cannot reach a child frame's scrollbar through CSS.
- * Injected as the first stylesheet, so a replaced page can still override it.
- */
+/* A parent document can't style a child iframe's scrollbar through CSS, so desktop.js injects this directly instead of shipping it with the replaceable page stylesheet. */
 
 :root {
   --desk-sb-face: #c0c0c0;
