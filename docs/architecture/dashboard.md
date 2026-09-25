@@ -104,7 +104,7 @@ HTTP サーバー（axum 0.8）で、ダッシュボードのブラウザ向け�
 
 ## 静的ファイルの配信（`src/dashboard/assets.rs`）
 
-`[dashboard].ui = true` のときだけ配信する（`ui_router()`。上の「UI と API の分離」を参照）。`web/` 配下の全ファイルをビルド時に `include_str!` でバイナリに埋め込む（実行時にファイルを探しに行かない）。ファイルを 1 つ追加するときは `assets.rs` に定数+ハンドラを、`mod.rs` の `ui_router()` にルートを 1 対 1 で足す。
+`[dashboard].ui = true` のときだけ配信する（`ui_router()`。上の「UI と API の分離」を参照）。差し替え不要なファイルは `assets.rs` の `STATIC_ASSETS`（パス・Content-Type・`include_str!`/`include_bytes!` で埋め込んだ本体の組）という 1 つの配列にまとめてあり、`assets::register()` がこれを 1 行ずつループしてルートに登録する。各エントリはテキスト用/バイナリ用の 2 つの小さな `macro_rules!`（`text_asset!(content_type, "web/ 以下のファイル名")` / `bytes_asset!(...)`。パスは `/` + ファイル名を自動で組み立てる）で 1 行にしてあるので、ファイルを 1 つ追加するときはこの配列に 1 行足すだけでよい。
 
 例外は `/desktop-page.html`・`/desktop-page.css`・`/desktop-banner` の 3 つで、`[dashboard]` にパスが設定されていればそのファイルを起動時（`AppState::new` → `DesktopAssets::load`）に読んで `AppState.desktop` に持ち、以降はそこから配信する（設定が無ければ同梱のものを `Bytes::from_static` で持つ）。リクエストのたびにディスクを見るのは `/custom.css` だけ。
 

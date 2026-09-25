@@ -138,43 +138,10 @@ impl AppState {
 }
 
 fn ui_router() -> Router<Arc<AppState>> {
-    Router::new()
-        .route("/", get(assets::index))
-        .route("/favicon.svg", get(assets::favicon))
-        .route("/favicon-32.png", get(assets::favicon_32))
-        .route("/apple-touch-icon.png", get(assets::apple_touch_icon))
-        .route("/style.css", get(assets::style))
-        .route("/desktop.css", get(assets::desktop_css))
-        .route("/boot.js", get(assets::boot_js))
-        .route("/app.js", get(assets::app_js))
-        .route("/graph.js", get(assets::graph_js))
-        .route("/storage.js", get(assets::storage_js))
-        .route("/i18n.js", get(assets::i18n_js))
-        .route("/util.js", get(assets::util_js))
-        .route("/ui.js", get(assets::ui_js))
-        .route("/sites.js", get(assets::sites_js))
-        .route("/webring.js", get(assets::webring_js))
-        .route("/publish.js", get(assets::publish_js))
-        .route("/settings.js", get(assets::settings_js))
-        .route("/setup.js", get(assets::setup_js))
-        .route("/pairing.js", get(assets::pairing_js))
-        .route("/login.js", get(assets::login_js))
-        .route("/desktop.js", get(assets::desktop_js))
-        .route("/desktop-window.js", get(assets::desktop_window_js))
-        .route("/desktop-settings.js", get(assets::desktop_settings_js))
-        .route("/desktop-icons.svg", get(assets::desktop_icons_svg))
+    assets::register(Router::new())
         .route("/desktop-page.html", get(assets::desktop_page))
         .route("/desktop-page.css", get(assets::desktop_page_css))
-        .route("/desktop-frame.css", get(assets::desktop_frame_css))
         .route("/desktop-banner", get(assets::desktop_banner))
-        .route(
-            "/fonts/pixelmplus12-regular.woff2",
-            get(assets::font_pixelmplus12_regular),
-        )
-        .route(
-            "/fonts/pixelmplus12-bold.woff2",
-            get(assets::font_pixelmplus12_bold),
-        )
         .route("/custom.css", get(assets::custom_css))
         .route("/login", get(session::login_page))
 }

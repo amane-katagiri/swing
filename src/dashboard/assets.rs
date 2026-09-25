@@ -2,152 +2,103 @@ use std::path::Path;
 use std::sync::Arc;
 
 use anyhow::{Context, Result, bail};
+use axum::Router;
 use axum::body::Bytes;
 use axum::extract::State;
 use axum::http::header;
 use axum::response::{IntoResponse, Response};
+use axum::routing::get;
 
 use super::AppState;
 use crate::config::DashboardConfig;
 
-const INDEX_HTML: &str = include_str!("../../web/index.html");
-const STYLE_CSS: &str = include_str!("../../web/style.css");
-const DESKTOP_CSS: &str = include_str!("../../web/desktop.css");
-const BOOT_JS: &str = include_str!("../../web/boot.js");
-const APP_JS: &str = include_str!("../../web/app.js");
-const GRAPH_JS: &str = include_str!("../../web/graph.js");
-const STORAGE_JS: &str = include_str!("../../web/storage.js");
-const I18N_JS: &str = include_str!("../../web/i18n.js");
-const UTIL_JS: &str = include_str!("../../web/util.js");
-const UI_JS: &str = include_str!("../../web/ui.js");
-const SITES_JS: &str = include_str!("../../web/sites.js");
-const WEBRING_JS: &str = include_str!("../../web/webring.js");
-const PUBLISH_JS: &str = include_str!("../../web/publish.js");
-const SETTINGS_JS: &str = include_str!("../../web/settings.js");
-const SETUP_JS: &str = include_str!("../../web/setup.js");
-const PAIRING_JS: &str = include_str!("../../web/pairing.js");
-const LOGIN_JS: &str = include_str!("../../web/login.js");
-const DESKTOP_JS: &str = include_str!("../../web/desktop.js");
-const DESKTOP_WINDOW_JS: &str = include_str!("../../web/desktop-window.js");
-const DESKTOP_SETTINGS_JS: &str = include_str!("../../web/desktop-settings.js");
-const DESKTOP_ICONS_SVG: &str = include_str!("../../web/desktop-icons.svg");
-const DESKTOP_PAGE_HTML: &str = include_str!("../../web/desktop-page.html");
-const DESKTOP_PAGE_CSS: &str = include_str!("../../web/desktop-page.css");
-const DESKTOP_FRAME_CSS: &str = include_str!("../../web/desktop-frame.css");
-const FAVICON_SVG: &str = include_str!("../../web/favicon.svg");
-const FAVICON_32_PNG: &[u8] = include_bytes!("../../web/favicon-32.png");
-const APPLE_TOUCH_ICON_PNG: &[u8] = include_bytes!("../../web/apple-touch-icon.png");
-const DESKTOP_BANNER_GIF: &[u8] = include_bytes!("../../web/desktop-banner.gif");
-const FONT_PIXELMPLUS12_REGULAR: &[u8] =
-    include_bytes!("../../web/fonts/pixelmplus12-regular.woff2");
-const FONT_PIXELMPLUS12_BOLD: &[u8] = include_bytes!("../../web/fonts/pixelmplus12-bold.woff2");
+enum AssetBody {
+    Text(&'static str),
+    Bytes(&'static [u8]),
+}
 
-fn asset(content_type: &'static str, body: &'static str) -> Response {
-    ([(header::CONTENT_TYPE, content_type)], body).into_response()
+struct StaticAsset {
+    path: &'static str,
+    content_type: &'static str,
+    body: AssetBody,
+}
+
+macro_rules! text_asset {
+    ($content_type:expr, $file:literal) => {
+        StaticAsset {
+            path: concat!("/", $file),
+            content_type: $content_type,
+            body: AssetBody::Text(include_str!(concat!("../../web/", $file))),
+        }
+    };
+}
+
+macro_rules! bytes_asset {
+    ($content_type:expr, $file:literal) => {
+        StaticAsset {
+            path: concat!("/", $file),
+            content_type: $content_type,
+            body: AssetBody::Bytes(include_bytes!(concat!("../../web/", $file))),
+        }
+    };
+}
+
+const JS: &str = "text/javascript; charset=utf-8";
+const CSS: &str = "text/css; charset=utf-8";
+
+const STATIC_ASSETS: &[StaticAsset] = &[
+    StaticAsset {
+        path: "/",
+        content_type: "text/html; charset=utf-8",
+        body: AssetBody::Text(include_str!("../../web/index.html")),
+    },
+    text_asset!("image/svg+xml", "favicon.svg"),
+    bytes_asset!("image/png", "favicon-32.png"),
+    bytes_asset!("image/png", "apple-touch-icon.png"),
+    text_asset!(CSS, "style.css"),
+    text_asset!(CSS, "desktop.css"),
+    text_asset!(CSS, "desktop-frame.css"),
+    text_asset!(JS, "boot.js"),
+    text_asset!(JS, "app.js"),
+    text_asset!(JS, "graph.js"),
+    text_asset!(JS, "storage.js"),
+    text_asset!(JS, "i18n.js"),
+    text_asset!(JS, "util.js"),
+    text_asset!(JS, "ui.js"),
+    text_asset!(JS, "sites.js"),
+    text_asset!(JS, "webring.js"),
+    text_asset!(JS, "publish.js"),
+    text_asset!(JS, "settings.js"),
+    text_asset!(JS, "setup.js"),
+    text_asset!(JS, "pairing.js"),
+    text_asset!(JS, "login.js"),
+    text_asset!(JS, "desktop.js"),
+    text_asset!(JS, "desktop-window.js"),
+    text_asset!(JS, "desktop-settings.js"),
+    text_asset!("image/svg+xml", "desktop-icons.svg"),
+    bytes_asset!("font/woff2", "fonts/pixelmplus12-regular.woff2"),
+    bytes_asset!("font/woff2", "fonts/pixelmplus12-bold.woff2"),
+];
+
+fn serve_static(asset: &'static StaticAsset) -> Response {
+    match asset.body {
+        AssetBody::Text(body) => {
+            ([(header::CONTENT_TYPE, asset.content_type)], body).into_response()
+        }
+        AssetBody::Bytes(body) => {
+            ([(header::CONTENT_TYPE, asset.content_type)], body).into_response()
+        }
+    }
+}
+
+pub(super) fn register(router: Router<Arc<AppState>>) -> Router<Arc<AppState>> {
+    STATIC_ASSETS.iter().fold(router, |router, asset| {
+        router.route(asset.path, get(move || async move { serve_static(asset) }))
+    })
 }
 
 fn bytes_asset(content_type: &str, body: Bytes) -> Response {
     ([(header::CONTENT_TYPE, content_type.to_string())], body).into_response()
-}
-
-fn binary_asset(content_type: &'static str, body: &'static [u8]) -> Response {
-    ([(header::CONTENT_TYPE, content_type)], body).into_response()
-}
-
-pub async fn index() -> Response {
-    asset("text/html; charset=utf-8", INDEX_HTML)
-}
-
-pub async fn favicon() -> Response {
-    asset("image/svg+xml", FAVICON_SVG)
-}
-
-pub async fn favicon_32() -> Response {
-    binary_asset("image/png", FAVICON_32_PNG)
-}
-
-pub async fn apple_touch_icon() -> Response {
-    binary_asset("image/png", APPLE_TOUCH_ICON_PNG)
-}
-
-pub async fn style() -> Response {
-    asset("text/css; charset=utf-8", STYLE_CSS)
-}
-
-pub async fn desktop_css() -> Response {
-    asset("text/css; charset=utf-8", DESKTOP_CSS)
-}
-
-pub async fn boot_js() -> Response {
-    asset("text/javascript; charset=utf-8", BOOT_JS)
-}
-
-pub async fn app_js() -> Response {
-    asset("text/javascript; charset=utf-8", APP_JS)
-}
-
-pub async fn graph_js() -> Response {
-    asset("text/javascript; charset=utf-8", GRAPH_JS)
-}
-
-pub async fn storage_js() -> Response {
-    asset("text/javascript; charset=utf-8", STORAGE_JS)
-}
-
-pub async fn i18n_js() -> Response {
-    asset("text/javascript; charset=utf-8", I18N_JS)
-}
-
-pub async fn util_js() -> Response {
-    asset("text/javascript; charset=utf-8", UTIL_JS)
-}
-
-pub async fn ui_js() -> Response {
-    asset("text/javascript; charset=utf-8", UI_JS)
-}
-
-pub async fn sites_js() -> Response {
-    asset("text/javascript; charset=utf-8", SITES_JS)
-}
-
-pub async fn webring_js() -> Response {
-    asset("text/javascript; charset=utf-8", WEBRING_JS)
-}
-
-pub async fn publish_js() -> Response {
-    asset("text/javascript; charset=utf-8", PUBLISH_JS)
-}
-
-pub async fn settings_js() -> Response {
-    asset("text/javascript; charset=utf-8", SETTINGS_JS)
-}
-
-pub async fn setup_js() -> Response {
-    asset("text/javascript; charset=utf-8", SETUP_JS)
-}
-
-pub async fn pairing_js() -> Response {
-    asset("text/javascript; charset=utf-8", PAIRING_JS)
-}
-
-pub async fn login_js() -> Response {
-    asset("text/javascript; charset=utf-8", LOGIN_JS)
-}
-
-pub async fn desktop_js() -> Response {
-    asset("text/javascript; charset=utf-8", DESKTOP_JS)
-}
-
-pub async fn desktop_window_js() -> Response {
-    asset("text/javascript; charset=utf-8", DESKTOP_WINDOW_JS)
-}
-
-pub async fn desktop_settings_js() -> Response {
-    asset("text/javascript; charset=utf-8", DESKTOP_SETTINGS_JS)
-}
-
-pub async fn desktop_icons_svg() -> Response {
-    asset("image/svg+xml", DESKTOP_ICONS_SVG)
 }
 
 fn desktop(state: &AppState) -> &DesktopAssets {
@@ -161,10 +112,6 @@ pub async fn desktop_page(State(state): State<Arc<AppState>>) -> Response {
     bytes_asset("text/html; charset=utf-8", desktop(&state).page.clone())
 }
 
-pub async fn desktop_frame_css() -> Response {
-    asset("text/css; charset=utf-8", DESKTOP_FRAME_CSS)
-}
-
 pub async fn desktop_page_css(State(state): State<Arc<AppState>>) -> Response {
     bytes_asset("text/css; charset=utf-8", desktop(&state).page_css.clone())
 }
@@ -174,14 +121,6 @@ pub async fn desktop_banner(State(state): State<Arc<AppState>>) -> Response {
         desktop(&state).banner_content_type,
         desktop(&state).banner.clone(),
     )
-}
-
-pub async fn font_pixelmplus12_regular() -> Response {
-    binary_asset("font/woff2", FONT_PIXELMPLUS12_REGULAR)
-}
-
-pub async fn font_pixelmplus12_bold() -> Response {
-    binary_asset("font/woff2", FONT_PIXELMPLUS12_BOLD)
 }
 
 pub async fn custom_css(State(state): State<Arc<AppState>>) -> Response {
@@ -208,6 +147,9 @@ pub struct DesktopAssets {
 
 impl DesktopAssets {
     pub fn load(config: &DashboardConfig) -> Result<Self> {
+        const DESKTOP_PAGE_HTML: &str = include_str!("../../web/desktop-page.html");
+        const DESKTOP_PAGE_CSS: &str = include_str!("../../web/desktop-page.css");
+        const DESKTOP_BANNER_GIF: &[u8] = include_bytes!("../../web/desktop-banner.gif");
         Ok(Self {
             page: read_override(config.desktop_page.as_deref(), DESKTOP_PAGE_HTML.as_bytes())?,
             page_css: read_override(
@@ -286,6 +228,26 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn every_linked_stylesheet_is_served() {
+        let index = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("web/index.html");
+        let source = std::fs::read_to_string(&index).unwrap();
+        let mut hrefs = std::collections::BTreeSet::new();
+        for part in source.split("<link rel=\"stylesheet\" href=\"").skip(1) {
+            hrefs.insert(part.split('"').next().unwrap().to_string());
+        }
+        assert!(hrefs.contains("/style.css"));
+        for href in hrefs {
+            let req = Request::builder()
+                .uri(href.clone())
+                .header("Host", "127.0.0.1:8082")
+                .body(Body::empty())
+                .unwrap();
+            let resp = call(router(test_state()), req).await;
+            assert_eq!(resp.status(), StatusCode::OK, "{href}");
+        }
+    }
+
+    #[tokio::test]
     async fn index_is_served_as_html_with_security_headers() {
         let app = router(test_state());
         let req = Request::builder()
@@ -312,34 +274,31 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn style_and_scripts_have_expected_content_types() {
+    async fn table_driven_assets_have_expected_content_types() {
+        for asset in super::STATIC_ASSETS {
+            let app = router(test_state());
+            let req = Request::builder()
+                .uri(asset.path)
+                .header("Host", "127.0.0.1:8082")
+                .body(Body::empty())
+                .unwrap();
+            let resp = call(app, req).await;
+            assert_eq!(resp.status(), StatusCode::OK, "{}", asset.path);
+            assert_eq!(
+                resp.headers().get("content-type").unwrap(),
+                asset.content_type,
+                "{}",
+                asset.path
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn state_dependent_assets_have_expected_content_types() {
         for (path, expected) in [
-            ("/favicon.svg", "image/svg+xml"),
-            ("/favicon-32.png", "image/png"),
-            ("/apple-touch-icon.png", "image/png"),
-            ("/style.css", "text/css; charset=utf-8"),
-            ("/desktop.css", "text/css; charset=utf-8"),
-            ("/boot.js", "text/javascript; charset=utf-8"),
-            ("/app.js", "text/javascript; charset=utf-8"),
-            ("/graph.js", "text/javascript; charset=utf-8"),
-            ("/storage.js", "text/javascript; charset=utf-8"),
-            ("/i18n.js", "text/javascript; charset=utf-8"),
-            ("/util.js", "text/javascript; charset=utf-8"),
-            ("/ui.js", "text/javascript; charset=utf-8"),
-            ("/sites.js", "text/javascript; charset=utf-8"),
-            ("/webring.js", "text/javascript; charset=utf-8"),
-            ("/publish.js", "text/javascript; charset=utf-8"),
-            ("/settings.js", "text/javascript; charset=utf-8"),
-            ("/desktop.js", "text/javascript; charset=utf-8"),
-            ("/desktop-window.js", "text/javascript; charset=utf-8"),
-            ("/desktop-settings.js", "text/javascript; charset=utf-8"),
-            ("/desktop-icons.svg", "image/svg+xml"),
             ("/desktop-page.html", "text/html; charset=utf-8"),
             ("/desktop-page.css", "text/css; charset=utf-8"),
-            ("/desktop-frame.css", "text/css; charset=utf-8"),
             ("/desktop-banner", "image/gif"),
-            ("/fonts/pixelmplus12-regular.woff2", "font/woff2"),
-            ("/fonts/pixelmplus12-bold.woff2", "font/woff2"),
             ("/custom.css", "text/css; charset=utf-8"),
         ] {
             let app = router(test_state());
