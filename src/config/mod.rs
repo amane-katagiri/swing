@@ -441,7 +441,7 @@ pub(crate) fn build_config_from_str(
     get_env: impl Fn(&str) -> Option<String>,
 ) -> Result<Config> {
     let file: ConfigFile = toml::from_str(text).context("parsing config file")?;
-    build::build_config(file, get_env)
+    build::build_config(file, None, get_env)
 }
 
 pub fn parse_bool(input: &str) -> Result<bool> {
@@ -462,7 +462,14 @@ impl Config {
 
     pub fn load(cli_path: Option<&Path>) -> Result<Self> {
         let (file, config_path, config_exists) = load_file(cli_path)?;
-        let mut config = build::build_config(file, env_var)?;
+        let base = if config_exists {
+            let absolute = std::path::absolute(&config_path)
+                .with_context(|| format!("resolving config file path {}", config_path.display()))?;
+            absolute.parent().map(Path::to_path_buf)
+        } else {
+            None
+        };
+        let mut config = build::build_config(file, base.as_deref(), env_var)?;
         config.config_path = config_path;
         config.config_exists = config_exists;
         Ok(config)
@@ -574,6 +581,25 @@ mod tests {
         let cfg = Config::load(Some(&path)).unwrap();
         assert_eq!(cfg.config_path, path);
         assert!(cfg.config_exists);
+    }
+
+    #[test]
+    fn relative_file_paths_resolve_against_the_config_file_directory() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("swing.toml");
+        std::fs::write(
+            &path,
+            "[nostr]\nsecret_key = \"k\"\nrelays = [\"wss://r\"]\n[agent]\nstate_dir = \"./data\"\n[dashboard]\ncustom_css = \"theme/custom.css\"\n",
+        )
+        .unwrap();
+        let cfg = Config::load(Some(&path)).unwrap();
+        let base = std::path::absolute(dir.path()).unwrap();
+        assert_eq!(cfg.agent.state_dir, base.join("data"));
+        assert_eq!(cfg.kubo.repo, base.join("data").join("kubo"));
+        assert_eq!(
+            cfg.dashboard.custom_css,
+            Some(base.join("theme").join("custom.css"))
+        );
     }
 
     #[test]

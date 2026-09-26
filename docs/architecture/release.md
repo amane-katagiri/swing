@@ -37,7 +37,7 @@
 
 ## macOS の動作確認（`.github/workflows/macos-check.yml`）
 
-Mac の実機が無くても `swing-tray` とサービス登録を macOS で動かして確かめるためのワークフロー。手動実行（`workflow_dispatch`）でだけ動く。`macos-latest` のランナー（GUI のログインセッションがあり、画面は 1024×768 の等倍、ロケールは `en_US`）で `--workspace` を release ビルドし、`swing.example.toml` の写しを設定ファイルにして、鍵の無いセットアップモード（[`up.md`](up.md#セットアップモード鍵未設定)）で動かす。Kubo も relay も使わない。CLI は設定ファイルのディレクトリで実行する（`state_dir = "./data"` がカレントディレクトリからの相対パスのため）。
+Mac の実機が無くても `swing-tray` とサービス登録を macOS で動かして確かめるためのワークフロー。手動実行（`workflow_dispatch`）でだけ動く。`macos-latest` のランナー（GUI のログインセッションがあり、画面は 1024×768 の等倍、ロケールは `en_US`）で `--workspace` を release ビルドし、`swing.example.toml` の写しを設定ファイルにして、鍵の無いセットアップモード（[`up.md`](up.md#セットアップモード鍵未設定)）で動かす。Kubo も relay も使わない。CLI は設定ファイルのディレクトリで実行する。
 
 順に次を行い、各段階で `screencapture` で画面全体と、メニューバーの右半分（開いたメニューを含む）を撮る。
 

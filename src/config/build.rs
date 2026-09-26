@@ -60,12 +60,27 @@ fn resolve_typed<T>(
     }
 }
 
+fn rebase_path(
+    sources: &BTreeMap<String, Source>,
+    key: &str,
+    base: Option<&Path>,
+    path: PathBuf,
+) -> PathBuf {
+    match base {
+        Some(base) if sources.get(key) != Some(&Source::Env) && path.is_relative() => {
+            base.join(path.strip_prefix(".").unwrap_or(&path))
+        }
+        _ => path,
+    }
+}
+
 fn resolve_opt_path(
     sources: &mut BTreeMap<String, Source>,
     key: &str,
     get_env: &impl Fn(&str) -> Option<String>,
     env_key: &str,
     file_val: Option<String>,
+    base: Option<&Path>,
 ) -> Option<PathBuf> {
     let env_val = get_env(env_key);
     sources.insert(
@@ -80,7 +95,7 @@ fn resolve_opt_path(
     );
     match env_val {
         Some(v) => Some(PathBuf::from(v)),
-        None => file_val.map(PathBuf::from),
+        None => file_val.map(|v| rebase_path(sources, key, base, PathBuf::from(v))),
     }
 }
 
@@ -408,6 +423,7 @@ fn resolve_agent(
     sources: &mut BTreeMap<String, Source>,
     get_env: &impl Fn(&str) -> Option<String>,
     file: AgentFile,
+    base: Option<&Path>,
 ) -> Result<AgentConfig> {
     let state_dir = resolve(
         sources,
@@ -502,7 +518,7 @@ fn resolve_agent(
     }
 
     Ok(AgentConfig {
-        state_dir: PathBuf::from(state_dir),
+        state_dir: rebase_path(sources, "agent.state_dir", base, PathBuf::from(state_dir)),
         poll_interval: Duration::from_secs(poll_interval),
         fetch_timeout: Duration::from_secs(fetch_timeout),
         fetch_idle_timeout: Duration::from_secs(fetch_idle_timeout),
@@ -552,6 +568,7 @@ fn resolve_dashboard(
     sources: &mut BTreeMap<String, Source>,
     get_env: &impl Fn(&str) -> Option<String>,
     file: DashboardFile,
+    base: Option<&Path>,
 ) -> Result<DashboardConfig> {
     let listen = resolve(
         sources,
@@ -626,6 +643,7 @@ fn resolve_dashboard(
         get_env,
         settings::env_of("dashboard.custom_css"),
         file.custom_css,
+        base,
     );
     let desktop_page = resolve_opt_path(
         sources,
@@ -633,6 +651,7 @@ fn resolve_dashboard(
         get_env,
         settings::env_of("dashboard.desktop_page"),
         file.desktop_page,
+        base,
     );
     let desktop_page_css = resolve_opt_path(
         sources,
@@ -640,6 +659,7 @@ fn resolve_dashboard(
         get_env,
         settings::env_of("dashboard.desktop_page_css"),
         file.desktop_page_css,
+        base,
     );
     let desktop_banner = resolve_opt_path(
         sources,
@@ -647,6 +667,7 @@ fn resolve_dashboard(
         get_env,
         settings::env_of("dashboard.desktop_banner"),
         file.desktop_banner,
+        base,
     );
     let mascots_dir = resolve_opt_path(
         sources,
@@ -654,6 +675,7 @@ fn resolve_dashboard(
         get_env,
         settings::env_of("dashboard.mascots_dir"),
         file.mascots_dir,
+        base,
     );
 
     let max_upload = resolve(
@@ -692,6 +714,7 @@ fn resolve_kubo(
     file: KuboFile,
     state_dir: &Path,
     max_total_storage: u64,
+    base: Option<&Path>,
 ) -> Result<KuboConfig> {
     let managed = resolve_typed(
         sources,
@@ -710,6 +733,7 @@ fn resolve_kubo(
         get_env,
         settings::env_of("kubo.binary"),
         file.binary,
+        base,
     );
 
     let repo = resolve(
@@ -723,6 +747,10 @@ fn resolve_kubo(
         "invalid [kubo].repo",
         state_dir.join("kubo"),
     )?;
+    let repo = match sources.get("kubo.repo") {
+        Some(Source::Default) => repo,
+        _ => rebase_path(sources, "kubo.repo", base, repo),
+    };
 
     let storage_max = resolve(
         sources,
@@ -864,6 +892,7 @@ fn resolve_gateway(
 
 pub(super) fn build_config(
     file: ConfigFile,
+    base: Option<&Path>,
     get_env: impl Fn(&str) -> Option<String>,
 ) -> Result<Config> {
     let mut sources: BTreeMap<String, Source> = BTreeMap::new();
@@ -871,17 +900,18 @@ pub(super) fn build_config(
 
     let nostr = resolve_nostr(&mut sources, get_env, file.nostr)?;
     let policy = resolve_policy(&mut sources, get_env, file.policy)?;
-    let agent = resolve_agent(&mut sources, get_env, file.agent)?;
+    let agent = resolve_agent(&mut sources, get_env, file.agent, base)?;
     let kubo = resolve_kubo(
         &mut sources,
         get_env,
         file.kubo,
         &agent.state_dir,
         policy.max_total_storage,
+        base,
     )?;
     let ipfs = resolve_ipfs(&mut sources, get_env, file.ipfs, kubo.managed)?;
     let publish = resolve_publish(&mut sources, get_env, file.publish)?;
-    let dashboard = resolve_dashboard(&mut sources, get_env, file.dashboard)?;
+    let dashboard = resolve_dashboard(&mut sources, get_env, file.dashboard, base)?;
     let gateway = resolve_gateway(
         &mut sources,
         get_env,
@@ -921,7 +951,7 @@ mod tests {
     }
 
     fn assert_env_rejects(env_key: &'static str, value: &'static str, expected_substring: &str) {
-        let err = build_config(minimal_file(), move |k| {
+        let err = build_config(minimal_file(), None, move |k| {
             (k == env_key).then(|| value.to_string())
         })
         .unwrap_err();
@@ -929,6 +959,79 @@ mod tests {
             err.to_string().contains(expected_substring),
             "expected error containing {expected_substring:?}, got: {err}"
         );
+    }
+
+    fn file_with_paths(state_dir: &str) -> ConfigFile {
+        let mut file = minimal_file();
+        file.agent.state_dir = Some(state_dir.into());
+        file.kubo.binary = Some("bin/ipfs".into());
+        file.dashboard.mascots_dir = Some("mascots".into());
+        file
+    }
+
+    fn base_dir() -> PathBuf {
+        std::env::temp_dir().join("swing-config-dir")
+    }
+
+    #[test]
+    fn relative_file_paths_are_joined_to_the_base_dir() {
+        let base = base_dir();
+        let cfg = build_config(file_with_paths("./data"), Some(&base), |_| None).unwrap();
+        assert_eq!(cfg.agent.state_dir, base.join("data"));
+        assert_eq!(cfg.kubo.repo, base.join("data").join("kubo"));
+        assert_eq!(cfg.kubo.binary, Some(base.join("bin").join("ipfs")));
+        assert_eq!(cfg.dashboard.mascots_dir, Some(base.join("mascots")));
+    }
+
+    #[test]
+    fn env_relative_paths_are_not_joined_to_the_base_dir() {
+        let base = base_dir();
+        let cfg = build_config(file_with_paths("./data"), Some(&base), |k| match k {
+            "SWING_STATE_DIR" => Some("./env-data".into()),
+            "SWING_KUBO_BINARY" => Some("env/ipfs".into()),
+            "SWING_DASHBOARD_MASCOTS_DIR" => Some("env-mascots".into()),
+            _ => None,
+        })
+        .unwrap();
+        assert_eq!(cfg.agent.state_dir, PathBuf::from("./env-data"));
+        assert_eq!(cfg.kubo.repo, PathBuf::from("./env-data").join("kubo"));
+        assert_eq!(cfg.kubo.binary, Some(PathBuf::from("env/ipfs")));
+        assert_eq!(
+            cfg.dashboard.mascots_dir,
+            Some(PathBuf::from("env-mascots"))
+        );
+    }
+
+    #[test]
+    fn absolute_file_paths_ignore_the_base_dir() {
+        let elsewhere = std::env::temp_dir().join("swing-elsewhere");
+        let mut file = file_with_paths(&elsewhere.join("state").to_string_lossy());
+        file.kubo.repo = Some(elsewhere.join("kubo").to_string_lossy().into_owned());
+        let cfg = build_config(file, Some(&base_dir()), |_| None).unwrap();
+        assert_eq!(cfg.agent.state_dir, elsewhere.join("state"));
+        assert_eq!(cfg.kubo.repo, elsewhere.join("kubo"));
+    }
+
+    #[test]
+    fn default_kubo_repo_follows_the_rebased_state_dir() {
+        let base = base_dir();
+        let cfg = build_config(file_with_paths("data"), Some(&base), |_| None).unwrap();
+        assert_eq!(cfg.kubo.repo, base.join("data").join("kubo"));
+        assert_eq!(cfg.source_of("kubo.repo"), Some(Source::Default));
+    }
+
+    #[test]
+    fn default_state_dir_is_joined_to_the_base_dir() {
+        let base = base_dir();
+        let cfg = build_config(minimal_file(), Some(&base), |_| None).unwrap();
+        assert_eq!(cfg.agent.state_dir, base.join("data"));
+        assert_eq!(cfg.kubo.repo, base.join("data").join("kubo"));
+    }
+
+    #[test]
+    fn relative_file_paths_stay_as_written_without_a_base_dir() {
+        let cfg = build_config(file_with_paths("./data"), None, |_| None).unwrap();
+        assert_eq!(cfg.agent.state_dir, PathBuf::from("./data"));
     }
 
     #[test]
@@ -951,9 +1054,9 @@ mod tests {
                 _ => None,
             }
         };
-        let err = build_config(minimal_file(), env("20m")).unwrap_err();
+        let err = build_config(minimal_file(), None, env("20m")).unwrap_err();
         assert!(err.to_string().contains("report_ttl"));
-        let cfg = build_config(minimal_file(), env("21m")).unwrap();
+        let cfg = build_config(minimal_file(), None, env("21m")).unwrap();
         assert_eq!(cfg.agent.report_ttl, Duration::from_secs(21 * 60));
     }
 
@@ -965,12 +1068,12 @@ mod tests {
                 _ => None,
             }
         };
-        let cfg = build_config(minimal_file(), env("7d")).unwrap();
+        let cfg = build_config(minimal_file(), None, env("7d")).unwrap();
         assert_eq!(
             cfg.agent.report_ttl,
             Duration::from_secs(crate::nostr::MAX_REPORT_AGE)
         );
-        let err = build_config(minimal_file(), env("604801s")).unwrap_err();
+        let err = build_config(minimal_file(), None, env("604801s")).unwrap_err();
         assert!(
             err.to_string().contains("report_ttl must be at most 7d"),
             "{err}"
@@ -984,7 +1087,7 @@ mod tests {
 
     #[test]
     fn mfs_root_env_override_is_normalized() {
-        let cfg = build_config(minimal_file(), |k| match k {
+        let cfg = build_config(minimal_file(), None, |k| match k {
             "SWING_MFS_ROOT" => Some("/mirror/".into()),
             _ => None,
         })
@@ -1014,7 +1117,7 @@ mod tests {
             },
             ..Default::default()
         };
-        let cfg = build_config(file, |k| match k {
+        let cfg = build_config(file, None, |k| match k {
             "SWING_NOSTR_SECRET_KEY" => Some("env-key".into()),
             "SWING_NOSTR_RELAYS" => Some("wss://a,wss://b".into()),
             _ => None,
@@ -1040,7 +1143,7 @@ mod tests {
             },
             ..Default::default()
         };
-        let cfg = build_config(file, |_| None).unwrap();
+        let cfg = build_config(file, None, |_| None).unwrap();
         assert_eq!(cfg.nostr.mirror_set, "swing");
         assert_eq!(cfg.nostr.site_event_kind, 35980);
         assert_eq!(cfg.nostr.replica_event_kind, 35981);
@@ -1087,7 +1190,7 @@ mod tests {
             },
             ..Default::default()
         };
-        let cfg = build_config(file, |_| None).unwrap();
+        let cfg = build_config(file, None, |_| None).unwrap();
         assert_eq!(
             cfg.nostr.relays,
             DEFAULT_RELAYS
@@ -1111,7 +1214,7 @@ mod tests {
             },
             ..Default::default()
         };
-        let cfg = build_config(file, |k| match k {
+        let cfg = build_config(file, None, |k| match k {
             "SWING_NIP05" => Some("off".into()),
             _ => None,
         })
@@ -1134,7 +1237,7 @@ mod tests {
             },
             ..Default::default()
         };
-        let cfg = build_config(file, |_| None).unwrap();
+        let cfg = build_config(file, None, |_| None).unwrap();
         assert_eq!(cfg.publish.nip05, Nip05Mode::Warn);
     }
 
@@ -1152,7 +1255,7 @@ mod tests {
             },
             ..Default::default()
         };
-        let cfg = build_config(file, |k| match k {
+        let cfg = build_config(file, None, |k| match k {
             "SWING_PUBLISH_NIP05" => Some("off".into()),
             _ => None,
         })
@@ -1171,7 +1274,7 @@ mod tests {
 
     #[test]
     fn dashboard_defaults_to_localhost_8082_with_default_gateway() {
-        let cfg = build_config(minimal_file(), |_| None).unwrap();
+        let cfg = build_config(minimal_file(), None, |_| None).unwrap();
         assert_eq!(
             cfg.dashboard.listen,
             SocketAddr::from(([127, 0, 0, 1], 8082))
@@ -1204,7 +1307,7 @@ mod tests {
             },
             ..Default::default()
         };
-        let cfg = build_config(file, |k| match k {
+        let cfg = build_config(file, None, |k| match k {
             "SWING_DASHBOARD_MAX_UPLOAD" => Some("512MB".into()),
             _ => None,
         })
@@ -1233,10 +1336,10 @@ mod tests {
 
     #[test]
     fn dashboard_ui_defaults_to_true_and_can_be_disabled() {
-        let cfg = build_config(minimal_file(), |_| None).unwrap();
+        let cfg = build_config(minimal_file(), None, |_| None).unwrap();
         assert!(cfg.dashboard.ui);
 
-        let cfg = build_config(minimal_file(), |k| match k {
+        let cfg = build_config(minimal_file(), None, |k| match k {
             "SWING_DASHBOARD_UI" => Some("false".into()),
             _ => None,
         })
@@ -1253,7 +1356,7 @@ mod tests {
             },
             ..minimal_file()
         };
-        let cfg = build_config(file, |_| None).unwrap();
+        let cfg = build_config(file, None, |_| None).unwrap();
         assert!(!cfg.dashboard.ui);
     }
 
@@ -1280,7 +1383,7 @@ mod tests {
             },
             ..Default::default()
         };
-        let cfg = build_config(file, |k| match k {
+        let cfg = build_config(file, None, |k| match k {
             "SWING_DASHBOARD_LISTEN" => Some("0.0.0.0:8082".into()),
             "SWING_DASHBOARD_ALLOWED_HOSTS" => Some("a.example, b.example".into()),
             "SWING_DASHBOARD_GATEWAY" => Some("http://env-gateway.example".into()),
@@ -1338,7 +1441,7 @@ mod tests {
             },
             ..Default::default()
         };
-        let cfg = build_config(file, |_| None).unwrap();
+        let cfg = build_config(file, None, |_| None).unwrap();
         assert_eq!(cfg.dashboard.gateway, None);
     }
 
@@ -1352,7 +1455,7 @@ mod tests {
             },
             ..Default::default()
         };
-        let cfg = build_config(file, |k| match k {
+        let cfg = build_config(file, None, |k| match k {
             "SWING_MAX_TOTAL_STORAGE" => Some("20GB".into()),
             _ => None,
         })
@@ -1369,7 +1472,7 @@ mod tests {
             },
             ..minimal_file()
         };
-        let err = build_config(file, |_| None).unwrap_err();
+        let err = build_config(file, None, |_| None).unwrap_err();
         assert!(err.to_string().contains("[ipfs].api conflicts"));
     }
 
@@ -1384,7 +1487,7 @@ mod tests {
 
     #[test]
     fn unmanaged_kubo_uses_ipfs_api() {
-        let cfg = build_config(minimal_file(), |k| match k {
+        let cfg = build_config(minimal_file(), None, |k| match k {
             "SWING_KUBO_MANAGED" => Some("false".into()),
             "SWING_IPFS_API" => Some("http://127.0.0.1:15001".into()),
             _ => None,
@@ -1399,7 +1502,7 @@ mod tests {
 
     #[test]
     fn unmanaged_kubo_defaults_ipfs_api() {
-        let cfg = build_config(minimal_file(), |k| match k {
+        let cfg = build_config(minimal_file(), None, |k| match k {
             "SWING_KUBO_MANAGED" => Some("false".into()),
             _ => None,
         })
@@ -1412,7 +1515,7 @@ mod tests {
 
     #[test]
     fn kubo_repo_defaults_under_state_dir() {
-        let cfg = build_config(minimal_file(), |k| match k {
+        let cfg = build_config(minimal_file(), None, |k| match k {
             "SWING_STATE_DIR" => Some("/var/lib/swing".into()),
             _ => None,
         })
@@ -1422,7 +1525,7 @@ mod tests {
 
     #[test]
     fn kubo_repo_env_overrides_default() {
-        let cfg = build_config(minimal_file(), |k| match k {
+        let cfg = build_config(minimal_file(), None, |k| match k {
             "SWING_KUBO_REPO" => Some("/data/kubo-repo".into()),
             _ => None,
         })
@@ -1439,7 +1542,7 @@ mod tests {
             },
             ..minimal_file()
         };
-        let cfg = build_config(file, |k| match k {
+        let cfg = build_config(file, None, |k| match k {
             "SWING_KUBO_BINARY" => Some("/usr/local/bin/ipfs".into()),
             _ => None,
         })
@@ -1449,7 +1552,7 @@ mod tests {
 
     #[test]
     fn kubo_storage_max_defaults_to_max_total_storage() {
-        let cfg = build_config(minimal_file(), |k| match k {
+        let cfg = build_config(minimal_file(), None, |k| match k {
             "SWING_MAX_TOTAL_STORAGE" => Some("50GB".into()),
             _ => None,
         })
@@ -1459,7 +1562,7 @@ mod tests {
 
     #[test]
     fn kubo_storage_max_can_differ_from_max_total_storage() {
-        let cfg = build_config(minimal_file(), |k| match k {
+        let cfg = build_config(minimal_file(), None, |k| match k {
             "SWING_MAX_TOTAL_STORAGE" => Some("50GB".into()),
             "SWING_KUBO_STORAGE_MAX" => Some("80GB".into()),
             _ => None,
@@ -1478,7 +1581,7 @@ mod tests {
             },
             ..minimal_file()
         };
-        let err = build_config(file, |_| None).unwrap_err();
+        let err = build_config(file, None, |_| None).unwrap_err();
         assert!(err.to_string().contains("provide_strategy"));
     }
 
@@ -1491,7 +1594,7 @@ mod tests {
             },
             ..minimal_file()
         };
-        let cfg = build_config(file, |k| match k {
+        let cfg = build_config(file, None, |k| match k {
             "SWING_KUBO_GATEWAY_LISTEN" => Some("127.0.0.1:8181".into()),
             _ => None,
         })
@@ -1513,7 +1616,7 @@ mod tests {
 
     #[test]
     fn kubo_swarm_port_defaults_to_unset() {
-        let cfg = build_config(minimal_file(), |_| None).unwrap();
+        let cfg = build_config(minimal_file(), None, |_| None).unwrap();
         assert_eq!(cfg.kubo.swarm_port, None);
     }
 
@@ -1524,7 +1627,7 @@ mod tests {
 
     #[test]
     fn kubo_swarm_port_in_range_is_accepted() {
-        let cfg = build_config(minimal_file(), |k| match k {
+        let cfg = build_config(minimal_file(), None, |k| match k {
             "SWING_KUBO_SWARM_PORT" => Some("4001".into()),
             _ => None,
         })
@@ -1539,7 +1642,7 @@ mod tests {
 
     #[test]
     fn gateway_listen_enabled_with_hosts_is_accepted() {
-        let cfg = build_config(minimal_file(), |k| match k {
+        let cfg = build_config(minimal_file(), None, |k| match k {
             "SWING_GATEWAY_LISTEN" => Some("127.0.0.1:8081".into()),
             "SWING_GATEWAY_HOSTS" => Some("example.com".into()),
             _ => None,
@@ -1570,7 +1673,7 @@ mod tests {
             },
             ..minimal_file()
         };
-        let cfg = build_config(file, |k| match k {
+        let cfg = build_config(file, None, |k| match k {
             "SWING_GATEWAY_HOSTS" => Some(" a.example , b.example ".into()),
             _ => None,
         })
@@ -1583,11 +1686,11 @@ mod tests {
 
     #[test]
     fn gateway_upstream_defaults_to_managed_kubo_gateway_listen() {
-        let cfg = build_config(minimal_file(), |_| None).unwrap();
+        let cfg = build_config(minimal_file(), None, |_| None).unwrap();
         assert!(cfg.kubo.managed);
         assert_eq!(cfg.gateway.upstream, "http://127.0.0.1:8080");
 
-        let cfg = build_config(minimal_file(), |k| match k {
+        let cfg = build_config(minimal_file(), None, |k| match k {
             "SWING_KUBO_GATEWAY_LISTEN" => Some("127.0.0.1:9999".into()),
             _ => None,
         })
@@ -1597,7 +1700,7 @@ mod tests {
 
     #[test]
     fn gateway_upstream_defaults_to_localhost_when_unmanaged() {
-        let cfg = build_config(minimal_file(), |k| match k {
+        let cfg = build_config(minimal_file(), None, |k| match k {
             "SWING_KUBO_MANAGED" => Some("false".into()),
             _ => None,
         })
@@ -1607,7 +1710,7 @@ mod tests {
 
     #[test]
     fn gateway_upstream_env_overrides_default() {
-        let cfg = build_config(minimal_file(), |k| match k {
+        let cfg = build_config(minimal_file(), None, |k| match k {
             "SWING_GATEWAY_UPSTREAM" => Some("http://ipfs:8080".into()),
             _ => None,
         })
@@ -1624,7 +1727,7 @@ mod tests {
             },
             ..minimal_file()
         };
-        let cfg = build_config(file, |k| match k {
+        let cfg = build_config(file, None, |k| match k {
             "SWING_MAX_TOTAL_STORAGE" => Some("10GB".into()),
             _ => None,
         })
@@ -1640,11 +1743,11 @@ mod tests {
 
     #[test]
     fn source_tracking_covers_secret_key_and_managed_ipfs_api() {
-        let cfg = build_config(minimal_file(), |_| None).unwrap();
+        let cfg = build_config(minimal_file(), None, |_| None).unwrap();
         assert_eq!(cfg.source_of("nostr.secret_key"), Some(Source::File));
         assert_eq!(cfg.source_of("ipfs.api"), Some(Source::Default));
 
-        let cfg = build_config(ConfigFile::default(), |_| None).unwrap();
+        let cfg = build_config(ConfigFile::default(), None, |_| None).unwrap();
         assert_eq!(cfg.source_of("nostr.secret_key"), Some(Source::Default));
     }
 

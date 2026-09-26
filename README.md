@@ -100,7 +100,7 @@ cp swing.example.toml swing.toml
 - `[nostr] relays`: 実際に使う Nostr relay
 - `[policy] max_total_storage`: 保存する全サイト合計の容量上限
 
-既定では `[kubo] managed = true` になっていて、`swing up` 自身が Kubo を子プロセスとして初期化・起動します。状態ファイルは `[agent] state_dir`（既定 `./data`）に、Kubo のリポジトリはその下の `kubo`（既定 `./data/kubo`）に置かれます。他の設定項目は後述の「設定一覧」を参照してください。
+既定では `[kubo] managed = true` になっていて、`swing up` 自身が Kubo を子プロセスとして初期化・起動します。状態ファイルは `[agent] state_dir`（既定 `./data`。設定ファイルがあれば、相対パスは設定ファイルのあるディレクトリが起点）に、Kubo のリポジトリはその下の `kubo`（既定 `./data/kubo`）に置かれます。他の設定項目は後述の「設定一覧」を参照してください。
 
 起動します。
 

@@ -159,6 +159,8 @@ swing-tray [--config <path>]
 - カタログのキー集合が `Config.sources`（`build_config` が実際に解決するキー）の集合と完全に一致すること。
 - `render_env_example` が「compose では効果が無い」と注記する `ENV_NO_EFFECT_IN_COMPOSE` の集合が、`compose.yaml` の `mirror` サービスの `environment:` に固定値で書かれている `SWING_*` の集合と一致すること。
 
+パスの設定（カタログの種類が `Path` のもの: `[agent].state_dir`・`[kubo].binary`・`[kubo].repo`・`[dashboard].custom_css`・`desktop_page`・`desktop_page_css`・`desktop_banner`・`mascots_dir`）の相対パスは、値の出どころで起点が変わる。設定ファイルがあるときは、設定ファイルに書いた値と既定値（`state_dir` の `./data`）を、設定ファイルのあるディレクトリ（`Config::load` が設定ファイルのパスを絶対パスにした親ディレクトリ）を起点に `build_config` が絶対パスにする。環境変数で渡した値と、設定ファイルが無いときの既定値はそのまま残り、カレントディレクトリが起点になる。他の値から導く既定値（`[kubo].repo` の `<state_dir>/kubo`）は解決後の `state_dir` に従う。絶対パスはどちらでもそのまま。設定ファイルの書き換え（ダッシュボードの設定編集・セットアップ・ポートの固定）は TOML の文書を直接編集するので、解決後のパスがファイルに書き戻されることはない。
+
 設定例は [`../swing.example.toml`](../swing.example.toml) を参照。`swing.example.toml` の `#field = value` はコメントアウトされた任意設定（省略時は既定値、または他の設定から導かれる値）、`field = value` は有効な行。
 
 Kubo の起動・設定は [`architecture/kubo.md`](architecture/kubo.md)、内蔵 gateway の動作は [`architecture/gateway.md`](architecture/gateway.md) を参照。

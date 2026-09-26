@@ -6,7 +6,7 @@
 
 - 登録する `swing` のコマンドは `<exe> up --config <config>`（`<exe>` は `current_exe()` の絶対パス。Windows ではこれを `conhost.exe` で包み、引数を足す。[下記](#windowsタスクスケジューラ)）。
 - 設定ファイルは `config::resolve_config_path` で決め、そのパスにファイルが無ければ「service install needs a config file (swing.toml): pass --config or set SWING_CONFIG」でエラー（環境変数だけで動かす構成は非対応）。パスは `canonicalize` して絶対パスにする。
-- 作業ディレクトリは設定ファイルの親ディレクトリ（相対な `state_dir = "./data"` がそのまま使える）。
+- 作業ディレクトリは設定ファイルの親ディレクトリ。設定ファイルに書いた相対パスと既定値は作業ディレクトリに関係なく設定ファイルのディレクトリから解決される（[`../architecture.md#設定と環境変数`](../architecture.md#設定と環境変数)）。
 - `--system` は Linux でのみ有効で、他 OS で指定すると「--system is only supported on Linux」でエラー。`--no-start` は登録だけ行い起動しない（`install` のみ）。
 - 生成する unit / plist / タスク XML / トレイの登録内容の文字列は純粋関数（`systemd_unit`・`launchd_plist`・`launchd_tray_plist`・`schtasks_xml`・`tray_run_command`）で作り、ユニットテストで検証している。以下の表は動作に効く値だけを挙げ、全文はこれらの関数が正本。OS 依存の実行部分（ファイル書き込み・`systemctl`/`launchctl`/`schtasks` の呼び出し）だけ `cfg(target_os = ...)` で分岐し、対象 3 OS 以外では `install`/`uninstall`/`start`/`status`/`stop` すべて「service management is not supported on this OS」でエラーになる。
 - `service::is_installed(system)` は `swing` 本体が登録済みかどうかを `Option<bool>` で返す（`Some(true)` 登録済み、`Some(false)` 未登録、`None` 分からない）。Linux は unit ファイル、macOS は plist の有無で決まり、`None` は返さない。Windows は下記「Windows」の `schtasks` による判定。CLI からは使わず、`swing-tray` が使う（[`tray.md`](tray.md)）。

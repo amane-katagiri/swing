@@ -2,6 +2,8 @@ use super::*;
 
 const EXAMPLE_COMMENT_COL: usize = 37;
 
+const TOML_EXAMPLE_HEADER: &str = "# パスの相対パスは、書いた値も既定値も、この設定ファイルのあるディレクトリを起点にする（環境変数で渡したパスはカレントディレクトリが起点）\n";
+
 fn push_padded_comment(out: &mut String, assignment: &str, note: &str) {
     let len = assignment.chars().count();
     out.push_str(assignment);
@@ -17,7 +19,7 @@ fn push_padded_comment(out: &mut String, assignment: &str, note: &str) {
 }
 
 pub fn render_toml_example() -> String {
-    let mut out = String::new();
+    let mut out = String::from(TOML_EXAMPLE_HEADER);
     for section in SECTION_ORDER {
         if !out.is_empty() {
             out.push('\n');

@@ -1,3 +1,5 @@
+# パスの相対パスは、書いた値も既定値も、この設定ファイルのあるディレクトリを起点にする（環境変数で渡したパスはカレントディレクトリが起点）
+
 [nostr]
 #secret_key = "nsec1..."             # SWING_NOSTR_SECRET_KEY: 署名用の秘密鍵（nsec または hex）。省略可。無いと swing up はセットアップモードで起動し、ダッシュボードから生成・保存できる
 relays = ["wss://relay.damus.io", "wss://nos.lol", "wss://relay.primal.net", "wss://yabu.me", "wss://relay-jp.nostr.wirednet.jp"]
