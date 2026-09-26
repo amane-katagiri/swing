@@ -24,17 +24,17 @@ SWING が提供するのは、この「誰を保存するか」の表明と、�
 ## しくみ
 
 ```text
-                 Nostr
-        ┌─────────┼─────────┐
-        │         │         │
-      Alice      Bob      Carol
-        │         │         │
-   mirror-agent mirror-agent mirror-agent
-        │         │         │
-      Kubo      Kubo      Kubo
-        │         │         │
-        └─────────┼─────────┘
-             Public IPFS
+                   Nostr
+       ┌─────────────┼─────────────┐
+       │             │             │
+     Alice          Bob          Carol
+       │             │             │
+ mirror-agent  mirror-agent  mirror-agent
+       │             │             │
+     Kubo          Kubo          Kubo
+       │             │             │
+       └─────────────┼─────────────┘
+                Public IPFS
 ```
 
 Nostr は「更新の通知」と「誰のサイトを保存するか」を伝えるために使います。IPFS はサイトの実データを保存・配送するために使います。
