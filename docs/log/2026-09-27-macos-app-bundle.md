@@ -12,11 +12,11 @@
 |---|---|
 | バンドルに入れるのは `swing-tray` だけにし、`swing` は tarball の直下に素の実行ファイルのまま置く | `swing` は CLI として PATH に置いて使う。バンドルの中に入れるとシンボリックリンクなどが要る |
 | `service install` は `swing` の隣の `SWING.app/Contents/MacOS/swing-tray` だけを見て、素の `swing-tray` は見ない | 判定を 1 つにする。前の形で登録した人は `service install` し直せば新しい形になる |
-| 本体とトレイの両方の LaunchAgent に `AssociatedBundleIdentifiers = [jp.ne.ama.swing]` を付ける | 「ログイン項目と機能拡張」で 2 つとも SWING としてまとめて出すため |
+| 本体とトレイの両方の LaunchAgent に `AssociatedBundleIdentifiers = [jp.ne.ama.swing]` を付ける | 「ログイン項目と機能拡張」で 2 つとも SWING としてまとめて出すため。ad-hoc 署名では効かなかった（下記）が、同じ Team ID で署名したときに効くはずなので残した |
 | バンドル ID は `jp.ne.ama.swing`（LaunchAgent の Label と同じ文字列） | アプリ名が SWING なので。Label とバンドル ID は別の名前空間 |
 | バンドルはスクリプト（`tray/macos/bundle.sh`）で組み、`cargo-bundle` などは入れない | 中身は Info.plist と 2 ファイルだけ。release と `macos-check` の両方から同じものを使える |
 | `.icns` はリポジトリにコミットし、ビルド時には作らない | `.ico` と同じ扱い。Linux でも作れる（CairoSVG で書き出して Pillow で格納） |
-| アイコンはロゴを 1024px の中央に 824px で置き、背景は付けない | macOS のアプリアイコンの余白の目安に合わせた。角丸の背景を付けるかは見え方を見てから |
+| アイコンは 1024px の中央に 824px の白い角丸の板を置き、その上にロゴを 640px で描く | 最初は透過背景のロゴだけにしたが、macOS 26 の Finder では角丸の形になっていないアイコンがグレーの角丸の板に入れて表示された。白い板を付けたら、そのまま表示された |
 | `codesign` があればバンドルに ad-hoc 署名する | Info.plist をコード署名に結び付けておく。ランナーの `codesign` で足り、`rcodesign` は要らない |
 | `LSUIElement` も入れる | 今の activation policy の `Accessory` と同じく Dock に出さない。起動直後に一瞬 Dock に出るのも防ぐ |
 | `macos-check` の System Events の操作は、プロセス名ではなく `pgrep -x swing-tray` の PID で探す | バンドルに入れるとプロセスの表示名が `CFBundleName`（`SWING`）になるため |
@@ -27,4 +27,11 @@
 - `bundle.sh` を Linux で動かし、バンドルの構成と Info.plist のバージョンの置き換えを確かめた（`codesign` の無い環境なので署名は飛ぶ）。
 - `SWING.icns` を Pillow で読み戻し、16〜1024px（Retina の 2x を含む）が入っていることを確かめた。
 
-確かめていないこと（todo）: macOS での `dumpbtm` の表示、Finder のアイコン、バンドルにしたトレイの動作。`macos-check` を回して確かめる。
+作業ブランチで `macos-check` を 2 回回し（アイコンの作り直しの前と後）、どちらも全ステップが通った。
+
+- Finder で `SWING.app` が「SWING」の名前とアイコンで出る。
+- `sfltool dumpbtm` では、トレイの項目の `Name` が `SWING` になった（前は `swing-tray`）。実行ファイルがバンドルの中にあることから名前が決まっている。
+- 本体の項目は `Name: swing` のままで、`AssociatedBundleIdentifiers` による紐づけは起きなかった。`codesign -dv` では `Signature=adhoc`・`TeamIdentifier=not set`。紐づけにはエージェントとアプリが同じ Team ID で署名されている必要があると考えられる（todo）。
+- トレイのプロセスの `LSDisplayName` は `SWING`、`ApplicationType` は `UIElement`。メニューの有効・無効、停止、トレイの「Start」からの起動、`service uninstall` の後始末は前と同じ結果だった。
+
+確かめていないこと: システム設定の「ログイン項目と機能拡張」の画面での見え方（`macos-check` では画面に行が収まらないため `dumpbtm` だけを見ている）。

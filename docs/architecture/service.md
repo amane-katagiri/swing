@@ -54,7 +54,7 @@
 | 停止の上限 | `ExitTimeOut = 90`（`service::STOP_TIMEOUT`。launchd が自分で止めるとき（`bootout` など）に SIGTERM から SIGKILL までを待つ秒数。既定の 20 秒では `swing up` の停止シーケンスが終わらないため） |
 | ログ | `StandardOutPath`・`StandardErrorPath` とも `~/Library/Logs/swing.log` |
 | `EnvironmentVariables.PATH` | `/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin`（Homebrew の bin を含める） |
-| `AssociatedBundleIdentifiers` | `[jp.ne.ama.swing]`（`SWING.app` の `CFBundleIdentifier`。システム設定の「ログイン項目と機能拡張」で、トレイの LaunchAgent とあわせて `SWING.app` の名前とアイコンで出すため） |
+| `AssociatedBundleIdentifiers` | `[jp.ne.ama.swing]`（`SWING.app` の `CFBundleIdentifier`）。ad-hoc 署名では効かず、「ログイン項目と機能拡張」では本体は `swing` のまま出る（トレイは実行ファイルが `SWING.app` の中にあるので `SWING` で出る）。バンドルとエージェントを同じ Team ID で署名したときに、本体も `SWING` に紐づけるために付けている |
 
 パス・値は XML エスケープする。
 

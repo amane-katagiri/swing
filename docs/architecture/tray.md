@@ -95,7 +95,7 @@ OS ごとに 1 枚の PNG をバイナリに埋め込む。停止中とエラー
 - **Windows**: `tray/assets/icon-64.png`（`web/favicon.svg` を 64×64 に書き出したもの）。停止中は灰色で半透明になる。
 - **macOS**: `tray/assets/icon-template-64.png`（`web/favicon.svg` の図形をすべて黒で塗り、64×64 に書き出したもの）を、テンプレート画像として出す。メニューバーの色に合わせて macOS が白か黒で描く。停止中はアルファが半分になり、薄く表示される。
 
-`swing-tray.exe` のファイルアイコンは `tray/assets/swing-tray.ico`（元図は `tray/assets/swing-tray.svg`。[`release.md`](release.md)）。macOS の `SWING.app` のアイコンは `tray/assets/SWING.icns`（`web/favicon.svg` を 1024px の正方形の中央に 824px で置き、16〜1024px を格納したもの）。
+`swing-tray.exe` のファイルアイコンは `tray/assets/swing-tray.ico`（元図は `tray/assets/swing-tray.svg`。[`release.md`](release.md)）。macOS の `SWING.app` のアイコンは `tray/assets/SWING.icns`（1024px の正方形の中央に 824px の白い角丸の板（角の半径 185px、下に薄い影）を置き、その上に `web/favicon.svg` を 640px で描いて、16〜1024px を格納したもの）。
 
 ## macOS のアプリバンドル（`SWING.app`）
 
