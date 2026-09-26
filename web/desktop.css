@@ -77,7 +77,7 @@ body[data-view="desktop"] .swing-main {
   min-height: 0;
   padding: 18px;
   background: var(--desk-teal);
-  overflow: hidden;
+  overflow: clip;
   font-family: var(--desk-font-ui);
   color: var(--desk-text);
 }
