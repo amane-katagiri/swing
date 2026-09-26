@@ -25,7 +25,7 @@ SWING（Nostr + IPFS 個人サイト相互ミラー）のリポジトリで作�
 
 ## デモ環境
 
-画面や動作を見せるときは `docker/demo/demo.sh up --seed` で外部ネットワークに出ないデモ環境を、サンプルのサイトとフォロー関係（深さ 5 まで）入りで上げる（ダッシュボードは http://127.0.0.1:18082/）。実 relay・実鍵・リポジトリ直下の `.env` は使わない。構成と外に出る経路は [`docker/demo/README.md`](docker/demo/README.md)。
+画面や動作を見せるときは `docker/demo/demo.sh up --seed` で外部ネットワークに出ないデモ環境を、サンプルのサイトとフォロー関係（深さ 5 まで）入りで上げる（ダッシュボードは <http://127.0.0.1:18082/>）。実 relay・実鍵・リポジトリ直下の `.env` は使わない。構成と外に出る経路は [`docker/demo/README.md`](docker/demo/README.md)。
 
 ## コーディング規則
 

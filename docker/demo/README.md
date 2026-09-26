@@ -13,8 +13,8 @@ docker/demo/demo.sh ps      # それ以外の引数はそのまま docker compos
 docker/demo/demo.sh logs -f mirror
 ```
 
-- ダッシュボード: http://127.0.0.1:18082/ 。ログインは `docker/demo/demo.sh exec mirror swing dashboard open --no-browser` で出た URL を開く（`docker/demo/compose.yaml` が `SWING_DASHBOARD_PUBLIC_URL=http://127.0.0.1:18082` を渡しているので、ホストのブラウザでそのまま開ける）
-- Kubo Gateway: http://localhost:18080/ （ダッシュボードの Gateway リンクもここを指す。`localhost` ではサイトごとに `<cid>.ipfs.localhost` へ移る）
+- ダッシュボード: <http://127.0.0.1:18082/>。ログインは `docker/demo/demo.sh exec mirror swing dashboard open --no-browser` で出た URL を開く（`docker/demo/compose.yaml` が `SWING_DASHBOARD_PUBLIC_URL=http://127.0.0.1:18082` を渡しているので、ホストのブラウザでそのまま開ける）
+- Kubo Gateway: <http://localhost:18080/>（ダッシュボードの Gateway リンクもここを指す。`localhost` ではサイトごとに `<cid>.ipfs.localhost` へ移る）
 - コードを変えたら `demo.sh up` をもう一度実行すれば mirror を作り直す。鍵とデータはそのまま残る。
 
 NIP-05 検証を試したいときだけ、mirror を外部ネットワークにつなぐ:
