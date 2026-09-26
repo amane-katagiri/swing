@@ -21,7 +21,7 @@
 | [`architecture/dashboard/web.md`](architecture/dashboard/web.md) | ダッシュボードの画面（Desktop 以外）と CSS カスタマイズ（`dashboard.md` の子ページ） |
 | [`architecture/dashboard/desktop.md`](architecture/dashboard/desktop.md) | ダッシュボードの Desktop 画面（`dashboard.md` の子ページで `web.md` と並列） |
 | [`architecture/dashboard/mascot.md`](architecture/dashboard/mascot.md) | Desktop 画面のマスコット: パック形式・ふるまい・当たり判定・吹き出し・おしらせ（`desktop.md` の子ページ） |
-| [`architecture/release.md`](architecture/release.md) | ビルド（Windows 向けのクロスビルドを含む）とリリース（`.github/workflows/release.yml`） |
+| [`architecture/release.md`](architecture/release.md) | ビルド（Windows 向けのクロスビルドを含む）とリリース（`.github/workflows/release.yml`）、macOS の動作確認（`.github/workflows/macos-check.yml`） |
 
 ## 構成要素
 
@@ -98,6 +98,7 @@ swing/
   docker/demo/         外部ネットワークに出ないデモ環境（compose の重ね合わせとシードスクリプト）。詳細は docker/demo/README.md
   Dockerfile, compose.yaml, .env.example, swing.example.toml
   .github/workflows/release.yml  配布用バイナリとコンテナイメージのビルド、ドラフトリリース（[`architecture/release.md`](architecture/release.md)）
+  .github/workflows/macos-check.yml  手動実行で macOS のトレイとサービス登録を動かして画面を撮る（[`architecture/release.md`](architecture/release.md#macos-の動作確認githubworkflowsmacos-checkyml)）
   docs/                役割は AGENTS.md を参照
 ```
 
@@ -212,4 +213,4 @@ cargo test --test nostr_relay_integration -- --ignored --test-threads=1
 SWING_TEST_KUBO_BIN=/path/to/ipfs cargo test --lib kubo::tests -- --ignored
 ```
 
-ビルド（Windows 向けのクロスビルドを含む）とリリース（`.github/workflows/release.yml`）は [`architecture/release.md`](architecture/release.md) を参照。
+ビルド（Windows 向けのクロスビルドを含む）とリリース（`.github/workflows/release.yml`）、macOS の動作確認（`.github/workflows/macos-check.yml`）は [`architecture/release.md`](architecture/release.md) を参照。

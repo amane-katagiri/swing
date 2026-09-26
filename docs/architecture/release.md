@@ -31,8 +31,29 @@
 | `taiki-e/install-action` | `cargo-zigbuild` をビルド済みバイナリからインストール |
 | ziglang（PyPI、`pip3 install`） | `cargo zigbuild` が使う Zig 本体 |
 | `docker/setup-qemu-action`・`docker/setup-buildx-action`・`docker/login-action`・`docker/build-push-action` | マルチアーキテクチャのイメージのビルドと ghcr.io への push |
+| `mxschmitt/action-tmate` | `macos-check` の最後に、ランナーへ SSH で入れる tmate のセッションを開く（下記） |
 
 サードパーティおよび `actions/*`（`actions/checkout`・`actions/upload-artifact`・`actions/download-artifact`）の action はフルコミット SHA に固定し、末尾に `# vN` コメントでタグ相当のバージョンを添えている。ziglang は pip の `==` でバージョンを固定する。Rust ツールチェインのバージョン自体はこれらのピン留めとは別で、ワークフローの `toolchain:` 入力（環境変数 `RUST_TOOLCHAIN`）で決まる。選定理由と信頼性の評価は [2026-09-25 の log](../log/2026-09-25-release-actions-rationale.md) を参照。
+
+## macOS の動作確認（`.github/workflows/macos-check.yml`）
+
+Mac の実機が無くても `swing-tray` とサービス登録を macOS で動かして確かめるためのワークフロー。手動実行（`workflow_dispatch`）でだけ動く。`macos-latest` のランナー（GUI のログインセッションがあり、画面は 1024×768 の等倍、ロケールは `en_US`）で `--workspace` を release ビルドし、`swing.example.toml` の写しを設定ファイルにして、鍵の無いセットアップモード（[`up.md`](up.md#セットアップモード鍵未設定)）で動かす。Kubo も relay も使わない。CLI は設定ファイルのディレクトリで実行する（`state_dir = "./data"` がカレントディレクトリからの相対パスのため）。
+
+順に次を行い、各段階で `screencapture` で画面全体と、メニューバーの右半分（開いたメニューを含む）を撮る。
+
+1. `swing service install` → ダッシュボードが応答するのを待ち、`launchctl print`（`jp.ne.ama.swing`・`jp.ne.ama.swing-tray`）・`pgrep`・`lsappinfo`（`ApplicationType` が `UIElement` なら Dock に出ない）・`swing service status`・メニューバーでのアイコンの位置と大きさを保存する
+2. `sudo sfltool dumpbtm`（「ログイン項目と機能拡張」のバックグラウンド項目としての登録。名前・種類・実行ファイルのパス）を保存する
+3. 動作中のメニューを開く（ライト → ダーク）。開いたメニューの項目名と有効・無効も保存する
+4. `swing stop` で止め、停止中のアイコンとメニューを撮る（ダーク → ライト）
+5. トレイのメニューを開いて ↓ → Return（停止中に最初に選べるのは「Start」）で起動し、動作中に戻るのを撮る
+6. `swing service uninstall` の後の `~/Library/LaunchAgents` とプロセスを保存する（前の段階が失敗しても行う）
+
+操作はランナーのシェルから `osascript` で行う（`/bin/bash` と `osascript` にはアクセシビリティと Apple Events の許可が付いている）。
+
+- `swing-tray` のアイコンは、System Events では `swing-tray` のプロセスの `menu bar 1` の `menu bar item 1` に見える。AX の `click` では `tray-icon` のメニューが開かないので、その位置の中央に `CGEventPost` でマウスのクリックを送る（JXA）。
+- ダークモードは System Events の `appearance preferences` で切り替える。
+
+2〜5 は失敗しても続ける（`continue-on-error`）。撮った画像・テキスト・`~/Library/Logs/swing*.log`・TCC の許可の一覧は artifact `macos-check` に残す。入力 `ssh` を true にすると、最後に `mxschmitt/action-tmate` で実行した本人だけが入れる tmate のセッションを開く。ログインし直したときの自動起動と、Retina での表示は、ランナーでは確かめられない。
 
 ## ローカルでのクロスビルド
 

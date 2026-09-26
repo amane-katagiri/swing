@@ -1,0 +1,173 @@
+name: macos-check
+
+on:
+  workflow_dispatch:
+    inputs:
+      ssh:
+        description: Open a tmate session at the end
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_TOOLCHAIN: "1.97"
+
+jobs:
+  tray:
+    runs-on: macos-latest
+    timeout-minutes: 45
+    env:
+      W: ${{ github.workspace }}/check
+      OUT: ${{ github.workspace }}/check/out
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # v1
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+
+      - uses: Swatinem/rust-cache@49a0bdc70d2e1b713ca9e2869b211fcce03d3c1c # v2
+        with:
+          key: macos-check
+
+      - name: Build
+        run: cargo build --release --locked --workspace
+
+      - name: Prepare
+        run: |
+          mkdir -p "$W/bin" "$OUT"
+          cp target/release/swing target/release/swing-tray "$W/bin/"
+          cp swing.example.toml "$W/swing.toml"
+          sw_vers > "$OUT/sw_vers.txt"
+          system_profiler SPDisplaysDataType > "$OUT/displays.txt"
+          defaults read -g AppleLocale > "$OUT/locale.txt" 2>&1 || true
+          for db in "/Library/Application Support/com.apple.TCC/TCC.db" "$HOME/Library/Application Support/com.apple.TCC/TCC.db"; do
+            sudo sqlite3 "$db" "select service, client, auth_value from access" 2>&1 | tee -a "$OUT/tcc.txt" > /dev/null || true
+          done
+          cat > "$W/click.js" <<'EOF'
+          ObjC.import('Cocoa');
+          function run(argv) {
+            const p = $.CGPointMake(Number(argv[0]), Number(argv[1]));
+            for (const type of [5, 1, 2]) {
+              $.CGEventPost(0, $.CGEventCreateMouseEvent(null, type, p, 0));
+              delay(0.1);
+            }
+          }
+          EOF
+          cat > "$W/lib.sh" <<'EOF'
+          cd "$W"
+          shot() { sleep "${2:-1}"; screencapture -x "$OUT/$1.png"; screencapture -x -R 512,0,512,260 "$OUT/$1-menubar.png"; }
+          listen() { awk -F'"' '/^\[dashboard\]/{s=1} s && /^listen *=/{print $2; exit}' "$W/swing.toml"; }
+          up() { curl -s -o /dev/null --max-time 2 "http://$(listen)/"; }
+          wait_up() { for _ in $(seq 60); do up && return 0; sleep 1; done; echo "swing up did not respond"; return 1; }
+          wait_down() { for _ in $(seq 60); do up || return 0; sleep 1; done; echo "swing up is still responding"; return 1; }
+          dark() { osascript -e "tell application \"System Events\" to tell appearance preferences to set dark mode to $1"; }
+          sysev() { osascript -e "with timeout of 10 seconds" -e "tell application \"System Events\" to tell process \"swing-tray\" to $1" -e "end timeout"; }
+          open_menu() {
+            local x y w h
+            IFS=', ' read -r x y w h < <(sysev 'get {position, size} of menu bar item 1 of menu bar 1')
+            osascript -l JavaScript "$W/click.js" $((x + w / 2)) $((y + h / 2)) >> "$OUT/osascript.log" 2>&1
+            sleep 2
+          }
+          key() { osascript -e "tell application \"System Events\" to key code $1" >> "$OUT/osascript.log" 2>&1; sleep 0.5; }
+          close_menu() { key 53 || true; }
+          menu() {
+            open_menu
+            shot "$1" 0
+            sysev 'get {name, enabled} of every menu item of menu 1 of menu bar item 1 of menu bar 1' > "$OUT/$1.txt" 2>&1 || true
+            close_menu
+          }
+          start_from_menu() {
+            open_menu
+            key 125
+            key 36
+          }
+          EOF
+          . "$W/lib.sh"
+          dark false || true
+          shot 00-before
+
+      - name: Install the service
+        run: |
+          . "$W/lib.sh"
+          "$W/bin/swing" service install --config "$W/swing.toml" | tee "$OUT/service-install.txt"
+          wait_up
+          sleep 8
+          for label in jp.ne.ama.swing jp.ne.ama.swing-tray; do
+            launchctl print "gui/$(id -u)/$label" > "$OUT/launchctl-$label.txt" 2>&1 || true
+          done
+          pgrep -fl swing-tray | tee "$OUT/pgrep-tray.txt"
+          lsappinfo info -only ApplicationType "$(lsappinfo find pid="$(pgrep -x swing-tray)")" > "$OUT/lsappinfo-tray.txt" 2>&1 || true
+          lsappinfo list > "$OUT/lsappinfo-list.txt" 2>&1 || true
+          "$W/bin/swing" service status > "$OUT/service-status.txt" 2>&1 || true
+          sysev 'get {size, position} of every menu bar item of menu bar 1' > "$OUT/menubar-item.txt" 2>&1 || true
+          shot 01-running-light
+
+      - name: Login items
+        continue-on-error: true
+        run: |
+          . "$W/lib.sh"
+          sudo sfltool dumpbtm 2>&1 | tee "$OUT/dumpbtm.txt" > /dev/null
+
+      - name: Menu while running
+        continue-on-error: true
+        run: |
+          . "$W/lib.sh"
+          menu 02-running-light-menu
+          dark true
+          shot 03-running-dark 3
+          menu 04-running-dark-menu
+
+      - name: Stop from the CLI
+        run: |
+          . "$W/lib.sh"
+          "$W/bin/swing" stop --config "$W/swing.toml"
+          wait_down
+          shot 05-stopped-dark 8
+
+      - name: Menu while stopped
+        continue-on-error: true
+        run: |
+          . "$W/lib.sh"
+          menu 06-stopped-dark-menu
+          dark false
+          shot 07-stopped-light 3
+          menu 08-stopped-light-menu
+
+      - name: Start from the tray
+        continue-on-error: true
+        run: |
+          . "$W/lib.sh"
+          start_from_menu
+          shot 09-starting 0
+          wait_up
+          shot 10-started 8
+
+      - name: Uninstall the service
+        if: always()
+        run: |
+          . "$W/lib.sh"
+          "$W/bin/swing" service uninstall | tee "$OUT/service-uninstall.txt"
+          sleep 3
+          ls ~/Library/LaunchAgents > "$OUT/launchagents-after.txt"
+          pgrep -fl 'swing' > "$OUT/pgrep-after.txt" || true
+          shot 11-uninstalled
+
+      - name: Collect logs
+        if: always()
+        run: cp ~/Library/Logs/swing*.log "$OUT/" 2>/dev/null || true
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        if: always()
+        with:
+          name: macos-check
+          path: check/out
+          if-no-files-found: error
+
+      - uses: mxschmitt/action-tmate@35b54afac29c97fb54faba5b513f8fbd1882f113 # v3.24
+        if: always() && inputs.ssh
+        with:
+          limit-access-to-actor: true
