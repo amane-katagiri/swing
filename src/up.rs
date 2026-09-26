@@ -13,6 +13,8 @@ use crate::config::{Config, IpfsApi};
 use crate::dashboard;
 use crate::kubo;
 use crate::lock;
+use crate::ports;
+use crate::settings;
 use crate::shutdown::{Exit, ExitRequest, RUNTIME_SHUTDOWN_TIMEOUT};
 use crate::signer::Signer;
 
@@ -182,7 +184,68 @@ async fn start_kubo(
     Ok(StartOutcome::Ready(Box::new(daemon), api_url))
 }
 
-pub async fn run(config: Config, token: CancellationToken) -> Result<Exit> {
+async fn bind_dashboard(
+    mut config: Config,
+    shift_ports: bool,
+) -> Result<(tokio::net::TcpListener, Config)> {
+    let addr = config.dashboard.listen;
+    if !shift_ports {
+        let listener = tokio::net::TcpListener::bind(addr)
+            .await
+            .with_context(|| format!("binding dashboard listener on {addr}"))?;
+        return Ok((listener, config));
+    }
+
+    let mut pins = Vec::new();
+    let listener = if ports::may_shift(&config, "dashboard.listen") {
+        let listener = ports::bind_shifting(addr)
+            .await
+            .with_context(|| format!("binding dashboard listener on {addr} or a nearby port"))?;
+        let bound = listener
+            .local_addr()
+            .context("reading dashboard listener address")?;
+        if bound != addr {
+            warn!(configured = %addr, %bound, "dashboard port is in use; listening on another port");
+        }
+        pins.push(("dashboard.listen", bound));
+        listener
+    } else {
+        tokio::net::TcpListener::bind(addr)
+            .await
+            .with_context(|| format!("binding dashboard listener on {addr}"))?
+    };
+
+    if config.kubo.managed && ports::may_shift(&config, "kubo.gateway_listen") {
+        let configured = config.kubo.gateway_listen;
+        match ports::free_addr(configured).await {
+            Ok(free) => {
+                if free != configured {
+                    warn!(%configured, %free, "Kubo gateway port is in use; using another port");
+                }
+                pins.push(("kubo.gateway_listen", free));
+            }
+            Err(e) => {
+                warn!(error = %e, %configured, "failed to find a free port for the Kubo gateway")
+            }
+        }
+    }
+
+    if pins.is_empty() {
+        return Ok((listener, config));
+    }
+    match settings::pin_addrs(&config, &pins) {
+        Ok(pinned) => config = pinned,
+        Err(e) => {
+            warn!(error = %e, path = %config.config_path.display(), "failed to write the listen addresses to the config");
+            if let Some(&(_, bound)) = pins.iter().find(|(key, _)| *key == "dashboard.listen") {
+                config.dashboard.listen = bound;
+            }
+        }
+    }
+    Ok((listener, config))
+}
+
+pub async fn run(config: Config, token: CancellationToken, port_shift: bool) -> Result<Exit> {
     let _lock = lock::acquire(&config.agent.state_dir)?;
     let exit = ExitRequest::new(token.clone());
     let notify = Arc::new(Notify::new());
@@ -194,6 +257,9 @@ pub async fn run(config: Config, token: CancellationToken) -> Result<Exit> {
     let signer = Signer::load(&config)?;
     let setup_mode = signer.is_none();
 
+    let (listener, config) = bind_dashboard(config, setup_mode && port_shift).await?;
+    let addr = config.dashboard.listen;
+
     let dashboard_token = auth::load_or_create_token(&config.agent.state_dir)
         .context("preparing the dashboard token")?;
     let dashboard_state = Arc::new(dashboard::AppState::new(
@@ -204,10 +270,6 @@ pub async fn run(config: Config, token: CancellationToken) -> Result<Exit> {
         dashboard_token,
     )?);
 
-    let addr = config.dashboard.listen;
-    let listener = tokio::net::TcpListener::bind(addr)
-        .await
-        .with_context(|| format!("binding dashboard listener on {addr}"))?;
     if !addr.ip().is_loopback() {
         warn!(
             %addr,
@@ -423,6 +485,64 @@ async fn run_managed(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    async fn with_taken_ports(
+        shift_ports: bool,
+        env: fn(&str) -> Option<String>,
+    ) -> (Config, std::net::SocketAddr, std::net::SocketAddr) {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("swing.toml");
+        let dashboard = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let gateway = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let (d, g) = (
+            dashboard.local_addr().unwrap(),
+            gateway.local_addr().unwrap(),
+        );
+        std::fs::write(
+            &path,
+            format!("[dashboard]\nlisten = \"{d}\"\n[kubo]\ngateway_listen = \"{g}\"\n"),
+        )
+        .unwrap();
+        let mut config =
+            crate::config::build_config_from_str(&std::fs::read_to_string(&path).unwrap(), env)
+                .unwrap();
+        config.config_path = path.clone();
+        config.config_exists = true;
+        let result = bind_dashboard(config, shift_ports).await;
+        let saved = Config::load(Some(&path)).unwrap();
+        match result {
+            Ok((listener, config)) => {
+                assert_eq!(listener.local_addr().unwrap(), config.dashboard.listen);
+                assert_eq!(saved.dashboard.listen, config.dashboard.listen);
+            }
+            Err(_) => assert!(!shift_ports || env("SWING_DASHBOARD_LISTEN").is_some()),
+        }
+        (saved, d, g)
+    }
+
+    #[tokio::test]
+    async fn setup_mode_moves_taken_ports_and_writes_them() {
+        let (saved, d, g) = with_taken_ports(true, |_| None).await;
+        assert_ne!(saved.dashboard.listen, d);
+        assert_ne!(saved.kubo.gateway_listen, g);
+        assert_eq!(saved.kubo.gateway_listen.ip(), g.ip());
+    }
+
+    #[tokio::test]
+    async fn without_port_shift_a_taken_dashboard_port_fails_and_nothing_is_written() {
+        let (saved, d, g) = with_taken_ports(false, |_| None).await;
+        assert_eq!(saved.dashboard.listen, d);
+        assert_eq!(saved.kubo.gateway_listen, g);
+    }
+
+    #[tokio::test]
+    async fn env_sourced_ports_are_never_moved() {
+        let (saved, _, g) = with_taken_ports(true, |k| {
+            (k == "SWING_KUBO_GATEWAY_LISTEN").then(|| "127.0.0.1:1".to_string())
+        })
+        .await;
+        assert_eq!(saved.kubo.gateway_listen, g);
+    }
 
     #[test]
     fn stop_budget_fits_within_force_exit_and_service_manager_limits() {

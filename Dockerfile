@@ -13,6 +13,7 @@ RUN groupadd --system --gid 1000 swing \
     && mkdir -p /data \
     && chown swing:swing /data
 COPY --from=builder /build/target/release/swing /usr/local/bin/swing
+ENV SWING_NO_PORT_SHIFT=true
 USER swing
 WORKDIR /data
 VOLUME /data

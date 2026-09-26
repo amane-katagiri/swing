@@ -9,6 +9,7 @@
 - runtime には `/usr/local/bin/swing` だけを置き、ユーザー `swing`（uid/gid 1000）で実行する。`/data` はそのユーザー所有の `VOLUME`。
 - `WORKDIR /data`。`--config`／`SWING_CONFIG` のどちらも無いときに `resolve_config_path` が返す `<cwd>/swing.toml`（[`../architecture.md#設定と環境変数`](../architecture.md#設定と環境変数)）がこの `/data`（volume の中）になる。
 - `ENTRYPOINT ["swing"]`、`CMD ["up"]`（[`up.md`](up.md)）。
+- `ENV SWING_NO_PORT_SHIFT=true`。セットアップモードでもダッシュボードと Kubo の gateway のポートをずらさない（[`up.md#セットアップモードでのポートの調整`](up.md#セットアップモードでのポートの調整)）。コンテナの中ではほかのプロセスとポートがぶつかることがほぼ無く、ずれるとホストに公開したポート（`-p`）の先で誰も待ち受けていない状態になり、しかもその値が `/data/swing.toml` に残るため。`CMD` を上書きしても効くよう、フラグではなく環境変数で渡す。compose は `SWING_DASHBOARD_LISTEN` を渡し `SWING_KUBO_MANAGED=false` なので、これが無くてもずれない。
 - `docker/release.Dockerfile` は release ワークフローが ghcr.io に push するイメージ用。1 ステージで、ビルド済みの musl バイナリを `<TARGETARCH>/swing` から入れる。それ以外はこの Dockerfile の runtime と同じ（[`release.md`](release.md)）。`compose.yaml` はこれを使わずルートの `Dockerfile` からビルドする。
 
 ## compose.yaml

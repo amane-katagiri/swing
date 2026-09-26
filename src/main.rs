@@ -48,6 +48,12 @@ enum Command {
             help = "Append logs to this file instead of stderr"
         )]
         log_file: Option<PathBuf>,
+        #[arg(
+            long,
+            env = "SWING_NO_PORT_SHIFT",
+            help = "Never move the dashboard or Kubo gateway port during setup; fail if it is in use"
+        )]
+        no_port_shift: bool,
         #[cfg(windows)]
         #[arg(long, hide = true)]
         exit_with_parent: bool,
@@ -351,6 +357,7 @@ async fn run(cli: Cli) -> Result<()> {
     match cli.command {
         Command::Up {
             config,
+            no_port_shift,
             #[cfg(windows)]
             exit_with_parent,
             ..
@@ -363,7 +370,7 @@ async fn run(cli: Cli) -> Result<()> {
             let signal = watch.token();
             loop {
                 let cfg = config::Config::load(config.as_deref())?;
-                match up::run(cfg, signal.child_token()).await? {
+                match up::run(cfg, signal.child_token(), !no_port_shift).await? {
                     Exit::Stop => return Ok(()),
                     Exit::Restart => {
                         info!("restarting: reloading configuration");

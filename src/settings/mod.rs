@@ -6,7 +6,7 @@ use crate::config::{Config, Source};
 mod edit;
 mod example;
 
-pub use edit::{EditError, setup, setup_keys, update};
+pub use edit::{EditError, pin_addrs, setup, setup_keys, update};
 pub use example::{render_env_example, render_toml_example};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]

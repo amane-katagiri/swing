@@ -2,7 +2,7 @@
 
 [`../architecture.md`](../architecture.md) の一部。設定キーは [`../architecture.md#設定と環境変数`](../architecture.md#設定と環境変数)、内蔵 gateway は [`gateway.md`](gateway.md)、Kubo プロセスの管理は [`kubo.md`](kubo.md#kubo-プロセスの管理kubors)、OS への常駐登録は [`service.md`](service.md)、コンテナでの起動は [`docker.md`](docker.md)。
 
-`swing up`（`up::run`）は起動順が固定されている: `swing.lock` の取得（[多重起動の防止](#多重起動の防止lockrs)）→ 終了要求（`ExitRequest`、[下記](#終了要求と-exit-codeshutdownexitrequest-shutdownexit)）の作成 → `<state_dir>/upload/` の掃除（`dashboard::cleanup_upload_dir`）→ `signer::Signer::load` で署名の方法を決める（下記「セットアップモード」、[`signer.md`](signer.md)）→ ダッシュボードのトークン（`<state_dir>/dashboard.token`）の読み込み・作成（`auth::load_or_create_token`）→ ダッシュボードの `AppState` 作成・`TcpListener::bind`・`dashboard::serve` の起動 → 鍵の有無・`[kubo].managed` に応じた Kubo / agent の起動ループ → 終わったらダッシュボードを止め、署名アプリとの接続を閉じる（`Signer::shutdown`）。ダッシュボードは bind した時点で応答を始める（agent の準備が整うまで 503 を返す API は [`dashboard/http-api.md#共通`](dashboard/http-api.md#共通)）。`up::run` は呼ばれるたびにこの順で最初からやり直す（署名の方法の扱いは [`signer.md`](signer.md#signer)）。
+`swing up`（`up::run`）は起動順が固定されている: `swing.lock` の取得（[多重起動の防止](#多重起動の防止lockrs)）→ 終了要求（`ExitRequest`、[下記](#終了要求と-exit-codeshutdownexitrequest-shutdownexit)）の作成 → `<state_dir>/upload/` の掃除（`dashboard::cleanup_upload_dir`）→ `signer::Signer::load` で署名の方法を決める（下記「セットアップモード」、[`signer.md`](signer.md)）→ ダッシュボードの `TcpListener::bind`（`up::bind_dashboard`。セットアップモードではポートをずらすことがある。下記「セットアップモードでのポートの調整」）→ ダッシュボードのトークン（`<state_dir>/dashboard.token`）の読み込み・作成（`auth::load_or_create_token`）→ ダッシュボードの `AppState` 作成・`dashboard::serve` の起動 → 鍵の有無・`[kubo].managed` に応じた Kubo / agent の起動ループ → 終わったらダッシュボードを止め、署名アプリとの接続を閉じる（`Signer::shutdown`）。ダッシュボードは bind した時点で応答を始める（agent の準備が整うまで 503 を返す API は [`dashboard/http-api.md#共通`](dashboard/http-api.md#共通)）。`up::run` は呼ばれるたびにこの順で最初からやり直す（署名の方法の扱いは [`signer.md`](signer.md#signer)）。
 
 鍵が設定されていれば、Kubo / agent のループは `[kubo].managed` に応じて 2 通りに分かれる。
 
@@ -16,6 +16,21 @@
 秘密鍵（`[nostr].secret_key` / `SWING_NOSTR_SECRET_KEY`）も `<state_dir>/remote-signer.json` も無く、`signer::Signer::load` が `None` を返すと（読み込み規則は [`signer.md`](signer.md)）、`up::run` は Kubo も agent も起動せず、ダッシュボードだけを動かして `token.cancelled()` を待つ（`dashboard::AppState::new` には `signer: None` を渡す。[`dashboard.md`](dashboard.md#セットアップモードと-appstatesetup_mode)）。このモードでの API の応答は [`dashboard/http-api.md#共通`](dashboard/http-api.md#共通) を参照。
 
 セットアップモードを抜ける経路は 2 つある。`POST /api/setup`（[`dashboard/http-api.md#post-apisetup`](dashboard/http-api.md#post-apisetup)）は鍵（または署名アプリの接続情報）と初期設定を書き込んだ後、下記の「終了要求と exit code」のプロセス内再起動をスケジュールする。`swing signer pair`（[`cli.md#signer-pair`](cli.md#signer-pair)）は `remote-signer.json` だけを書き、次に `up::run` が始まったとき（`swing stop --restart` などによる再起動）に `Signer::load` がそれを読んでセットアップモードを抜ける。`swing up` は鍵が無くても起動でき、`swing.toml` が無くても書き込み先は用意される（設定ファイルの探索順は [`../architecture.md`](../architecture.md#設定と環境変数) 参照）ので、初回起動はこのモードで待ち、ダッシュボードのセットアップ画面から鍵（または署名アプリとのペアリング）・relays・保存上限を書き込んで自分自身を再起動する（[`dashboard.md`](dashboard.md)）。
+
+### セットアップモードでのポートの調整
+
+セットアップモードの間は、既定のポートがほかのプロセスに使われていても起動と初回の起動後の Kubo が止まらないよう、ダッシュボードと管理下の Kubo の gateway のポートをずらして設定ファイルに書き込む。`swing up --no-port-shift`（環境変数 `SWING_NO_PORT_SHIFT` でも指定できる。`up::run` の `port_shift = false`。Docker イメージは既定で有効にしている。[`docker.md#dockerfile`](docker.md#dockerfile)）のときと、値が環境変数由来（`ports::may_shift`。Docker のポート公開と食い違わないように）のときは一切ずらさず書き込みもしない。設定ファイルに書いてある値はずらす対象に含める（セットアップ前のファイルは `swing.example.toml` の写しであることが多いため）。
+
+ずらし方（`ports::bind_shifting`）: 設定のアドレスから始めて、同じ IP でポートを 1 ずつ上げながら最大 20 個（`ports::PROBE_COUNT`）先まで `tokio::net::TcpListener::bind` を試し、それでも駄目ならポート 0（OS が選ぶ空きポート）で bind する。次の候補に進むのは bind が `AddrInUse` か `PermissionDenied`（Windows の除外ポート範囲）で失敗したときだけで、それ以外の失敗はそのままエラーにする。
+
+どちらも `up::bind_dashboard` が、ダッシュボードの bind のときにまとめて行い、書き込んだ後の設定で `AppState` を作る。セットアップを終える経路（`POST /api/setup` と `swing signer pair`）は、どちらもこのとき書き込んだ値をそのまま引き継ぐ。
+
+- ダッシュボード: 上の手順で bind し、ずらしたときは warn（`dashboard port is in use; listening on another port`）を出す。`swing dashboard open`・`swing-tray`・`swing stop` は設定ファイルの `listen` を見てつなぐので、セットアップを終える前のこの時点で書く。
+- Kubo の gateway: `[kubo].managed = true` なら、`[kubo].gateway_listen` から同じ手順で空いているアドレスを探す（`ports::free_addr`。bind してすぐ閉じるだけ。セットアップモードでは Kubo を起動しないので、この時点で空いているかを確かめられる）。ずらしたときは warn（`Kubo gateway port is in use; using another port`）を出す。探すこと自体に失敗したら warn を出して書き込まない。
+- ずらしたかどうかに関わらず、両方のアドレスを `settings::pin_addrs` で 1 回で書き込む。書き込みに失敗したら warn を出し、メモリ上の設定のダッシュボードのアドレスだけを bind したものに直して続ける。
+- セットアップモードで起動するたびにやり直すので、前回書き込んだポートが使われていても、セットアップを終えるまではまたずらせる。書き込んでからセットアップを終えるまでの間に Kubo の gateway のポートが使われた場合は、通常モードで Kubo の起動に失敗する（下記）。
+
+セットアップモードでないときは、ダッシュボードの bind に失敗すると `swing up` の起動自体がエラーで終わり、Kubo の gateway が使えなければ Kubo の起動失敗としてバックオフして再起動を繰り返す（上記）。
 
 ## shutdown（shutdown.rs）
 

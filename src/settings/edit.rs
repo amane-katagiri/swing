@@ -1,5 +1,6 @@
 use std::collections::BTreeMap;
 use std::fmt;
+use std::net::SocketAddr;
 use std::path::Path;
 
 use anyhow::{Context, Result, anyhow, bail};
@@ -147,6 +148,23 @@ pub fn update(current: &Config, items: &BTreeMap<String, InputValue>) -> Result<
     check_not_env_sourced(current, items).map_err(EditError::Invalid)?;
     let mut doc = load_document(&current.config_path)?;
     apply_items(&mut doc, items).map_err(EditError::Invalid)?;
+    validate_and_write(&current.config_path, &doc.to_string())
+}
+
+fn insert_addrs(doc: &mut DocumentMut, addrs: &[(&str, SocketAddr)]) -> Result<()> {
+    for (key, addr) in addrs {
+        let desc = find(key)
+            .filter(|s| s.kind == Kind::SocketAddr)
+            .with_context(|| format!("{key} is not an address setting"))?;
+        ensure_table(doc, desc.section)?
+            .insert(desc.field, Item::Value(Value::from(addr.to_string())));
+    }
+    Ok(())
+}
+
+pub fn pin_addrs(current: &Config, addrs: &[(&str, SocketAddr)]) -> Result<Config, EditError> {
+    let mut doc = load_document(&current.config_path)?;
+    insert_addrs(&mut doc, addrs).map_err(EditError::Invalid)?;
     validate_and_write(&current.config_path, &doc.to_string())
 }
 
@@ -410,5 +428,19 @@ mod tests {
         let reloaded = setup(&cfg, None, &items).unwrap();
         assert!(reloaded.nostr.secret_key.is_none());
         assert_eq!(reloaded.nostr.relays, vec!["wss://relay.example"]);
+    }
+
+    #[test]
+    fn pin_addrs_keeps_other_keys_and_rejects_non_address_settings() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("swing.toml");
+        std::fs::write(&path, "# keep\n[nostr]\nrelays = [\"wss://r\"]\n").unwrap();
+        let cfg = Config::load(Some(&path)).unwrap();
+        let listen: SocketAddr = "127.0.0.1:8083".parse().unwrap();
+        let reloaded = pin_addrs(&cfg, &[("dashboard.listen", listen)]).unwrap();
+        assert_eq!(reloaded.dashboard.listen, listen);
+        assert_eq!(reloaded.nostr.relays, vec!["wss://r"]);
+        assert!(std::fs::read_to_string(&path).unwrap().contains("# keep"));
+        assert!(pin_addrs(&cfg, &[("nostr.mirror_set", listen)]).is_err());
     }
 }

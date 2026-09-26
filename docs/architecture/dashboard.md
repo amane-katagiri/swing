@@ -28,7 +28,7 @@ HTTP サーバー（axum 0.8）で、ダッシュボードのブラウザ向け�
 
 `up::run`（`src/up.rs`）の中で行う。全体の起動順・サーバタスクを止める時機は [`up.md`](up.md) を参照。ダッシュボード固有の点は次の 2 つ:
 
-- `[dashboard].listen` に `TcpListener::bind` する。bind に失敗すると `swing up` の起動自体がエラーで終了する。`[dashboard].listen` の IP が `is_loopback()`（`127.0.0.0/8` と `::1`）でなければ、前段に TLS を終端する HTTP リバースプロキシが無いとログインコードとセッション cookie が平文で流れることを `tracing::warn` で警告する（判定は待ち受けアドレスだけで、`allowed_hosts` は見ない）。サーバが動き出すと `dashboard listening; run `swing dashboard open` to log in` を info で出す。
+- `[dashboard].listen` に `TcpListener::bind` する。bind に失敗すると `swing up` の起動自体がエラーで終了する（セットアップモードではポートをずらして bind し、そのアドレスを Kubo の gateway のアドレスと一緒に設定ファイルへ書き込む。[`up.md#セットアップモードでのポートの調整`](up.md#セットアップモードでのポートの調整)）。`[dashboard].listen` の IP が `is_loopback()`（`127.0.0.0/8` と `::1`）でなければ、前段に TLS を終端する HTTP リバースプロキシが無いとログインコードとセッション cookie が平文で流れることを `tracing::warn` で警告する（判定は待ち受けアドレスだけで、`allowed_hosts` は見ない）。サーバが動き出すと `dashboard listening; run `swing dashboard open` to log in` を info で出す。
 - `dashboard::serve` を別タスクとして `tokio::spawn` する。
 
 ## 設定（`[dashboard]`）
@@ -149,7 +149,7 @@ HTTP サーバー（axum 0.8）で、ダッシュボードのブラウザ向け�
 
 この表はダッシュボードの書き込み範囲を決める安全境界で、実体は `settings::SETTINGS` の `editable` フィールドである。`settings::find`・`settings::is_editable` はこのカタログを引く。`settings::raw_value`（[`dashboard/http-api.md#get-apiconfig`](dashboard/http-api.md#get-apiconfig) の `raw`）は編集可能なキーを手で列挙した `match` で、カタログとの食い違いはテスト `raw_value_covers_every_editable_key` が検出する。カタログに載っていても `source: "env"`（環境変数由来）なら `editable: false` になる。`PUT`/`POST /api/setup` は、編集可能でないキーか env 由来のキーが 1 つでも混ざっていれば要求全体を 400 で拒否し、部分的な適用はしない（非公開の `settings::edit::check_not_env_sourced`）。`nostr.secret_key` はカタログ上 `editable: false` なので `PUT /api/config` からは絶対に書けず、`POST /api/setup` だけが書ける（下記）。
 
-書き込みは `settings::update`（`PUT /api/config`）と `settings::setup`（`POST /api/setup`）の 2 つだけで、どちらも同じ手順を踏む: 書き込み先のファイルを毎回その場で `toml_edit::DocumentMut` として読む（起動時の `Config.config_exists` は見ず、読んだ時点で無ければ空文書。起動後に前の保存で作られたファイルもここで読み直すので、保存を重ねても前の項目は消えない）→ 渡された項目だけを書き換える（`toml_edit` なのでコメントや他のキーはそのまま残る）→ `config::build_config_from_str` で組み立て直して妥当性を確認する（失敗したらファイルには一切触れない）→ 親ディレクトリが無ければ `auth::create_private_dir_all` で作る → `auth::write_private_file` で書く（どちらも上記「認証」と同じ実装）。既存ファイルの権限は引き継がず、unix では既存・新規を問わず常に `0600` にする。書き込み先は設定ファイルの探索順（[`../architecture.md#設定と環境変数`](../architecture.md#設定と環境変数)）で決まるパスで、ファイルが無ければ新規作成になる。
+書き込みは `settings::update`（`PUT /api/config`）と `settings::setup`（`POST /api/setup`）と `settings::pin_addrs`（セットアップモードの `swing up` がダッシュボードの待ち受けアドレスを書く。[`up.md#セットアップモードでのポートの調整`](up.md#セットアップモードでのポートの調整)）の 3 つだけで、どれも同じ手順を踏む（`settings::pin_addrs` は `editable: false` のアドレスのキー（`Kind::SocketAddr`）だけを書く）: 書き込み先のファイルを毎回その場で `toml_edit::DocumentMut` として読む（起動時の `Config.config_exists` は見ず、読んだ時点で無ければ空文書。起動後に前の保存で作られたファイルもここで読み直すので、保存を重ねても前の項目は消えない）→ 渡された項目だけを書き換える（`toml_edit` なのでコメントや他のキーはそのまま残る）→ `config::build_config_from_str` で組み立て直して妥当性を確認する（失敗したらファイルには一切触れない）→ 親ディレクトリが無ければ `auth::create_private_dir_all` で作る → `auth::write_private_file` で書く（どちらも上記「認証」と同じ実装）。既存ファイルの権限は引き継がず、unix では既存・新規を問わず常に `0600` にする。書き込み先は設定ファイルの探索順（[`../architecture.md#設定と環境変数`](../architecture.md#設定と環境変数)）で決まるパスで、ファイルが無ければ新規作成になる。
 
 失敗は `settings::EditError` の 2 種類に分かれ、HTTP ステータスが変わる:
 

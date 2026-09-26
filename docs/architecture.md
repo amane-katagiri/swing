@@ -66,6 +66,7 @@ swing/
     up.rs            `swing up` supervisor（Kubo の起動・監視、agent の起動・再起動、バックオフ）。詳細は architecture/up.md
     kubo.rs          Kubo バイナリの検出・init・`ipfs config` 適用・子プロセスの起動と終了・ヘルス待ち・kubo.pid と孤児回収。詳細は architecture/kubo.md
     lock.rs          多重起動防止のインスタンスロック（swing.lock）。詳細は architecture/up.md
+    ports.rs         セットアップモードでのポートのずらし方（`bind_shifting`・`free_addr`・`may_shift`）。詳細は architecture/up.md
     auth.rs          ダッシュボードのトークンファイル（dashboard.token）、HMAC 署名のセッション値、使い捨てログインコード。詳細は architecture/dashboard.md
     login.rs         `swing dashboard open`・`swing dashboard rotate-token`。詳細は architecture/cli.md
     gateway.rs       内蔵 gateway（axum）。Host 名での振り分けと Kubo gateway へのプロキシ。詳細は architecture/gateway.md
@@ -107,7 +108,7 @@ swing/
 ## CLI
 
 ```
-swing up      [--config <path>] [--log-file <path>]
+swing up      [--config <path>] [--log-file <path>] [--no-port-shift]
 swing stop    [--config <path>] [--restart] [--timeout <secs>]
 swing service install   [--config <path>] [--system] [--no-start] [--no-tray]
 swing service uninstall [--system]
@@ -161,7 +162,7 @@ swing-tray [--config <path>]
 
 Kubo の起動・設定は [`architecture/kubo.md`](architecture/kubo.md)、内蔵 gateway の動作は [`architecture/gateway.md`](architecture/gateway.md) を参照。
 
-`swing` が読む `SWING_` 環境変数のうち TOML キーを持たずカタログに無いのは `SWING_CONFIG`（設定ファイルのパス）だけ。ほかにテスト用の `SWING_TEST_*` がある。`compose.yaml` の変数展開専用のホストバインド変数（`SWING_KUBO_GATEWAY_BIND`・`SWING_GATEWAY_BIND`・`SWING_DASHBOARD_BIND`）はカタログの外で、`swing` は読まない。ログレベルは `RUST_LOG`。
+`swing` が読む `SWING_` 環境変数のうち TOML キーを持たずカタログに無いのは `SWING_CONFIG`（設定ファイルのパス）と `SWING_NO_PORT_SHIFT`（`swing up --no-port-shift` と同じ。clap の `env` で読み、`false`・`0`・`no`・`off` など以外なら有効。[`architecture/up.md#セットアップモードでのポートの調整`](architecture/up.md#セットアップモードでのポートの調整)）だけ。ほかにテスト用の `SWING_TEST_*` がある。`compose.yaml` の変数展開専用のホストバインド変数（`SWING_KUBO_GATEWAY_BIND`・`SWING_GATEWAY_BIND`・`SWING_DASHBOARD_BIND`）はカタログの外で、`swing` は読まない。ログレベルは `RUST_LOG`。
 
 compose でのコンテナ内の待ち受けとホスト側の公開アドレス（`SWING_*_BIND`）の対応と、内蔵 gateway の有効化は [`architecture/docker.md#composeyaml`](architecture/docker.md#composeyaml)。
 
