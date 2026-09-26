@@ -39,7 +39,8 @@ jobs:
       - name: Prepare
         run: |
           mkdir -p "$W/bin" "$OUT"
-          cp target/release/swing target/release/swing-tray "$W/bin/"
+          cp target/release/swing "$W/bin/"
+          tray/macos/bundle.sh target/release/swing-tray "$W/bin"
           cp swing.example.toml "$W/swing.toml"
           sw_vers > "$OUT/sw_vers.txt"
           system_profiler SPDisplaysDataType > "$OUT/displays.txt"
@@ -65,7 +66,7 @@ jobs:
           wait_up() { for _ in $(seq 60); do up && return 0; sleep 1; done; echo "swing up did not respond"; return 1; }
           wait_down() { for _ in $(seq 60); do up || return 0; sleep 1; done; echo "swing up is still responding"; return 1; }
           dark() { osascript -e "tell application \"System Events\" to tell appearance preferences to set dark mode to $1"; }
-          sysev() { osascript -e "with timeout of 10 seconds" -e "tell application \"System Events\" to tell process \"swing-tray\" to $1" -e "end timeout"; }
+          sysev() { osascript -e "with timeout of 10 seconds" -e "tell application \"System Events\" to tell (first process whose unix id is $(pgrep -x swing-tray)) to $1" -e "end timeout"; }
           open_menu() {
             local x y w h
             IFS=', ' read -r x y w h < <(sysev 'get {position, size} of menu bar item 1 of menu bar 1')
@@ -105,6 +106,16 @@ jobs:
           "$W/bin/swing" service status > "$OUT/service-status.txt" 2>&1 || true
           sysev 'get {size, position} of every menu bar item of menu bar 1' > "$OUT/menubar-item.txt" 2>&1 || true
           shot 01-running-light
+
+      - name: Finder
+        continue-on-error: true
+        run: |
+          . "$W/lib.sh"
+          lsappinfo info -only name "$(lsappinfo find pid="$(pgrep -x swing-tray)")" > "$OUT/lsappinfo-tray-name.txt" 2>&1 || true
+          codesign -dv "$W/bin/SWING.app" > "$OUT/codesign.txt" 2>&1 || true
+          open -R "$W/bin/SWING.app"
+          shot 01-finder 3
+          osascript -e 'tell application "Finder" to close every window' || true
 
       - name: Login items
         continue-on-error: true

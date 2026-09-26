@@ -100,6 +100,8 @@ fn xml_escape(input: &str) -> String {
         .replace('\'', "&apos;")
 }
 
+const MACOS_BUNDLE_ID: &str = "jp.ne.ama.swing";
+
 pub fn launchd_plist(exe: &Path, config: &Path, workdir: &Path, log: &Path) -> String {
     let exe = xml_escape(&exe.to_string_lossy());
     let config = xml_escape(&config.to_string_lossy());
@@ -139,6 +141,10 @@ pub fn launchd_plist(exe: &Path, config: &Path, workdir: &Path, log: &Path) -> S
         <key>PATH</key>
         <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
     </dict>
+    <key>AssociatedBundleIdentifiers</key>
+    <array>
+        <string>{MACOS_BUNDLE_ID}</string>
+    </array>
 </dict>
 </plist>
 "#,
@@ -171,6 +177,10 @@ pub fn launchd_tray_plist(tray: &Path, config: &Path, workdir: &Path) -> String 
     <string>Aqua</string>
     <key>ProcessType</key>
     <string>Interactive</string>
+    <key>AssociatedBundleIdentifiers</key>
+    <array>
+        <string>{MACOS_BUNDLE_ID}</string>
+    </array>
 </dict>
 </plist>
 "#
@@ -193,13 +203,16 @@ pub fn tray_run_command(tray: &Path, config: &Path) -> String {
     )
 }
 
+const TRAY_RELATIVE_PATH: &str = if cfg!(windows) {
+    "swing-tray.exe"
+} else if cfg!(target_os = "macos") {
+    "SWING.app/Contents/MacOS/swing-tray"
+} else {
+    "swing-tray"
+};
+
 pub fn tray_exe_path(exe: &Path) -> Option<PathBuf> {
-    let name = if cfg!(windows) {
-        "swing-tray.exe"
-    } else {
-        "swing-tray"
-    };
-    let path = exe.parent()?.join(name);
+    let path = exe.parent()?.join(TRAY_RELATIVE_PATH);
     path.is_file().then_some(path)
 }
 
@@ -994,7 +1007,7 @@ fn install_tray(
     }
     let Some(tray) = tray_exe_path(exe) else {
         println!(
-            "swing-tray was not found next to {}; skipping the tray icon.",
+            "{TRAY_RELATIVE_PATH} was not found next to {}; skipping the tray icon.",
             exe.display()
         );
         return Ok(());
@@ -1189,6 +1202,9 @@ mod tests {
         assert!(plist.contains("<key>LimitLoadToSessionType</key>\n    <string>Aqua</string>"));
         assert!(plist.contains("<key>RunAtLoad</key>\n    <true/>"));
         assert!(!plist.contains("KeepAlive"));
+        assert!(plist.contains(
+            "<key>AssociatedBundleIdentifiers</key>\n    <array>\n        <string>jp.ne.ama.swing</string>"
+        ));
     }
 
     #[test]
@@ -1214,13 +1230,10 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let exe = dir.path().join("swing");
         assert_eq!(tray_exe_path(&exe), None);
-        let name = if cfg!(windows) {
-            "swing-tray.exe"
-        } else {
-            "swing-tray"
-        };
-        std::fs::write(dir.path().join(name), b"").unwrap();
-        assert_eq!(tray_exe_path(&exe), Some(dir.path().join(name)));
+        let tray = dir.path().join(TRAY_RELATIVE_PATH);
+        std::fs::create_dir_all(tray.parent().unwrap()).unwrap();
+        std::fs::write(&tray, b"").unwrap();
+        assert_eq!(tray_exe_path(&exe), Some(tray));
     }
 
     #[test]
@@ -1318,6 +1331,9 @@ mod tests {
         assert!(plist.contains("<key>StandardErrorPath</key>"));
         assert!(plist.contains("<key>EnvironmentVariables</key>"));
         assert!(plist.contains("/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"));
+        assert!(plist.contains(
+            "<key>AssociatedBundleIdentifiers</key>\n    <array>\n        <string>jp.ne.ama.swing</string>"
+        ));
     }
 
     #[test]

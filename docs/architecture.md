@@ -93,6 +93,8 @@ swing/
     assets/swing-tray.svg, assets/swing-tray.ico  swing-tray.exe のファイルアイコン（ロゴの右下にタスクトレイのバッジ）と、その元の SVG
     assets/icon-64.png           Windows のトレイアイコン
     assets/icon-template-64.png  macOS のメニューバーのアイコン（テンプレート画像）
+    assets/SWING.icns            macOS の `SWING.app` のアイコン
+    macos/bundle.sh, macos/Info.plist  `swing-tray` を `SWING.app` にまとめるスクリプトと、その Info.plist の雛形
   docker/kubo-init.d/  Kubo コンテナの起動スクリプト（外部 Kubo の設定。compose 専用）
   docker/release.Dockerfile  ghcr.io に push するイメージ。release ワークフローがビルド済みの musl バイナリを入れる
   docker/demo/         外部ネットワークに出ないデモ環境（compose の重ね合わせとシードスクリプト）。詳細は docker/demo/README.md

@@ -13,12 +13,12 @@
 
 ## タスクトレイの自動起動（Windows と macOS）
 
-`install` は、`swing` 実行ファイルと同じディレクトリに `swing-tray`（Windows は `swing-tray.exe`。`tray_exe_path`）があれば、ログイン時に `swing-tray --config <config>` を起動するよう登録する（[`tray.md`](tray.md)）。見つからなければ「swing-tray was not found next to ...」と出して、トレイの登録だけ飛ばす。`--no-start` でなければ、登録した直後にトレイも起動する。`--no-tray` を付けると登録せず、既に登録があれば消す（付けずに `install` し直した後で外すときのため）。`uninstall` は、先にトレイの登録を消してから（無ければ何もしない）本体を停止・削除する。Linux ではトレイを扱わず、`--no-tray` は何もしない。
+`install` は、`swing` 実行ファイルと同じディレクトリにトレイ（Windows は `swing-tray.exe`、macOS は `SWING.app/Contents/MacOS/swing-tray`。`tray_exe_path`）があれば、ログイン時に `swing-tray --config <config>` を起動するよう登録する（[`tray.md`](tray.md)）。macOS では `SWING.app` の外にある素の `swing-tray` は見ない。見つからなければ「<そのパス> was not found next to ...」と出して、トレイの登録だけ飛ばす。`--no-start` でなければ、登録した直後にトレイも起動する。`--no-tray` を付けると登録せず、既に登録があれば消す（付けずに `install` し直した後で外すときのため）。`uninstall` は、先にトレイの登録を消してから（無ければ何もしない）本体を停止・削除する。Linux ではトレイを扱わず、`--no-tray` は何もしない。
 
 | OS | 登録先 | 直後の起動 | `uninstall` |
 |---|---|---|---|
 | Windows | `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` の値 `swing-tray`（`RegSetKeyValueW`）。中身は `tray_run_command` が作る `"<swing-tray.exe>" --config "<config>"`（`canonicalize` が付ける `\\?\` は外し、`\\?\UNC\` は `\\` に戻す） | `swing-tray.exe` を子プロセスとして起動し、待たない | 値を消す（`RegDeleteKeyValueW`。無ければ何もしない）。動いているトレイには触らない。トレイはタスク `swing` の削除を見つけて閉じる（[`tray.md`](tray.md#サービスの登録が消えたら終了する)）ので、`install --no-tray` で値だけを消したときは動き続ける |
-| macOS | `~/Library/LaunchAgents/jp.ne.ama.swing-tray.plist`（`launchd_tray_plist`）。`RunAtLoad = true`・`LimitLoadToSessionType = Aqua`・`ProcessType = Interactive`、`KeepAlive` は無し | 先に `launchctl bootout gui/<uid>/jp.ne.ama.swing-tray`（失敗は無視）してから `launchctl bootstrap gui/<uid> <plist>` | plist があれば `bootout`（失敗は無視）して plist を消す。動いているトレイも止まる |
+| macOS | `~/Library/LaunchAgents/jp.ne.ama.swing-tray.plist`（`launchd_tray_plist`）。`ProgramArguments` は `SWING.app` の中の `swing-tray` を直接指す。`RunAtLoad = true`・`LimitLoadToSessionType = Aqua`・`ProcessType = Interactive`・`AssociatedBundleIdentifiers = [jp.ne.ama.swing]`、`KeepAlive` は無し | 先に `launchctl bootout gui/<uid>/jp.ne.ama.swing-tray`（失敗は無視）してから `launchctl bootstrap gui/<uid> <plist>` | plist があれば `bootout`（失敗は無視）して plist を消す。動いているトレイも止まる |
 
 ## Linux（systemd）
 
@@ -54,6 +54,7 @@
 | 停止の上限 | `ExitTimeOut = 90`（`service::STOP_TIMEOUT`。launchd が自分で止めるとき（`bootout` など）に SIGTERM から SIGKILL までを待つ秒数。既定の 20 秒では `swing up` の停止シーケンスが終わらないため） |
 | ログ | `StandardOutPath`・`StandardErrorPath` とも `~/Library/Logs/swing.log` |
 | `EnvironmentVariables.PATH` | `/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin`（Homebrew の bin を含める） |
+| `AssociatedBundleIdentifiers` | `[jp.ne.ama.swing]`（`SWING.app` の `CFBundleIdentifier`。システム設定の「ログイン項目と機能拡張」で、トレイの LaunchAgent とあわせて `SWING.app` の名前とアイコンで出すため） |
 
 パス・値は XML エスケープする。
 

@@ -84,7 +84,7 @@ jobs:
           else
             cp "target/${{ matrix.target }}/release/swing" "dist/$name/"
             if [ "${{ runner.os }}" = macOS ]; then
-              cp "target/${{ matrix.target }}/release/swing-tray" "dist/$name/"
+              tray/macos/bundle.sh "target/${{ matrix.target }}/release/swing-tray" "dist/$name"
             fi
             tar -C dist -czf "dist/$name.tar.gz" "$name"
           fi

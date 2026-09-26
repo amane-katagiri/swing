@@ -116,7 +116,7 @@ Kubo を初期化・起動し、その上で mirror-agent を動かします。�
 ./target/release/swing service install
 ```
 
-Linux では systemd のユーザーユニット、macOS では launchd の LaunchAgent、Windows ではタスクスケジューラに登録します（Linux はログアウト後も動かし続けるために `loginctl enable-linger` を試み、失敗すれば案内を表示します）。Windows と macOS では、`swing` と同じフォルダに `swing-tray` があれば、タスクトレイのアイコン（下記「ダッシュボード」）もログイン時に起動するよう登録し、その場で起動します。トレイが要らなければ `--no-tray` を付けてください。状態確認は `swing service status`、起動は `swing service start`、停止は `swing service stop`、削除は `swing service uninstall` です。詳しくは [`docs/architecture/up.md`](docs/architecture/up.md) と [`docs/architecture/service.md`](docs/architecture/service.md) を参照してください。
+Linux では systemd のユーザーユニット、macOS では launchd の LaunchAgent、Windows ではタスクスケジューラに登録します（Linux はログアウト後も動かし続けるために `loginctl enable-linger` を試み、失敗すれば案内を表示します）。Windows と macOS では、`swing` と同じフォルダに `swing-tray.exe`（macOS は `SWING.app`）があれば、タスクトレイのアイコン（下記「ダッシュボード」）もログイン時に起動するよう登録し、その場で起動します。トレイが要らなければ `--no-tray` を付けてください。状態確認は `swing service status`、起動は `swing service start`、停止は `swing service stop`、削除は `swing service uninstall` です。詳しくは [`docs/architecture/up.md`](docs/architecture/up.md) と [`docs/architecture/service.md`](docs/architecture/service.md) を参照してください。
 
 ### Docker Compose で動かす
 
@@ -221,7 +221,7 @@ docker compose exec mirror swing dashboard open --no-browser
 
 全ブラウザのログインを取り消したいときは `swing dashboard rotate-token` を実行します。
 
-Windows と macOS では、`swing-tray` を起動するとタスクトレイ（macOS はメニューバー）にアイコンが出ます。そこからダッシュボードを開く（ログイン済みで開きます）・再起動・停止ができます。サービスとして登録してあれば、トレイを起動したときに `swing up` が止まっていれば起動し、メニューから起動することもできます。トレイを終了するときは、SWING も止めるかどうかを選べます。`swing service install` で登録すると、ログイン時に自動で起動します。手で起動するときは、`swing up` と同じ設定ファイルを読むように `swing-tray --config <swing.toml のパス>` と指定してください（詳しくは [`docs/architecture/tray.md`](docs/architecture/tray.md)）。
+Windows と macOS では、`swing-tray` を起動するとタスクトレイ（macOS はメニューバー）にアイコンが出ます。そこからダッシュボードを開く（ログイン済みで開きます）・再起動・停止ができます。サービスとして登録してあれば、トレイを起動したときに `swing up` が止まっていれば起動し、メニューから起動することもできます。トレイを終了するときは、SWING も止めるかどうかを選べます。`swing service install` で登録すると、ログイン時に自動で起動します。手で起動するときは、`swing up` と同じ設定ファイルを読むように `swing-tray --config <swing.toml のパス>`（macOS は `SWING.app/Contents/MacOS/swing-tray --config <swing.toml のパス>`）と指定してください（詳しくは [`docs/architecture/tray.md`](docs/architecture/tray.md)）。
 
 - **Desktop**: 保存中のサイトを、懐かしい Windows 風デスクトップ上のブラウザウィンドウに表示される「リンク集」ページ風に眺められます。
 - **Sites**: `swing sites` と同じ内容を一覧表示し、そのまま「mirror に追加」「mirror から外す」を操作できます。ボタンひとつで `swing status` 相当のストレージチェックも実行できます。

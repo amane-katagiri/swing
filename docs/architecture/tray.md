@@ -10,7 +10,7 @@ swing-tray [--config <path>]
 
 - **対応 OS**: Windows と macOS だけ。GUI の依存（`tray-icon`・`tao`・`png`・`sys-locale`・`rfd`）は `cfg(any(windows, target_os = "macos"))` の target 依存にしてあり、他の OS では「swing-tray supports only Windows and macOS」を出して終了コード 1 で終わるだけのバイナリになる。
 - **Windows**: `windows_subsystem = "windows"` の GUI アプリなので、起動してもコンソールウィンドウが開かない。標準出力・標準エラーはどこにも出ない。
-- **macOS**: activation policy を `Accessory` にして、Dock にアイコンを出さない。
+- **macOS**: `SWING.app` バンドル（下記）の中に入れて配る。activation policy を `Accessory` にし、`Info.plist` にも `LSUIElement` を入れて、Dock にアイコンを出さない。
 - **言語**: メニューとダイアログの文言は OS のロケール（`sys_locale::get_locale()`）が `ja` で始まれば日本語、それ以外は英語。
 
 ## 設定ファイル
@@ -95,4 +95,28 @@ OS ごとに 1 枚の PNG をバイナリに埋め込む。停止中とエラー
 - **Windows**: `tray/assets/icon-64.png`（`web/favicon.svg` を 64×64 に書き出したもの）。停止中は灰色で半透明になる。
 - **macOS**: `tray/assets/icon-template-64.png`（`web/favicon.svg` の図形をすべて黒で塗り、64×64 に書き出したもの）を、テンプレート画像として出す。メニューバーの色に合わせて macOS が白か黒で描く。停止中はアルファが半分になり、薄く表示される。
 
-`swing-tray.exe` のファイルアイコンは `tray/assets/swing-tray.ico`（元図は `tray/assets/swing-tray.svg`。[`release.md`](release.md)）。
+`swing-tray.exe` のファイルアイコンは `tray/assets/swing-tray.ico`（元図は `tray/assets/swing-tray.svg`。[`release.md`](release.md)）。macOS の `SWING.app` のアイコンは `tray/assets/SWING.icns`（`web/favicon.svg` を 1024px の正方形の中央に 824px で置き、16〜1024px を格納したもの）。
+
+## macOS のアプリバンドル（`SWING.app`）
+
+`tray/macos/bundle.sh <swing-tray> <出力先ディレクトリ>` が `<出力先>/SWING.app` を作る（あれば作り直す）。release と `macos-check` のワークフローがこれを使う。`cargo build` だけでは作られないので、手元でビルドした `swing-tray` を `service install` に登録させるときも、このスクリプトで `swing` の隣に `SWING.app` を置く。
+
+```
+SWING.app/Contents/
+  Info.plist            tray/macos/Info.plist の @VERSION@ を tray/Cargo.toml の version に置き換えたもの
+  MacOS/swing-tray
+  Resources/SWING.icns
+```
+
+| `Info.plist` のキー | 値 |
+|---|---|
+| `CFBundleIdentifier` | `jp.ne.ama.swing`（LaunchAgent の `AssociatedBundleIdentifiers` と同じ。[`service.md`](service.md)） |
+| `CFBundleName`・`CFBundleDisplayName` | `SWING` |
+| `CFBundleExecutable` | `swing-tray` |
+| `CFBundleIconFile` | `SWING` |
+| `LSUIElement` | `true` |
+| `LSMinimumSystemVersion` | `11.0` |
+
+`codesign` があれば（macOS なら）バンドル全体に ad-hoc 署名（`codesign --force --sign -`）をする。開発者 ID の署名と公証はしていない。
+
+手で起動するときは `SWING.app/Contents/MacOS/swing-tray --config <path>` を実行する（`open SWING.app` では `--config` を渡せず、カレントディレクトリも `/` になる）。
