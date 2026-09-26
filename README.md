@@ -6,7 +6,10 @@
 </p>
 
 <p align="center">
-  <img src="docs/assets/dashboard-desktop.png" alt="ダッシュボードの Desktop 画面。Windows 風デスクトップの上のブラウザウィンドウに、保存中のサイトのリンク集が並び、右下にデスクトップの背景を設定するコントロール パネルのダイアログが開いている。タスクバーの上にはマスコットが 2 体立っている" width="900">
+  <picture>
+    <source media="(prefers-reduced-motion: reduce)" srcset="docs/assets/dashboard-desktop.png">
+    <img src="docs/assets/dashboard-desktop.webp" alt="ダッシュボードの Desktop 画面。Windows 風デスクトップの上のブラウザウィンドウに、保存中のサイトのリンク集が並び、最新の更新情報がマーキーで流れている。コントロール パネルのアイコンから、デスクトップの背景を設定するダイアログを開いて右下へドラッグする。タスクバーの上ではマスコットが 2 体歩き回っている" width="900">
+  </picture>
   <br>
   <sub>Desktop 画面（<a href="docker/demo/README.md">デモ環境</a>のサンプルデータ）</sub>
 </p>
