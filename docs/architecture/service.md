@@ -17,7 +17,7 @@
 
 | OS | 登録先 | 直後の起動 | `uninstall` |
 |---|---|---|---|
-| Windows | `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` の値 `swing-tray`（`RegSetKeyValueW`）。中身は `tray_run_command` が作る `"<swing-tray.exe>" --config "<config>"`（`canonicalize` が付ける `\\?\` は外し、`\\?\UNC\` は `\\` に戻す） | `swing-tray.exe` を子プロセスとして起動し、待たない | 値を消す（`RegDeleteKeyValueW`。無ければ何もしない）。動いているトレイには触らない。トレイはタスク `swing` の削除を見つけて閉じる（[`tray.md`](tray.md#サービスの登録が消えたら終了する)）ので、`install --no-tray` で値だけを消したときは動き続ける |
+| Windows | `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` の値 `swing-tray`（`RegSetKeyValueW`）。中身は `tray_run_command` が作る `"<swing-tray.exe>" --config "<config>"`（`canonicalize` が付ける `\\?\` は外し、`\\?\UNC\` は `\\` に戻す） | `swing-tray.exe` を `CreateProcessW` でハンドルを継承させずに（`bInheritHandles = FALSE`）起動し、待たない。`std::process::Command` はハンドルを継承させるので、呼び出し元のパイプをトレイが開いたままにし、`swing service install` の出力をパイプで受けた側が終わらなくなる | 値を消す（`RegDeleteKeyValueW`。無ければ何もしない）。動いているトレイには触らない。トレイはタスク `swing` の削除を見つけて閉じる（[`tray.md`](tray.md#サービスの登録が消えたら終了する)）ので、`install --no-tray` で値だけを消したときは動き続ける |
 | macOS | `~/Library/LaunchAgents/jp.ne.ama.swing-tray.plist`（`launchd_tray_plist`）。`ProgramArguments` は `SWING.app` の中の `swing-tray` を直接指す。`RunAtLoad = true`・`LimitLoadToSessionType = Aqua`・`ProcessType = Interactive`・`AssociatedBundleIdentifiers = [jp.ne.ama.swing]`、`KeepAlive` は無し | 先に `launchctl bootout gui/<uid>/jp.ne.ama.swing-tray`（失敗は無視）してから `launchctl bootstrap gui/<uid> <plist>` | plist があれば `bootout`（失敗は無視）して plist を消す。動いているトレイも止まる |
 
 ## Linux（systemd）

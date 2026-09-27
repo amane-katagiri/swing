@@ -733,11 +733,13 @@ mod windows {
     use super::*;
     use std::os::windows::process::CommandExt;
     use std::process::Command;
-    use windows_sys::Win32::Foundation::{ERROR_FILE_NOT_FOUND, ERROR_SUCCESS};
+    use windows_sys::Win32::Foundation::{CloseHandle, ERROR_FILE_NOT_FOUND, ERROR_SUCCESS, FALSE};
     use windows_sys::Win32::System::Registry::{
         HKEY_CURRENT_USER, REG_SZ, RegDeleteKeyValueW, RegSetKeyValueW,
     };
-    use windows_sys::Win32::System::Threading::CREATE_NO_WINDOW;
+    use windows_sys::Win32::System::Threading::{
+        CREATE_NO_WINDOW, CreateProcessW, PROCESS_INFORMATION, STARTUPINFOW,
+    };
 
     const TASK_NAME: &str = "swing";
     const SCHTASKS_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
@@ -766,16 +768,40 @@ mod windows {
         }
         println!("Registered swing-tray to start at login (HKCU\\{RUN_KEY}\\{RUN_VALUE}).");
         if !no_start {
-            Command::new(tray)
-                .arg("--config")
-                .arg(config)
-                .current_dir(workdir)
-                .stdin(std::process::Stdio::null())
-                .stdout(std::process::Stdio::null())
-                .stderr(std::process::Stdio::null())
-                .spawn()
+            spawn_without_handles(&tray_run_command(tray, config), workdir)
                 .with_context(|| format!("starting {}", tray.display()))?;
             println!("Started swing-tray.");
+        }
+        Ok(())
+    }
+
+    // std::process::Command always inherits handles, so the tray would hold the caller's pipes open and `swing service install | ...` would never finish.
+    fn spawn_without_handles(command_line: &str, workdir: &Path) -> Result<()> {
+        let mut command_line = wide(command_line);
+        let workdir = wide(&strip_verbatim(&workdir.to_string_lossy()));
+        let mut startup: STARTUPINFOW = unsafe { std::mem::zeroed() };
+        startup.cb = std::mem::size_of::<STARTUPINFOW>() as u32;
+        let mut info: PROCESS_INFORMATION = unsafe { std::mem::zeroed() };
+        let ok = unsafe {
+            CreateProcessW(
+                std::ptr::null(),
+                command_line.as_mut_ptr(),
+                std::ptr::null(),
+                std::ptr::null(),
+                FALSE,
+                0,
+                std::ptr::null(),
+                workdir.as_ptr(),
+                &startup,
+                &mut info,
+            )
+        };
+        if ok == 0 {
+            return Err(std::io::Error::last_os_error().into());
+        }
+        unsafe {
+            CloseHandle(info.hProcess);
+            CloseHandle(info.hThread);
         }
         Ok(())
     }
