@@ -142,6 +142,7 @@ NIP-05 の検証結果はバッジで `OK`（`verified`）/ `NG`（`mismatch`）
 - busy 表示: `setBusy(button, bool)` で `disabled`・`aria-busy`・`.is-busy` を切り替える。
 - コピー: 成功で 1.5 秒だけ `data-copied="true"`、失敗で `data-copy-failed="true"`。表示文字列はすべて共通の `copy` キーで、対象の違いは `aria-label` 側で表す。
 - サイドナビ: 下端のトグル（`#nav-toggle`）で畳むとアイコンだけの幅（`--swing-nav-collapsed-width`）になり、各リンクの `title` にラベルを入れる。状態は `localStorage["swing:nav:collapsed"]` に保存し、`<body data-nav="collapsed">` で表す。フッタ（`.swing-nav-footer`）はミラーセット名とバージョンを出す（`publish.js::updateNavFooter`）。
+- ロゴタイプ（`.swing-logotype`）: `docs/assets/swing-lockup.svg` の形を、表示する高さ 26px の整数 px の格子に描き直したもの（帯の太さは上から 1,1,1,1,2,2,3px、隙間 1px）。`viewBox` の 1 単位が 1 CSS px で、帯の端がすべて整数 px に乗るので、ナビが 1px 未満ずれて描かれても `crispEdges` の丸めで帯の太さが変わらない。
 - ペアリング（`pairing.js::createPairing`）: [`POST /api/setup/signer`](http-api.md#post-apisetupsigner) が返した SVG を `data:` URI の `<img>` で出し、以後 [`GET /api/setup/signer`](http-api.md#get-apisetupsigner) を 1.5 秒間隔でポーリングして状態を状態行に出す（`idle` は `waiting` と同じ表示）。`ready`/`failed` で QR を隠してポーリングを止める。`ready` で確認の署名が通ったときは「確認の署名が通った」とだけ伝え、自動で署名されるとは言わない。通らなかったときは許可を促す警告にする。もう一度押すと新しいペアリングに置き換わり、前のポーリングは捨てる（`createLoadGuard`）。
 - 読み込み時: `<body>` 直後の同期スクリプト `boot.js` が `data-nav` を先に付ける。表示言語が英語以外に決まるときは `<html lang>` と `<html data-i18n-pending>` も付けて `[data-i18n]` 要素を隠し、`app.js` が静的な訳を当てた直後にこの属性を外す（動かなかった場合は 1 秒後に英語のまま表示される）。
 - モバイル幅: 760px 以下ではナビを横並びにしてトグルとサイドナビのフッタを隠し、ページ最下部の `<footer id="page-footer">` に同じ内容を表示する（Desktop 画面を除く）。

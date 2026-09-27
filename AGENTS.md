@@ -15,7 +15,7 @@ SWING（Nostr + IPFS 個人サイト相互ミラー）のリポジトリで作�
 | `docs/extensions.md` | 将来のイベント拡張の命名規約と予約表 | 新しい kind や d タグを使う前にここへ追記する |
 | `docs/todo.md` | 残タスク | 着手したら消す、見つけたら足す。完了済みは log へ |
 | `docs/log/YYYY-MM-DD-<slug>.md` | 実装ログ。その回で何を決め、何を作り、何を検証したか。`<slug>` は英語の kebab-case（本文は日本語でよい） | 追記のみ。過去のログは書き換えない。1 回の作業単位で 1 ファイル |
-| `docs/assets/` | README に貼る画像。ブランド素材（ロゴとロゴタイプを並べたロックアップの SVG、ライト用とダーク用）と、ダッシュボードの Desktop 画面のアニメーション（`dashboard-desktop.webp`）と静止画（`dashboard-desktop.png`）、その撮影手順（`capture.md`・`capture-desktop.sh`） | ダッシュボードのロゴを変えたら `web/index.html` のインライン SVG から作り直す。Desktop 画面の素材は画面の見た目を変えたら [`docs/assets/capture.md`](docs/assets/capture.md) の手順で撮り直す |
+| `docs/assets/` | README に貼る画像。ブランド素材（ロゴとロゴタイプを並べたロックアップの SVG、ライト用とダーク用）と、ダッシュボードの Desktop 画面のアニメーション（`dashboard-desktop.webp`）と静止画（`dashboard-desktop.png`）、その撮影手順（`capture.md`・`capture-desktop.sh`） | ダッシュボードのロゴマークを変えたら `web/index.html` のインライン SVG から作り直す。ロゴタイプはロックアップ側が元の形で、`web/index.html` のものはナビ用に整数 px の格子へ描き直したもの（[`docs/architecture/dashboard/web.md`](docs/architecture/dashboard/web.md)）なので、形を変えるときはロックアップを先に直してからナビ用を描き直す。Desktop 画面の素材は画面の見た目を変えたら [`docs/assets/capture.md`](docs/assets/capture.md) の手順で撮り直す |
 | `docs/examples/` | 参考実装（`publish.sh` など） | サポート対象ではない。プロトコル説明のための例示 |
 
 - 実装の「現状」を知りたいときは `docs/architecture.md` とそこから辿れるファイルだけを読めば足りる状態を保つ。

@@ -261,7 +261,7 @@ p {
   flex: none;
 }
 
-/* The stripes are under 2px at this size and antialiasing turns them to mush. */
+/* The nav logotype is redrawn on a whole-pixel grid so snapping never changes stripe widths wherever it lands. */
 .swing-logotype-body {
   fill: var(--swing-text);
   shape-rendering: crispEdges;
