@@ -614,6 +614,13 @@
       </div>
 
       <div class="swing-panel">
+        <h2 data-i18n="statsHeading">Resource usage</h2>
+        <p class="swing-hint" data-i18n="statsHint">Recorded every minute; you can look back up to 24 hours. IPFS traffic is what Kubo exchanges with other IPFS nodes.</p>
+        <div id="stats-status" class="swing-status" aria-live="polite"></div>
+        <div id="stats-content"></div>
+      </div>
+
+      <div class="swing-panel">
         <h2 data-i18n="processHeading">Process</h2>
         <div class="swing-process-actions">
           <button type="button" id="process-stop" class="swing-btn swing-btn-danger" data-i18n="processStop">Stop</button>

@@ -2,7 +2,7 @@
 
 [`../architecture.md`](../architecture.md) の一部。設定キーは [`../architecture.md#設定と環境変数`](../architecture.md#設定と環境変数)、内蔵 gateway は [`gateway.md`](gateway.md)、Kubo プロセスの管理は [`kubo.md`](kubo.md#kubo-プロセスの管理kubors)、OS への常駐登録は [`service.md`](service.md)、コンテナでの起動は [`docker.md`](docker.md)。
 
-`swing up`（`up::run`）は起動順が固定されている: `swing.lock` の取得（[多重起動の防止](#多重起動の防止lockrs)）→ 終了要求（`ExitRequest`、[下記](#終了要求と-exit-codeshutdownexitrequest-shutdownexit)）の作成 → `<state_dir>/upload/` の掃除（`dashboard::cleanup_upload_dir`）→ `signer::Signer::load` で署名の方法を決める（下記「セットアップモード」、[`signer.md`](signer.md)）→ ダッシュボードの `TcpListener::bind`（`up::bind_dashboard`。セットアップモードではポートをずらすことがある。下記「セットアップモードでのポートの調整」）→ ダッシュボードのトークン（`<state_dir>/dashboard.token`）の読み込み・作成（`auth::load_or_create_token`）→ ダッシュボードの `AppState` 作成・`dashboard::serve` の起動 → 鍵の有無・`[kubo].managed` に応じた Kubo / agent の起動ループ → 終わったらダッシュボードを止め、署名アプリとの接続を閉じる（`Signer::shutdown`）。ダッシュボードは bind した時点で応答を始める（agent の準備が整うまで 503 を返す API は [`dashboard/http-api.md#共通`](dashboard/http-api.md#共通)）。`up::run` は呼ばれるたびにこの順で最初からやり直す（署名の方法の扱いは [`signer.md`](signer.md#signer)）。
+`swing up`（`up::run`）は起動順が固定されている: `swing.lock` の取得（[多重起動の防止](#多重起動の防止lockrs)）→ 終了要求（`ExitRequest`、[下記](#終了要求と-exit-codeshutdownexitrequest-shutdownexit)）の作成 → `<state_dir>/upload/` の掃除（`dashboard::cleanup_upload_dir`）→ `signer::Signer::load` で署名の方法を決める（下記「セットアップモード」、[`signer.md`](signer.md)）→ ダッシュボードの `TcpListener::bind`（`up::bind_dashboard`。セットアップモードではポートをずらすことがある。下記「セットアップモードでのポートの調整」）→ ダッシュボードのトークン（`<state_dir>/dashboard.token`）の読み込み・作成（`auth::load_or_create_token`）→ ダッシュボードの `AppState` 作成・`dashboard::serve` の起動 → リソース使用量の測定（`stats::run`、[`stats.md`](stats.md)）の起動 → 鍵の有無・`[kubo].managed` に応じた Kubo / agent の起動ループ → 終わったら測定とダッシュボードを止め、署名アプリとの接続を閉じる（`Signer::shutdown`）。ダッシュボードは bind した時点で応答を始める（agent の準備が整うまで 503 を返す API は [`dashboard/http-api.md#共通`](dashboard/http-api.md#共通)）。`up::run` は呼ばれるたびにこの順で最初からやり直す（署名の方法の扱いは [`signer.md`](signer.md#signer)）。
 
 鍵が設定されていれば、Kubo / agent のループは `[kubo].managed` に応じて 2 通りに分かれる。
 
@@ -80,6 +80,7 @@ Kubo バイナリの検出・バージョン確認・リポジトリの初期化
 ```
 loop {
     wait_healthy(config.ipfs_api_url(), 30s)   // cancel されたら即終了
+    AppState.stats に RPC の URL を渡す（PID は分からないので渡さない。stats.md）
     agent::run_until(config, token.child_token())
     // cancel されたら agent の終了を最大 15 秒（AGENT_STOP_TIMEOUT）待ち、超えたら warn を出して future を捨てて終了
     // Ok(()) なら終了。Err ならバックオフして最初から
@@ -92,7 +93,7 @@ loop {
 
 1. `ensure_repo` → `pick_free_port` → `apply_config` → `Daemon::spawn` → `wait_healthy("http://127.0.0.1:<api_port>", 120s)`。
    - いずれかの手順が失敗したら（`wait_healthy` が失敗した場合は daemon を `stop` してから）バックオフして 1 からやり直す。
-2. `config.ipfs.api` を `IpfsApi::Url(api_url)` に差し替えたコピーで `agent::run_until`（共有の `Arc<dashboard::AppState>` と `Arc<Notify>` を渡す）を子トークンとともに `tokio::spawn` する。`agent::run_until` は `Result<()>` を返すだけで、終了要求の種別（stop/restart）は持たない（下記「終了要求と exit code」）。
+2. Kubo の PID と RPC の URL を測定の対象として `AppState.stats` に渡す（`Recorder::set_kubo`。Kubo が exit したら外す。[`stats.md`](stats.md#測り方)）。`config.ipfs.api` を `IpfsApi::Url(api_url)` に差し替えたコピーで `agent::run_until`（共有の `Arc<dashboard::AppState>` と `Arc<Notify>` を渡す）を子トークンとともに `tokio::spawn` する。`agent::run_until` は `Result<()>` を返すだけで、終了要求の種別（stop/restart）は持たない（下記「終了要求と exit code」）。
 3. `tokio::select!` で次のいずれかを待つ:
    - **Kubo が exit** → `error!` を出し、agent を cancel して最大 15 秒（`AGENT_STOP_TIMEOUT`）待つ（超えたら `abort()`）。`kubo.pid` を消し、バックオフして 1 からやり直す（Kubo・agent の両方を再起動）。
    - **agent が Err（または panic）** → `warn!`／`error!` を出し、バックオフしてから **agent だけ**を同じ Kubo に対して再起動する（Kubo はそのまま）。バックオフ中に cancel されたら `Daemon::stop(20s)` して `Ok(())` を返す。

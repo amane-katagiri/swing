@@ -32,6 +32,7 @@ use crate::ipfs::IpfsClient;
 use crate::nostr::RelayClient;
 use crate::shutdown::ExitRequest;
 use crate::signer::{Pairing, PairingState, Signer};
+use crate::stats;
 
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(120);
 const UPLOAD_TIMEOUT: Duration = Duration::from_secs(30 * 60);
@@ -61,6 +62,7 @@ pub struct AppState {
     pub restart_required: std::sync::atomic::AtomicBool,
     token: std::sync::RwLock<String>,
     pub login_codes: LoginCodes,
+    pub stats: Arc<stats::Recorder>,
 }
 
 impl AppState {
@@ -104,6 +106,7 @@ impl AppState {
             restart_required: std::sync::atomic::AtomicBool::new(false),
             token: std::sync::RwLock::new(token),
             login_codes: LoginCodes::default(),
+            stats: Arc::default(),
         })
     }
 
@@ -179,6 +182,7 @@ pub fn router(state: Arc<AppState>) -> Router {
     let mut app: Router<Arc<AppState>> = Router::new()
         .route("/api/overview", get(api::overview))
         .route("/api/activity", get(api::activity))
+        .route("/api/stats", get(api::stats))
         .route("/api/sites", get(api::sites))
         .route("/api/status", get(api::status))
         .route("/api/mirror", get(api::mirror_list))

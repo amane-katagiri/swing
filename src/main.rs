@@ -5,8 +5,8 @@ use anyhow::{Context, Result};
 use clap::{Args, Parser, Subcommand};
 use swing::shutdown::{self, Exit};
 use swing::{
-    config, health, key, login, mirror, pair, publish, replicas, service, settings, stop, up,
-    webring,
+    config, health, key, login, mirror, pair, publish, replicas, service, settings, stats, stop,
+    up, webring,
 };
 use tracing::info;
 use tracing_subscriber::EnvFilter;
@@ -142,6 +142,23 @@ enum Command {
     Status {
         #[command(flatten)]
         config: ConfigArg,
+    },
+    #[command(
+        about = "Show CPU, memory and IPFS traffic sampled by a running `swing up`, via its dashboard API (GET /api/stats)"
+    )]
+    Stats {
+        #[command(flatten)]
+        config: ConfigArg,
+        #[arg(
+            long,
+            value_name = "DURATION",
+            default_value = "1h",
+            value_parser = config::parse_duration_secs,
+            help = "How far back to summarize, e.g. 30m, 6h, 1d (samples are kept for 1d)"
+        )]
+        last: u64,
+        #[arg(long, help = "Print the raw samples as JSON")]
+        json: bool,
     },
     #[command(
         about = "Show mutual mirror relations as a webring graph, crawling follow sets from the given accounts (default: yourself)"
@@ -453,6 +470,10 @@ async fn run_other(command: Command) -> Result<()> {
         Command::Status { config } => {
             let cfg = config::Config::load(config.as_deref())?;
             health::status(&cfg).await
+        }
+        Command::Stats { config, last, json } => {
+            let cfg = config::Config::load(config.as_deref())?;
+            stats::show(&cfg, last, json).await
         }
         Command::Webring {
             config,

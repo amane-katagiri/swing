@@ -1,6 +1,7 @@
 import { storage } from './storage.js';
 import { t, currentLang } from './i18n.js';
 import { cache, el, apiFetch, setStatus, clearStatus, describeError, createLoadGuard, setBusy } from './util.js';
+import { loadStats } from './stats.js';
 
 const settingsEls = {
   notWritableNotice: document.getElementById('settings-not-writable-notice'),
@@ -248,6 +249,7 @@ export const SettingsView = {
   onShow() {
     if (cache.config) renderConfig(cache.config);
     else this.load();
+    loadStats();
   },
   async load(force) {
     const gen = settingsLoadGuard.start();

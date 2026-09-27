@@ -11,12 +11,14 @@ use crate::agent;
 use crate::auth;
 use crate::config::{Config, IpfsApi};
 use crate::dashboard;
+use crate::ipfs::IpfsClient;
 use crate::kubo;
 use crate::lock;
 use crate::ports;
 use crate::settings;
 use crate::shutdown::{Exit, ExitRequest, RUNTIME_SHUTDOWN_TIMEOUT};
 use crate::signer::Signer;
+use crate::stats::{self, KuboTarget};
 
 const UNMANAGED_HEALTH_TIMEOUT: Duration = Duration::from_secs(30);
 const MANAGED_HEALTH_TIMEOUT: Duration = Duration::from_secs(120);
@@ -286,6 +288,11 @@ pub async fn run(config: Config, token: CancellationToken, port_shift: bool) -> 
         }
     });
 
+    let stats_task = tokio::spawn(stats::run(
+        Arc::clone(&dashboard_state.stats),
+        token.child_token(),
+    ));
+
     let result = if setup_mode {
         info!(
             "no Nostr key or signer app configured; running in setup mode (dashboard only, waiting for setup)"
@@ -310,6 +317,7 @@ pub async fn run(config: Config, token: CancellationToken, port_shift: bool) -> 
         .await
     };
 
+    stats_task.abort();
     let _ = dashboard_shutdown_tx.send(());
     if tokio::time::timeout(DASHBOARD_SHUTDOWN_TIMEOUT, dashboard_task)
         .await
@@ -350,6 +358,10 @@ async fn run_unmanaged(
             continue;
         }
         info!(api = %api_url, "external Kubo is ready");
+        dashboard.stats.set_kubo(Some(KuboTarget {
+            pid: None,
+            ipfs: IpfsClient::new(api_url),
+        }));
 
         let started = Instant::now();
         let agent = agent::run_until(
@@ -412,6 +424,10 @@ async fn run_managed(
             StartOutcome::Retry => continue 'daemon,
             StartOutcome::Cancelled => return Ok(()),
         };
+        dashboard.stats.set_kubo(Some(KuboTarget {
+            pid: daemon.pid(),
+            ipfs: IpfsClient::new(api_url.clone()),
+        }));
         let mut managed_config = config.clone();
         managed_config.ipfs.api = IpfsApi::Url(api_url);
 
@@ -432,6 +448,7 @@ async fn run_managed(
                         Ok(status) => error!(%status, "kubo daemon exited unexpectedly"),
                         Err(e) => error!(error = %e, "waiting for the kubo daemon failed"),
                     }
+                    dashboard.stats.set_kubo(None);
                     agent_token.cancel();
                     if tokio::time::timeout(AGENT_STOP_TIMEOUT, &mut agent_handle).await.is_err() {
                         warn!(timeout = ?AGENT_STOP_TIMEOUT, "agent did not stop in time after kubo exited");

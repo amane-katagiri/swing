@@ -7,8 +7,8 @@
 - `<key>` は npub / hex / nprofile を受け付ける。
 - 「Follow Set」は kind 30000、`d = mirror_set` の作者ごとに最新のもの。「サイトごとの最新のサイトイベント」は sites・replicas・webring で `nostr::select_latest` が選ぶもの。どちらも新しさの比べ方は [`nostr.md`](nostr.md#未来ずれの許容nostrmax_future_skew)。
 - 自分でファイルを書くのは `up`・`publish`・`service install`/`uninstall`・`signer pair`・`dashboard rotate-token` だけ。`publish` は MFS、`service install`/`uninstall` は OS のサービス登録と、Windows・macOS では `swing-tray` のログイン時の自動起動の登録（[`service.md`](service.md#タスクトレイの自動起動windows-と-macos)）、`signer pair` は `<state_dir>/remote-signer.json`、`dashboard rotate-token` は `swing up` が動いていなければ `<state_dir>/dashboard.token`（[dashboard open / rotate-token](#dashboard-open--rotate-token)）を書く。`mirror add` / `remove` は Follow Set を relay に送り、受理されると動いている agent に即時の poll（sweep と state の保存を含む。[`dashboard.md#概要`](dashboard.md#概要)）を行わせる。`stop` と `service start`/`stop` は動いているプロセスやサービスを起動・停止させるだけ。ほかは読み取り専用。
-- `status`・`mirror add`・`mirror remove`・`stop`・`dashboard open`・`dashboard rotate-token`（と Windows の `service stop`。[service](#service-install--uninstall--start--stop--status)）は relay/Kubo に直接つながず、動いている `swing up` のダッシュボード API（`[dashboard].listen`、既定 `http://127.0.0.1:8082`）を `src/api_client.rs::ApiClient` 経由で叩く。`<[agent].state_dir>/dashboard.token` を読んで `Authorization: Bearer` で送るので、`swing up` と同じ設定（同じ `state_dir`）を読めて、そのファイルを読めるユーザーで実行する必要がある。API が `[dashboard].listen` を未指定アドレス（`0.0.0.0` / `::`）で待ち受けていても、クライアントは接続先と `Host` ヘッダをループバックの同じポートへ正規化する。API に接続できなければ `status`・`mirror add`・`mirror remove` は `swing up is not running (cannot connect to <addr>)` でエラー終了し（非ゼロ終了）、`stop` は `not running` を出して正常終了（終了コード 0）する。`sites`・`replicas`・`webring`・`mirror list`・`publish` はこの API を経由せず relay/Kubo に直接つなぐので、`swing up` が動いていなくても使える。
-- `[nostr].secret_key`（`SWING_NOSTR_SECRET_KEY`）は必須ではない。`signer::Signer::require` を呼ぶコマンド（`sites`・`replicas`・`webring`・`mirror list`・`publish`）は秘密鍵も `<state_dir>/remote-signer.json`（NIP-46 の署名アプリ。[`signer.md`](signer.md)）も無ければエラー終了するが、`status`・`mirror add`・`mirror remove`・`stop`・`dashboard open`・`dashboard rotate-token` はダッシュボード API 経由で鍵を直接使わないので鍵が無くても動く。ただし鍵が無い `swing up` はセットアップモード（[up](#up)）で動いており、そこでは `status`・`mirror add`・`mirror remove` は 503 `agent is not configured` を返す。
+- `status`・`stats`・`mirror add`・`mirror remove`・`stop`・`dashboard open`・`dashboard rotate-token`（と Windows の `service stop`。[service](#service-install--uninstall--start--stop--status)）は relay/Kubo に直接つながず、動いている `swing up` のダッシュボード API（`[dashboard].listen`、既定 `http://127.0.0.1:8082`）を `src/api_client.rs::ApiClient` 経由で叩く。`<[agent].state_dir>/dashboard.token` を読んで `Authorization: Bearer` で送るので、`swing up` と同じ設定（同じ `state_dir`）を読めて、そのファイルを読めるユーザーで実行する必要がある。API が `[dashboard].listen` を未指定アドレス（`0.0.0.0` / `::`）で待ち受けていても、クライアントは接続先と `Host` ヘッダをループバックの同じポートへ正規化する。API に接続できなければ `status`・`stats`・`mirror add`・`mirror remove` は `swing up is not running (cannot connect to <addr>)` でエラー終了し（非ゼロ終了）、`stop` は `not running` を出して正常終了（終了コード 0）する。`sites`・`replicas`・`webring`・`mirror list`・`publish` はこの API を経由せず relay/Kubo に直接つなぐので、`swing up` が動いていなくても使える。
+- `[nostr].secret_key`（`SWING_NOSTR_SECRET_KEY`）は必須ではない。`signer::Signer::require` を呼ぶコマンド（`sites`・`replicas`・`webring`・`mirror list`・`publish`）は秘密鍵も `<state_dir>/remote-signer.json`（NIP-46 の署名アプリ。[`signer.md`](signer.md)）も無ければエラー終了するが、`status`・`stats`・`mirror add`・`mirror remove`・`stop`・`dashboard open`・`dashboard rotate-token` はダッシュボード API 経由で鍵を直接使わないので鍵が無くても動く。ただし鍵が無い `swing up` はセットアップモード（[up](#up)）で動いており、そこでは `status`・`mirror add`・`mirror remove` は 503 `agent is not configured` を返す。
 
 ## up
 
@@ -103,6 +103,19 @@ state は読まない。
 - `ok` 以外の版と `Not in state` の項目が 1 つでもあれば、件数を表示して 0 以外で終了する。
 - agent の実行中は、保存途中の版（MFS に置いた後、state を保存する前）が `Not in state` に出ることがある。
 - 実行時間は突き合わせと同じく保存量に比例する（[起動時の突き合わせ](agent.md#起動時の突き合わせ)）。API 呼び出しはダッシュボードのリクエストタイムアウト（[`dashboard.md#タイムアウトsrcdashboardmodrs`](dashboard.md#タイムアウトsrcdashboardmodrs)）と `ApiClient` 側のタイムアウト（125 秒）の範囲で待つ。
+
+## stats
+
+```
+swing stats [--last <duration>, 既定 1h] [--json] [--config <path>]
+```
+
+`swing up` が測って持っているリソース使用量（[`stats.md`](stats.md)）を `GET /api/stats?since=<今 − last>` で取り（[共通](#共通)）、`src/stats.rs::render` で表にする。測るのは `swing up` 側で、このコマンドは読むだけ。`--last` は `30m`・`6h`・`1d` のような長さ（単位なしは秒）で、`swing up` が持つのは 24 時間分まで。セットアップモードでも使える。
+
+- 1 行目にサンプル数・期間・間隔・最新のサンプルが何秒前か。サンプルが無ければ `No samples in the last <期間>; swing up takes one every 1m.` だけを出す。
+- 表は `swing CPU`・`swing memory`・`Kubo CPU`・`Kubo memory`・`IPFS in`・`IPFS out` の 6 行で、列は `now`（最新のサンプルの値）・`avg`・`max`（期間内の値のあるサンプルでの平均と最大）。値が無ければ `-`。バイト数は 1024 基数で小数 1 桁に丸める（`format::format_bytes_approx`）。
+- 表の下に、最新のサンプルに通信量があれば Kubo 起動からの累計（`IPFS total since Kubo started: in …, out …`）、`kubo_managed` が `false` なら Kubo が SWING の管理外で CPU・メモリを取得できない旨を出す。
+- `--json` を付けると API の応答（[`dashboard/http-api.md#get-apistats`](dashboard/http-api.md#get-apistats)）をそのまま整形して出す。
 
 ## webring
 

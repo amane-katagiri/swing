@@ -137,6 +137,25 @@ pub async fn activity(
     }))
 }
 
+pub async fn stats(
+    State(state): State<Arc<AppState>>,
+    Query(params): Query<Vec<(String, String)>>,
+) -> Result<Json<dto::StatsDto>, ApiError> {
+    let mut since = 0;
+    for (key, value) in &params {
+        if key == "since" {
+            since = value
+                .parse()
+                .map_err(|_| ApiError::BadRequest(format!("invalid since: {value}")))?;
+        }
+    }
+    Ok(Json(dto::StatsDto {
+        interval: crate::stats::SAMPLE_INTERVAL.as_secs(),
+        kubo_managed: state.config.kubo.managed,
+        samples: state.stats.since(since),
+    }))
+}
+
 pub async fn sites(State(state): State<Arc<AppState>>) -> Result<Json<dto::SitesDto>, ApiError> {
     let relay = state.require_relay().await?;
     let view = mirror::collect_sites(&relay, &state.config)
@@ -1474,5 +1493,45 @@ mod tests {
         let (_status, json) = send_json(router(test_state()), "GET", "/api/overview", None).await;
         assert_eq!(json["signer"]["remote"], false);
         assert!(json["signer"]["last_failure"].is_null());
+    }
+
+    #[tokio::test]
+    async fn stats_returns_samples_newer_than_since() {
+        let state = test_state();
+        let state_kubo_managed = state.config.kubo.managed;
+        for at in [100, 160, 220] {
+            state.stats.push(crate::stats::Sample {
+                at,
+                swing: Some(crate::stats::ProcessSample {
+                    cpu_percent: Some(1.5),
+                    rss_bytes: 4096,
+                }),
+                kubo: None,
+                traffic: None,
+            });
+        }
+
+        let (status, json) = send_json(
+            router(Arc::clone(&state)),
+            "GET",
+            "/api/stats?since=100",
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(json["interval"], 60);
+        assert_eq!(json["kubo_managed"], state_kubo_managed);
+        let ats: Vec<u64> = json["samples"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|s| s["at"].as_u64().unwrap())
+            .collect();
+        assert_eq!(ats, vec![160, 220]);
+        assert_eq!(json["samples"][0]["swing"]["rss_bytes"], 4096);
+        assert!(json["samples"][0]["kubo"].is_null());
+
+        let (status, _) = send_json(router(state), "GET", "/api/stats?since=x", None).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
     }
 }

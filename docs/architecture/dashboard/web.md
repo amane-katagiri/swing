@@ -15,6 +15,7 @@
 | `graph.js` | webring 用の自前 force-directed layout。`util.js` の `clamp`・`sanitizeDisplayText` だけに依存する |
 | `pairing.js` | 署名アプリ（NIP-46）とのペアリングの部品（`createPairing`）。QR の表示・状態のポーリング・状態表示を受け持ち、Setup 画面と Publish 画面の「署名アプリとつなぎ直す」の両方が使う。`util.js`・`i18n.js` に依存する |
 | `sites.js` / `webring.js` / `publish.js` / `settings.js` / `setup.js` / `login.js` | 各画面（それぞれ Sites・Webring・Publish・Settings・Setup・Login）。`setup.js` は `publish.js` の `loadOverview` も使う |
+| `stats.js` | Settings 画面のリソース使用量のパネル（`loadStats`・`renderStats`）。`util.js`・`i18n.js` に依存し、`settings.js` と `app.js` から使う |
 | `boot.js` | 描画前に同期実行する小さな通常スクリプト（下記「共通の UI 部品」の読み込み時）。どのモジュールにも依存しない |
 | `app.js` | ルーター兼エントリポイント。`<script type="module" src="/app.js">` から読み込まれ、各画面モジュールを import する |
 
@@ -46,7 +47,7 @@ Desktop 画面専用のモジュール（`desktop*.js`）とその CSS は [`des
 | Sites | [`/api/sites`](http-api.md#get-apisites) の一覧、mirror への追加・削除、`Unfollowed but still stored`、[`/api/status`](http-api.md#get-apistatus) を呼ぶ Storage check（重いのでボタンを押したときだけ呼ぶ。版ごとの判定の表と、サイトごとの実容量・合計の表） | `cards`（既定）/ `table` |
 | Webring | [`/api/webring`](http-api.md#get-apiwebringrootkeydepthn) を root・depth 指定で取得。ノード選択で [`/api/replicas?key=`](http-api.md#get-apireplicaskeykey) を引き、詳細パネルからミラー操作もできる | `graph`（既定）/ `list` / `ascii` / `source`（dot・mermaid） |
 | Publish | [`/api/overview`](http-api.md#get-apioverview)・[`/api/publish/sites`](http-api.md#get-apipublishsites)（My sites）、publish フォーム（常にフォルダアップロード） | スタイル切替なし |
-| Settings | 設定の表示と編集、テーマ・言語・カスタム CSS、プロセスの停止・再起動（下記「Settings 画面」） | スタイル切替なし |
+| Settings | 設定の表示と編集、テーマ・言語・カスタム CSS、リソース使用量、プロセスの停止・再起動（下記「Settings 画面」） | スタイル切替なし |
 | Setup | 鍵が未設定（`overview.setup === true`）の間だけ表示できる導入画面。鍵の生成／貼り付け／署名アプリ（NIP-46）とのペアリング、relays、保存上限 3 つを入力して [`POST /api/setup`](http-api.md#post-apisetup) を送る（下記「Setup 画面」） | スタイル切替なし |
 
 ## Sites 画面
@@ -100,6 +101,16 @@ NIP-05 の検証結果はバッジで `OK`（`verified`）/ `NG`（`mismatch`）
 ### 表示の設定
 
 テーマ（`swing:theme`。`<html data-theme>` を付け替える）・表示言語（`swing:lang`）・カスタム CSS（`swing:user-css`。`<style id="user-css">` に入れる）をブラウザの `localStorage` に保存する（下記「CSS カスタマイズのインターフェース」「表示言語」）。言語を切り替えると `swing:langchange` という `CustomEvent` を `document` に投げ、`app.js` がそれを購読して各画面を再描画する。
+
+### リソース使用量
+
+「表示」パネルと「プロセス」パネルの間にある（`stats.js`）。Desktop 画面には無い。
+
+- 画面を開くたびに [`GET /api/stats`](http-api.md#get-apistats) を呼び、以後は Settings 画面を表示している間だけ `interval` 秒ごとに呼び直す（画面を離れると次の呼び出しで止まる）。2 回目からは手元の最後の `at` を `since` に渡して新しいサンプルだけを取り、最新のサンプルから 24 時間より古いものを捨てる。
+- 表（`.swing-table`）は `swing` の CPU・メモリ、Kubo の CPU・メモリ、IPFS の受信・送信の 6 行で、列は「現在」（最新のサンプル）・「1 時間平均」・「1 時間最大」・「24 時間最大」（最新のサンプルから数えた期間）。値が無ければ `–`。バイト数は `formatBytes`、通信量はそれに `/s` を付ける。
+- パネルの説明は 1 分ごとの記録を最大 24 時間さかのぼって見られることと、IPFS の通信量が何を数えたものかだけにする。
+- 表の下に最終記録の時刻、最新のサンプルに通信量があれば Kubo 起動からの累計、`kubo_managed` が `false` なら Kubo が SWING の管理外で CPU・メモリを取得できない旨を出す。サンプルが 1 つも無ければ表の代わりに「まだ記録がありません」を出す。
+- 読み込みの失敗は `#stats-status` に出し、次の呼び出しは続ける。
 
 ### プロセス操作
 

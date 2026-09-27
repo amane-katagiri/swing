@@ -6,6 +6,7 @@ import { SitesView, renderStatusCheck } from './sites.js';
 import { WebringView, renderWebringIfLoaded } from './webring.js';
 import { PublishView, renderIdentity, updateNavFooter, updateUploadInfo, renderMySites, loadOverview } from './publish.js';
 import { SettingsView, renderConfig } from './settings.js';
+import { renderStats } from './stats.js';
 import { SetupView } from './setup.js';
 import { LoginView } from './login.js';
 
@@ -87,6 +88,7 @@ function applyLanguage() {
   renderWebringIfLoaded();
   if (cache.publishSites) renderMySites();
   if (cache.config) renderConfig(cache.config);
+  renderStats();
   if (cache.status) renderStatusCheck(cache.status);
   SetupView.render();
   LoginView.render();

@@ -23,6 +23,14 @@ pub enum Fetched {
     TooLarge,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+pub struct Bandwidth {
+    #[serde(rename = "TotalIn")]
+    pub total_in: u64,
+    #[serde(rename = "TotalOut")]
+    pub total_out: u64,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MfsEntry {
     pub name: String,
@@ -440,6 +448,11 @@ impl IpfsClient {
         Ok(Some(parsed.hash))
     }
 
+    pub async fn bandwidth(&self) -> Result<Bandwidth> {
+        let text = self.call("stats/bw", "", Duration::from_secs(10)).await?;
+        serde_json::from_str(&text).context("parsing stats/bw response")
+    }
+
     pub async fn is_directory(&self, cid: &str) -> Result<bool> {
         let text = self
             .call(
@@ -467,6 +480,20 @@ mod tests {
         assert_eq!(percent_encode_segment("index.html"), "index.html");
         assert_eq!(percent_encode_segment("a b"), "a%20b");
         assert_eq!(percent_encode_relative_path("css/a b.css"), "css/a%20b.css");
+    }
+
+    #[test]
+    fn bandwidth_reads_the_totals_of_stats_bw() {
+        let bw: Bandwidth =
+            serde_json::from_str(r#"{"TotalIn":123,"TotalOut":456,"RateIn":1.5,"RateOut":2.25}"#)
+                .unwrap();
+        assert_eq!(
+            bw,
+            Bandwidth {
+                total_in: 123,
+                total_out: 456
+            }
+        );
     }
 
     fn entry_names(entries: &[Entry]) -> Vec<String> {

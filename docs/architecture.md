@@ -12,6 +12,7 @@
 | [`architecture/nostr.md`](architecture/nostr.md) | Nostr イベントの検証（`nostr.rs`）、取得と表示の上限（`nostr::budget`）、レプリカ報告の信頼度 |
 | [`architecture/kubo.md`](architecture/kubo.md) | MFS の使い方、Kubo RPC、Kubo プロセスの管理、Kubo のバージョン |
 | [`architecture/up.md`](architecture/up.md) | `swing up`（supervisor）: セットアップモード、終了要求・シグナル、多重起動の防止 |
+| [`architecture/stats.md`](architecture/stats.md) | リソース使用量の記録（`stats.rs`）: `swing up` が測る CPU・メモリ・IPFS の通信量、間隔と保持期間、OS ごとの取り方 |
 | [`architecture/gateway.md`](architecture/gateway.md) | 内蔵 gateway（`gateway.rs`）: Host 振り分けと Kubo gateway へのプロキシ |
 | [`architecture/service.md`](architecture/service.md) | `swing service install / uninstall / start / stop / status`（systemd / launchd / タスクスケジューラ） |
 | [`architecture/tray.md`](architecture/tray.md) | タスクトレイ（`swing-tray`、Windows と macOS）: メニュー、状態の表示、ダッシュボード API の使い方 |
@@ -51,7 +52,7 @@ swing/
     ipfs.rs          Kubo RPC クライアント
     mfs.rs           MFS 上のパスの組み立て
     key.rs           key generate
-    format.rs        バイト数・秒数の表示用フォーマット（format_bytes / format_duration_secs）
+    format.rs        バイト数・秒数の表示用フォーマット（format_bytes / format_bytes_approx / format_duration_secs）
     policy.rs        保存ポリシー判定（純粋関数）
     state.rs         state.json の永続化
     agent/           mirror-agent ループ。詳細は architecture/agent.md
@@ -64,6 +65,7 @@ swing/
     signer.rs        署名（Signer: 秘密鍵か NIP-46 の署名アプリ）、remote-signer.json、QR コードでのペアリング。詳細は architecture/signer.md
     pair.rs          `swing signer pair`（ターミナルに QR コードを出して署名アプリとペアリングする）。詳細は architecture/cli.md
     up.rs            `swing up` supervisor（Kubo の起動・監視、agent の起動・再起動、バックオフ）。詳細は architecture/up.md
+    stats.rs         リソース使用量の記録（`swing up` の中で 60 秒ごとに測ってメモリに 24 時間分持つ）と stats サブコマンド。stats/process.rs が OS ごとにプロセスの CPU 時間とメモリを読む。詳細は architecture/stats.md
     kubo.rs          Kubo バイナリの検出・init・`ipfs config` 適用・子プロセスの起動と終了・ヘルス待ち・kubo.pid と孤児回収。詳細は architecture/kubo.md
     lock.rs          多重起動防止のインスタンスロック（swing.lock）。詳細は architecture/up.md
     ports.rs         セットアップモードでのポートのずらし方（`bind_shifting`・`free_addr`・`may_shift`）。詳細は architecture/up.md
@@ -105,7 +107,7 @@ swing/
   docs/                役割は AGENTS.md を参照
 ```
 
-`mirror.rs`・`health.rs`・`replicas.rs`・`webring.rs` は、relay/Kubo とやり取りして値を返す関数（`collect_mirror_list`・`collect_sites`・`collect_status`・`replicas::collect`・`webring::collect`）と、表示する関数とに分かれている。ダッシュボードの API ハンドラは同じ関数を呼び、DTO に変換する。CLI は `sites`・`replicas`・`webring`・`mirror list` ではこれらを直接呼び、`status`・`mirror add`/`remove` ではダッシュボード API 経由で `swing up` 側に呼ばせる。`publish.rs` は段階ごとの関数（`check_nip05`・`add_and_measure`・`sign_and_send`・`prune_old_versions_collect`）を CLI とダッシュボードで共有する。
+`mirror.rs`・`health.rs`・`replicas.rs`・`webring.rs` は、relay/Kubo とやり取りして値を返す関数（`collect_mirror_list`・`collect_sites`・`collect_status`・`replicas::collect`・`webring::collect`）と、表示する関数とに分かれている。ダッシュボードの API ハンドラは同じ関数を呼び、DTO に変換する。CLI は `sites`・`replicas`・`webring`・`mirror list` ではこれらを直接呼び、`status`・`stats`・`mirror add`/`remove` ではダッシュボード API 経由で `swing up` 側に呼ばせる。`publish.rs` は段階ごとの関数（`check_nip05`・`add_and_measure`・`sign_and_send`・`prune_old_versions_collect`）を CLI とダッシュボードで共有する。
 
 サブコマンドごとに relay/Kubo へ直接つなぐか、動いている `swing up` のダッシュボード API を経由するかは [`architecture/cli.md#共通`](architecture/cli.md#共通) を参照。
 
@@ -128,6 +130,7 @@ swing mirror remove <key>...           [--config <path>]
 swing sites                            [--config <path>]
 swing replicas [<key>...]              [--config <path>]
 swing status                           [--config <path>]
+swing stats  [--last <duration>] [--json] [--config <path>]
 swing webring [<key>...] [--depth <N>] [--format <text|dot|mermaid>] [--config <path>]
 swing signer pair [--relay <URL>]...   [--config <path>]
 swing key generate

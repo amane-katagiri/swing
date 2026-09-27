@@ -73,6 +73,13 @@ pub struct ActivityDto {
     pub latest_stored_at: Option<u64>,
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+pub struct StatsDto {
+    pub interval: u64,
+    pub kubo_managed: bool,
+    pub samples: Vec<crate::stats::Sample>,
+}
+
 #[derive(Debug, Serialize)]
 pub struct OverviewDto {
     pub version: String,

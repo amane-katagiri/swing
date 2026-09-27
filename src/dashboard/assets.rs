@@ -73,6 +73,7 @@ const STATIC_ASSETS: &[StaticAsset] = &[
     text_asset!(JS, "webring.js"),
     text_asset!(JS, "publish.js"),
     text_asset!(JS, "settings.js"),
+    text_asset!(JS, "stats.js"),
     text_asset!(JS, "setup.js"),
     text_asset!(JS, "pairing.js"),
     text_asset!(JS, "login.js"),

@@ -35,7 +35,7 @@ API は `swing up` の寿命で動き続ける（[`../up.md`](../up.md)）。
 | エンドポイント | 使えないとき |
 |---|---|
 | relay・Kubo を使うもの（`/api/sites`・`/api/status`・`/api/mirror`・`/api/mirror/add`・`/api/mirror/remove`・`/api/webring`・`/api/replicas`・`/api/publish/sites`・`/api/publish/upload`） | agent が起動時の突き合わせ（保存量に比例して時間がかかる）を終えて `AppState::set_ready` を呼ぶまでと、agent が落ちて `set_not_ready` を呼んでから次に `set_ready` するまで（[`../agent.md#全体の流れ`](../agent.md#全体の流れ)）は 503 `{"error": "agent is not ready"}`。セットアップモード（[`../up.md#セットアップモード鍵未設定`](../up.md#セットアップモード鍵未設定)）の間は常に 503 `{"error": "agent is not configured"}` |
-| `/api/overview`・`/api/activity`・`/api/config`・`/api/shutdown`・`/api/restart`・`/api/login`・`/api/login-code`・`/api/token/rotate` | 無い（常に応答する） |
+| `/api/overview`・`/api/activity`・`/api/stats`・`/api/config`・`/api/shutdown`・`/api/restart`・`/api/login`・`/api/login-code`・`/api/token/rotate` | 無い（常に応答する） |
 | `/api/setup` | セットアップモードでなければ 409。セットアップが一度成功してから再起動するまでも 409 |
 | `/api/setup/signer` | セットアップモードでも署名アプリを使っている間でもなければ 409 |
 | `/api/signer/reconnect` | 署名アプリを使っていなければ 409 |
@@ -75,6 +75,19 @@ API は `swing up` の寿命で動き続ける（[`../up.md`](../up.md)）。
 - `latest_stored_at`: `state.json` に記録された全版の `stored_at` の最大値。版が 1 つも無い（`state.json` が無い場合を含む）と `null`。
 - `state.json` を読むだけで relay にも Kubo にも接続しないので、定期的に呼んでも軽い。Desktop 画面の更新確認はこれを見て、値が進んだときだけ `/api/sites` を取り直す（[`desktop.md`](desktop.md)）。
 - agent の準備状態に関わらず応答する。`state.json` の読み込み・解釈に失敗したら 500（`error!` でログに出す）。
+
+## GET /api/stats
+
+```json
+{ "interval": 60, "kubo_managed": true, "samples": [ { "at": 1790000000, "swing": { "cpu_percent": 0.4, "rss_bytes": 17432576 }, "kubo": { "cpu_percent": 2.1, "rss_bytes": 251658240 }, "traffic": { "in_per_sec": 5120, "out_per_sec": 2048, "total_in": 734003200, "total_out": 104857600 } } ] }
+```
+
+- `swing up` が測って持っているリソース使用量（[`../stats.md`](../stats.md)）を古い順に返す。メモリ上の配列を写すだけで、呼んでも測り直さない。
+- `since`（epoch 秒、省略時 0）より後の `at` のサンプルだけを返す。前回の最後の `at` を渡せば新しい分だけ取れる。数値でなければ 400。
+- `interval`: 測る間隔の秒数。
+- `kubo_managed`: `[kubo].managed`。`false`（外部の Kubo）なら `kubo` は常に `null`。
+- 各サンプルの `swing`・`kubo`・`traffic` と、その中の `cpu_percent`・`in_per_sec`・`out_per_sec` は、取れなかったときや前回との差が出せないときに `null`（条件は [`../stats.md#測り方`](../stats.md#測り方)）。`cpu_percent` は 1 コアを 100% とする小数、ほかはバイト数（`*_per_sec` は毎秒）の整数。
+- agent の準備状態に関わらず応答する（セットアップモードでも）。
 
 ## GET /api/sites
 

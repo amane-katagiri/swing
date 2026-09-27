@@ -200,6 +200,8 @@ swing status
 
 状態ファイルに記録した版が Kubo の MFS に揃っているかと、状態ファイルに無い余分なパスを表示します。問題があれば 0 以外で終了するので、cron などからの監視にも使えます。詳しくは [`docs/architecture/cli.md`](docs/architecture/cli.md#status) を参照してください。
 
+動いている `swing up` の CPU・メモリと IPFS の通信量は `swing stats` で見られます。`swing up` が 1 分ごとに測って直近 24 時間分をメモリに持っていて、`--last 6h` のように期間を指定すると、その間の平均と最大を表示します。ダッシュボードの Settings 画面にも同じ内容が出ます。詳しくは [`docs/architecture/stats.md`](docs/architecture/stats.md) を参照してください。
+
 保存したサイトはローカルのゲートウェイで閲覧できます。`http://localhost:8080/ipfs/<cid>/` を開くと `http://<cid>.ipfs.localhost:8080/` に移り、サイトごとに別のオリジンで表示されます。ゲートウェイはローカルにあるデータだけを返し、ネットワークから取りに行きません。
 
 動作状況は、直接 `swing up` を実行していればそのまま端末（または `--log-file` で指定したファイル）に出ます。サービスとして登録した場合は、Linux なら `journalctl --user -u swing -f`、macOS なら `~/Library/Logs/swing.log`、Windows ならサービス登録時のログファイルで確認できます。Docker Compose の場合はコンテナのログで確認します。
