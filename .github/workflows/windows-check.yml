@@ -1,0 +1,297 @@
+name: windows-check
+
+on:
+  workflow_dispatch:
+    inputs:
+      ssh:
+        description: Open a tmate session at the end
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_TOOLCHAIN: "1.97"
+
+defaults:
+  run:
+    shell: pwsh
+
+jobs:
+  tray:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    env:
+      W: ${{ github.workspace }}\check
+      OUT: ${{ github.workspace }}\check\out
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # v1
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+
+      - uses: Swatinem/rust-cache@49a0bdc70d2e1b713ca9e2869b211fcce03d3c1c # v2
+        with:
+          key: windows-check
+
+      - name: Build
+        run: cargo build --release --locked --workspace
+
+      - name: Prepare
+        timeout-minutes: 3
+        run: |
+          New-Item -ItemType Directory -Force "$env:W\bin", "$env:OUT" | Out-Null
+          Copy-Item target\release\swing.exe, target\release\swing-tray.exe "$env:W\bin\"
+          Copy-Item swing.example.toml "$env:W\swing.toml"
+          @'
+          Set-Location $env:W
+          Add-Type -AssemblyName System.Windows.Forms, System.Drawing
+          function Shot($name, $wait = 1) {
+            Start-Sleep $wait
+            try {
+              $b = [System.Windows.Forms.SystemInformation]::VirtualScreen
+              $bmp = New-Object System.Drawing.Bitmap $b.Width, $b.Height
+              $g = [System.Drawing.Graphics]::FromImage($bmp)
+              $g.CopyFromScreen($b.Left, $b.Top, 0, 0, $bmp.Size)
+              $bmp.Save("$env:OUT\$name.png", [System.Drawing.Imaging.ImageFormat]::Png)
+              $g.Dispose(); $bmp.Dispose()
+            } catch { "$name`: $_" | Add-Content "$env:OUT\shot-errors.txt" }
+          }
+          function Listen { (Select-String -Path "$env:W\swing.toml" -Pattern '^listen\s*=\s*"([^"]+)"' | Select-Object -First 1).Matches[0].Groups[1].Value }
+          function Up { try { Invoke-WebRequest -UseBasicParsing -TimeoutSec 2 "http://$(Listen)/" | Out-Null; $true } catch { $false } }
+          function WaitUp { for ($i = 0; $i -lt 60; $i++) { if (Up) { return }; Start-Sleep 1 }; throw "swing up did not respond" }
+          function WaitDown { for ($i = 0; $i -lt 60; $i++) { if (-not (Up)) { return }; Start-Sleep 1 }; throw "swing up is still responding" }
+          function Swing { & "$env:W\bin\swing.exe" @args 2>&1 | ForEach-Object { "$_" } }
+          function Tray { Get-Process swing-tray -ErrorAction SilentlyContinue | Select-Object Id, SessionId, MainWindowHandle, Path }
+          function Save($name, $value) { $value | Out-File -Encoding utf8 "$env:OUT\$name.txt"; $value }
+          Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes
+          Add-Type @"
+          using System;
+          using System.Runtime.InteropServices;
+          public static class Mouse {
+            [DllImport("user32.dll")] static extern bool SetCursorPos(int x, int y);
+            [DllImport("user32.dll")] static extern void mouse_event(uint f, uint x, uint y, uint d, UIntPtr e);
+            public static void Click(int x, int y) {
+              SetCursorPos(x, y);
+              System.Threading.Thread.Sleep(100);
+              mouse_event(2, 0, 0, 0, UIntPtr.Zero);
+              mouse_event(4, 0, 0, 0, UIntPtr.Zero);
+            }
+          }
+          public static class PopupMenu {
+            [StructLayout(LayoutKind.Sequential)] public struct RECT { public int Left, Top, Right, Bottom; }
+            [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern IntPtr FindWindowW(string c, string n);
+            [DllImport("user32.dll")] static extern IntPtr SendMessageW(IntPtr h, uint m, IntPtr w, IntPtr l);
+            [DllImport("user32.dll")] static extern int GetMenuItemCount(IntPtr m);
+            [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int GetMenuStringW(IntPtr m, uint i, System.Text.StringBuilder s, int n, uint f);
+            [DllImport("user32.dll")] static extern uint GetMenuState(IntPtr m, uint i, uint f);
+            [DllImport("user32.dll")] static extern bool GetMenuItemRect(IntPtr w, IntPtr m, uint i, out RECT r);
+            public class Item { public string Text; public bool Enabled; public uint State; public int X, Y; }
+            public static Item[] Items() {
+              var hwnd = FindWindowW("#32768", null);
+              if (hwnd == IntPtr.Zero) return new Item[0];
+              var menu = SendMessageW(hwnd, 0x01E1, IntPtr.Zero, IntPtr.Zero);
+              if (menu == IntPtr.Zero) return new Item[0];
+              var n = GetMenuItemCount(menu);
+              var items = new Item[Math.Max(n, 0)];
+              for (uint i = 0; i < n; i++) {
+                var sb = new System.Text.StringBuilder(256);
+                GetMenuStringW(menu, i, sb, 256, 0x400);
+                var state = GetMenuState(menu, i, 0x400);
+                RECT r;
+                GetMenuItemRect(IntPtr.Zero, menu, i, out r);
+                items[i] = new Item { Text = sb.ToString(), Enabled = (state & 3) == 0, State = state, X = (r.Left + r.Right) / 2, Y = (r.Top + r.Bottom) / 2 };
+              }
+              return items;
+            }
+          }
+          "@
+          $AE = [System.Windows.Automation.AutomationElement]
+          $TS = [System.Windows.Automation.TreeScope]
+          function Prop($p, $v) { New-Object System.Windows.Automation.PropertyCondition $p, $v }
+          function TopWindows($class) { $AE::RootElement.FindAll($TS::Children, (Prop $AE::ClassNameProperty $class)) }
+          function ClickAt($e) { $r = $e.Current.BoundingRectangle; [Mouse]::Click([int]($r.X + $r.Width / 2), [int]($r.Y + $r.Height / 2)) }
+          function Describe($root) {
+            $root.FindAll($TS::Descendants, [System.Windows.Automation.Condition]::TrueCondition) | ForEach-Object {
+              $c = $_.Current
+              "$($c.ControlType.ProgrammaticName)`t$($c.ClassName)`t$($c.AutomationId)`t$($c.Name)`tenabled=$($c.IsEnabled)`t$($c.BoundingRectangle)"
+            }
+          }
+          function TrayIcon {
+            foreach ($class in 'Shell_TrayWnd', 'TopLevelWindowForOverflowXamlIsland', 'NotifyIconOverflowWindow') {
+              foreach ($w in TopWindows $class) {
+                $hit = $w.FindAll($TS::Descendants, (Prop $AE::ControlTypeProperty ([System.Windows.Automation.ControlType]::Button))) | Where-Object { $_.Current.Name -clike 'SWING*' } | Select-Object -First 1
+                if ($hit) { return $hit }
+              }
+            }
+          }
+          function OpenMenu {
+            $icon = TrayIcon
+            if (-not $icon) {
+              $chevron = TopWindows 'Shell_TrayWnd' | ForEach-Object { $_.FindAll($TS::Descendants, [System.Windows.Automation.Condition]::TrueCondition) } | Where-Object { $_.Current.Name -eq 'Show Hidden Icons' } | Select-Object -First 1
+              if (-not $chevron) { throw "neither the SWING icon nor the Show Hidden Icons button was found" }
+              ClickAt $chevron
+              Start-Sleep 2
+              $icon = TrayIcon
+              if (-not $icon) { throw "the SWING icon was not found in the overflow" }
+            }
+            "icon: $($icon.Current.Name) $($icon.Current.BoundingRectangle)" | Add-Content "$env:OUT\ui.log"
+            ClickAt $icon
+            Start-Sleep 2
+          }
+          function MenuItems { [PopupMenu]::Items() }
+          function Esc { [System.Windows.Forms.SendKeys]::SendWait('{ESC}'); Start-Sleep 1 }
+          function Menu($name) {
+            OpenMenu
+            Shot $name 0
+            Save $name (MenuItems | ForEach-Object { "$($_.Text)`tenabled=$($_.Enabled)`tstate=$($_.State)`tat=$($_.X),$($_.Y)" } | Out-String)
+            Esc
+          }
+          function Choose($label) {
+            OpenMenu
+            $item = MenuItems | Where-Object { $_.Text -eq $label } | Select-Object -First 1
+            if (-not $item) { Esc; throw "menu item '$label' was not found" }
+            [Mouse]::Click($item.X, $item.Y)
+            Start-Sleep 2
+          }
+          function Dialog { TopWindows '#32770' | Where-Object { $_.Current.Name -eq 'SWING' } | Select-Object -First 1 }
+          function Answer($name, $button) {
+            $d = Dialog
+            if (-not $d) { throw "no SWING dialog" }
+            Shot $name 0
+            Save $name (Describe $d | Out-String)
+            $b = $d.FindAll($TS::Descendants, (Prop $AE::ClassNameProperty 'Button')) | Where-Object { $_.Current.Name -eq $button } | Select-Object -First 1
+            if (-not $b) { Esc; throw "button '$button' was not found" }
+            ClickAt $b
+            Start-Sleep 2
+          }
+          '@ | Set-Content "$env:W\lib.ps1"
+          . "$env:W\lib.ps1"
+          Save os ((Get-CimInstance Win32_OperatingSystem | Select-Object Caption, Version, OSLanguage, MUILanguages | Format-List | Out-String))
+          Save locale (@(
+            "UICulture: $((Get-UICulture).Name)"
+            "Culture: $((Get-Culture).Name)"
+            "WinSystemLocale: $((Get-WinSystemLocale).Name)"
+            "WinUILanguageOverride: $(Get-WinUILanguageOverride)"
+            "WinUserLanguageList: $((Get-WinUserLanguageList).LanguageTag -join ', ')"
+            "OEM code page: $([Console]::OutputEncoding.CodePage) / chcp: $(chcp)"
+          ) -join "`n")
+          Save session (@(
+            "whoami: $(whoami)"
+            "UserInteractive: $([Environment]::UserInteractive)"
+            "SessionId: $((Get-Process -Id $PID).SessionId)"
+            (query user 2>&1 | Out-String)
+            (qwinsta 2>&1 | Out-String)
+            "VirtualScreen: $([System.Windows.Forms.SystemInformation]::VirtualScreen)"
+          ) -join "`n")
+          Shot 00-before
+
+      - name: Status before install
+        timeout-minutes: 3
+        run: |
+          . "$env:W\lib.ps1"
+          Save schtasks-query-missing (schtasks /Query /TN swing 2>&1 | Out-String)
+          Save schtasks-csv-head (schtasks /Query /FO CSV /NH 2>&1 | Select-Object -First 5 | Out-String)
+          $out = Save service-status-before (Swing service status)
+          if ($LASTEXITCODE -ne 0 -or ($out -join "`n") -notmatch 'not installed') { throw "expected 'not installed' (exit $LASTEXITCODE)" }
+
+      - name: Install the service
+        timeout-minutes: 3
+        run: |
+          . "$env:W\lib.ps1"
+          Save service-install (Swing service install --config "$env:W\swing.toml")
+          if ($LASTEXITCODE -ne 0) { throw "service install failed" }
+          WaitUp
+          Start-Sleep 8
+          Save tray-after-install (Tray | Format-List | Out-String)
+          Save run-key (Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run' | Format-List | Out-String)
+          $out = Save service-status-installed (Swing service status)
+          if ($LASTEXITCODE -ne 0 -or ($out -join "`n") -match 'not installed') { throw "expected an installed task (exit $LASTEXITCODE)" }
+          Shot 01-running
+
+      - name: Taskbar
+        timeout-minutes: 3
+        continue-on-error: true
+        run: |
+          . "$env:W\lib.ps1"
+          (New-Object -ComObject Shell.Application).MinimizeAll()
+          $sp = TopWindows '#32770' | Where-Object { $_.Current.Name -eq 'System Properties' } | Select-Object -First 1
+          if ($sp) { $sp.FindAll($TS::Descendants, (Prop $AE::NameProperty 'OK')) | Select-Object -First 1 | ForEach-Object { ClickAt $_ } }
+          Start-Sleep 2
+          Save taskbar (TopWindows 'Shell_TrayWnd' | ForEach-Object { Describe $_ } | Out-String)
+          Shot 02-desktop
+
+      - name: Menu and dialogs while running
+        timeout-minutes: 3
+        continue-on-error: true
+        run: |
+          . "$env:W\lib.ps1"
+          Menu 03-running-menu
+          Choose Stop
+          Answer 04-stop-dialog No
+          if (-not (Up)) { throw "answering No to Stop stopped swing" }
+          Choose Quit
+          Answer 05-quit-dialog Cancel
+          if (-not (Tray)) { throw "answering Cancel to Quit closed the tray" }
+          Save overflow (TopWindows 'TopLevelWindowForOverflowXamlIsland' | ForEach-Object { Describe $_ } | Out-String)
+
+      - name: Stop from the CLI
+        timeout-minutes: 3
+        run: |
+          . "$env:W\lib.ps1"
+          Save stop (Swing stop --config "$env:W\swing.toml")
+          WaitDown
+          Shot 06-stopped 8
+          Save tray-after-stop (Tray | Format-List | Out-String)
+          $out = Save service-status-stopped (Swing service status)
+          if ($LASTEXITCODE -ne 0 -or ($out -join "`n") -match 'not installed') { throw "expected an installed task (exit $LASTEXITCODE)" }
+
+      - name: Menu while stopped
+        timeout-minutes: 3
+        continue-on-error: true
+        run: |
+          . "$env:W\lib.ps1"
+          Menu 07-stopped-menu
+
+      - name: Start from the tray
+        timeout-minutes: 3
+        run: |
+          . "$env:W\lib.ps1"
+          Choose Start
+          WaitUp
+          Shot 08-started 8
+
+      - name: Uninstall the service
+        timeout-minutes: 3
+        if: always()
+        run: |
+          . "$env:W\lib.ps1"
+          Save service-uninstall (Swing service uninstall)
+          $closed = $false
+          for ($i = 0; $i -lt 30; $i++) { if (-not (Tray)) { $closed = $true; break }; Start-Sleep 1 }
+          Save tray-after-uninstall "closed: $closed after ${i}s"
+          $out = Save service-status-after (Swing service status)
+          Save run-key-after (Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run' | Format-List | Out-String)
+          Save processes-after (Get-Process swing* -ErrorAction SilentlyContinue | Format-Table Id, Name, SessionId | Out-String)
+          Shot 09-uninstalled
+          if (($out -join "`n") -notmatch 'not installed') { throw "expected 'not installed' after uninstall" }
+          if (-not $closed) { throw "swing-tray did not exit after uninstall" }
+
+      - name: Collect logs
+        if: always()
+        run: Copy-Item "$env:W\swing.log" "$env:OUT\" -ErrorAction SilentlyContinue
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        if: always()
+        with:
+          name: windows-check
+          path: check/out
+          if-no-files-found: error
+
+      - uses: mxschmitt/action-tmate@35b54afac29c97fb54faba5b513f8fbd1882f113 # v3.24
+        if: always() && inputs.ssh
+        with:
+          limit-access-to-actor: true
