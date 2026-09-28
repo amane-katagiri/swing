@@ -12,7 +12,7 @@ use axum::response::{IntoResponse, Response};
 use tokio::io::AsyncWriteExt;
 
 use super::AppState;
-use super::api::{ApiError, PublishFields, PublishOutcome, run_publish};
+use super::api::{ApiError, PublishFields, PublishOutcome, internal, run_publish};
 use super::dto;
 
 pub const MAX_UPLOAD_FILES: usize = 10_000;
@@ -205,18 +205,18 @@ async fn receive_upload(multipart: &mut Multipart, dest: &Path) -> Result<Parsed
                 if let Some(parent) = target.parent() {
                     create_private_dir_all(parent)
                         .await
-                        .map_err(|e| ApiError::Internal(format!("{e:#}")))?;
+                        .map_err(|e| internal("creating an upload directory failed", e))?;
                 }
                 let mut out = create_private_file(&target)
                     .await
-                    .map_err(|e| ApiError::Internal(format!("{e:#}")))?;
+                    .map_err(|e| internal("creating an uploaded file failed", e))?;
                 let mut field = field;
                 loop {
                     match field.chunk().await {
                         Ok(Some(chunk)) => out
                             .write_all(&chunk)
                             .await
-                            .map_err(|e| ApiError::Internal(format!("{e:#}")))?,
+                            .map_err(|e| internal("writing an uploaded file failed", e))?,
                         Ok(None) => break,
                         Err(e) => return Err(multipart_error_to_api(e)),
                     }
@@ -257,11 +257,11 @@ pub async fn publish_upload(
     let upload_root = state.config.agent.state_dir.join("upload");
     create_private_dir_all(&upload_root)
         .await
-        .map_err(|e| ApiError::Internal(format!("creating upload directory: {e:#}")))?;
+        .map_err(|e| internal("creating the upload directory failed", e))?;
     let dest: PathBuf = upload_root.join(random_upload_name());
     create_private_dir_all(&dest)
         .await
-        .map_err(|e| ApiError::Internal(format!("creating upload directory: {e:#}")))?;
+        .map_err(|e| internal("creating the upload directory failed", e))?;
 
     let guard = UploadDirGuard::new(dest.clone());
     let result = handle_upload(&state, &mut multipart, &dest).await;

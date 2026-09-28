@@ -9,7 +9,7 @@ use serde::Deserialize;
 use crate::auth;
 
 use super::AppState;
-use super::api::{ApiError, AppJson};
+use super::api::{ApiError, AppJson, internal};
 use super::dto;
 use super::guard;
 
@@ -104,8 +104,8 @@ pub async fn rotate_token(
     let state_dir = state.config.agent.state_dir.clone();
     let token = tokio::task::spawn_blocking(move || auth::write_new_token(&state_dir))
         .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?
-        .map_err(|e| ApiError::Internal(format!("{e:#}")))?;
+        .map_err(|e| internal("rotating the dashboard token failed", e))?
+        .map_err(|e| internal("rotating the dashboard token failed", e))?;
     state.set_token(token);
     state.login_codes.clear();
     Ok(Json(serde_json::json!({ "ok": true })))

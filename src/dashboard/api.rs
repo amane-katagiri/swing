@@ -54,7 +54,13 @@ impl IntoResponse for ApiError {
             ),
             ApiError::Upstream(msg) => (StatusCode::BAD_GATEWAY, msg),
             ApiError::Conflict(msg) => (StatusCode::CONFLICT, msg),
-            ApiError::Internal(msg) => (StatusCode::INTERNAL_SERVER_ERROR, msg),
+            ApiError::Internal(detail) => {
+                error!(error = %detail, "dashboard request failed");
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "internal error; see the swing log for details".to_string(),
+                )
+            }
         };
         (status, Json(serde_json::json!({ "error": message }))).into_response()
     }
@@ -502,10 +508,8 @@ pub struct UpdateConfigRequest {
     items: BTreeMap<String, settings::InputValue>,
 }
 
-fn internal(context: &str, e: impl std::fmt::Display) -> ApiError {
-    let message = format!("{e:#}");
-    error!(error = %message, "{context}");
-    ApiError::Internal(message)
+pub(super) fn internal(context: &str, e: impl std::fmt::Display) -> ApiError {
+    ApiError::Internal(format!("{context}: {e:#}"))
 }
 
 fn settings_error(e: settings::EditError) -> ApiError {
@@ -655,7 +659,7 @@ pub async fn start_pairing(
     let pairing = Pairing::start(PairingRequest::for_config(&state.config.nostr, relays))
         .map_err(bad_request)?;
     let uri = pairing.uri().to_string();
-    let qr_svg = signer::qr_svg(&uri).map_err(|e| ApiError::Internal(format!("{e:#}")))?;
+    let qr_svg = signer::qr_svg(&uri).map_err(|e| internal("drawing the QR code failed", e))?;
     *state.pairing.lock().expect("pairing lock") = Some(pairing);
     Ok(Json(dto::PairingStartDto { uri, qr_svg }))
 }
@@ -694,6 +698,23 @@ mod tests {
 
     use crate::shutdown::ExitRequest;
     use crate::signer::{Pairing, PairingState, Signer};
+
+    #[tokio::test]
+    async fn internal_errors_do_not_reach_the_client() {
+        use axum::response::IntoResponse;
+        let resp = super::internal(
+            "saving the config file failed",
+            "/home/someone/.config/swing/swing.toml: Permission denied",
+        )
+        .into_response();
+        assert_eq!(resp.status(), StatusCode::INTERNAL_SERVER_ERROR);
+        let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let body = String::from_utf8(body.to_vec()).unwrap();
+        assert!(!body.contains("someone"), "{body}");
+        assert!(!body.contains("Permission denied"), "{body}");
+    }
 
     #[tokio::test]
     async fn config_endpoint_never_exposes_the_secret_key_value() {
@@ -1172,7 +1193,9 @@ mod tests {
         let body = put_config_body("policy.max_total_storage", "20GB");
         let (status, json) = send_json(router(state), "PUT", "/api/config", Some(body)).await;
         assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
-        assert!(json["error"].as_str().unwrap().contains("swing.toml"));
+        let error = json["error"].as_str().unwrap();
+        assert!(error.contains("swing log"), "{error}");
+        assert!(!error.contains("swing.toml"), "{error}");
     }
 
     #[cfg(unix)]

@@ -19,7 +19,7 @@
 | 409 | publish の多重実行、セットアップ・ペアリング・つなぎ直しを使えない状態（セットアップが済んで再起動を待っている間の 2 回目の `POST /api/setup` を含む）、`mirror/add` で Follow Set が上限を超える（各エンドポイント） |
 | 413 | ボディが大きすぎる |
 | 422 | publish の NIP-05 `require` 失敗だけ |
-| 500 | ファイルの読み書きなど内部の失敗 |
+| 500 | ファイルの読み書きなど内部の失敗。詳細（パスや OS のエラー）は `error!` でログにだけ出し、本文は常に `{"error": "internal error; see the swing log for details"}`（`api::ApiError::Internal`） |
 | 502 | relay・Kubo・Nostr 発行・署名アプリの失敗 |
 | 503 | agent の未準備・セットアップモード（下記） |
 
