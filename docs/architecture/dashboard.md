@@ -94,9 +94,9 @@ HTTP サーバー（axum 0.8）で、ダッシュボードのブラウザ向け�
 
 `/mascots/index.json` と `/mascots/{id}/{file}` は `assets::register()` の対象外で、`ui_router()` に直接ルートを持つ。`AppState::new` が `ui = true` のときだけ `mascots::MascotRegistry::load(config.dashboard.mascots_dir)` を呼び、結果を `AppState.mascots` に持つ（`DesktopAssets::load` と並ぶ起動時 1 回読み込み。設定の再反映には再起動が要る）。
 
-- 同梱の `mochi`・`neko`（`web/mascots/<id>/`、`include_str!`/`include_bytes!` でバイナリに埋め込み）は常に読み込める。
+- 同梱の `yureko`・`mochi`・`neko`（`web/mascots/<id>/`、`include_str!`/`include_bytes!` でバイナリに埋め込み）は常に読み込める。
 - `mascots_dir` が設定されていれば、次の順に読む。読み飛ばすものは `warn!` でエントリ名（`Debug` 形式でエスケープ）と理由を出す（`swing up` は止めない。`mascots_dir` 自体が無い・読めない場合も同梱パックだけで続行する）。読み飛ばしの `warn!` は 1 回の読み込みで 10 件まで個別に出し、残りは件数だけを 1 行にまとめる。
-  1. **候補を集める**: `mascots_dir` 直下のエントリを最大 1024 個まで見る（超えた分は 1 行の `warn!` を出して見ない）。この段階ではファイルを開かず、名前とエントリの種類（リンクを辿らない）だけで次を満たすものを候補にする: 名前（= パック id）が UTF-8 で `^[a-z0-9][a-z0-9-]{0,31}$` に一致し、同梱の id（`mochi`・`neko`）と重ならず、シンボリックリンクではないディレクトリである。
+  1. **候補を集める**: `mascots_dir` 直下のエントリを最大 1024 個まで見る（超えた分は 1 行の `warn!` を出して見ない）。この段階ではファイルを開かず、名前とエントリの種類（リンクを辿らない）だけで次を満たすものを候補にする: 名前（= パック id）が UTF-8 で `^[a-z0-9][a-z0-9-]{0,31}$` に一致し、同梱の id（`yureko`・`mochi`・`neko`）と重ならず、シンボリックリンクではないディレクトリである。
   2. **上限で切る**: 候補を id の昇順に並べ、先頭の 32 個だけを残す。超えた分は中身を読まずに読み飛ばす（候補に残ったパックが後の検証で落ちても、33 個目以降は繰り上がらない）。
   3. **各パックを読む**: 残った候補ごとに次をすべて満たさなければ読み飛ばす。
      - パックディレクトリ・`manifest.json`・スプライトファイルを、リンクを辿らずに開けて、開いたハンドルから取ったメタデータで判定する（パスで確かめてから別に開くことはしない）。Unix では `mascots_dir` を開いたディレクトリを基準に `openat(O_NOFOLLOW | O_NONBLOCK)` でパックディレクトリ（`O_DIRECTORY` 付き）を、さらにそれを基準にファイルを開くので、途中でどこかをシンボリックリンクに差し替えられても外を読まない。FIFO は開くときに待たず、通常ファイルでないとして落ちる。Windows では `FILE_FLAG_OPEN_REPARSE_POINT` で開いてリパースポイント（シンボリックリンク・ジャンクション）なら落とし、開いたハンドルの実パス（`GetFinalPathNameByHandleW`）の親が、`canonicalize` した `mascots_dir`（パックディレクトリなら）かパックディレクトリの実パス（ファイルなら）と一致することを確かめる。
@@ -104,7 +104,7 @@ HTTP サーバー（axum 0.8）で、ダッシュボードのブラウザ向け�
      - `manifest.json` が 64 KiB 以下、JSON オブジェクトとしてパースでき、`format` が `1`、`sprite` がプレーンなファイル名（`/`・`\`・`..` を含まず `.` で始まらない、拡張子が大文字小文字を問わず `.png`/`.gif`/`.webp`）。マニフェストのそれ以上の検証（`animations.idle` の有無、値の範囲など）はフロントエンド（`desktop-mascot-pack.js::normalizeManifest`）に任せる。
      - スプライトが 1 MiB 以下。大きさはハンドルのメタデータで確かめたうえで、読むときも上限 + 1 バイトまでしか読まず、読んでいる間に上限を超えたら落とす。
      - スプライトの先頭のヘッダ（PNG の `IHDR`、GIF の論理画面記述子、WebP の `VP8 `・`VP8L`・`VP8X` チャンク）を読んで得た形式が拡張子と一致し、幅・高さがどちらも 1〜4096 px で、幅 × 高さが 4,194,304（2048 × 2048）ピクセル以下。
-- 読み込んだ `manifest.json`・スプライトのバイト列はそのままメモリに持つ。`GET /mascots/index.json` の本文（`{"packs":[{"id","base"}]}`）も `load()` で 1 回だけ組み立てて持ち、リクエストごとにはそれを返す。並び順は同梱パック（`mochi`・`neko`）→ ユーザー定義パック（id 昇順）。`GET /mascots/{id}/manifest.json` と `GET /mascots/{id}/{sprite}`（`sprite` はそのパックのマニフェストが指すファイル名そのもの）だけを返し、それ以外の `{id}`・`{file}` の組み合わせは `404`。
+- 読み込んだ `manifest.json`・スプライトのバイト列はそのままメモリに持つ。`GET /mascots/index.json` の本文（`{"packs":[{"id","base"}]}`）も `load()` で 1 回だけ組み立てて持ち、リクエストごとにはそれを返す。並び順は同梱パック（`yureko`・`mochi`・`neko`）→ ユーザー定義パック（id 昇順）。`GET /mascots/{id}/manifest.json` と `GET /mascots/{id}/{sprite}`（`sprite` はそのパックのマニフェストが指すファイル名そのもの）だけを返し、それ以外の `{id}`・`{file}` の組み合わせは `404`。
 
 | ルート | Content-Type |
 |---|---|

@@ -35,7 +35,7 @@ Desktop 画面専用のモジュール（依存は下から上への一方向。
 | `desktop-page.html`・`desktop-page.css`・`desktop-banner.gif` | リンク集ページ・その専用 CSS・88×31 バナーの同梱版。設定で差し替えられる（[`../dashboard.md#設定dashboard`](../dashboard.md#設定dashboard)） |
 | `desktop-icons.svg` | ピクセルアートアイコンのスプライト。`index.html` から `<use>` で参照する。SE ロゴの E は S との隙間を切り欠いた塗りの図形で持つ（外部ファイルの `<symbol>` の `mask` は、Firefox では CSS `zoom` の内側でずれるため使わない） |
 | `fonts/` | 同梱フォント PixelMplus12 とそのライセンス |
-| `mascots/` | 同梱のマスコットのパック（`mochi/`・`neko/`。`index.json` は静的ファイルではなく実行時に生成する。[`mascot.md`](mascot.md)） |
+| `mascots/` | 同梱のマスコットのパック（`yureko/`・`mochi/`・`neko/`。`index.json` は静的ファイルではなく実行時に生成する。[`mascot.md`](mascot.md)） |
 
 ## 画面
 

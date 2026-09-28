@@ -37,7 +37,7 @@ let allPacks = [];
 const instances = [];
 const byNode = new Map();
 let active = [];
-let settings = { packs: null, walk: true, chatter: true };
+let settings = { packs: ['yureko'], walk: true, chatter: true };
 let resolveLoaded;
 const loadedPromise = new Promise((resolve) => {
   resolveLoaded = resolve;

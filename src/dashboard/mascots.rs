@@ -32,6 +32,11 @@ struct BundledPack {
 
 const BUNDLED: &[BundledPack] = &[
     BundledPack {
+        id: "yureko",
+        manifest: include_str!("../../web/mascots/yureko/manifest.json"),
+        sprite: include_bytes!("../../web/mascots/yureko/sprite.png"),
+    },
+    BundledPack {
         id: "mochi",
         manifest: include_str!("../../web/mascots/mochi/manifest.json"),
         sprite: include_bytes!("../../web/mascots/mochi/sprite.png"),
@@ -649,6 +654,7 @@ mod tests {
         );
         let registry = MascotRegistry::load(Some(dir.path()));
         assert!(registry.find("my-pack").is_some());
+        assert!(registry.find("yureko").is_some());
         assert!(registry.find("mochi").is_some());
         assert!(registry.find("neko").is_some());
     }
@@ -1066,6 +1072,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let missing = dir.path().join("does-not-exist");
         let registry = MascotRegistry::load(Some(&missing));
+        assert!(registry.find("yureko").is_some());
         assert!(registry.find("mochi").is_some());
         assert!(registry.find("neko").is_some());
     }
@@ -1103,7 +1110,7 @@ mod tests {
             .iter()
             .map(|p| p["id"].as_str().unwrap())
             .collect();
-        assert_eq!(ids, vec!["mochi", "neko", "aaa-pack", "zzz-pack"]);
+        assert_eq!(ids, vec!["yureko", "mochi", "neko", "aaa-pack", "zzz-pack"]);
     }
 
     #[tokio::test]
@@ -1165,7 +1172,7 @@ mod tests {
                 .iter()
                 .map(|p| p["id"].as_str().unwrap())
                 .collect::<Vec<_>>(),
-            vec!["mochi", "neko"]
+            vec!["yureko", "mochi", "neko"]
         );
         for pack in packs {
             let base = pack["base"].as_str().unwrap();

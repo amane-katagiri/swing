@@ -5,7 +5,7 @@ import { DesktopMascots } from './desktop-mascot.js';
 
 export const MASCOT_SETTINGS_KEY = 'swing:desktop:mascot';
 const INTERVALS = [60, 300, 900, 1800];
-const DEFAULTS = { packs: null, interval: 60, walk: true, chatter: true };
+const DEFAULTS = { packs: ['yureko'], interval: 60, walk: true, chatter: true };
 const THUMB_PX = 48;
 const PREVIEW_MARGIN = 8;
 
@@ -30,7 +30,8 @@ let notifyChanged = () => {};
 function normalize(parsed) {
   const out = { ...DEFAULTS };
   if (!parsed || typeof parsed !== 'object') return out;
-  if (Array.isArray(parsed.packs)) out.packs = [...new Set(parsed.packs.filter((id) => typeof id === 'string'))];
+  if (parsed.packs === null) out.packs = null;
+  else if (Array.isArray(parsed.packs)) out.packs = [...new Set(parsed.packs.filter((id) => typeof id === 'string'))];
   if (parsed.interval === null || INTERVALS.includes(parsed.interval)) out.interval = parsed.interval;
   if (typeof parsed.walk === 'boolean') out.walk = parsed.walk;
   if (typeof parsed.chatter === 'boolean') out.chatter = parsed.chatter;
@@ -192,7 +193,7 @@ export const MascotSettingsPage = {
   isDirty,
   save() {
     const { packs, interval, walk, chatter } = pending;
-    const next = packs == null ? { interval, walk, chatter } : { packs, interval, walk, chatter };
+    const next = { packs, interval, walk, chatter };
     if (!storage.trySet(MASCOT_SETTINGS_KEY, JSON.stringify(next))) {
       showStorageError(true);
       return false;

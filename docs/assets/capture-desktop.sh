@@ -40,7 +40,17 @@ ab mouse move 700 450
 sleep 4
 
 ab record start "$work/take.webm"
-sleep 3
+sleep 2
+read -r mx my < <(agent-browser --session "$session" eval \
+  '(() => { const r = document.querySelector(".desk-mascot").getBoundingClientRect(); return `${Math.round(r.x + r.width / 2)} ${Math.round(r.y + r.height * 0.6)}`; })()' | tr -d '"')
+ab mouse move "$mx" "$my"
+sleep 0.2
+ab mouse down left
+ab mouse move "$((mx + 40))" "$((my - 160))" --duration 700 --steps 30
+sleep 0.8
+ab mouse up left
+ab mouse move 700 450
+sleep 2
 ab dblclick '#desk-icon-control-panel'
 sleep 1.2
 read -r x y tx ty < <(agent-browser --session "$session" eval \

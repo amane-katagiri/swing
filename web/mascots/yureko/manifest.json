@@ -1,0 +1,58 @@
+{
+  "format": 1,
+  "name": "ゆれ子",
+  "sprite": "sprite.png",
+  "frame": { "width": 64, "height": 64 },
+  "scale": 2,
+  "anchor": { "x": 32, "y": 63 },
+  "balloon": { "x": 32, "y": 3 },
+  "facing": "right",
+  "speed": 8,
+  "animations": {
+    "idle": {
+      "frames": [
+        { "index": 0, "ms": 1800 },
+        { "index": 1, "ms": 120 }
+      ]
+    },
+    "walk": {
+      "frames": [
+        { "index": 2, "ms": 260 },
+        { "index": 3, "ms": 260, "dy": -0.5 },
+        { "index": 4, "ms": 260 },
+        { "index": 5, "ms": 260, "dy": -0.5 }
+      ]
+    },
+    "talk": { "frames": [0], "fps": 1 },
+    "sleep": {
+      "frames": [
+        { "index": 7, "ms": 1100, "dy": 2.5 },
+        { "index": 8, "ms": 1100, "dy": 2.5 }
+      ]
+    },
+    "surprise": {
+      "frames": [{ "index": 9, "ms": 900 }],
+      "loop": false
+    },
+    "drag": { "frames": [10], "fps": 1 },
+    "fall": { "frames": [11], "fps": 1 }
+  },
+  "overlays": {
+    "mouth": {
+      "frames": [
+        { "index": 6, "ms": 150 },
+        { "index": 12, "ms": 120 }
+      ], 
+      "on": ["talk"]
+    }
+  },
+  "lines": {
+    "greet": ["こんにちは……ゆれこだよ", "今日も、よろしくね"],
+    "site-stored": ["{title} が更新されたみたい", "{title} に新しいお知らせが来てるよ"],
+    "sites-stored-many": ["更新が {count} 件あるみたい"],
+    "fetch-error": ["うまくつながらないみたい……"],
+    "recovered": ["つながったよ。よかった……"],
+    "idle": ["のんびりしよ……", "ちょっと眠いかも……", "ゆれてる？"],
+    "click": ["どうしたの？", "わっ", "呼んだ？"]
+  }
+}
