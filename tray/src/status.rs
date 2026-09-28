@@ -113,6 +113,27 @@ impl Pending {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Answer {
+    Yes,
+    No,
+    Cancel,
+}
+
+impl Answer {
+    pub fn from_label(lang: Lang, label: &str) -> Self {
+        let l = labels(lang);
+        [
+            (l.yes, Self::Yes),
+            (l.no, Self::No),
+            (l.cancel, Self::Cancel),
+        ]
+        .into_iter()
+        .find(|(l, _)| *l == label)
+        .map_or(Self::Cancel, |(_, answer)| answer)
+    }
+}
+
 #[derive(Debug, PartialEq, Eq)]
 pub struct MenuState {
     pub status_text: String,
@@ -198,6 +219,9 @@ pub struct Labels {
     pub quit: &'static str,
     pub quit_confirm: &'static str,
     pub stop_confirm: &'static str,
+    pub yes: &'static str,
+    pub no: &'static str,
+    pub cancel: &'static str,
 }
 
 pub fn labels(lang: Lang) -> &'static Labels {
@@ -220,6 +244,9 @@ pub fn labels(lang: Lang) -> &'static Labels {
             quit: "終了",
             stop_confirm: "SWING を停止しますか？\n\nミラーしているサイトの取得と配信が止まります。",
             quit_confirm: "SWING を停止してからトレイを閉じますか？\n\n「いいえ」を選ぶと、SWING は動かしたままトレイだけを閉じます。",
+            yes: "はい",
+            no: "いいえ",
+            cancel: "キャンセル",
         },
         Lang::En => &Labels {
             running: "SWING: Running",
@@ -239,6 +266,9 @@ pub fn labels(lang: Lang) -> &'static Labels {
             quit: "Quit",
             stop_confirm: "Stop SWING?\n\nMirrored sites will no longer be fetched or served.",
             quit_confirm: "Stop SWING before closing the tray?\n\nChoose No to close only the tray and keep SWING running.",
+            yes: "Yes",
+            no: "No",
+            cancel: "Cancel",
         },
     }
 }
@@ -459,5 +489,17 @@ mod tests {
         assert_eq!(Lang::from_locale(Some("JA")), Lang::Ja);
         assert_eq!(Lang::from_locale(Some("en-US")), Lang::En);
         assert_eq!(Lang::from_locale(None), Lang::En);
+    }
+
+    #[test]
+    fn answers_come_from_the_labels_of_the_same_language() {
+        assert_eq!(Answer::from_label(Lang::Ja, "はい"), Answer::Yes);
+        assert_eq!(Answer::from_label(Lang::Ja, "いいえ"), Answer::No);
+        assert_eq!(Answer::from_label(Lang::Ja, "キャンセル"), Answer::Cancel);
+        assert_eq!(Answer::from_label(Lang::En, "Yes"), Answer::Yes);
+        assert_eq!(Answer::from_label(Lang::En, "No"), Answer::No);
+        assert_eq!(Answer::from_label(Lang::En, "Cancel"), Answer::Cancel);
+        assert_eq!(Answer::from_label(Lang::Ja, "Yes"), Answer::Cancel);
+        assert_eq!(Answer::from_label(Lang::En, ""), Answer::Cancel);
     }
 }

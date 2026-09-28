@@ -7,7 +7,7 @@ use tao::event_loop::{ControlFlow, EventLoopBuilder, EventLoopProxy};
 use tray_icon::menu::{Menu, MenuEvent, MenuId, MenuItem, PredefinedMenuItem};
 use tray_icon::{Icon, TrayIcon, TrayIconBuilder};
 
-use crate::status::{Lang, Pending, Snapshot, is_running, labels, menu_state};
+use crate::status::{Answer, Lang, Pending, Snapshot, is_running, labels, menu_state};
 use crate::worker::{self, Action, Update};
 
 #[cfg(windows)]
@@ -26,7 +26,7 @@ enum Confirmable {
 enum UserEvent {
     Menu(MenuEvent),
     Worker(Update),
-    Confirmed(Confirmable, MessageDialogResult),
+    Confirmed(Confirmable, Answer),
 }
 
 struct Items {
@@ -82,18 +82,48 @@ impl Items {
 
 // Shown from another thread so the event loop keeps handling the menu and status updates meanwhile.
 fn confirm(lang: Lang, what: Confirmable, proxy: EventLoopProxy<UserEvent>) {
-    let (description, buttons) = match what {
-        Confirmable::Quit => (labels(lang).quit_confirm, MessageButtons::YesNoCancel),
-        Confirmable::Stop => (labels(lang).stop_confirm, MessageButtons::YesNo),
+    let l = labels(lang);
+    let description = match what {
+        Confirmable::Quit => l.quit_confirm,
+        Confirmable::Stop => l.stop_confirm,
     };
     std::thread::spawn(move || {
-        let answer = rfd::MessageDialog::new()
+        let result = rfd::MessageDialog::new()
             .set_title("SWING")
             .set_description(description)
-            .set_buttons(buttons)
+            .set_buttons(buttons(lang, what))
             .show();
-        let _ = proxy.send_event(UserEvent::Confirmed(what, answer));
+        let _ = proxy.send_event(UserEvent::Confirmed(what, answer(lang, result)));
     });
+}
+
+#[cfg(windows)]
+fn buttons(_lang: Lang, what: Confirmable) -> MessageButtons {
+    match what {
+        Confirmable::Quit => MessageButtons::YesNoCancel,
+        Confirmable::Stop => MessageButtons::YesNo,
+    }
+}
+
+// rfd titles the plain Yes/No buttons in English on macOS instead of following the system language.
+#[cfg(target_os = "macos")]
+fn buttons(lang: Lang, what: Confirmable) -> MessageButtons {
+    let l = labels(lang);
+    match what {
+        Confirmable::Quit => {
+            MessageButtons::YesNoCancelCustom(l.yes.into(), l.no.into(), l.cancel.into())
+        }
+        Confirmable::Stop => MessageButtons::OkCancelCustom(l.yes.into(), l.no.into()),
+    }
+}
+
+fn answer(lang: Lang, result: MessageDialogResult) -> Answer {
+    match result {
+        MessageDialogResult::Yes => Answer::Yes,
+        MessageDialogResult::No => Answer::No,
+        MessageDialogResult::Custom(label) => Answer::from_label(lang, &label),
+        _ => Answer::Cancel,
+    }
 }
 
 fn decode_png(bytes: &[u8]) -> (Vec<u8>, u32, u32) {
@@ -310,12 +340,12 @@ pub fn run(config_path: Option<PathBuf>, _lock: Option<std::fs::File>) -> ! {
             Event::UserEvent(UserEvent::Confirmed(what, answer)) => {
                 confirming = false;
                 match (what, answer) {
-                    (Confirmable::Quit, MessageDialogResult::Yes) => {
+                    (Confirmable::Quit, Answer::Yes) => {
                         view.set_pending(Pending::Quitting);
                         let _ = actions.send(Action::StopAndQuit);
                     }
-                    (Confirmable::Quit, MessageDialogResult::No) => quit = true,
-                    (Confirmable::Stop, MessageDialogResult::Yes) => {
+                    (Confirmable::Quit, Answer::No) => quit = true,
+                    (Confirmable::Stop, Answer::Yes) => {
                         view.set_pending(Pending::Stopping);
                         let _ = actions.send(Action::Stop);
                     }
