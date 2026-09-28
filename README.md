@@ -472,7 +472,7 @@ Nostr の秘密鍵は、Docker Compose で動かす場合は `.env` に、バイ
 秘密鍵をこのコンピュータに置かずに、スマホの署名アプリに署名をリクエストすることもできます。NIP-46 の `nostrconnect://` リンクからの接続に対応した署名アプリなら使えます。たとえば次のものがあります。
 
 - Android: [Amber](https://github.com/greenart7c3/Amber)。Google Play にはないので、Zapstore・Obtainium・GitHub のリリースから入れてください（SWING との接続・公開・レプリカ報告を確かめています）
-- iPhone / iPad: [Clave](https://apps.apple.com/app/id6762104155)（App Store。閉じていてもプッシュ通知で起きて署名する作りです。コピーしたリンクを Clave の「Connect」に貼り付けてつなぎます。SWING との組み合わせはまだ確かめていません）
+- iPhone / iPad: [Clave](https://apps.apple.com/app/id6762104155)（App Store。QR コードでの接続と、開いているとき・閉じているときの署名を確かめています）。閉じていても（画面が消えていても）プッシュ通知で起きて署名しますが、答えが SWING に届くのは、署名アプリとのやりとりの relay を `wss://relay.powr.build` にしたとき（セットアップ画面の relay の欄か、`swing signer pair --relay wss://relay.powr.build`）だけです。既定の `wss://relay.primal.net` のままだと Clave が開いている間しか答えが届かず、数日おきのレプリカ報告が止まります
 
 普段使いの Nostr アプリにも署名役になれるものがあります（Primal など）。ただし Primal は、アプリの中で開始した「セッション」の間しかリクエストを聞かず、セッションは 15 分リクエストが無いと終わります。公開のときにセッションを開始すれば使えますが、数日おきのレプリカ報告には答えられないので、SWING にはおすすめしません。
 
