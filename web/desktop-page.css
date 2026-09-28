@@ -30,15 +30,8 @@
 html {
   background: #050b2b;
   background-image:
-    radial-gradient(1px 1px at 10% 20%, #fff, transparent),
-    radial-gradient(1px 1px at 30% 70%, #fff, transparent),
-    radial-gradient(1px 1px at 55% 15%, #fff, transparent),
-    radial-gradient(1px 1px at 70% 55%, #fff, transparent),
-    radial-gradient(1px 1px at 85% 30%, #fff, transparent),
-    radial-gradient(1px 1px at 92% 80%, #fff, transparent),
-    radial-gradient(1px 1px at 15% 90%, #fff, transparent),
-    radial-gradient(1px 1px at 45% 45%, #fff, transparent);
-  background-repeat: no-repeat;
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='232' height='208' shape-rendering='crispEdges'%3E%3Crect x='38' y='52' width='5' height='1' fill='%23aabbff'/%3E%3Crect x='40' y='50' width='1' height='5' fill='%23aabbff'/%3E%3Crect x='40' y='52' width='1' height='1' fill='%23fff'/%3E%3Crect x='183' y='150' width='7' height='1' fill='%237788dd'/%3E%3Crect x='186' y='147' width='1' height='7' fill='%237788dd'/%3E%3Crect x='185' y='150' width='3' height='1' fill='%23fff'/%3E%3Crect x='186' y='149' width='1' height='3' fill='%23fff'/%3E%3Crect x='186' y='150' width='1' height='1' fill='%23fff'/%3E%3Crect x='148' y='24' width='5' height='1' fill='%23ffe9a8'/%3E%3Crect x='150' y='22' width='1' height='5' fill='%23ffe9a8'/%3E%3Crect x='150' y='24' width='1' height='1' fill='%23fff'/%3E%3Crect x='90' y='178' width='5' height='1' fill='%23aabbff'/%3E%3Crect x='92' y='176' width='1' height='5' fill='%23aabbff'/%3E%3Crect x='92' y='178' width='1' height='1' fill='%23fff'/%3E%3Crect x='17' y='120' width='7' height='1' fill='%238f7fe0'/%3E%3Crect x='20' y='117' width='1' height='7' fill='%238f7fe0'/%3E%3Crect x='19' y='120' width='3' height='1' fill='%23fff'/%3E%3Crect x='20' y='119' width='1' height='3' fill='%23fff'/%3E%3Crect x='20' y='120' width='1' height='1' fill='%23fff'/%3E%3C/svg%3E"),
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160' shape-rendering='crispEdges'%3E%3Crect x='12' y='23' width='1' height='1' fill='%23fff'/%3E%3Crect x='87' y='9' width='1' height='1' fill='%23fff'/%3E%3Crect x='141' y='52' width='1' height='1' fill='%23fff'/%3E%3Crect x='33' y='98' width='1' height='1' fill='%23fff'/%3E%3Crect x='119' y='131' width='1' height='1' fill='%23fff'/%3E%3Crect x='64' y='147' width='1' height='1' fill='%23fff'/%3E%3Crect x='150' y='110' width='1' height='1' fill='%23fff'/%3E%3Crect x='51' y='61' width='1' height='1' fill='%238fa8ff'/%3E%3Crect x='103' y='84' width='1' height='1' fill='%238fa8ff'/%3E%3Crect x='8' y='133' width='1' height='1' fill='%238fa8ff'/%3E%3Crect x='129' y='17' width='1' height='1' fill='%238fa8ff'/%3E%3Crect x='76' y='112' width='1' height='1' fill='%23ffe9a8'/%3E%3Crect x='96' y='40' width='2' height='2' fill='%23dfe6ff'/%3E%3Crect x='22' y='142' width='2' height='2' fill='%23fff'/%3E%3Crect x='137' y='88' width='2' height='2' fill='%23ffe9a8'/%3E%3Crect x='58' y='4' width='2' height='2' fill='%23dfe6ff'/%3E%3Crect x='4' y='57' width='2' height='2' fill='%23fff'/%3E%3C/svg%3E");
   font-family: var(--desk-font-page);
   color: var(--desk-text);
   -webkit-font-smoothing: none;
