@@ -852,7 +852,10 @@ mod tests {
 
         let signer_client = Client::new();
         signer_client.add_relay(url.clone()).await.unwrap();
-        signer_client.connect().await;
+        signer_client
+            .connect()
+            .and_wait(Duration::from_secs(5))
+            .await;
         signer_client
             .subscribe(
                 Filter::new()
