@@ -98,11 +98,16 @@ impl<C: KuboStore, N: Nip05Verify, R: ReportRelay> Agent<C, N, R> {
             let path = format!("{account}/{}", site.name);
             match self.ipfs.mfs_list(&path).await {
                 Ok(versions) => {
-                    let cids: BTreeSet<String> = versions
-                        .into_iter()
-                        .filter(|v| v.name.parse::<u64>().is_ok() && !v.cid.is_empty())
-                        .map(|v| v.cid)
-                        .collect();
+                    let mut cids = BTreeSet::new();
+                    for v in versions {
+                        let Ok(created_at) = v.name.parse::<u64>() else {
+                            continue;
+                        };
+                        if !v.cid.is_empty() {
+                            self.activity.record_published(created_at);
+                            cids.insert(v.cid);
+                        }
+                    }
                     if !cids.is_empty() {
                         held.cids.entry(key).or_default().extend(cids);
                     }
@@ -112,6 +117,9 @@ impl<C: KuboStore, N: Nip05Verify, R: ReportRelay> Agent<C, N, R> {
                     held.unknown.insert(key);
                 }
             }
+        }
+        if held.unknown.is_empty() {
+            self.activity.mark_published_checked();
         }
         held
     }
@@ -157,6 +165,43 @@ impl<C: KuboStore, N: Nip05Verify, R: ReportRelay> Agent<C, N, R> {
             }
         }
         book.loaded = true;
+    }
+
+    pub(super) async fn record_replica_reports(&self) {
+        let kind = self.config.nostr.replica_event_kind;
+        let since = self
+            .activity
+            .latest_replica_report_at()
+            .filter(|&at| at > 0);
+        let events = match self
+            .reporter
+            .fetch_reports_about(kind, self.own, since)
+            .await
+        {
+            Ok(events) => events,
+            Err(e) => {
+                warn!(
+                    error = format!("{e:#}"),
+                    "fetching replica reports about own sites failed"
+                );
+                return;
+            }
+        };
+        self.activity.mark_replica_reports_checked();
+        let now = now_secs();
+        for event in events {
+            if event.pubkey == self.own || !event.tags.public_keys().any(|pk| pk == self.own) {
+                continue;
+            }
+            let Ok(report) =
+                nostr::parse_replica_report(&event, kind, self.config.nostr.site_event_kind)
+            else {
+                continue;
+            };
+            if report.author == self.own && report.counts_at(now) {
+                self.activity.record_replica_report(report.created_at);
+            }
+        }
     }
 
     pub(super) async fn sync_reports(&self) {
@@ -439,6 +484,121 @@ mod tests {
         fx.kubo().mfs.retain(|p, _| !p.contains("a%2Fb.example"));
         fx.agent.sync_reports().await;
         assert_eq!(fx.take_reports(), vec![(fx.own_key("a/b.example"), vec![])]);
+    }
+
+    #[tokio::test]
+    async fn syncing_records_the_newest_published_version_and_never_lowers_it() {
+        let fx = Fixture::new(default_policy(), FakeKubo::default());
+        fx.agent.sync_reports().await;
+        assert_eq!(fx.agent.activity.latest_published_at(), Some(0));
+
+        {
+            let mut kubo = fx.kubo();
+            kubo.mfs.insert(fx.publish_path(D, "100"), "bafy-a".into());
+            kubo.mfs
+                .insert(fx.publish_path("a/b.example", "300"), "bafy-b".into());
+            kubo.mfs.insert(fx.publish_path(D, "999999"), String::new());
+            kubo.mfs
+                .insert(fx.publish_path(D, "notes.txt"), "bafy-n".into());
+        }
+        fx.agent.sync_reports().await;
+        assert_eq!(fx.agent.activity.latest_published_at(), Some(300));
+
+        fx.agent.activity.record_published(400);
+        fx.kubo().mfs.retain(|p, _| !p.contains("a%2Fb.example"));
+        fx.agent.sync_reports().await;
+        assert_eq!(fx.agent.activity.latest_published_at(), Some(400));
+    }
+
+    fn report_about_own(fx: &Fixture, reporter: &Keys, d: &str, created_at: u64) -> Event {
+        nostr::build_replica_report_builder(
+            35981,
+            35980,
+            &fx.agent.own,
+            d,
+            &BTreeSet::from([CID_A.to_string()]),
+            Timestamp::from_secs(created_at + REPORT_TTL),
+        )
+        .custom_created_at(Timestamp::from_secs(created_at))
+        .finalize(reporter)
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn reports_by_others_about_own_sites_advance_the_replica_report_time() {
+        let fx = Fixture::new(default_policy(), FakeKubo::default());
+        let now = now_secs();
+        let other = Keys::generate();
+        let own_keys = fx.agent.reporter.keys.clone();
+        let about_someone_else = nostr::build_replica_report_builder(
+            35981,
+            35980,
+            &fx.pubkey,
+            D,
+            &BTreeSet::from([CID_A.to_string()]),
+            Timestamp::from_secs(now + REPORT_TTL),
+        )
+        .custom_created_at(Timestamp::from_secs(now - 1))
+        .tag(Tag::public_key(fx.agent.own))
+        .finalize(&other)
+        .unwrap();
+        fx.relay().stored = vec![
+            report_about_own(&fx, &own_keys, D, now - 1),
+            about_someone_else,
+            report_about_own(&fx, &other, D, now + nostr::MAX_FUTURE_SKEW + 60),
+        ];
+
+        fx.agent.record_replica_reports().await;
+        assert_eq!(fx.agent.activity.latest_replica_report_at(), Some(0));
+
+        fx.relay()
+            .stored
+            .push(report_about_own(&fx, &other, D, now - 100));
+        fx.relay().stored.push(report_about_own(
+            &fx,
+            &Keys::generate(),
+            "b.example",
+            now - 50,
+        ));
+        fx.agent.record_replica_reports().await;
+        assert_eq!(fx.agent.activity.latest_replica_report_at(), Some(now - 50));
+
+        fx.relay()
+            .stored
+            .push(report_about_own(&fx, &own_keys, "b.example", now));
+        fx.agent.record_replica_reports().await;
+        assert_eq!(fx.agent.activity.latest_replica_report_at(), Some(now - 50));
+        assert_eq!(fx.relay().about_since, vec![None, None, Some(now - 50)]);
+    }
+
+    #[tokio::test]
+    async fn a_failed_fetch_keeps_the_replica_report_time() {
+        let fx = Fixture::new(default_policy(), FakeKubo::default());
+        let now = now_secs();
+        let other = Keys::generate();
+        fx.relay().fail_fetch = true;
+        fx.agent.record_replica_reports().await;
+        assert_eq!(fx.agent.activity.latest_replica_report_at(), None);
+
+        {
+            let mut relay = fx.relay();
+            relay.stored = vec![report_about_own(&fx, &other, D, now - 10)];
+            relay.fail_fetch = false;
+        }
+        fx.agent.record_replica_reports().await;
+        assert_eq!(fx.agent.activity.latest_replica_report_at(), Some(now - 10));
+
+        {
+            let mut relay = fx.relay();
+            relay.stored.push(report_about_own(&fx, &other, D, now));
+            relay.fail_fetch = true;
+        }
+        fx.agent.record_replica_reports().await;
+        assert_eq!(fx.agent.activity.latest_replica_report_at(), Some(now - 10));
+
+        fx.relay().fail_fetch = false;
+        fx.agent.record_replica_reports().await;
+        assert_eq!(fx.agent.activity.latest_replica_report_at(), Some(now));
     }
 
     #[test]

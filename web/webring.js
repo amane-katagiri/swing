@@ -18,6 +18,7 @@ import {
 } from './util.js';
 import { copyButton, buildRemoveControl } from './ui.js';
 import { createWebringGraph } from './graph.js';
+import { SHOW_SELF_IN_WEBRING } from './notify-settings.js';
 
 const webringEls = {
   status: document.getElementById('webring-status'),
@@ -291,8 +292,34 @@ async function addToMirrorFromDetail(pubkey, btn) {
   }
 }
 
+let showSelfPending = false;
+
+async function showSelf() {
+  const self = cache.overview && cache.overview.pubkey;
+  if (!self) return;
+  const hasSelf = () => {
+    const data = cache.webringByQuery.get(webringQueryKey(currentWebringQuery));
+    return !!data && data.nodes.some((n) => n.pubkey === self);
+  };
+  await WebringView.load();
+  if (!hasSelf()) {
+    webringEls.form.elements.root.value = '';
+    setWebringQuery('', currentWebringQuery.depth);
+    await WebringView.load(true);
+  }
+  if (hasSelf()) selectNode(self);
+}
+
 export const WebringView = {
   init() {
+    document.addEventListener(SHOW_SELF_IN_WEBRING, () => {
+      if (document.body.dataset.view === 'webring') {
+        showSelf();
+        return;
+      }
+      showSelfPending = true;
+      location.hash = '#/webring';
+    });
     const saved = loadSavedWebringQuery();
     if (saved) {
       webringEls.form.elements.root.value = saved.root;
@@ -310,6 +337,11 @@ export const WebringView = {
     });
   },
   onShow() {
+    if (showSelfPending) {
+      showSelfPending = false;
+      showSelf();
+      return;
+    }
     if (cache.webringByQuery.has(webringQueryKey(currentWebringQuery))) this.render();
     else this.load();
   },

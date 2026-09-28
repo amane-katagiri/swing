@@ -293,6 +293,7 @@
           <div class="desk-dialog-tabs" role="tablist" aria-label="コントロール パネルのタブ">
             <button type="button" class="desk-dialog-tab is-active" id="desk-tab-background" data-tab="background" role="tab" aria-selected="true" aria-controls="desk-tabpanel-background">背景</button>
             <button type="button" class="desk-dialog-tab" id="desk-tab-mascot" data-tab="mascot" role="tab" aria-selected="false" aria-controls="desk-tabpanel-mascot" tabindex="-1">マスコット</button>
+            <button type="button" class="desk-dialog-tab" id="desk-tab-notify" data-tab="notify" role="tab" aria-selected="false" aria-controls="desk-tabpanel-notify" tabindex="-1">通知</button>
             <button type="button" class="desk-dialog-tab" id="desk-tab-system" data-tab="system" role="tab" aria-selected="false" aria-controls="desk-tabpanel-system" tabindex="-1">システム</button>
           </div>
           <div class="desk-dialog-body">
@@ -355,25 +356,6 @@
                 <p class="desk-ms-list-status" id="desk-ms-list-status">よみこみちゅう…</p>
               </fieldset>
               <fieldset class="desk-fieldset">
-                <legend>更新の確認</legend>
-                <div class="desk-ms-row">
-                  <span id="desk-ms-interval-label">確認の間隔:</span>
-                  <div class="desk-combobox">
-                    <button type="button" class="desk-combobox-field" id="desk-ms-interval-field" role="combobox" aria-haspopup="listbox" aria-expanded="false" aria-controls="desk-ms-interval-list" aria-labelledby="desk-ms-interval-label desk-ms-interval-value">
-                      <span class="desk-combobox-value" id="desk-ms-interval-value">1 分</span>
-                      <span class="desk-combobox-arrow" aria-hidden="true"></span>
-                    </button>
-                    <ul class="desk-combobox-list" id="desk-ms-interval-list" role="listbox" aria-label="確認の間隔" hidden>
-                      <li class="desk-combobox-option" role="option" id="desk-ms-interval-opt-60" data-value="60" aria-selected="true">1 分</li>
-                      <li class="desk-combobox-option" role="option" id="desk-ms-interval-opt-300" data-value="300" aria-selected="false">5 分</li>
-                      <li class="desk-combobox-option" role="option" id="desk-ms-interval-opt-900" data-value="900" aria-selected="false">15 分</li>
-                      <li class="desk-combobox-option" role="option" id="desk-ms-interval-opt-1800" data-value="1800" aria-selected="false">30 分</li>
-                      <li class="desk-combobox-option" role="option" id="desk-ms-interval-opt-off" data-value="off" aria-selected="false">確認しない</li>
-                    </ul>
-                  </div>
-                </div>
-              </fieldset>
-              <fieldset class="desk-fieldset">
                 <legend>動き</legend>
                 <label class="desk-check">
                   <input type="checkbox" class="desk-check-input" id="desk-ms-walk">
@@ -385,6 +367,63 @@
                 </label>
               </fieldset>
               <p class="desk-wp-storage-error" id="desk-ms-storage-error" hidden></p>
+            </div>
+            <div class="desk-tabpanel" id="desk-tabpanel-notify" role="tabpanel" aria-labelledby="desk-tab-notify" hidden>
+              <fieldset class="desk-fieldset">
+                <legend>更新の確認</legend>
+                <div class="desk-sys-row">
+                  <span id="desk-nt-interval-label">確認の間隔:</span>
+                  <div class="desk-combobox">
+                    <button type="button" class="desk-combobox-field" id="desk-nt-interval-field" role="combobox" aria-haspopup="listbox" aria-expanded="false" aria-controls="desk-nt-interval-list" aria-labelledby="desk-nt-interval-label desk-nt-interval-value">
+                      <span class="desk-combobox-value" id="desk-nt-interval-value">1 分</span>
+                      <span class="desk-combobox-arrow" aria-hidden="true"></span>
+                    </button>
+                    <ul class="desk-combobox-list" id="desk-nt-interval-list" role="listbox" aria-label="確認の間隔" hidden>
+                      <li class="desk-combobox-option" role="option" id="desk-nt-interval-opt-60" data-value="60" aria-selected="true">1 分</li>
+                      <li class="desk-combobox-option" role="option" id="desk-nt-interval-opt-300" data-value="300" aria-selected="false">5 分</li>
+                      <li class="desk-combobox-option" role="option" id="desk-nt-interval-opt-900" data-value="900" aria-selected="false">15 分</li>
+                      <li class="desk-combobox-option" role="option" id="desk-nt-interval-opt-1800" data-value="1800" aria-selected="false">30 分</li>
+                      <li class="desk-combobox-option" role="option" id="desk-nt-interval-opt-off" data-value="off" aria-selected="false">確認しない</li>
+                    </ul>
+                  </div>
+                </div>
+              </fieldset>
+              <fieldset class="desk-fieldset">
+                <legend>デスクトップでおしらせする内容</legend>
+                <label class="desk-check">
+                  <input type="checkbox" class="desk-check-input" id="desk-nt-mascot-stored">
+                  <span class="desk-check-label">フォロー中のサイトを新しくミラーしたとき</span>
+                </label>
+                <label class="desk-check">
+                  <input type="checkbox" class="desk-check-input" id="desk-nt-mascot-published">
+                  <span class="desk-check-label">サイトを SWING に公開（publish）したとき</span>
+                </label>
+                <label class="desk-check">
+                  <input type="checkbox" class="desk-check-input" id="desk-nt-mascot-replica">
+                  <span class="desk-check-label">自分のサイトが SWING で新しくミラーされたとき</span>
+                </label>
+              </fieldset>
+              <fieldset class="desk-fieldset">
+                <legend>ブラウザの通知</legend>
+                <label class="desk-check">
+                  <input type="checkbox" class="desk-check-input" id="desk-nt-browser">
+                  <span class="desk-check-label">デスクトップを見ていないときはブラウザの通知を使う</span>
+                </label>
+                <label class="desk-check">
+                  <input type="checkbox" class="desk-check-input" id="desk-nt-browser-stored">
+                  <span class="desk-check-label">フォロー中のサイトを新しくミラーしたとき</span>
+                </label>
+                <label class="desk-check">
+                  <input type="checkbox" class="desk-check-input" id="desk-nt-browser-published">
+                  <span class="desk-check-label">サイトを SWING に公開（publish）したとき</span>
+                </label>
+                <label class="desk-check">
+                  <input type="checkbox" class="desk-check-input" id="desk-nt-browser-replica">
+                  <span class="desk-check-label">自分のサイトが SWING で新しくミラーされたとき</span>
+                </label>
+                <p class="desk-wp-storage-error" id="desk-nt-browser-reason" hidden></p>
+              </fieldset>
+              <p class="desk-wp-storage-error" id="desk-nt-storage-error" hidden></p>
             </div>
             <div class="desk-tabpanel" id="desk-tabpanel-system" role="tabpanel" aria-labelledby="desk-tab-system" hidden>
               <fieldset class="desk-fieldset">
@@ -670,6 +709,30 @@
         <div class="swing-css-actions">
           <button type="button" id="user-css-apply" class="swing-btn swing-btn-accent" data-i18n="apply">Apply</button>
           <button type="button" id="user-css-reset" class="swing-btn" data-i18n="reset">Reset</button>
+        </div>
+      </div>
+
+      <div class="swing-panel">
+        <h2 data-i18n="browserNotifyHeading">Notifications</h2>
+        <p class="swing-hint" data-i18n="browserNotifyHint">Saved in this browser only, not on the server. Browser notifications are shown while you are not looking at the Desktop screen.</p>
+        <label class="swing-field"><span data-i18n="checkIntervalLabel">Check for updates</span>
+          <select id="settings-check-interval" class="swing-input">
+            <option value="60" data-i18n="checkInterval60">Every minute</option>
+            <option value="300" data-i18n="checkInterval300">Every 5 minutes</option>
+            <option value="900" data-i18n="checkInterval900">Every 15 minutes</option>
+            <option value="1800" data-i18n="checkInterval1800">Every 30 minutes</option>
+            <option value="off" data-i18n="checkIntervalOff">Don't check</option>
+          </select>
+          <span class="swing-hint" data-i18n="checkIntervalHint">With “Don't check”, neither browser notifications nor the notices from the Desktop screen's mascots arrive.</span>
+        </label>
+        <div class="swing-field">
+          <label class="swing-checkbox"><input type="checkbox" id="settings-notify-enabled"> <span data-i18n="browserNotifyEnable">Use browser notifications</span></label>
+        </div>
+        <div id="settings-notify-status" class="swing-status" aria-live="polite"></div>
+        <div class="swing-field"><span data-i18n="browserNotifyKindsLabel">Notify me</span>
+          <label class="swing-checkbox"><input type="checkbox" id="settings-notify-stored"> <span data-i18n="notifyKindStored">When a site you follow is newly mirrored</span></label>
+          <label class="swing-checkbox"><input type="checkbox" id="settings-notify-published"> <span data-i18n="notifyKindPublished">When you publish a site to SWING</span></label>
+          <label class="swing-checkbox"><input type="checkbox" id="settings-notify-replica"> <span data-i18n="notifyKindReplica">When your site is newly mirrored on SWING</span></label>
         </div>
       </div>
 

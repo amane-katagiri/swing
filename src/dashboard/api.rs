@@ -140,6 +140,8 @@ pub async fn activity(
         .map_err(|e| internal("reading state.json", e))?;
     Ok(Json(dto::ActivityDto {
         latest_stored_at: saved.latest_stored_at(),
+        latest_published_at: state.activity.latest_published_at(),
+        latest_replica_report_at: state.activity.latest_replica_report_at(),
     }))
 }
 
@@ -443,6 +445,7 @@ pub(super) async fn run_publish(
             "no relay accepted the site event; old versions were kept".to_string(),
         ));
     }
+    state.activity.record_published(created_at.as_secs());
 
     let site_path = layout.publish_site(&pubkey_hex, &fields.site);
     let prune =
@@ -1491,6 +1494,8 @@ mod tests {
             send_json(router(Arc::clone(&state)), "GET", "/api/activity", None).await;
         assert_eq!(status, StatusCode::OK);
         assert!(json["latest_stored_at"].is_null());
+        assert!(json["latest_published_at"].is_null());
+        assert!(json["latest_replica_report_at"].is_null());
 
         let mut saved = crate::state::State::default();
         for (d, stored_at) in [("x.example", 20), ("y.example", 50)] {
@@ -1509,6 +1514,19 @@ mod tests {
         let (status, json) = send_json(router(state), "GET", "/api/activity", None).await;
         assert_eq!(status, StatusCode::OK);
         assert_eq!(json["latest_stored_at"], 50);
+    }
+
+    #[tokio::test]
+    async fn activity_reads_what_the_agent_and_publishes_recorded() {
+        let state = test_state();
+        state.activity.record_published(300);
+        state.activity.record_published(200);
+        state.activity.record_replica_report(400);
+
+        let (status, json) = send_json(router(state), "GET", "/api/activity", None).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(json["latest_published_at"], 300);
+        assert_eq!(json["latest_replica_report_at"], 400);
     }
 
     #[tokio::test]

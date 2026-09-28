@@ -419,6 +419,7 @@ function submitUpload({ site, url, title, message, nip05, files }) {
       if (xhr.status >= 200 && xhr.status < 300) {
         hideProgress();
         renderPublishResult(body, null);
+        document.dispatchEvent(new CustomEvent('swing:published', { detail: body }));
         saveLastPublish({ site, url, title, message, nip05 });
         publishEls.uploadInput.value = '';
         updateUploadInfo();

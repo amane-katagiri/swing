@@ -1,11 +1,12 @@
 import { applyStaticI18n, t } from './i18n.js';
 import { storage } from './storage.js';
 import { cache, copyWithFeedback, getStyle } from './util.js';
-import { DesktopView } from './desktop.js';
+import { DesktopView, desktopUpdates } from './desktop.js';
 import { SitesView, renderStatusCheck } from './sites.js';
 import { WebringView, renderWebringIfLoaded } from './webring.js';
 import { PublishView, renderIdentity, updateNavFooter, updateUploadInfo, renderMySites, loadOverview } from './publish.js';
 import { SettingsView, renderConfig } from './settings.js';
+import { BrowserNotifySettings } from './settings-notify.js';
 import { renderStats } from './stats.js';
 import { SetupView } from './setup.js';
 import { LoginView } from './login.js';
@@ -89,6 +90,7 @@ function applyLanguage() {
   renderWebringIfLoaded();
   if (cache.publishSites) renderMySites();
   if (cache.config) renderConfig(cache.config);
+  BrowserNotifySettings.render();
   renderStats();
   if (cache.status) renderStatusCheck(cache.status);
   SetupView.render();
@@ -104,7 +106,7 @@ function init() {
   SitesView.init();
   WebringView.init();
   PublishView.init();
-  SettingsView.init();
+  SettingsView.init({ updates: desktopUpdates });
   SetupView.init();
   LoginView.init();
   wireReloadButtons();
@@ -124,7 +126,10 @@ function init() {
       }
     })
     .catch(() => {})
-    .finally(showRoute);
+    .finally(() => {
+      showRoute();
+      desktopUpdates.checkNow();
+    });
 }
 
 init();

@@ -62,6 +62,7 @@ pub async fn run_until(
         Arc::clone(&relay),
         state,
         state_path,
+        Arc::clone(&dashboard.activity),
     ));
     // A select! arm body is not polled against the other arms, so a signal arriving during it would wait for the body to finish.
     if race_with_shutdown(agent.reconcile(), &shutdown).await {

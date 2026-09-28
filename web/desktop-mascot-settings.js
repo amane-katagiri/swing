@@ -1,11 +1,8 @@
-import { storage } from './storage.js';
 import { el } from './util.js';
-import { createCombobox } from './desktop-combobox.js';
 import { DesktopMascots } from './desktop-mascot.js';
+import { readMascotSettings, writeMascotSettings } from './notify-settings.js';
 
-export const MASCOT_SETTINGS_KEY = 'swing:desktop:mascot';
-const INTERVALS = [60, 300, 900, 1800];
-const DEFAULTS = { packs: ['yureko'], interval: 60, walk: true, chatter: true };
+const DEFAULTS = { packs: ['yureko'], walk: true, chatter: true };
 const THUMB_PX = 48;
 const PREVIEW_MARGIN = 8;
 
@@ -13,8 +10,6 @@ const els = {
   preview: document.getElementById('desk-ms-preview'),
   list: document.getElementById('desk-ms-list'),
   listStatus: document.getElementById('desk-ms-list-status'),
-  comboField: document.getElementById('desk-ms-interval-field'),
-  comboList: document.getElementById('desk-ms-interval-list'),
   walk: document.getElementById('desk-ms-walk'),
   chatter: document.getElementById('desk-ms-chatter'),
   storageError: document.getElementById('desk-ms-storage-error'),
@@ -24,7 +19,6 @@ let saved = { ...DEFAULTS };
 let pending = { ...DEFAULTS };
 let selectedId = null;
 let rows = [];
-let updates = null;
 let notifyChanged = () => {};
 
 function normalize(parsed) {
@@ -32,26 +26,18 @@ function normalize(parsed) {
   if (!parsed || typeof parsed !== 'object') return out;
   if (parsed.packs === null) out.packs = null;
   else if (Array.isArray(parsed.packs)) out.packs = [...new Set(parsed.packs.filter((id) => typeof id === 'string'))];
-  if (parsed.interval === null || INTERVALS.includes(parsed.interval)) out.interval = parsed.interval;
   if (typeof parsed.walk === 'boolean') out.walk = parsed.walk;
   if (typeof parsed.chatter === 'boolean') out.chatter = parsed.chatter;
   return out;
 }
 
 function loadSaved() {
-  const raw = storage.get(MASCOT_SETTINGS_KEY, null);
-  if (!raw) return { ...DEFAULTS };
-  try {
-    return normalize(JSON.parse(raw));
-  } catch {
-    return { ...DEFAULTS };
-  }
+  return normalize(readMascotSettings());
 }
 
 function canonical(state) {
   const out = {};
   if (state.packs != null) out.packs = [...state.packs].sort();
-  out.interval = state.interval;
   out.walk = state.walk;
   out.chatter = state.chatter;
   return out;
@@ -65,12 +51,7 @@ function isShown(state, id) {
   return state.packs == null || state.packs.includes(id);
 }
 
-function intervalMs(state) {
-  return state.interval == null ? null : state.interval * 1000;
-}
-
-function apply(state, previous) {
-  if (!previous || previous.interval !== state.interval) updates.setInterval(intervalMs(state));
+function apply(state) {
   DesktopMascots.applySettings(state);
 }
 
@@ -143,16 +124,8 @@ function buildList() {
   syncForm();
 }
 
-function onIntervalChange(value) {
-  setPending({ ...pending, interval: value === 'off' ? null : Number(value) });
-}
-
-const intervalCombo = createCombobox({ field: els.comboField, list: els.comboList, onChange: onIntervalChange });
-
 function syncForm() {
   for (const row of rows) row.input.checked = isShown(pending, row.id);
-  intervalCombo.close();
-  intervalCombo.setValue(pending.interval == null ? 'off' : String(pending.interval));
   els.walk.checked = pending.walk;
   els.chatter.checked = pending.chatter;
   select(selectedId);
@@ -171,19 +144,16 @@ function showStorageError(show) {
 
 export const MascotSettingsPage = {
   id: 'mascot',
-  init({ changed, dialog, updates: watcher }) {
+  init({ changed }) {
     notifyChanged = changed;
-    updates = watcher;
     saved = loadSaved();
     pending = { ...saved };
     els.list.hidden = true;
     els.walk.addEventListener('change', () => setPending({ ...pending, walk: els.walk.checked }));
     els.chatter.addEventListener('change', () => setPending({ ...pending, chatter: els.chatter.checked }));
-    /* A titlebar drag doesn't reliably fire a `click` on the field/list, so the combobox's own outside-click close can miss it. */
-    dialog.querySelector('.desk-titlebar').addEventListener('pointerdown', () => intervalCombo.close());
     new ResizeObserver(renderPreview).observe(els.preview);
     DesktopMascots.whenLoaded().then(buildList);
-    apply(saved, null);
+    apply(saved);
   },
   open() {
     pending = { ...saved };
@@ -192,29 +162,18 @@ export const MascotSettingsPage = {
   },
   isDirty,
   save() {
-    const { packs, interval, walk, chatter } = pending;
-    const next = { packs, interval, walk, chatter };
-    if (!storage.trySet(MASCOT_SETTINGS_KEY, JSON.stringify(next))) {
+    const { packs, walk, chatter } = pending;
+    if (!writeMascotSettings({ packs, walk, chatter })) {
       showStorageError(true);
       return false;
     }
     showStorageError(false);
-    const previous = saved;
     saved = { ...pending };
-    apply(saved, previous);
+    apply(saved);
     setPending({ ...saved });
     return true;
   },
   discard() {
     pending = { ...saved };
-  },
-  onKey(ev) {
-    if (!intervalCombo.isOpen()) return false;
-    if (ev.key === 'Tab') {
-      intervalCombo.close();
-      return false;
-    }
-    intervalCombo.handleKey(ev);
-    return true;
   },
 };

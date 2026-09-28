@@ -26,6 +26,7 @@ use tokio::sync::{Mutex, Notify, RwLock, oneshot};
 use tower_http::timeout::TimeoutLayer;
 use tracing::info;
 
+use crate::activity::Activity;
 use crate::auth::{self, LoginCodes};
 use crate::config::Config;
 use crate::ipfs::IpfsClient;
@@ -63,6 +64,7 @@ pub struct AppState {
     token: std::sync::RwLock<String>,
     pub login_codes: LoginCodes,
     pub stats: Arc<stats::Recorder>,
+    pub activity: Arc<Activity>,
 }
 
 impl AppState {
@@ -107,6 +109,7 @@ impl AppState {
             token: std::sync::RwLock::new(token),
             login_codes: LoginCodes::default(),
             stats: Arc::default(),
+            activity: Arc::default(),
         })
     }
 

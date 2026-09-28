@@ -74,16 +74,3 @@
   margin: 0;
   font-size: 12px;
 }
-
-.desk-ms-row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px 8px;
-  align-items: center;
-  min-width: 0;
-  font-size: 12px;
-}
-
-#desk-ms-interval-label {
-  flex: none;
-}

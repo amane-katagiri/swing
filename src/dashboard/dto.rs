@@ -71,6 +71,8 @@ pub struct LoginCodeDto {
 #[derive(Debug, Serialize)]
 pub struct ActivityDto {
     pub latest_stored_at: Option<u64>,
+    pub latest_published_at: Option<u64>,
+    pub latest_replica_report_at: Option<u64>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

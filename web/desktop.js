@@ -6,6 +6,8 @@ import { initDeskScale } from './desktop-scale.js';
 import { tabAcrossEdge, focusableIn, isModalOpen, scheduleActiveSync } from './desktop-focus.js';
 import { createUpdateWatcher } from './desktop-updates.js';
 import { DesktopMascots } from './desktop-mascot.js';
+import { createBrowserNotifier } from './desktop-notify.js';
+import { browserNotifyReady } from './notify-settings.js';
 
 const DESK_TEXT = {
   loading: 'よみこみちゅう…',
@@ -377,8 +379,14 @@ export const desktopUpdates = createUpdateWatcher({
     await DesktopView.load(true);
     return cache.sites;
   },
-  isActive: () => document.body.dataset.view === 'desktop' && !document.hidden,
+  isActive: () => {
+    const view = document.body.dataset.view;
+    if (!view || view === 'login' || view === 'setup') return false;
+    return !document.hidden || browserNotifyReady();
+  },
 });
+
+createBrowserNotifier({ updates: desktopUpdates, mascotsShowing: () => DesktopMascots.showing() });
 
 export const DesktopView = {
   init() {

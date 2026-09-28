@@ -20,7 +20,7 @@
 | [`architecture/dashboard.md`](architecture/dashboard.md) | `swing up` の寿命で常時動く Web ダッシュボード兼制御 API（起動と終了、設定、ガード、静的ファイル、agent 未準備時の扱い） |
 | [`architecture/dashboard/http-api.md`](architecture/dashboard/http-api.md) | ダッシュボードの HTTP API |
 | [`architecture/dashboard/web.md`](architecture/dashboard/web.md) | ダッシュボードの画面（Desktop 以外）と CSS カスタマイズ（`dashboard.md` の子ページ） |
-| [`architecture/dashboard/desktop.md`](architecture/dashboard/desktop.md) | ダッシュボードの Desktop 画面（`dashboard.md` の子ページで `web.md` と並列） |
+| [`architecture/dashboard/desktop.md`](architecture/dashboard/desktop.md) | ダッシュボードの Desktop 画面と、どの画面でも動く更新の確認・おしらせの出し分け・ブラウザの通知（`dashboard.md` の子ページで `web.md` と並列） |
 | [`architecture/dashboard/mascot.md`](architecture/dashboard/mascot.md) | Desktop 画面のマスコット: パック形式・ふるまい・当たり判定・吹き出し・おしらせ（`desktop.md` の子ページ） |
 | [`architecture/release.md`](architecture/release.md) | ビルド（Windows 向けのクロスビルドを含む）とリリース（`.github/workflows/release.yml`）、macOS と Windows の動作確認（`.github/workflows/macos-check.yml`・`windows-check.yml`） |
 
@@ -46,6 +46,7 @@
 swing/
   src/
     lib.rs           各モジュールを公開するクレートルート
+    activity.rs      agent とダッシュボードが共有する最新の publish・レプリカ報告の時刻（`/api/activity` 用。メモリだけに持つ）
     main.rs          CLI エントリ (clap)
     config/          設定読み込み、サイズ・時間パーサ（mod.rs: 型・パーサ・`Config::load`、build.rs: セクションごとの解決関数に分けた `build_config`）
     nostr.rs         relay 接続 / follow set 取得 / site event 購読・発行・パース / レプリカ報告の組み立て・パース

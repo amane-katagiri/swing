@@ -16,6 +16,7 @@ use tokio::sync::Semaphore;
 use tokio::task::JoinSet;
 use tracing::{info, warn};
 
+use crate::activity::Activity;
 use crate::config::Config;
 use crate::health;
 use crate::ipfs::KuboStore;
@@ -44,6 +45,7 @@ async fn poll_once<C, N, R>(
     agent.sweep().await;
     follow::refresh_follow_set(relay, agent, tasks).await;
     agent.sync_reports().await;
+    agent.record_replica_reports().await;
 }
 
 struct Agent<C, N, R> {
@@ -53,6 +55,7 @@ struct Agent<C, N, R> {
     reporter: R,
     own: PublicKey,
     reports: tokio::sync::Mutex<ReportBook>,
+    activity: Arc<Activity>,
     layout: MfsLayout,
     state: tokio::sync::Mutex<State>,
     state_path: PathBuf,
@@ -69,6 +72,7 @@ impl<C: KuboStore, N: Nip05Verify, R: ReportRelay> Agent<C, N, R> {
         reporter: R,
         state: State,
         state_path: PathBuf,
+        activity: Arc<Activity>,
     ) -> Self {
         let permits = Semaphore::new(config.agent.concurrency);
         let layout = MfsLayout::new(config.ipfs.mfs_root.clone());
@@ -80,6 +84,7 @@ impl<C: KuboStore, N: Nip05Verify, R: ReportRelay> Agent<C, N, R> {
             own: reporter.public_key(),
             reporter,
             reports: tokio::sync::Mutex::new(ReportBook::default()),
+            activity,
             state: tokio::sync::Mutex::new(state),
             state_path,
             targets: RwLock::new(HashSet::new()),
@@ -439,6 +444,7 @@ mod tests {
             FakeRelay::default(),
             State::default(),
             dir.path().join("state.json"),
+            Arc::default(),
         );
         let pubkey = Keys::generate().public_key();
         agent.replace_targets(HashSet::from([pubkey]));

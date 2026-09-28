@@ -16,6 +16,8 @@
 | `pairing.js` | 署名アプリ（NIP-46）とのペアリングの部品（`createPairing`）。QR の表示・状態のポーリング・状態表示を受け持ち、Setup 画面と Publish 画面の「署名アプリとつなぎ直す」の両方が使う。`util.js`・`i18n.js` に依存する |
 | `sites.js` / `webring.js` / `publish.js` / `settings.js` / `setup.js` / `login.js` | 各画面（それぞれ Sites・Webring・Publish・Settings・Setup・Login）。`setup.js` は `publish.js` の `loadOverview` も使う |
 | `stats.js` | Settings 画面のリソース使用量のパネル（`loadStats`・`renderStats`）。`util.js`・`i18n.js` に依存し、`settings.js` と `app.js` から使う |
+| `notify-settings.js` | おしらせの設定（`swing:desktop:notify`）の読み書き（`readNotifySettings`・`writeNotifySettings`）、確認の間隔の選択肢（`CHECK_INTERVALS`）と読み書き（`readCheckInterval`・`writeCheckInterval`。`swing:desktop:mascot` の `interval`。キー全体の読み書き `readMascotSettings`・`writeMascotSettings` もここにある）、ブラウザの通知の許可の要求（`requestBrowserPermission`）と使えない理由の判定（`notificationSupport`・`unavailableReason`・`blockedReason`）、使えるかどうか（`browserNotifyReady`）と種類を確認するかどうか（`kindWanted`）。`storage.js` にだけ依存し、Settings 画面と Desktop 画面の両方が使う |
+| `settings-notify.js` | Settings 画面の「通知」パネル（`BrowserNotifySettings`）。`notify-settings.js`・`util.js`・`i18n.js` に依存し、`settings.js` と `app.js` から使う |
 | `boot.js` | 描画前に同期実行する小さな通常スクリプト（下記「共通の UI 部品」の読み込み時）。どのモジュールにも依存しない |
 | `app.js` | ルーター兼エントリポイント。`<script type="module" src="/app.js">` から読み込まれ、各画面モジュールを import する |
 
@@ -47,7 +49,7 @@ Desktop 画面専用のモジュール（`desktop*.js`）とその CSS は [`des
 | Sites | [`/api/sites`](http-api.md#get-apisites) の一覧、mirror への追加・削除、`Unfollowed but still stored`、[`/api/status`](http-api.md#get-apistatus) を呼ぶ Storage check（重いのでボタンを押したときだけ呼ぶ。版ごとの判定の表と、サイトごとの実容量・合計の表） | `cards`（既定）/ `table` |
 | Webring | [`/api/webring`](http-api.md#get-apiwebringrootkeydepthn) を root・depth 指定で取得。ノード選択で [`/api/replicas?key=`](http-api.md#get-apireplicaskeykey) を引き、詳細パネルからミラー操作もできる | `graph`（既定）/ `list` / `ascii` / `source`（dot・mermaid） |
 | Publish | [`/api/overview`](http-api.md#get-apioverview)・[`/api/publish/sites`](http-api.md#get-apipublishsites)（My sites）、publish フォーム（常にフォルダアップロード） | スタイル切替なし |
-| Settings | 設定の表示と編集、テーマ・言語・カスタム CSS、リソース使用量、プロセスの停止・再起動（下記「Settings 画面」） | スタイル切替なし |
+| Settings | 設定の表示と編集、テーマ・言語・カスタム CSS、通知（確認の間隔・ブラウザの通知）、リソース使用量、プロセスの停止・再起動（下記「Settings 画面」） | スタイル切替なし |
 | Setup | 鍵が未設定（`overview.setup === true`）の間だけ表示できる導入画面。鍵の生成／貼り付け／署名アプリ（NIP-46）とのペアリング、relays、保存上限 3 つを入力して [`POST /api/setup`](http-api.md#post-apisetup) を送る（下記「Setup 画面」） | スタイル切替なし |
 
 ## Sites 画面
@@ -79,6 +81,7 @@ NIP-05 の検証結果はバッジで `OK`（`verified`）/ `NG`（`mismatch`）
 ## Webring 画面
 
 - root/depth のクエリは `swing:webring:query` に保存し、次に開いたときに復元する。
+- 外から自分のノードを開く入口: `document` に `swing:show-self-in-webring`（名前は `notify-settings.js::SHOW_SELF_IN_WEBRING`）を投げると、Webring 画面に移って（すでに表示中ならそのまま）自分（`cache.overview.pubkey`）のノードを選んだ状態にする。今のクエリ（保存済みの `swing:webring:query`）のグラフを読み込み（キャッシュがあればそれ）、自分のノードがあればそのまま選ぶ。無ければ root を空（＝自分）にしてクエリを保存し直し、読み込み直してから選ぶ（depth は変えない）。ブラウザの通知のクリックが使う（[`desktop.md#おしらせの出し分け`](desktop.md#おしらせの出し分け)）。
 - 再取得中、既存の表示は消さず `aria-busy="true"` で薄く表示する。表示中の内容が無いとき（初回やエラーの後など）だけ「Loading webring…」になる。
 - ノード詳細パネルのミラー操作は選んだノードが自分自身かどうかで変える（自分自身: ボタン無し／ミラー済み: 削除ボタン／未ミラー: 追加ボタン）。判定はキャッシュ済みの `/api/sites` か `/api/mirror` の pubkey 集合。
 - `beyond` と `over_budget`（意味は [`../cli.md#webring`](../cli.md#webring)）は、どちらも 0 より大きければ画面下部にヒント文を 1 行ずつ出す。`list` 表示では `referencing`（起点を名指ししているだけでクロールには加えていないアカウント）を「Mutual」「One-way」と並ぶグループとして出し、`more` が 0 より大きければ末尾に件数のヒント文を添える（[「レプリカ報告の信頼度」](../nostr.md#レプリカ報告の信頼度replicastier)）。ノード詳細パネルの報告者一覧は npub の後ろに信頼度の tier（`author`/`chosen`/`other`）に応じたタグを付け、`site.dropped` が 0 より大きければ末尾に「…and N more」相当のヒント文を出す（[取得と表示の上限](../nostr.md#取得と表示の上限nostrbudget)）。
@@ -102,9 +105,18 @@ NIP-05 の検証結果はバッジで `OK`（`verified`）/ `NG`（`mismatch`）
 
 テーマ（`swing:theme`。`<html data-theme>` を付け替える）・表示言語（`swing:lang`）・カスタム CSS（`swing:user-css`。`<style id="user-css">` に入れる）をブラウザの `localStorage` に保存する（下記「CSS カスタマイズのインターフェース」「表示言語」）。言語を切り替えると `swing:langchange` という `CustomEvent` を `document` に投げ、`app.js` がそれを購読して各画面を再描画する。
 
+### 通知
+
+「表示」パネルの下にある「通知」パネル（`settings-notify.js`）。Desktop 画面の「コントロール パネル」→「通知」タブの「更新の確認」と「ブラウザの通知」と同じ設定（`swing:desktop:mascot` の `interval` と `swing:desktop:notify` の `browser`。[`desktop.md`「コントロール パネル」](desktop.md#コントロール-パネル)）を、Desktop 画面の外から変えるためのもの。サーバの設定（上記「設定編集」）とは独立で、ブラウザにだけ保存される旨の説明を 1 行添える。
+
+- 中身は上から「確認の間隔」のセレクト（1 分 / 5 分 / 15 分 / 30 分 / 確認しない。「通知」タブと同じ選択肢で、値の検証と既定は `notify-settings.js` の `CHECK_INTERVALS`・`readCheckInterval`。「確認しない」にするとブラウザの通知もマスコットのおしらせも来ない旨の注記を `swing-hint` で添える）、「ブラウザの通知を使う」チェックボックス、「通知する内容」の 3 つの種類のチェックボックス（Desktop 画面の文言と同じ意味。使わないときは無効表示）。
+- 「表示」パネルのテーマ・言語と同じく、変えたその場で `localStorage` に書く（保存ボタンは無い）。間隔は `writeCheckInterval`（今の値を読み直して `interval` だけを書き換える）で書き、書けたら `desktopUpdates.setInterval` で watcher に当てる。種類と「使う」は、今の値を読み直して `browser` だけを書き換えるので、Desktop 画面側の `mascot` は変えない。watcher とブラウザの通知は使うたびに読むので、その場で効く。
+- 「使う」をオンにした操作の中で、許可がまだなら `Notification.requestPermission()` を呼ぶ（`notify-settings.js::requestBrowserPermission`。Desktop 画面と共通）。許可されなければチェックを外して理由を出す。安全なコンテキストでないか `Notification` が無いブラウザではチェックボックスを無効にして理由を出す。保存済みの値がオンでも、画面を開いたときに許可が無くなっていれば理由を出す。理由と保存の失敗は「使う」の下の `#settings-notify-status`（`swing-status`、`data-kind="error"`）に i18n の文で出し、言語を切り替えると出し直す。間隔や種類の変更では、保存の失敗の表示だけを消す（許可の理由は残す）。
+- 画面を開くたびに `localStorage` から読み直して表示する（Desktop 画面や別のタブで変えた値を出すため）。
+
 ### リソース使用量
 
-「表示」パネルと「プロセス」パネルの間にある（`stats.js`）。Desktop 画面には無い。
+「通知」パネルと「プロセス」パネルの間にある（`stats.js`）。Desktop 画面には無い。
 
 - 画面を開くたびに [`GET /api/stats`](http-api.md#get-apistats) を呼び、以後は Settings 画面を表示している間だけ `interval` 秒ごとに呼び直す（画面を離れると次の呼び出しで止まる）。2 回目からは手元の最後の `at` を `since` に渡して新しいサンプルだけを取り、最新のサンプルから 24 時間より古いものを捨てる。
 - 表（`.swing-table`）は `swing` の CPU・メモリ、Kubo の CPU・メモリ、IPFS の受信・送信の 6 行で、列は「現在」（最新のサンプル）・「1 時間平均」・「1 時間最大」・「24 時間最大」（最新のサンプルから数えた期間）。値が無ければ `–`。バイト数は `formatBytes`、通信量はそれに `/s` を付ける。
@@ -165,7 +177,11 @@ NIP-05 の検証結果はバッジで `OK`（`verified`）/ `NG`（`mismatch`）
 | `swing:desktop:visits` | 整数の文字列 | Desktop 画面の来訪者カウンタ（[`desktop.md`](desktop.md#リンク集ページiframe)） |
 | `swing:desktop:wallpaper` | JSON（`{color?, image?}`、両方省略可。詳細は [`desktop.md`「コントロール パネル」](desktop.md#コントロール-パネル)） | Desktop 画面の壁紙設定 |
 | `swing:desktop:startup` | `"1"` / `"0"` | パスなしで開いたときに Desktop 画面を出すか（既定 `"0"`。[`desktop.md`「コントロール パネル」](desktop.md#コントロール-パネル)） |
-| `swing:desktop:mascot` | JSON（`{packs?, interval, walk, chatter}`。詳細は [`mascot.md`「マスコットタブ」](mascot.md#マスコットタブ)） | Desktop 画面のマスコットと更新の確認の設定 |
+| `swing:desktop:mascot` | JSON（`{packs?, interval, walk, chatter}`。詳細は [`mascot.md`「マスコットタブ」](mascot.md#マスコットタブ)。`interval` は「通知」タブが書く） | Desktop 画面のマスコットと更新の確認の間隔の設定（`interval` は Settings 画面の「通知」パネルも書く） |
+| `swing:desktop:notify` | JSON（`{mascot: {stored, published, replica}, browser: {enabled, stored, published, replica}}`。詳細は [`desktop.md`「コントロール パネル」](desktop.md#コントロール-パネル)） | おしらせの種類のオン・オフ（マスコットとブラウザの通知で別々）とブラウザの通知を使うかどうか。Desktop 画面の「通知」タブと Settings 画面の「通知」パネルの両方が読み書きする |
+| `swing:desktop:seen`・`swing:desktop:seen-published`・`swing:desktop:seen-replicas` | 整数の文字列 | 保存・公開・ミラーする人の増加のおしらせの既読の位置（[`desktop.md`「更新の確認」](desktop.md#更新の確認)） |
+| `swing:desktop:replica-reporters` | JSON（`{<d>: {<pubkey>: <初めて見た時刻>}}`） | 前回確認した自分のサイトの報告者の集合（[`desktop.md`「更新の確認」](desktop.md#更新の確認)） |
+| `swing:desktop:notified` | JSON（`{<種類>: <at>}`） | ブラウザの通知を出したおしらせの位置（[`desktop.md`「おしらせの出し分け」](desktop.md#おしらせの出し分け)） |
 
 ## 表示言語（i18n）
 

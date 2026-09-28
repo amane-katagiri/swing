@@ -2,7 +2,7 @@ import { sanitizeDisplayText } from './util.js';
 
 export const INDEX_URL = '/mascots/index.json';
 export const ANIMATION_NAMES = ['idle', 'walk', 'talk', 'sleep', 'surprise', 'drag', 'fall'];
-export const LINE_KINDS = ['greet', 'site-stored', 'sites-stored-many', 'fetch-error', 'recovered', 'idle', 'click'];
+export const LINE_KINDS = ['greet', 'site-stored', 'sites-stored-many', 'site-published', 'sites-published-many', 'replica-added', 'replicas-added-many', 'fetch-error', 'recovered', 'idle', 'click'];
 
 const OVERLAY_DEFAULTS = {
   blink: { on: ['idle', 'walk', 'talk'], interval: [2500, 6000] },

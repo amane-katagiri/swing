@@ -55,6 +55,7 @@ pub(super) struct FakeRelayState {
     pub(super) reject: bool,
     pub(super) fail_sign: bool,
     pub(super) send_attempts: usize,
+    pub(super) about_since: Vec<Option<u64>>,
 }
 
 pub(super) struct FakeRelay {
@@ -82,6 +83,25 @@ impl ReportRelay for FakeRelay {
             anyhow::bail!("simulated fetch failure");
         }
         Ok(s.stored.clone())
+    }
+
+    async fn fetch_reports_about(
+        &self,
+        _report_kind: u16,
+        author: PublicKey,
+        since: Option<u64>,
+    ) -> anyhow::Result<Vec<Event>> {
+        let mut s = self.s.lock().unwrap();
+        s.about_since.push(since);
+        if s.fail_fetch {
+            anyhow::bail!("simulated fetch failure");
+        }
+        Ok(s.stored
+            .iter()
+            .filter(|e| e.tags.public_keys().any(|pk| pk == author))
+            .filter(|e| since.is_none_or(|since| e.created_at.as_secs() >= since))
+            .cloned()
+            .collect())
     }
 
     async fn send_report(&self, report: EventBuilder) -> anyhow::Result<bool> {
@@ -161,6 +181,7 @@ impl Fixture {
             FakeRelay::default(),
             State::default(),
             state_path.clone(),
+            Arc::default(),
         );
         agent.replace_targets(HashSet::from([pubkey]));
         Self {

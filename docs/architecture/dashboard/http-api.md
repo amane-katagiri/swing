@@ -69,11 +69,14 @@ API は `swing up` の寿命で動き続ける（[`../up.md`](../up.md)）。
 ## GET /api/activity
 
 ```json
-{ "latest_stored_at": 1790000000 }
+{ "latest_stored_at": 1790000000, "latest_published_at": 1790000100, "latest_replica_report_at": 1790000200 }
 ```
 
 - `latest_stored_at`: `state.json` に記録された全版の `stored_at` の最大値。版が 1 つも無い（`state.json` が無い場合を含む）と `null`。
-- `state.json` を読むだけで relay にも Kubo にも接続しないので、定期的に呼んでも軽い。Desktop 画面の更新確認はこれを見て、値が進んだときだけ `/api/sites` を取り直す（[`desktop.md`](desktop.md)）。
+- `latest_published_at`: 自分が publish した版の `created_at` の最大値。agent がレプリカ報告の同期で `publish/<自分>/` を一覧したとき（CLI の `swing publish` の分もここで拾う）と、ダッシュボードの publish（`POST /api/publish/upload`）がどこかの relay に受理されたときに進む（[`../agent.md#レプリカ報告`](../agent.md#レプリカ報告)）。値は下がらない。一覧がすべて成功して publish した版が 1 つも無いと分かったら `0`、まだ分かっていなければ `null`。
+- `latest_replica_report_at`: 自分以外の報告者が自分のサイトについて出したレプリカ報告の `created_at` の最大値。agent が poll ごとに relay から取得して記録する（[`../agent.md#レプリカ報告`](../agent.md#レプリカ報告)）。値は下がらない。取得に成功して数えられる報告が 1 つも無ければ `0`、まだ一度も取得に成功していなければ `null`。
+- `latest_published_at` と `latest_replica_report_at` はメモリ上の `activity::Activity`（`AppState.activity` を agent と共有する）を読むだけで、`state.json` には書かない。`created_at` が源なので、再起動後は agent の最初の poll で元の値に戻る。`null`（まだ分からない）と `0`（確かめたら無かった）を分けるのは、フロントが「無い」状態を既読の基準にして、最初の 1 件をおしらせできるようにするため。セットアップモードでは agent が動かないので両方 `null`。
+- `state.json` とメモリを読むだけで relay にも Kubo にも接続しないので、定期的に呼んでも軽い。ダッシュボードの更新の確認はこれを見て、値が進んだものだけ `/api/sites`・`/api/publish/sites`・`/api/replicas` を取り直す（[`desktop.md#更新の確認`](desktop.md#更新の確認)）。
 - agent の準備状態に関わらず応答する。`state.json` の読み込み・解釈に失敗したら 500（`error!` でログに出す）。
 
 ## GET /api/stats

@@ -40,7 +40,10 @@
 | 低 | マスコットの、反転しない飾りのレイヤー（寝るときの「z」のような文字を、位置だけ左右反転して絵は反転せずに描く）。今はアニメーションごとの `"flip": false` でシートの向きに振り向かせている | [Desktop 画面のマスコット](log/2026-09-26-desktop-mascot.md) |
 | 低 | マスコットの当たり判定を Firefox と WebKit で確かめる（リンク集ページの `zoom` を打ち消す構成で、iframe の中の座標の換算 `frameToViewport` が合っているか） | [Desktop 画面のマスコット](log/2026-09-26-desktop-mascot.md) |
 | 低 | しめじの画像セット（番号の決まったポーズの PNG 群）をマスコットのパックに変換するツール。権利関係はキャラクターごとに違うので、同梱はせずユーザーが自分で入れる前提 | [Desktop 画面のマスコット](log/2026-09-26-desktop-mascot.md) |
-| 低 | おしらせの種類を増やす（新しいサイトと既存のサイトの更新の区別、publish の完了、レプリカ報告など）。Desktop 画面の外でのおしらせ（ブラウザの通知・タスクトレイ）も、`desktop-updates.js` のイベントを受ける形で足せる | [Desktop 画面のマスコット](log/2026-09-26-desktop-mascot.md) |
+| 低 | タスクトレイ（`swing-tray`）での OS の通知。トレイは別プロセスなので `desktop-updates.js` のイベントは受けられず、worker が `/api/overview` と一緒に `/api/activity` のカーソルを見る形になる。Windows のトースト・macOS の UserNotifications の依存と、既読をブラウザと共有するならサーバ側の既読カーソルが要る | [おしらせの種類とブラウザ通知](log/2026-09-29-notice-kinds-and-browser-notifications.md) |
+| 低 | 他の人のレプリカ報告は agent の poll ごとの取得なので、おしらせが最大 `poll_interval` 遅れる。すぐ知らせたいなら `kind 35981, #p=自分` の購読を足す | [おしらせの種類とブラウザ通知](log/2026-09-29-notice-kinds-and-browser-notifications.md) |
+| 低 | ブラウザ通知の、タブが裏にあるときの定期確認・本物の OS 通知の表示・2 件以上の通知のクリックを実ブラウザで確かめる（ヘッドレスではスタブで代えた） | [おしらせの種類とブラウザ通知](log/2026-09-29-notice-kinds-and-browser-notifications.md) |
+| 低 | `docs/assets/dashboard-desktop.*` の撮り直し（コントロール パネルに「通知」タブが増えた） | [おしらせの種類とブラウザ通知](log/2026-09-29-notice-kinds-and-browser-notifications.md) |
 | 低 | 特定のレプリカ報告者・Follow Set 由来のアカウントを個別にブロックする仕組み。今回の tier 分け（Author/Chosen/Other）はブロックではなく信頼度の提示だけ | [信頼度による tier 分け](log/2026-09-23-trust-tiers.md) |
 | 中 | 取得バイト数の累積予算（`[agent] max_fetch_per_day` / `max_fetch_per_month`）。今の上限は 1 回・1 サイトあたりだけで、1 tick の総取得量に上限が無い。`src/ipfs.rs` の取得中のバイト数を state に積み、`policy::decide` の事前判定で `budget_exhausted` として skip する（`dag/export` を張る前に止める） | [間欠運用と通信量](log/2026-09-23-intermittent-operation-and-traffic-limits.md) |
 | 低 | ミラー取得の一時停止トグル（ダッシュボードのスイッチ・設定・環境変数）と、取得の時間帯ウィンドウ（`active_hours`）。メータード回線の自動判定（NetworkManager の `Metered`、WinRT の `NetworkCostType`、`NWPathMonitor.isExpensive`）は OS ごとに分かれるので後回し | [間欠運用と通信量](log/2026-09-23-intermittent-operation-and-traffic-limits.md) |

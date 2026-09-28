@@ -84,11 +84,17 @@ Desktop 画面を歩き回るマスコットを自分で作る人向けの手引
   "greet": ["にゃー"],
   "site-stored": ["{title} が更新されたみたい"],
   "sites-stored-many": ["更新が {count} 件あるよ"],
+  "site-published": ["{title} を公開したよ"],
+  "replica-added": ["{title} をミラーしてくれる人が増えたよ"],
   "click": ["なあに？"]
 }
 ```
 
 種類と差し込める値（`{title}`・`{d}`・`{count}`）の一覧は [`architecture/dashboard/mascot.md#パック形式-1`](architecture/dashboard/mascot.md#パック形式-1) の「せりふ」の表を参照。
+
+- おしらせのせりふは 3 組ある。ミラーしているサイトの保存（`site-stored`・`sites-stored-many`）、自分のサイトの公開（`site-published`・`sites-published-many`）、自分のサイトをミラーしてくれる人が増えたとき（`replica-added`・`replicas-added-many`）。それぞれ 1 件用と 2 件以上用がある。
+- 種類の違うおしらせが同時に来ると、種類ごとのせりふを 1 行ずつ並べて 1 つの吹き出しに出す。1 つのせりふは 1 行で読める長さ（全角 20 字ほどまで）にしておくと、並べたときに吹き出しが縦に伸びすぎない。
+- 1 件用のせりふには `{title}` を入れておくと、何のおしらせかが分かりやすい。2 件以上用は `{count}` を使う（`replicas-added-many` の `{count}` はサイトの数）。
 
 ## 確かめ方
 

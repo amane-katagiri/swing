@@ -7,10 +7,10 @@
 | ファイル | 内容 |
 |---|---|
 | `agent/mod.rs` | `Agent` 構造体の定義、`new`、`poll_once`、メンテナンス系（`sweep`・`collect_garbage`・`reconcile`・`remove_unfollowed`）、state 保存の共通ヘルパー（`save`） |
-| `agent/lifecycle.rs` | `run_until`（プロセスのライフサイクル本体。`CancellationToken`・`swing up` から渡される共有の `Arc<dashboard::AppState>`・`Arc<Notify>` を受け取る）、内蔵 gateway タスクの起動・終了、ダッシュボードへの準備完了・未準備の通知（`AppState::set_ready`/`set_not_ready`） |
+| `agent/lifecycle.rs` | `run_until`（プロセスのライフサイクル本体。`CancellationToken`・`swing up` から渡される共有の `Arc<dashboard::AppState>`・`Arc<Notify>` を受け取る。`AppState.activity` を `Agent` に渡して共有する）、内蔵 gateway タスクの起動・終了、ダッシュボードへの準備完了・未準備の通知（`AppState::set_ready`/`set_not_ready`） |
 | `agent/follow.rs` | `refresh_follow_set`（Follow Set の取得・保存・再送は `choose_and_apply_follow_set`、対象の切り替え・サイトイベントの購読・取得は `resubscribe_and_backfill` に分かれた薄い呼び出し元）、`limit_sites_per_account` |
 | `agent/store.rs` | `Agent::submit`/`drain`（キューイングと直列実行）、`apply_site_event`（「保存の順序」の中核）、NIP-05 検証、`decide`/`version_infos` |
-| `agent/replicas.rs` | レプリカ報告の差分計算・送信（`SentReport`・`ReportBook`・`Held`・`reports_to_send`・`held`・`load_sent_reports`・`sync_reports`） |
+| `agent/replicas.rs` | レプリカ報告の差分計算・送信（`SentReport`・`ReportBook`・`Held`・`reports_to_send`・`held`・`load_sent_reports`・`sync_reports`）、他の報告者からの報告の時刻の記録（`record_replica_reports`） |
 | `agent/test_support.rs` | ユニットテスト共通のフィクスチャ（`Fixture`・`FakeNip05`・`FakeRelay`、`test_config`）。`#[cfg(test)]`。`FakeKubo` は `src/test_support.rs` のものを `pub(super) use` で再公開する |
 
 外部からは `swing::agent::run_until` だけを公開する（`swing up` が Kubo・agent を協調させて起動・再起動するために使う。[`up.md`](up.md)）。テストは対応するモジュールの `#[cfg(test)] mod tests` に置く。
@@ -26,6 +26,7 @@
    3. unfollow
    4. 対象 pubkey 群のサイトイベントを購読し直してから過去分を取得し、`nostr::select_latest`（未来ずれの許容は [`nostr.md`](nostr.md#未来ずれの許容nostrmax_future_skew)）でサイトごとの最新版を選び、pubkey ごとに、保存済みのサイトすべてと、それ以外のサイトを `created_at` の新しい順に合計 `max_sites_per_account` 件まで、タスクに投入する。一時的な取得・保存の失敗はここで再試行される。
    5. レプリカ報告の同期（Follow Set が決まらなくても行う）
+   6. 他の報告者が自分のサイトについて出した報告の時刻を記録する（下記「レプリカ報告」）
 5. 購読で届いたサイトイベントをタスクに投入する（投入前に捨てる条件は下記「並行処理」の `submit`）。購読 ID と kind が一致しない通知は debug ログで捨てる。
 6. タスクはサイト単位で「保存の順序」に従って処理する。新版を記録したら、同時実行の枠を返してからレプリカ報告の同期を行う。
 
@@ -131,6 +132,11 @@ state のロックの中で行う。
 - 全 relay に送り、どこかに受理されたら記録を更新する。受理されなければ warn を出し、次の同期で送り直す。
 - 署名（NIP-46 の署名アプリへのリクエストを含む）か送信がエラーになったら warn を出して、その回の残りの報告は送らずに打ち切る。残りは次の同期で送り直す（署名アプリがオフラインのときの扱いは [`signer.md#署名アプリがオフラインのとき`](signer.md#署名アプリがオフラインのとき)）。
 - 取り下げた記録は `cid` 無しで残り、出し直さない。
+
+ダッシュボードの `/api/activity`（[`dashboard/http-api.md`](dashboard/http-api.md#get-apiactivity)）のために、次の 2 つをメモリ上の `activity::Activity`（ダッシュボードの `AppState` と共有する。値は最大値を取るだけで下がらず、`state.json` には書かない）に記録する。
+
+- publish の時刻: 保存している CID を集めるときに一覧した `publish/<自分>/<site>/` の整数名（CID が空でないもの）の最大値。整数名はサイトイベントの `created_at` なので、同じ Kubo で `swing publish` した分も次の同期で拾う。一覧がすべて成功したら、版が無くても「確かめた」印を付ける（`/api/activity` で `0` になる）。
+- 他の報告者の報告の時刻: poll ごとに relay から `replica_event_kind` で `#p` が自分の報告を、前回までに記録した最大値を `since` に付けて取得する（まだ無ければ `since` 無し。`limit` は `capped_limit(MAX_SITES_PER_AUTHOR_LISTED, MAX_REPORTS_PER_SITE)`）。報告者が自分でない、`p` タグに自分がある、`parse_replica_report` でパースでき作者が自分、`ReplicaReport::counts_at(now)` が true（未来ずれの許容・`MAX_REPORT_AGE`・`expiration`）のものの `created_at` の最大値を記録する。`cid` 無し（取り下げ）の報告も数える。取得に成功したら、数える報告が無くても「確かめた」印を付ける（`/api/activity` で `0` になる）。`since` は記録した最大値が 0 なら付けない。取得に失敗したら warn を出し、値はそのまま。購読は増やさない。
 
 受信側で報告を数える規則（`replicas::collect_reports` / `ReplicaReport::counts_at`）は [「レプリカ報告の信頼度」](nostr.md#レプリカ報告の信頼度replicastier)。受信側は `created_at` から `nostr::MAX_REPORT_AGE`（7 日）を過ぎた報告を数えない（[取得と表示の上限](nostr.md#取得と表示の上限nostrbudget)）ので、`report_ttl` はそれ以下でないと設定の検証でエラーになる（[`../architecture.md`](../architecture.md#設定と環境変数)）。出し直しは `report_ttl / 2` ごとなので、上限の 7 日でも最新の報告は常に 3.5 日以内に出ている。
 

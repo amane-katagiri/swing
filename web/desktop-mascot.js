@@ -6,17 +6,28 @@ import { loadPacks } from './desktop-mascot-pack.js';
 import { createSprite } from './desktop-mascot-sprite.js';
 import { createBehavior } from './desktop-mascot-behavior.js';
 import { createBalloon } from './desktop-mascot-balloon.js';
+import { isNoticeEvent } from './desktop-updates.js';
+import { readNotifySettings } from './notify-settings.js';
 
 const DEFAULT_LINES = {
   greet: ['こんにちは！'],
   'site-stored': ['{title} が更新されました'],
   'sites-stored-many': ['新しい更新が {count} 件あります'],
+  'site-published': ['{title} を公開しました'],
+  'sites-published-many': ['{count} 件のサイトを公開しました'],
+  'replica-added': ['{title} をミラーしてくれる人が増えました'],
+  'replicas-added-many': ['{count} 件のサイトをミラーしてくれる人が増えました'],
   'fetch-error': ['サーバにつながらないようです…'],
   recovered: ['サーバにつながりました'],
   idle: ['ひまですね…'],
   click: ['なにかご用ですか？'],
 };
 
+const NOTICE_LINES = {
+  stored: ['site-stored', 'sites-stored-many'],
+  published: ['site-published', 'sites-published-many'],
+  replica: ['replica-added', 'replicas-added-many'],
+};
 const MAX_LINKS = 5;
 const TITLE_MAX = 60;
 const LINE_CLOSE_MS = 4000;
@@ -44,6 +55,7 @@ const loadedPromise = new Promise((resolve) => {
 });
 let updates = null;
 let queued = [];
+let deferred = [];
 let loaded = false;
 let greeted = false;
 let roundRobin = 0;
@@ -78,14 +90,25 @@ function isViewActive() {
   return document.body.dataset.view === 'desktop' && !document.hidden;
 }
 
-function noticeKey(n) {
-  return `${n.pubkey}\u0000${n.site.d}\u0000${n.storedAt}`;
+function combine(prev, next) {
+  if (!prev || next.kind !== 'replica') return next;
+  const reporters = new Map([...prev.added, ...next.added].map((r) => [r.pubkey, r]));
+  return { ...(next.at >= prev.at ? next : prev), at: Math.max(prev.at, next.at), added: Array.from(reporters.values()) };
 }
 
 function mergeNotices(...lists) {
   const byKey = new Map();
-  for (const list of lists) for (const n of list) byKey.set(noticeKey(n), n);
-  return Array.from(byKey.values()).sort((a, b) => a.storedAt - b.storedAt);
+  for (const list of lists) for (const n of list) byKey.set(n.key, combine(byKey.get(n.key), n));
+  return Array.from(byKey.values()).sort((a, b) => a.at - b.at);
+}
+
+function unacknowledged(notices) {
+  return notices.filter((n) => !updates.isAcknowledged(n));
+}
+
+function forMascot(notices) {
+  const { mascot } = readNotifySettings();
+  return notices.filter((n) => mascot[n.kind]);
 }
 
 function showingNotices(inst) {
@@ -106,21 +129,24 @@ function say(inst, kind, now = performance.now()) {
   inst.behavior.setTalking(true, now);
 }
 
+function noticeLine(pack, kind, group) {
+  const [one, many] = NOTICE_LINES[kind];
+  if (group.length > 1) return fill(pickLine(pack, many), { count: group.length });
+  const n = group[0];
+  return fill(pickLine(pack, one), { title: siteTitle(n.site), d: sanitizeDisplayText(n.site.d, TITLE_MAX), count: 1 });
+}
+
 function showNotices(inst, notices, now) {
-  const newest = notices.reduce((max, n) => Math.max(max, n.storedAt), 0);
-  const acknowledge = () => updates.acknowledge(newest);
+  const acknowledge = () => updates.acknowledge(notices);
   const toLink = (n) => ({ label: siteTitle(n.site), href: n.href, onOpen: acknowledge });
-  let content;
-  if (notices.length === 1) {
-    const n = notices[0];
-    const text = fill(pickLine(inst.pack, 'site-stored'), { title: siteTitle(n.site), d: sanitizeDisplayText(n.site.d, TITLE_MAX), count: 1 });
-    content = { text, links: [toLink(n)], more: 0 };
-  } else {
-    const newestFirst = [...notices].reverse();
-    const text = fill(pickLine(inst.pack, 'sites-stored-many'), { count: notices.length });
-    content = { text, links: newestFirst.slice(0, MAX_LINKS).map(toLink), more: Math.max(0, notices.length - MAX_LINKS) };
-  }
-  inst.balloon.show({ ...content, closable: true, autoCloseMs: null, notices, newest }, now, { instant: reducedQuery.matches });
+  const text = Object.keys(NOTICE_LINES)
+    .map((kind) => notices.filter((n) => n.kind === kind))
+    .filter((group) => group.length > 0)
+    .map((group) => noticeLine(inst.pack, group[0].kind, group))
+    .join('\n');
+  const newestFirst = [...notices].reverse();
+  const content = { text, links: newestFirst.slice(0, MAX_LINKS).map(toLink), more: Math.max(0, notices.length - MAX_LINKS) };
+  inst.balloon.show({ ...content, closable: true, autoCloseMs: null, notices }, now, { instant: reducedQuery.matches });
   inst.behavior.setTalking(true, now);
   announce([content.text, ...content.links.map((l) => l.label)].join('、'));
 }
@@ -145,29 +171,43 @@ function deliver(inst, notices, now) {
   showNotices(inst, merged, now);
 }
 
+function distribute(notices) {
+  const fresh = unacknowledged(notices);
+  if (fresh.length === 0 || active.length === 0) return;
+  const now = performance.now();
+  let target = active.find(holdsNotices);
+  if (!target) {
+    target = active[roundRobin % active.length];
+    roundRobin += 1;
+  }
+  for (const inst of active) if (inst !== target) inst.behavior.surprise(now);
+  deliver(target, fresh, now);
+}
+
+function flushDeferred() {
+  if (!loaded || !isViewActive() || deferred.length === 0) return;
+  const notices = forMascot(deferred);
+  deferred = [];
+  distribute(notices);
+}
+
 function onUpdate(event) {
   if (!loaded) {
     queued.push(event);
     return;
   }
-  if (active.length === 0) return;
-  const now = performance.now();
-  if (event.kind === 'sites-stored') {
-    let target = active.find(holdsNotices);
-    if (!target) {
-      target = active[roundRobin % active.length];
-      roundRobin += 1;
-    }
-    for (const inst of active) if (inst !== target) inst.behavior.surprise(now);
-    deliver(target, event.notices, now);
-  } else if (event.kind === 'fetch-error' || event.kind === 'recovered') {
-    say(active[roundRobin % active.length], event.kind, now);
+  if (isNoticeEvent(event)) {
+    const notices = forMascot(event.notices);
+    if (isViewActive()) distribute(notices);
+    else deferred = mergeNotices(deferred, notices);
+  } else if ((event.kind === 'fetch-error' || event.kind === 'recovered') && isViewActive() && active.length > 0) {
+    say(active[roundRobin % active.length], event.kind, performance.now());
   }
 }
 
 function onBalloonClose(inst, content, reason, hadFocus) {
   inst.behavior.setTalking(false, performance.now());
-  if (reason === 'button' && content.newest != null) updates.acknowledge(content.newest);
+  if (reason === 'button' && Array.isArray(content.notices)) updates.acknowledge(content.notices);
   if (hadFocus && els.fallbackFocus) els.fallbackFocus.focus();
 }
 
@@ -501,6 +541,12 @@ async function load() {
   queued = [];
   for (const event of pendingEvents) onUpdate(event);
   greetOnce();
+  flushDeferred();
+  startLoop();
+}
+
+function onVisibility() {
+  flushDeferred();
   startLoop();
 }
 
@@ -511,7 +557,7 @@ export const DesktopMascots = {
     updates.subscribe(onUpdate);
     new ResizeObserver(measure).observe(els.container);
     reducedQuery.addEventListener('change', applyReduced);
-    document.addEventListener('visibilitychange', startLoop);
+    document.addEventListener('visibilitychange', onVisibility);
     watchDocument(document, topSource);
     load();
   },
@@ -522,7 +568,13 @@ export const DesktopMascots = {
   onShow() {
     if (!els.container) return;
     greetOnce();
+    flushDeferred();
     startLoop();
+  },
+  showing() {
+    if (!els.container || !isViewActive()) return false;
+    if (!loaded) return settings.packs == null || settings.packs.length > 0;
+    return active.length > 0;
   },
   packs() {
     return allPacks;

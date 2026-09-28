@@ -2,6 +2,7 @@ import { storage } from './storage.js';
 import { t, currentLang } from './i18n.js';
 import { cache, el, apiFetch, setStatus, clearStatus, describeError, createLoadGuard, setBusy } from './util.js';
 import { loadStats } from './stats.js';
+import { BrowserNotifySettings } from './settings-notify.js';
 
 const settingsEls = {
   notWritableNotice: document.getElementById('settings-not-writable-notice'),
@@ -199,7 +200,7 @@ function applyTheme(theme) {
 const settingsLoadGuard = createLoadGuard();
 
 export const SettingsView = {
-  init() {
+  init({ updates }) {
     const savedTheme = storage.get('swing:theme', 'auto');
     applyTheme(savedTheme);
     settingsEls.themeSelect.value = savedTheme;
@@ -228,6 +229,8 @@ export const SettingsView = {
       userCssEl.textContent = '';
     });
 
+    BrowserNotifySettings.init({ updates });
+
     async function runProcessAction(button, confirmKey, path, okKey) {
       if (!window.confirm(t(confirmKey))) return;
       clearStatus(settingsEls.processStatus);
@@ -249,6 +252,7 @@ export const SettingsView = {
   onShow() {
     if (cache.config) renderConfig(cache.config);
     else this.load();
+    BrowserNotifySettings.onShow();
     loadStats();
   },
   async load(force) {

@@ -256,6 +256,12 @@ pub trait ReportRelay {
         &self,
         report_kind: u16,
     ) -> impl Future<Output = Result<Vec<Event>>> + Send;
+    fn fetch_reports_about(
+        &self,
+        report_kind: u16,
+        author: PublicKey,
+        since: Option<u64>,
+    ) -> impl Future<Output = Result<Vec<Event>>> + Send;
     fn send_report(&self, report: EventBuilder) -> impl Future<Output = Result<bool>> + Send;
 }
 
@@ -275,6 +281,26 @@ impl ReportRelay for RelayClient {
         self.fetch(filter, "fetching own replica reports").await
     }
 
+    async fn fetch_reports_about(
+        &self,
+        report_kind: u16,
+        author: PublicKey,
+        since: Option<u64>,
+    ) -> Result<Vec<Event>> {
+        let mut filter = Filter::new()
+            .kind(Kind::Custom(report_kind))
+            .pubkey(author)
+            .limit(capped_limit(
+                budget::MAX_SITES_PER_AUTHOR_LISTED,
+                budget::MAX_REPORTS_PER_SITE,
+            ));
+        if let Some(since) = since {
+            filter = filter.since(Timestamp::from_secs(since));
+        }
+        self.fetch(filter, "fetching replica reports about own sites")
+            .await
+    }
+
     async fn send_report(&self, report: EventBuilder) -> Result<bool> {
         let event = self.sign(report).await.context("signing replica report")?;
         let output = self.publish_to_relays(&event).await?;
@@ -289,6 +315,15 @@ impl<T: ReportRelay + Send + Sync> ReportRelay for std::sync::Arc<T> {
 
     async fn fetch_own_reports(&self, report_kind: u16) -> Result<Vec<Event>> {
         T::fetch_own_reports(self, report_kind).await
+    }
+
+    async fn fetch_reports_about(
+        &self,
+        report_kind: u16,
+        author: PublicKey,
+        since: Option<u64>,
+    ) -> Result<Vec<Event>> {
+        T::fetch_reports_about(self, report_kind, author, since).await
     }
 
     async fn send_report(&self, report: EventBuilder) -> Result<bool> {
