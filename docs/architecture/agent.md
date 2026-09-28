@@ -156,7 +156,7 @@ state のロックの中で行う。
 
 ## state.json（state.rs）
 
-`[agent].state_dir` 直下。一時ファイルに書いて rename する。
+`[agent].state_dir` 直下。ダッシュボードのトークンや `remote-signer.json` と同じ `auth::write_private_file` で、一時ファイル（unix では `0o600`）に書いて `fsync` してから rename する。`state_dir` が無ければ `auth::create_private_dir_all` で作る（unix では新しく作るディレクトリだけ `0o700`。既にあるディレクトリのモードは変えない）。
 
 ```json
 {

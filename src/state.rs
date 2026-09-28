@@ -1,5 +1,5 @@
 use std::collections::{BTreeMap, BTreeSet};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use anyhow::{Context, Result};
 use nostr_sdk::prelude::Event;
@@ -56,14 +56,10 @@ impl State {
         if let Some(parent) = path.parent()
             && !parent.as_os_str().is_empty()
         {
-            std::fs::create_dir_all(parent)
+            crate::auth::create_private_dir_all(parent)
                 .with_context(|| format!("creating state dir {}", parent.display()))?;
         }
-        let tmp: PathBuf = path.with_extension("json.tmp");
-        std::fs::write(&tmp, text).with_context(|| format!("writing {}", tmp.display()))?;
-        std::fs::rename(&tmp, path)
-            .with_context(|| format!("renaming {} to {}", tmp.display(), path.display()))?;
-        Ok(())
+        crate::auth::write_private_file(path, text)
     }
 
     pub async fn load(path: &Path) -> Result<Self> {
@@ -225,6 +221,19 @@ mod tests {
         let loaded = State::load(&path).await.unwrap();
         assert_eq!(loaded.total_bytes(), 100);
         assert_eq!(loaded.site_bytes(&site_key("abc", "example.com")), 100);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn saved_state_and_new_state_dir_are_private() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let state_dir = dir.path().join("state");
+        let path = state_dir.join("state.json");
+        State::default().save(&path).await.unwrap();
+        let mode = |p: &Path| std::fs::metadata(p).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode(&state_dir), 0o700);
+        assert_eq!(mode(&path), 0o600);
     }
 
     #[tokio::test]
