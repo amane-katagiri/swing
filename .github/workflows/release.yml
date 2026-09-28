@@ -77,7 +77,8 @@ jobs:
         run: |
           name="swing-${GITHUB_REF_NAME}-${{ matrix.target }}"
           mkdir -p "dist/$name"
-          cp LICENSE README.md "dist/$name/"
+          cp LICENSE swing.example.toml web/fonts/LICENSE-PixelMplus.txt "dist/$name/"
+          cp docs/release/README.md "dist/$name/README.md"
           if [ "${{ runner.os }}" = Windows ]; then
             cp "target/${{ matrix.target }}/release/swing.exe" "target/${{ matrix.target }}/release/swing-tray.exe" "dist/$name/"
             (cd dist && 7z a "$name.zip" "$name" >/dev/null)

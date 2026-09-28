@@ -16,7 +16,7 @@
 - workspace には `swing` と `swing-tray`（`tray/`）がある。fmt は `cargo fmt --all --check`、clippy / test は `--workspace` で回し、いずれもワークスペース全体（`tray/` を含む）を対象にする。Linux は `-p swing` だけをビルドし、Windows と macOS は `--workspace` でビルドする。
 - Windows 向けのビルドでは、`build.rs`（`swing` と `swing-tray` の両方）が `winresource` でファイルアイコン（`swing` は `assets/swing.ico`、`swing-tray` は `tray/assets/swing-tray.ico`）とバージョン情報（`Cargo.toml` の `name`・`version`）を exe に埋め込む。他の target では何もしない。
 - macOS の `swing` は素の実行ファイルで、ファイルアイコンは付かない。`swing-tray` は `tray/macos/bundle.sh` で `SWING.app` にまとめ、アイコンと名前はバンドルが持つ（[`tray.md`](tray.md#macos-のアプリバンドルswingapp)）。
-- 成果物は `swing-<ref>-<target>.tar.gz`（Windows は `.zip`）で、中身は `swing`（`swing.exe`）・`LICENSE`・`README.md`。Windows には `swing-tray.exe`、macOS には `SWING.app` も入れる。Kubo は同梱しない。
+- 成果物は `swing-<ref>-<target>.tar.gz`（Windows は `.zip`）で、中身は `swing`（`swing.exe`）・`LICENSE`・`web/fonts/LICENSE-PixelMplus.txt`・`swing.example.toml` と、`docs/release/README.md` を `README.md` に改名したもの。Windows には `swing-tray.exe`、macOS には `SWING.app` も入れる。Kubo は同梱しない。
 - タグの ref で動いたとき（タグの push と、タグを選んだ手動実行）は、タグ名と `Cargo.toml` の `version` が一致しないと失敗する（`v0.1.0` と `0.1.0`）。全 target が通ると `SHA256SUMS` を付けた**ドラフト**のリリースを作る。公開は GitHub 上で手動で行う。
 - ブランチで手動実行したときはリリースを作らず、バイナリは Actions の artifact に残す。イメージは下記のとおり push する。
 - `image` ジョブが `ghcr.io/<owner>/<repo>`（小文字）のコンテナイメージを `linux/amd64`・`linux/arm64` で作る。中身は `build` ジョブの `x86_64-unknown-linux-musl`・`aarch64-unknown-linux-musl` の `swing` を `docker/release.Dockerfile`（[`docker.md`](docker.md#dockerfile)）に入れたもの。QEMU は `RUN`（ユーザー作成）にだけ使う。
