@@ -47,14 +47,23 @@ Mac の実機が無くても `swing-tray` とサービス登録を macOS で動�
 4. 動作中のメニューを開く（ライト → ダーク）。開いたメニューの項目名と有効・無効も保存する
 5. `swing stop` で止め、停止中のアイコンとメニューを撮る（ダーク → ライト）
 6. トレイのメニューを開いて ↓ → Return（停止中に最初に選べるのは「Start」）で起動し、動作中に戻るのを撮る
-7. `swing service uninstall` の後の `~/Library/LaunchAgents` とプロセスを保存する（前の段階が失敗しても行う）
+7. 英語のまま、メニューの「Stop」で出る確認のダイアログを撮って文言とボタンを保存し、開いたままアイコンをクリックして撮り（メニューは開かない）、「No」を押して止まらないことを確かめる。続けて「Quit」のダイアログを保存して「Cancel」を押し、トレイも `swing up` も残ることを確かめる
+8. `defaults write -g AppleLanguages -array ja-JP en-US` と `AppleLocale ja_JP` にして、`launchctl kickstart -k` でトレイを起動し直し、動作中のメニューを日本語で撮って保存する
+9. 「ダッシュボードを開く」を選び、Safari のプロセスが出るのを待って撮る。Safari のウィンドウ名と、Safari の履歴（`~/Library/Safari/History.db`）に残った URL を保存する（ログインリンク `/login?code=…` → `/` → `/#/setup` と進めばログインできている）
+10. 「停止」のダイアログを保存して「いいえ」（止まらない）、もう一度「停止」で「はい」（ダッシュボードが応答しなくなる）を押し、停止中のメニューを保存する
+11. 停止中のメニューの「起動」で起動し直す
+12. 「終了」のダイアログを保存して「キャンセル」（トレイも `swing up` も残る）、もう一度「終了」で「いいえ」（トレイだけが閉じ、`swing up` は動き続ける）を押す。トレイを `launchctl kickstart -k` で起動し直し、「終了」で「はい」（`swing up` が止まり、トレイも閉じる）を押す
+13. `swing service uninstall` の後の `~/Library/LaunchAgents` とプロセスを保存する（前の段階が失敗しても行う）
 
 操作はランナーのシェルから `osascript` で行う（`/bin/bash` と `osascript` にはアクセシビリティと Apple Events の許可が付いている）。
 
 - `swing-tray` のアイコンは、System Events では `swing-tray` のプロセス（`SWING.app` に入れたので名前は `SWING` になる。`pgrep -x swing-tray` の PID の `unix id` で探す）の `menu bar 1` の `menu bar item 1` に見える。AX の `click` では `tray-icon` のメニューが開かないので、その位置の中央に `CGEventPost` でマウスのクリックを送る（JXA）。
 - ダークモードは System Events の `appearance preferences` で切り替える。
+- メニューの項目は名前で選ぶ。開いたメニューの項目を上から数えて、目的の項目までの有効な項目の数だけ ↓ を押し、Return を押す。
+- 確認のダイアログはトレイのプロセスではなく `UserNotificationCenter` のプロセスの `window 1`（subrole は `AXSystemDialog`）に見えるので、ボタンは AX の `click button "<名前>"` で押す。ボタンの名前は表示言語のもの（[`tray.md`](tray.md#確認のダイアログ)）。
+- Safari に Apple Events で `URL of front document` を聞くと時間切れになるので、URL は履歴のデータベースを `sqlite3` で読む。
 
-2〜6 は失敗しても続ける（`continue-on-error`）。撮った画像・テキスト・`~/Library/Logs/swing*.log`・TCC の許可の一覧は artifact `macos-check` に残す。入力 `ssh` を true にすると、最後に `mxschmitt/action-tmate` で実行した本人だけが入れる tmate のセッションを開く。ログインし直したときの自動起動と、Retina での表示は、ランナーでは確かめられない。
+`service install`・`swing stop`・日本語への切り替え（8）・`service uninstall` 以外の段階は、失敗しても続ける（`continue-on-error`）。撮った画像・テキスト・`~/Library/Logs/swing*.log`・TCC の許可の一覧は artifact `macos-check` に残す。入力 `ssh` を true にすると、最後に `mxschmitt/action-tmate` で実行した本人だけが入れる tmate のセッションを開く。ログインし直したときの自動起動と、Retina での表示は、ランナーでは確かめられない。
 
 ## Windows の動作確認（`.github/workflows/windows-check.yml`）
 

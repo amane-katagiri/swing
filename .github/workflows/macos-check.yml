@@ -70,7 +70,11 @@ jobs:
           open_menu() {
             local x y w h
             IFS=', ' read -r x y w h < <(sysev 'get {position, size} of menu bar item 1 of menu bar 1')
-            osascript -l JavaScript "$W/click.js" $((x + w / 2)) $((y + h / 2)) >> "$OUT/osascript.log" 2>&1
+            echo "$((x + w / 2)) $((y + h / 2))" > "$W/menu-pos"
+            click_menu_again
+          }
+          click_menu_again() {
+            osascript -l JavaScript "$W/click.js" $(cat "$W/menu-pos") >> "$OUT/osascript.log" 2>&1
             sleep 2
           }
           key() { osascript -e "tell application \"System Events\" to key code $1" >> "$OUT/osascript.log" 2>&1; sleep 0.5; }
@@ -86,6 +90,60 @@ jobs:
             key 125
             key 36
           }
+          item_index() {
+            osascript - "$1" "$(pgrep -x swing-tray)" <<'OSA'
+          on run argv
+            tell application "System Events" to tell (first process whose unix id is ((item 2 of argv) as integer))
+              set n to 0
+              repeat with m in (every menu item of menu 1 of menu bar item 1 of menu bar 1)
+                if enabled of m then set n to n + 1
+                if name of m is (item 1 of argv) then return n
+              end repeat
+            end tell
+            return 0
+          end run
+          OSA
+          }
+          choose() {
+            local n
+            open_menu
+            n=$(item_index "$1")
+            if [ "${n:-0}" -le 0 ]; then echo "no enabled menu item: $1"; close_menu; return 1; fi
+            for _ in $(seq "$n"); do key 125; done
+            key 36
+          }
+          alert() { osascript -e "with timeout of 10 seconds" -e "tell application \"System Events\" to tell process \"UserNotificationCenter\" to $1" -e "end timeout"; }
+          wait_dialog() {
+            for _ in $(seq 20); do
+              [ -n "$(alert 'get name of every button of window 1' 2>/dev/null)" ] && return 0
+              sleep 0.5
+            done
+            echo "no dialog"
+            osascript -e 'tell application "System Events" to get name of every process' > "$OUT/processes-no-dialog.txt" 2>&1 || true
+            return 1
+          }
+          dialog() {
+            wait_dialog
+            shot "$1" 1
+            {
+              alert 'get {name, subrole} of every window'
+              alert 'get value of every static text of window 1'
+              alert 'get name of every button of window 1'
+            } > "$OUT/$1.txt" 2>&1 || true
+            cat "$OUT/$1.txt"
+          }
+          press() { alert "click button \"$1\" of window 1"; sleep 1; }
+          probe_tray() {
+            local t0=$SECONDS
+            { sysev 'get {position, size} of menu bar item 1 of menu bar 1'; echo "exit $? after $((SECONDS - t0))s"; } > "$OUT/$1.txt" 2>&1 || true
+            click_menu_again
+            shot "$1" 0
+            close_menu
+            cat "$OUT/$1.txt"
+          }
+          tray_alive() { pgrep -x swing-tray > /dev/null; }
+          wait_tray_gone() { for _ in $(seq 30); do tray_alive || return 0; sleep 1; done; echo "swing-tray is still running"; return 1; }
+          restart_tray() { launchctl kickstart -k "gui/$(id -u)/jp.ne.ama.swing-tray"; for _ in $(seq 30); do tray_alive && break; sleep 1; done; sleep 8; }
           EOF
           . "$W/lib.sh"
           dark false || true
@@ -157,6 +215,111 @@ jobs:
           wait_up
           shot 10-started 8
 
+      - name: Dialogs in English
+        continue-on-error: true
+        run: |
+          . "$W/lib.sh"
+          choose Stop
+          dialog 12-en-stop-dialog
+          probe_tray 12-en-menu-during-dialog
+          press No
+          shot 12-en-after-dialog 1
+          close_menu
+          sleep 3
+          up
+          tray_alive
+          choose Quit
+          dialog 13-en-quit-dialog
+          press Cancel
+          sleep 3
+          up
+          tray_alive
+
+      - name: Switch to Japanese
+        run: |
+          . "$W/lib.sh"
+          defaults write -g AppleLanguages -array ja-JP en-US
+          defaults write -g AppleLocale ja_JP
+          defaults read -g AppleLanguages > "$OUT/languages-ja.txt" 2>&1
+          restart_tray
+          shot 14-ja-running
+
+      - name: Menu in Japanese
+        continue-on-error: true
+        run: |
+          . "$W/lib.sh"
+          menu 15-ja-running-menu
+
+      - name: Open dashboard
+        continue-on-error: true
+        run: |
+          . "$W/lib.sh"
+          choose "ダッシュボードを開く"
+          for _ in $(seq 30); do pgrep -x Safari > /dev/null && break; sleep 1; done
+          pgrep -fl Safari | tee "$OUT/pgrep-safari.txt"
+          pgrep -x Safari > /dev/null
+          shot 16-ja-dashboard 10
+          osascript -e 'with timeout of 10 seconds' -e 'tell application "System Events" to tell process "Safari" to get name of every window' -e 'end timeout' > "$OUT/16-ja-dashboard.txt" 2>&1 || true
+          pkill -x Safari || true
+          sleep 3
+          sqlite3 ~/Library/Safari/History.db "select datetime(v.visit_time + 978307200, 'unixepoch'), i.url, v.redirect_source is not null from history_visits v join history_items i on i.id = v.history_item order by v.visit_time" >> "$OUT/16-ja-dashboard.txt" 2>&1 || true
+          cat "$OUT/16-ja-dashboard.txt"
+
+      - name: Stop from the tray
+        continue-on-error: true
+        run: |
+          . "$W/lib.sh"
+          choose "停止"
+          dialog 17-ja-stop-dialog
+          press いいえ
+          sleep 5
+          up
+          shot 18-ja-stop-cancelled 0
+          choose "停止"
+          wait_dialog
+          press はい
+          shot 19-ja-stopping 0
+          wait_down
+          shot 20-ja-stopped 8
+          menu 21-ja-stopped-menu
+
+      - name: Start from the tray in Japanese
+        continue-on-error: true
+        run: |
+          . "$W/lib.sh"
+          start_from_menu
+          shot 22-ja-starting 0
+          wait_up
+          shot 23-ja-started 8
+
+      - name: Quit from the tray
+        continue-on-error: true
+        run: |
+          . "$W/lib.sh"
+          choose "終了"
+          dialog 24-ja-quit-dialog
+          press キャンセル
+          sleep 3
+          tray_alive
+          up
+          choose "終了"
+          wait_dialog
+          press いいえ
+          wait_tray_gone
+          sleep 3
+          up
+          pgrep -fl swing | tee "$OUT/25-ja-quit-no.txt"
+          shot 25-ja-quit-no 0
+          restart_tray
+          choose "終了"
+          wait_dialog
+          press はい
+          shot 26-ja-quit-yes 0
+          wait_down
+          wait_tray_gone
+          pgrep -fl swing | tee "$OUT/27-ja-quit-yes.txt" || true
+          shot 27-ja-quit-yes-done 0
+
       - name: Uninstall the service
         if: always()
         run: |
@@ -165,7 +328,7 @@ jobs:
           sleep 3
           ls ~/Library/LaunchAgents > "$OUT/launchagents-after.txt"
           pgrep -fl 'swing' > "$OUT/pgrep-after.txt" || true
-          shot 11-uninstalled
+          shot 30-uninstalled
 
       - name: Collect logs
         if: always()
