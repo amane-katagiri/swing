@@ -328,8 +328,9 @@ enum MirrorCommand {
     },
 }
 
-fn init_tracing(log_file: Option<&PathBuf>) -> Result<()> {
-    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
+fn init_tracing(log_file: Option<&PathBuf>, default_filter: &str) -> Result<()> {
+    let filter =
+        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(default_filter));
     match log_file {
         Some(path) => {
             let file = std::fs::OpenOptions::new()
@@ -352,11 +353,11 @@ fn init_tracing(log_file: Option<&PathBuf>) -> Result<()> {
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
-    let log_file = match &cli.command {
-        Command::Up { log_file, .. } => log_file.as_ref(),
-        _ => None,
+    let (log_file, default_filter) = match &cli.command {
+        Command::Up { log_file, .. } => (log_file.as_ref(), "info"),
+        _ => (None, "info,nostr_sdk=warn,nostr_connect=warn"),
     };
-    init_tracing(log_file)?;
+    init_tracing(log_file, default_filter)?;
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()?;

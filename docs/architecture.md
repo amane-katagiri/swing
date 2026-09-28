@@ -35,7 +35,7 @@
 | ダッシュボードの HTTP サーバ | `axum` 0.8、リクエストタイムアウトに `tower-http` |
 | 設定 | `toml` + `serde`、環境変数が TOML を上書き |
 | CLI | `clap` derive |
-| ログ | `tracing` + `tracing-subscriber`（`RUST_LOG`、既定 `info`） |
+| ログ | `tracing` + `tracing-subscriber`（`RUST_LOG`。既定は `swing up` が `info`、ほかのコマンドは relay への接続・切断のログが出力に混ざらないよう `info,nostr_sdk=warn,nostr_connect=warn`） |
 | CID 検証 | `cid` クレート |
 
 クレート `swing` は lib + bin 構成。統合テストは `swing::` としてモジュールを直接使う。
