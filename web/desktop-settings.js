@@ -1,8 +1,9 @@
 import { createDialog } from './desktop-dialog.js';
 import { WallpaperPage } from './desktop-wallpaper.js';
 import { MascotSettingsPage } from './desktop-mascot-settings.js';
+import { SystemSettingsPage } from './desktop-system-settings.js';
 
-const PAGES = [WallpaperPage, MascotSettingsPage];
+const PAGES = [WallpaperPage, MascotSettingsPage, SystemSettingsPage];
 
 const dialogRoot = document.getElementById('desk-dialog-control-panel');
 

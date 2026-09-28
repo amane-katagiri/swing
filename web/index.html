@@ -14,6 +14,7 @@
 <link rel="stylesheet" href="/desktop-dialog.css">
 <link rel="stylesheet" href="/desktop-wallpaper.css">
 <link rel="stylesheet" href="/desktop-mascot-settings.css">
+<link rel="stylesheet" href="/desktop-system-settings.css">
 <link rel="stylesheet" href="/desktop-mascot.css">
 <link rel="stylesheet" href="/custom.css">
 <style id="user-css"></style>
@@ -292,6 +293,7 @@
           <div class="desk-dialog-tabs" role="tablist" aria-label="コントロール パネルのタブ">
             <button type="button" class="desk-dialog-tab is-active" id="desk-tab-background" data-tab="background" role="tab" aria-selected="true" aria-controls="desk-tabpanel-background">背景</button>
             <button type="button" class="desk-dialog-tab" id="desk-tab-mascot" data-tab="mascot" role="tab" aria-selected="false" aria-controls="desk-tabpanel-mascot" tabindex="-1">マスコット</button>
+            <button type="button" class="desk-dialog-tab" id="desk-tab-system" data-tab="system" role="tab" aria-selected="false" aria-controls="desk-tabpanel-system" tabindex="-1">システム</button>
           </div>
           <div class="desk-dialog-body">
             <div class="desk-tabpanel" id="desk-tabpanel-background" role="tabpanel" aria-labelledby="desk-tab-background">
@@ -383,6 +385,64 @@
                 </label>
               </fieldset>
               <p class="desk-wp-storage-error" id="desk-ms-storage-error" hidden></p>
+            </div>
+            <div class="desk-tabpanel" id="desk-tabpanel-system" role="tabpanel" aria-labelledby="desk-tab-system" hidden>
+              <fieldset class="desk-fieldset">
+                <legend>起動</legend>
+                <label class="desk-check">
+                  <input type="checkbox" class="desk-check-input" id="desk-sys-startup">
+                  <span class="desk-check-label">起動時にデスクトップを表示する</span>
+                </label>
+                <label class="desk-check">
+                  <input type="checkbox" class="desk-check-input" disabled>
+                  <span class="desk-check-label">起動音を鳴らす</span>
+                </label>
+                <label class="desk-check">
+                  <input type="checkbox" class="desk-check-input" checked disabled>
+                  <span class="desk-check-label">前回終了時に開いていたサイトを復元する</span>
+                </label>
+              </fieldset>
+              <fieldset class="desk-fieldset" disabled>
+                <legend>パフォーマンス</legend>
+                <div class="desk-sys-row">
+                  <span>コンピュータの役割:</span>
+                  <div class="desk-combobox">
+                    <button type="button" class="desk-combobox-field" aria-haspopup="listbox" aria-expanded="false" disabled>
+                      <span class="desk-combobox-value">ネットワーク サーバー</span>
+                      <span class="desk-combobox-arrow" aria-hidden="true"></span>
+                    </button>
+                  </div>
+                </div>
+                <label class="desk-check">
+                  <input type="checkbox" class="desk-check-input" checked disabled>
+                  <span class="desk-check-label">ウィンドウの内容を表示したままドラッグする</span>
+                </label>
+                <label class="desk-check">
+                  <input type="checkbox" class="desk-check-input" disabled>
+                  <span class="desk-check-label">仮想メモリを自分で設定する</span>
+                </label>
+              </fieldset>
+              <fieldset class="desk-fieldset" disabled>
+                <legend>ネットワーク</legend>
+                <div class="desk-sys-row">
+                  <span>モデムの速度:</span>
+                  <div class="desk-combobox">
+                    <button type="button" class="desk-combobox-field" aria-haspopup="listbox" aria-expanded="false" disabled>
+                      <span class="desk-combobox-value">28,800 bps</span>
+                      <span class="desk-combobox-arrow" aria-hidden="true"></span>
+                    </button>
+                  </div>
+                </div>
+                <label class="desk-check">
+                  <input type="checkbox" class="desk-check-input" checked disabled>
+                  <span class="desk-check-label">必要なときにダイヤルアップで接続する</span>
+                </label>
+                <label class="desk-check">
+                  <input type="checkbox" class="desk-check-input" disabled>
+                  <span class="desk-check-label">テレホーダイを利用できない場合は接続前に警告する</span>
+                </label>
+              </fieldset>
+              <p class="desk-wp-storage-error" id="desk-sys-storage-error" hidden></p>
             </div>
           </div>
           <div class="desk-dialog-buttons">

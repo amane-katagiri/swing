@@ -23,6 +23,7 @@ Desktop 画面専用のモジュール（依存は下から上への一方向。
 | `desktop-mascot-balloon.js` | 吹き出し（`createBalloon`）。文字送り・リンク・「とじる」・配置 |
 | `desktop-mascot.js` | マスコット全体の進行（`DesktopMascots`）。表示するパックごとに 1 体を出し、共有の `requestAnimationFrame` ループ・おしらせの振り分け・ポインタ操作と当たり判定の切り替えを持つ。`desktop.js` の `init`/`onShow` から呼ぶ。読み込んだパックの一覧（`packs()`・`whenLoaded()`）と設定の反映（`applySettings`）を「マスコット」タブに出す |
 | `desktop-mascot-settings.js` | 「コントロール パネル」の「マスコット」タブ本体（`MascotSettingsPage`）。保存キーもここで定義する |
+| `desktop-system-settings.js` | 「コントロール パネル」の「システム」タブ本体（`SystemSettingsPage`）と、パスなしで開いたときの画面を返す `startupView()`（`app.js` が使う）。保存キーもここで定義する |
 | `desktop-settings.js` | 「コントロール パネル」の殻（`PAGES` を `desktop-dialog.js` に結び付ける、`DesktopSettings`） |
 | `desktop.js` | 画面のロジック本体（デスクトップアイコンの選択・起動、リンク集ページへの書き込み、共通のクリック/フォーカス処理） |
 
@@ -30,7 +31,7 @@ Desktop 画面専用のモジュール（依存は下から上への一方向。
 
 | ファイル | 役割 |
 |---|---|
-| `desktop.css`・`desktop-dialog.css`・`desktop-wallpaper.css`・`desktop-mascot-settings.css`・`desktop-mascot.css` | `index.html` がこの順に読む CSS（それぞれフォント・シェル・`--desk-*` 変数、ダイアログの枠・汎用部品（チェックボックスを含む）、「背景」タブ固有、「マスコット」タブ固有、マスコットと吹き出し）。読み込み順は [`web.md#css-カスタマイズのインターフェース`](web.md#css-カスタマイズのインターフェース) |
+| `desktop.css`・`desktop-dialog.css`・`desktop-wallpaper.css`・`desktop-mascot-settings.css`・`desktop-system-settings.css`・`desktop-mascot.css` | `index.html` がこの順に読む CSS（それぞれフォント・シェル・`--desk-*` 変数、ダイアログの枠・汎用部品（無効状態を含むチェックボックス）、「背景」タブ固有、「マスコット」タブ固有、「システム」タブ固有、マスコットと吹き出し）。読み込み順は [`web.md#css-カスタマイズのインターフェース`](web.md#css-カスタマイズのインターフェース) |
 | `desktop-frame.css` | 窓側のスクロールバーの見た目。`desktop.js` がリンク集ページ（iframe）に差し込む（下記「[リンク集ページ（iframe）](#リンク集ページiframe)」） |
 | `desktop-page.html`・`desktop-page.css`・`desktop-banner.gif` | リンク集ページ・その専用 CSS・88×31 バナーの同梱版。設定で差し替えられる（[`../dashboard.md#設定dashboard`](../dashboard.md#設定dashboard)） |
 | `desktop-icons.svg` | ピクセルアートアイコンのスプライト。`index.html` から `<use>` で参照する。SE ロゴの E は S との隙間を切り欠いた塗りの図形で持つ（外部ファイルの `<symbol>` の `mask` は、Firefox では CSS `zoom` の内側でずれるため使わない） |
@@ -79,7 +80,7 @@ SWING Explorer ウィンドウ・「コントロール パネル」ダイアロ�
 
 ### コントロール パネル
 
-デスクトップアイコン「コントロール パネル」をダブルクリックまたは Enter/Space でモーダルダイアログ「コントロール パネル」を開く。タブは「背景」「マスコット」の 2 つ。ロジックは 3 層（ダイアログ一般の機能を持つ `desktop-dialog.js`、タブ切り替えの殻 `desktop-settings.js`、各タブの中身の `desktop-wallpaper.js::WallpaperPage`・`desktop-mascot-settings.js::MascotSettingsPage`）に分かれる。
+デスクトップアイコン「コントロール パネル」をダブルクリックまたは Enter/Space でモーダルダイアログ「コントロール パネル」を開く。タブは「背景」「マスコット」「システム」の 3 つ。ロジックは 3 層（ダイアログ一般の機能を持つ `desktop-dialog.js`、タブ切り替えの殻 `desktop-settings.js`、各タブの中身の `desktop-wallpaper.js::WallpaperPage`・`desktop-mascot-settings.js::MascotSettingsPage`・`desktop-system-settings.js::SystemSettingsPage`）に分かれる。
 
 **Page のインターフェース**: `desktop-settings.js` の `PAGES` の各要素は、`id`（`data-tab` と一致）・`init({changed, dialog, updates})`（`updates` は `desktop.js` の `desktopUpdates`）・`open()`・`isDirty()`・`save()`・`discard()` を持つオブジェクト（任意で `onKey(ev)`・`boot()`）。ドラッグ・Tab トラップ・Esc/Enter・OK/キャンセル/適用ボタンは `createDialog` が全ページ共通で持つ（フォーカス表示は CSS）。
 
@@ -96,6 +97,8 @@ SWING Explorer ウィンドウ・「コントロール パネル」ダイアロ�
 - **適用先**: `#desk-wallpaper`（アイコンより下・ウィンドウより下の層）。保存値はページ読み込み時に 1 回 `localStorage` から読み、以後はメモリ上の保存値を Desktop 画面の表示のたびに当て直す（別のタブで保存した値は読み直さない）。保存に失敗したらエラーを出し、保存値は変えない。
 
 **マスコットタブ（`MascotSettingsPage`）**: 表示するマスコットの選択・更新の確認の間隔（下記「[更新の確認](#更新の確認)」）・動き（「歩きまわる」「ひとりごとを言う」）を選び、`swing:desktop:mascot` キーに保存する。詳細は [`mascot.md#マスコットタブ`](mascot.md#マスコットタブ)。
+
+**システムタブ（`SystemSettingsPage`）**: 実際に働く項目は「起動時にデスクトップを表示する」チェックボックスだけ。オンにすると、ハッシュが無い（または知らない画面の）URL で開いたときの画面が `sites` ではなく `desktop` になる。`web/storage.js` 経由で `swing:desktop:startup` キー（`desktop-system-settings.js` で定義）に `"1"`/`"0"` で保存し、`"1"` 以外はオフ扱い。ほかに並ぶ項目（起動音・パフォーマンス・ネットワークなど）は飾りで、HTML で `disabled` にしてあり保存もしない。
 
 ### レイアウト
 

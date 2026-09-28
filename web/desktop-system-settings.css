@@ -1,0 +1,21 @@
+.desk-sys-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 8px;
+  align-items: center;
+  min-width: 0;
+  font-size: 12px;
+}
+
+.desk-sys-row > span {
+  flex: none;
+}
+
+.desk-fieldset:disabled .desk-sys-row > span {
+  color: var(--desk-shadow);
+  text-shadow: 1px 1px 0 var(--desk-highlight);
+}
+
+.desk-sys-row + .desk-check {
+  margin-top: 8px;
+}

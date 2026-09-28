@@ -9,6 +9,7 @@ import { SettingsView, renderConfig } from './settings.js';
 import { renderStats } from './stats.js';
 import { SetupView } from './setup.js';
 import { LoginView } from './login.js';
+import { startupView } from './desktop-system-settings.js';
 
 const VIEWS = { desktop: DesktopView, sites: SitesView, webring: WebringView, publish: PublishView, settings: SettingsView, setup: SetupView, login: LoginView };
 
@@ -18,7 +19,7 @@ function currentRoute() {
   const hash = location.hash.replace(/^#\/?/, '');
   if (unauthorized) return 'login';
   if (cache.overview && cache.overview.setup) return 'setup';
-  return hash !== 'login' && Object.prototype.hasOwnProperty.call(VIEWS, hash) ? hash : 'sites';
+  return hash !== 'login' && Object.prototype.hasOwnProperty.call(VIEWS, hash) ? hash : startupView();
 }
 
 function showRoute() {

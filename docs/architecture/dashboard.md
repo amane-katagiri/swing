@@ -111,7 +111,7 @@ HTTP サーバー（axum 0.8）で、ダッシュボードのブラウザ向け�
 | `GET /` | `text/html; charset=utf-8`（`index.html`） |
 | `GET /favicon.svg` | `image/svg+xml` |
 | `GET /favicon-32.png` `/apple-touch-icon.png` | `image/png`（`include_bytes!`） |
-| `GET /style.css` `/desktop.css` `/desktop-dialog.css` `/desktop-wallpaper.css` `/desktop-mascot-settings.css` | `text/css; charset=utf-8` |
+| `GET /style.css` `/desktop.css` `/desktop-dialog.css` `/desktop-wallpaper.css` `/desktop-mascot-settings.css` `/desktop-system-settings.css` | `text/css; charset=utf-8` |
 | `GET /*.js` | `text/javascript; charset=utf-8`。ファイルの一覧は `assets.rs::STATIC_ASSETS`（`web/*.js`）が正本 |
 | `GET /desktop-icons.svg` | `image/svg+xml` |
 | `GET /desktop-page.html` `/desktop-page.css` | `text/html; charset=utf-8` / `text/css; charset=utf-8`。Desktop 画面の iframe に入るリンク集ページとその専用 CSS（既定は `web/` の同名ファイル。ページの契約は [`dashboard/desktop.md#リンク集ページiframe`](dashboard/desktop.md#リンク集ページiframe)） |

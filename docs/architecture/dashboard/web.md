@@ -25,7 +25,7 @@ Desktop 画面専用のモジュール（`desktop*.js`）とその CSS は [`des
 
 ### ルーティング
 
-サイドナビの並び順（上から Desktop・Sites・Webring・Publish・Settings・Setup）と同じ `#/desktop` `#/sites` `#/webring` `#/publish` `#/settings` `#/setup` の 6 画面と、未ログインのときだけ出す Login 画面をハッシュルーティングで切り替える（既定は `sites`）。現在の画面のナビのリンクには `aria-current="page"` が付く。書き込みリクエストは `util.js::apiFetch` が `X-Swing-Dashboard: 1` と `Content-Type: application/json` を付ける。publish のアップロード（`XMLHttpRequest` + `FormData`）だけは `apiFetch` を通らず、`X-Swing-Dashboard: 1` だけを自分で付ける。relay 由来の文字列は DOM API だけで挿入し、`innerHTML` は使わない。`url` は `^https?://` にマッチするときだけリンクにする。
+サイドナビの並び順（上から Desktop・Sites・Webring・Publish・Settings・Setup）と同じ `#/desktop` `#/sites` `#/webring` `#/publish` `#/settings` `#/setup` の 6 画面と、未ログインのときだけ出す Login 画面をハッシュルーティングで切り替える（既定は `sites`。Desktop 画面の「コントロール パネル」→「システム」で `desktop` に変えられる。[`desktop.md`](desktop.md#コントロール-パネル)）。現在の画面のナビのリンクには `aria-current="page"` が付く。書き込みリクエストは `util.js::apiFetch` が `X-Swing-Dashboard: 1` と `Content-Type: application/json` を付ける。publish のアップロード（`XMLHttpRequest` + `FormData`）だけは `apiFetch` を通らず、`X-Swing-Dashboard: 1` だけを自分で付ける。relay 由来の文字列は DOM API だけで挿入し、`innerHTML` は使わない。`url` は `^https?://` にマッチするときだけリンクにする。
 
 ### 表示前のサニタイズ
 
@@ -35,7 +35,7 @@ Desktop 画面専用のモジュール（`desktop*.js`）とその CSS は [`des
 
 `app.js` の `init()` は `loadOverview()`（[`/api/overview`](http-api.md#get-apioverview)）を待ってから `showRoute()` を呼ぶ。`cache.overview.setup` が `true` の間は `currentRoute()` が hash に関わらず `'setup'` を返し（下記の未ログインの判定が優先）、サイドナビも Setup 項目だけを表示する（`false` の間は Setup 項目を隠し、残りの項目を出す）。
 
-未ログイン（`apiFetch` が `/api/login` 以外で 401 を受けた）のときは `util.js::apiFetch` が `swing:unauthorized` イベントを投げ、`app.js` が以後 `currentRoute()` を（セットアップモードでも）常に `'login'` にしてサイドナビをすべて隠す。ログイン済みのときに `#/login` を開いても `sites` に落とす。
+未ログイン（`apiFetch` が `/api/login` 以外で 401 を受けた）のときは `util.js::apiFetch` が `swing:unauthorized` イベントを投げ、`app.js` が以後 `currentRoute()` を（セットアップモードでも）常に `'login'` にしてサイドナビをすべて隠す。ログイン済みのときに `#/login` を開いても既定の画面に落とす。
 
 各画面のロードは世代カウンタ（`createLoadGuard`）でガードし、切り替えが速くても古いレスポンスで上書きしない。
 
@@ -164,6 +164,7 @@ NIP-05 の検証結果はバッジで `OK`（`verified`）/ `NG`（`mismatch`）
 | `swing:user-css` | 文字列（CSS） | Settings のカスタム CSS 欄の内容 |
 | `swing:desktop:visits` | 整数の文字列 | Desktop 画面の来訪者カウンタ（[`desktop.md`](desktop.md#リンク集ページiframe)） |
 | `swing:desktop:wallpaper` | JSON（`{color?, image?}`、両方省略可。詳細は [`desktop.md`「コントロール パネル」](desktop.md#コントロール-パネル)） | Desktop 画面の壁紙設定 |
+| `swing:desktop:startup` | `"1"` / `"0"` | パスなしで開いたときに Desktop 画面を出すか（既定 `"0"`。[`desktop.md`「コントロール パネル」](desktop.md#コントロール-パネル)） |
 | `swing:desktop:mascot` | JSON（`{packs?, interval, walk, chatter}`。詳細は [`mascot.md`「マスコットタブ」](mascot.md#マスコットタブ)） | Desktop 画面のマスコットと更新の確認の設定 |
 
 ## 表示言語（i18n）
@@ -176,7 +177,7 @@ Desktop 画面は UI 表示言語の設定に関わらず全部固定の日本�
 
 ## CSS カスタマイズのインターフェース
 
-読み込み順は `style.css` → Desktop 系 5 ファイル（[`desktop.md#構成`](desktop.md#構成)） → `/custom.css`（サーバ設定、[`../dashboard.md`](../dashboard.md#静的ファイルの配信srcdashboardassetsrs)） → `<style id="user-css">`（ブラウザの `localStorage`、後勝ち）の順。Desktop 画面は `--swing-*` 変数を参照せず、iframe のリンク集ページにはどれも届かない（[`desktop.md`](desktop.md)）。
+読み込み順は `style.css` → Desktop 系 6 ファイル（[`desktop.md#構成`](desktop.md#構成)） → `/custom.css`（サーバ設定、[`../dashboard.md`](../dashboard.md#静的ファイルの配信srcdashboardassetsrs)） → `<style id="user-css">`（ブラウザの `localStorage`、後勝ち）の順。Desktop 画面は `--swing-*` 変数を参照せず、iframe のリンク集ページにはどれも届かない（[`desktop.md`](desktop.md)）。
 
 `--swing-root`（webring の root ノードの色）と `--swing-focus` は `var(--swing-accent)` を参照するので、アクセントを変えるだけで揃って変わる。
 
