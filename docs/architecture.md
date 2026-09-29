@@ -68,7 +68,7 @@ swing/
     pair.rs          `swing signer pair`（ターミナルに QR コードを出して署名アプリとペアリングする）。詳細は architecture/cli.md
     up.rs            `swing up` supervisor（Kubo の起動・監視、agent の起動・再起動、バックオフ）。詳細は architecture/up.md
     stats.rs         リソース使用量の記録（`swing up` の中で 60 秒ごとに測ってメモリに 24 時間分持つ）と stats サブコマンド。stats/process.rs が OS ごとにプロセスの CPU 時間とメモリを読む。詳細は architecture/stats.md
-    kubo.rs          Kubo バイナリの検出・init・`ipfs config` 適用・RPC の秘密（kubo-api.secret）・子プロセスの起動と終了・ヘルス待ち・kubo.pid と孤児回収。詳細は architecture/kubo.md
+    kubo.rs          Kubo バイナリの検出・init・`ipfs config` 適用・RPC のポートと秘密（kubo-api.json）・子プロセスの起動と終了・ヘルス待ち・kubo.pid と孤児回収。詳細は architecture/kubo.md
     lock.rs          多重起動防止のインスタンスロック（swing.lock、swing-tray の swing-tray.lock）。詳細は architecture/up.md
     ports.rs         セットアップモードでのポートのずらし方（`bind_shifting`・`free_addr`・`may_shift`）。詳細は architecture/up.md
     auth.rs          ダッシュボードのトークンファイル（dashboard.token）、HMAC 署名のセッション値、使い捨てログインコード。詳細は architecture/dashboard.md

@@ -11,9 +11,11 @@ use serde_json::json;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::{Child, Command};
 
+use crate::ipfs::IpfsClient;
+
 pub const KUBO_VERSION: &str = "0.43.1";
 
-const API_SECRET_FILE: &str = "kubo-api.secret";
+const API_ACCESS_FILE: &str = "kubo-api.json";
 const API_SECRET_BYTES: usize = 32;
 
 const SHUTDOWN_RPC_TIMEOUT: Duration = Duration::from_secs(5);
@@ -40,7 +42,7 @@ pub const fn daemon_stop_budget(grace: Duration) -> Duration {
 pub struct ApiSecret(String);
 
 impl ApiSecret {
-    fn generate() -> Self {
+    pub fn generate() -> Self {
         Self(crate::auth::random_hex(API_SECRET_BYTES))
     }
 
@@ -73,51 +75,102 @@ impl std::fmt::Debug for ApiSecret {
     }
 }
 
-fn api_secret_path(state_dir: &Path) -> PathBuf {
-    state_dir.join(API_SECRET_FILE)
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ApiAccess {
+    pub port: u16,
+    pub secret: ApiSecret,
 }
 
-pub fn rotate_api_secret(state_dir: &Path) -> Result<ApiSecret> {
-    crate::auth::create_private_dir_all(state_dir)?;
-    let secret = ApiSecret::generate();
-    crate::auth::write_private_file(&api_secret_path(state_dir), &format!("{}\n", secret.0))?;
-    Ok(secret)
+#[derive(Serialize, Deserialize)]
+struct ApiAccessFile {
+    port: u16,
+    secret: String,
 }
 
-pub fn read_api_secret(state_dir: &Path) -> Result<Option<ApiSecret>> {
-    let path = api_secret_path(state_dir);
-    match std::fs::read_to_string(&path) {
-        Ok(text) => ApiSecret::parse(&text)
-            .map(Some)
-            .with_context(|| format!("{} does not hold a hex secret", path.display())),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
-        Err(e) => Err(e).with_context(|| format!("reading {}", path.display())),
+impl ApiAccess {
+    pub fn generate(port: u16) -> Self {
+        Self {
+            port,
+            secret: ApiSecret::generate(),
+        }
     }
+
+    pub fn url(&self) -> String {
+        format!("http://127.0.0.1:{}", self.port)
+    }
+
+    fn multiaddr(&self) -> String {
+        format!("/ip4/127.0.0.1/tcp/{}", self.port)
+    }
+
+    pub fn client(&self) -> IpfsClient {
+        IpfsClient::with_secret(self.url(), Some(&self.secret))
+    }
+}
+
+fn api_access_path(state_dir: &Path) -> PathBuf {
+    state_dir.join(API_ACCESS_FILE)
+}
+
+pub fn write_api_access(state_dir: &Path, access: &ApiAccess) -> Result<()> {
+    crate::auth::create_private_dir_all(state_dir)?;
+    let file = ApiAccessFile {
+        port: access.port,
+        secret: access.secret.0.clone(),
+    };
+    let text = serde_json::to_string(&file).context("serializing the Kubo API access")?;
+    crate::auth::write_private_file(&api_access_path(state_dir), &format!("{text}\n"))
+}
+
+pub fn read_api_access(state_dir: &Path) -> Result<Option<ApiAccess>> {
+    let path = api_access_path(state_dir);
+    let text = match std::fs::read_to_string(&path) {
+        Ok(text) => text,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(e).with_context(|| format!("reading {}", path.display())),
+    };
+    let file: ApiAccessFile =
+        serde_json::from_str(&text).with_context(|| format!("parsing {}", path.display()))?;
+    let secret = ApiSecret::parse(&file.secret)
+        .with_context(|| format!("{} does not hold a hex secret", path.display()))?;
+    Ok(Some(ApiAccess {
+        port: file.port,
+        secret,
+    }))
+}
+
+pub fn remove_api_access(state_dir: &Path) -> Result<()> {
+    remove_if_present(&api_access_path(state_dir))
+}
+
+fn remove_if_present(path: &Path) -> Result<()> {
+    match std::fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(e).with_context(|| format!("removing {}", path.display())),
+    }
+}
+
+pub async fn managed_client(state_dir: &Path, repo: &Path) -> Result<IpfsClient> {
+    let Some(access) = read_api_access(state_dir)? else {
+        bail!(
+            "Kubo is not running: {} does not exist (start `swing up`, or set [kubo].managed = false and [ipfs].api to use an external Kubo)",
+            api_access_path(state_dir).display()
+        );
+    };
+    let client = access.client();
+    ensure_own_daemon(&client, repo).await?;
+    Ok(client)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct KuboSettings {
     pub storage_max: u64,
     pub provide_strategy: String,
-    pub api_port: u16,
-    pub api_secret: ApiSecret,
+    pub api: ApiAccess,
     pub gateway: SocketAddr,
     pub swarm_port: Option<u16>,
     pub public_gateway_hosts: Vec<String>,
-}
-
-pub fn api_url_from_repo(repo: &Path) -> Result<String> {
-    let path = repo.join("api");
-    let text = match std::fs::read_to_string(&path) {
-        Ok(text) => text,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => bail!(
-            "Kubo is not running: {} does not exist (start `swing up`, or set [kubo].managed = false and [ipfs].api to use an external Kubo)",
-            path.display()
-        ),
-        Err(e) => return Err(e).with_context(|| format!("reading {}", path.display())),
-    };
-    multiaddr_to_http_url(text.trim())
-        .with_context(|| format!("parsing Kubo API address in {}", path.display()))
 }
 
 pub fn multiaddr_to_http_url(addr: &str) -> Result<String> {
@@ -293,13 +346,6 @@ pub async fn apply_config(bin: &Path, repo: &Path, s: &KuboSettings) -> Result<(
     set_config_json(
         bin,
         repo,
-        "Addresses.API",
-        &json!([format!("/ip4/127.0.0.1/tcp/{}", s.api_port)]),
-    )
-    .await?;
-    set_config_json(
-        bin,
-        repo,
         "Addresses.Gateway",
         &json!([gateway_multiaddr(s.gateway)]),
     )
@@ -315,11 +361,11 @@ pub async fn apply_config(bin: &Path, repo: &Path, s: &KuboSettings) -> Result<(
         .await?;
     }
 
-    set_api_authorizations(repo, &s.api_secret)
+    set_api_access(repo, &s.api)
 }
 
-// Edits the file directly because `ipfs config` would put the secret on a command line other users can read.
-fn set_api_authorizations(repo: &Path, secret: &ApiSecret) -> Result<()> {
+// Edits the file directly because `ipfs config` would put the port and secret on a command line other users can read.
+fn set_api_access(repo: &Path, access: &ApiAccess) -> Result<()> {
     let path = repo.join("config");
     let text =
         std::fs::read_to_string(&path).with_context(|| format!("reading {}", path.display()))?;
@@ -328,15 +374,27 @@ fn set_api_authorizations(repo: &Path, secret: &ApiSecret) -> Result<()> {
     let root = config
         .as_object_mut()
         .with_context(|| format!("{} is not a JSON object", path.display()))?;
-    let api = root.entry("API").or_insert_with(|| json!({}));
-    if api.is_null() {
-        *api = json!({});
-    }
-    api.as_object_mut()
-        .with_context(|| format!("API in {} is not a JSON object", path.display()))?
-        .insert("Authorizations".to_string(), secret.kubo_authorizations());
+    object_entry(root, "Addresses", &path)?.insert("API".to_string(), json!([access.multiaddr()]));
+    object_entry(root, "API", &path)?.insert(
+        "Authorizations".to_string(),
+        access.secret.kubo_authorizations(),
+    );
     let text = serde_json::to_string_pretty(&config).context("serializing the Kubo config")?;
-    crate::auth::write_private_file(&path, &text)
+    crate::settings::write_atomic(&path, &text)
+}
+
+fn object_entry<'a>(
+    root: &'a mut serde_json::Map<String, serde_json::Value>,
+    key: &str,
+    path: &Path,
+) -> Result<&'a mut serde_json::Map<String, serde_json::Value>> {
+    let value = root.entry(key).or_insert_with(|| json!({}));
+    if value.is_null() {
+        *value = json!({});
+    }
+    value
+        .as_object_mut()
+        .with_context(|| format!("{key} in {} is not a JSON object", path.display()))
 }
 
 fn pid_file_path(state_dir: &Path) -> PathBuf {
@@ -479,7 +537,7 @@ async fn attempt_graceful_shutdown(api_port: u16, pid: u32, secret: Option<&ApiS
         .timeout(ORPHAN_SHUTDOWN_RPC_TIMEOUT)
         .send()
         .await
-        .is_ok();
+        .is_ok_and(|resp| resp.status().is_success());
     if !responded {
         return false;
     }
@@ -568,10 +626,13 @@ pub async fn recover_orphan(state_dir: &Path, repo: &Path) -> Result<()> {
         return Ok(());
     }
 
-    let secret = read_api_secret(state_dir).unwrap_or_else(|e| {
-        tracing::warn!(error = %e, "cannot read the Kubo API secret; asking the orphan to shut down without it");
-        None
-    });
+    let secret = read_api_access(state_dir)
+        .unwrap_or_else(|e| {
+            tracing::warn!(error = %e, "cannot read the Kubo API access; asking the orphan to shut down without it");
+            None
+        })
+        .filter(|access| access.port == record.api_port)
+        .map(|access| access.secret);
     if attempt_graceful_shutdown(record.api_port, record.pid, secret.as_ref()).await {
         tracing::info!(
             pid = record.pid,
@@ -652,7 +713,7 @@ where
 pub struct Daemon {
     child: Child,
     api_url: String,
-    http: reqwest::Client,
+    ipfs: IpfsClient,
     saw_repo_lock: Arc<AtomicBool>,
     // Held only for its Drop: closing the Job Object handle kills the child.
     #[cfg(windows)]
@@ -661,12 +722,8 @@ pub struct Daemon {
 }
 
 impl Daemon {
-    pub async fn spawn(
-        bin: &Path,
-        repo: &Path,
-        api_url: String,
-        api_secret: &ApiSecret,
-    ) -> Result<Daemon> {
+    pub async fn spawn(bin: &Path, repo: &Path, api: &ApiAccess) -> Result<Daemon> {
+        remove_if_present(&repo.join("api"))?;
         let mut command = Command::new(bin);
         command
             .args([
@@ -709,8 +766,8 @@ impl Daemon {
 
         Ok(Daemon {
             child,
-            api_url,
-            http: crate::ipfs::kubo_http_client(Some(api_secret)),
+            api_url: api.url(),
+            ipfs: api.client(),
             saw_repo_lock,
             #[cfg(windows)]
             job,
@@ -719,6 +776,10 @@ impl Daemon {
 
     pub fn pid(&self) -> Option<u32> {
         self.child.id()
+    }
+
+    pub fn ipfs(&self) -> &IpfsClient {
+        &self.ipfs
     }
 
     pub fn try_wait(&mut self) -> std::io::Result<Option<std::process::ExitStatus>> {
@@ -734,22 +795,10 @@ impl Daemon {
     }
 
     pub async fn stop(mut self, grace: Duration) -> Result<()> {
-        let shutdown_url = format!("{}/api/v0/shutdown", self.api_url.trim_end_matches('/'));
-        match self
-            .http
-            .post(&shutdown_url)
-            .timeout(SHUTDOWN_RPC_TIMEOUT)
-            .send()
-            .await
-        {
-            Ok(resp) if resp.status().is_success() => {
-                tracing::debug!("kubo RPC shutdown requested");
-            }
-            Ok(resp) => {
-                tracing::debug!(status = %resp.status(), "kubo RPC shutdown request answered with an error (daemon may be exiting anyway)");
-            }
+        match self.ipfs.shutdown(SHUTDOWN_RPC_TIMEOUT).await {
+            Ok(()) => tracing::debug!("kubo RPC shutdown requested"),
             Err(e) => {
-                tracing::debug!(error = %e, "kubo RPC shutdown request did not complete (daemon may have closed the connection while exiting)");
+                tracing::debug!(error = %format!("{e:#}"), "kubo RPC shutdown request failed (daemon may be exiting anyway)");
             }
         }
 
@@ -853,29 +902,7 @@ mod windows_job {
     }
 }
 
-#[derive(Deserialize)]
-struct IdResponse {
-    #[serde(rename = "ID")]
-    id: String,
-}
-
-fn id_url(api_url: &str) -> String {
-    format!("{}/api/v0/id", api_url.trim_end_matches('/'))
-}
-
-async fn post_id(client: &reqwest::Client, url: &str) -> Option<reqwest::Response> {
-    match client
-        .post(url)
-        .timeout(Duration::from_secs(5))
-        .send()
-        .await
-    {
-        Ok(resp) if resp.status().is_success() => Some(resp),
-        _ => None,
-    }
-}
-
-pub async fn ensure_own_daemon(ipfs: &crate::ipfs::IpfsClient, repo: &Path) -> Result<()> {
+pub async fn ensure_own_daemon(ipfs: &IpfsClient, repo: &Path) -> Result<()> {
     let expected = read_peer_id(repo)?;
     let answered = ipfs
         .peer_id()
@@ -883,8 +910,8 @@ pub async fn ensure_own_daemon(ipfs: &crate::ipfs::IpfsClient, repo: &Path) -> R
         .context("asking the Kubo API for its peer ID")?;
     if answered != expected {
         bail!(
-            "the Kubo API named in {} answered with peer ID {answered}, not this repo's {expected}; the file is stale (is `swing up` running?)",
-            repo.join("api").display()
+            "the Kubo API at {} answered with peer ID {answered}, not this repo's {expected}; it is not the Kubo `swing up` started (is `swing up` running?)",
+            ipfs.api_url()
         );
     }
     Ok(())
@@ -903,52 +930,57 @@ fn read_peer_id(repo: &Path) -> Result<String> {
         .with_context(|| format!("{} has no Identity.PeerID", path.display()))
 }
 
-pub async fn wait_healthy(api_url: &str, timeout: Duration) -> Result<()> {
-    let client = crate::ipfs::kubo_http_client(None);
-    let url = id_url(api_url);
-    let healthy = wait_until(timeout, Duration::from_secs(1), || async {
-        post_id(&client, &url).await.is_some()
-    })
-    .await;
-    if healthy {
-        Ok(())
-    } else {
-        bail!("Kubo did not become healthy within {timeout:?} (POST {url})")
+pub async fn wait_healthy(ipfs: &IpfsClient, timeout: Duration) -> Result<()> {
+    let deadline = tokio::time::Instant::now() + timeout;
+    loop {
+        let err = match ipfs.peer_id().await {
+            Ok(_) => return Ok(()),
+            Err(e) => e,
+        };
+        if tokio::time::Instant::now() >= deadline {
+            return Err(err.context(format!(
+                "Kubo at {} did not become healthy within {timeout:?}",
+                ipfs.api_url()
+            )));
+        }
+        tokio::time::sleep(Duration::from_secs(1)).await;
     }
 }
 
 impl Daemon {
+    fn owns_api_file(&self, repo: &Path) -> bool {
+        std::fs::read_to_string(repo.join("api"))
+            .ok()
+            .and_then(|text| multiaddr_to_http_url(text.trim()).ok())
+            .is_some_and(|url| url == self.api_url)
+    }
+
+    // Waits for Kubo to write <repo>/api before sending the secret, since that file appears only after this child bound the port.
     pub async fn wait_healthy(&mut self, repo: &Path, timeout: Duration) -> Result<()> {
-        let expected = match read_peer_id(repo) {
-            Ok(id) => Some(id),
-            Err(e) => {
-                tracing::warn!(error = %e, "cannot read the Kubo peer ID; accepting any API that answers");
-                None
-            }
-        };
-        let url = id_url(&self.api_url);
+        let expected = read_peer_id(repo)?;
         let deadline = tokio::time::Instant::now() + timeout;
         let mut foreign: Option<String> = None;
         loop {
-            let answered = match post_id(&self.http, &url).await {
-                Some(resp) => Some(resp.json::<IdResponse>().await.ok().map(|r| r.id)),
-                None => None,
-            };
             if let Some(status) = self.child.try_wait().context("checking the Kubo daemon")? {
                 bail!("Kubo exited ({status}) before becoming healthy");
             }
-            match (answered, &expected) {
-                (Some(_), None) => return Ok(()),
-                (Some(Some(id)), Some(expected)) if &id == expected => return Ok(()),
-                (Some(id), Some(_)) => foreign = Some(id.unwrap_or_default()),
-                (None, _) => {}
+            if self.owns_api_file(repo) {
+                match self.ipfs.peer_id().await {
+                    Ok(id) if id == expected => return Ok(()),
+                    Ok(id) => foreign = Some(id),
+                    Err(_) => {}
+                }
             }
             if tokio::time::Instant::now() >= deadline {
-                match (foreign, expected) {
-                    (Some(got), Some(expected)) => bail!(
-                        "Kubo did not become healthy within {timeout:?}: POST {url} answered with peer ID {got:?}, expected {expected}"
+                match foreign {
+                    Some(got) => bail!(
+                        "Kubo did not become healthy within {timeout:?}: {} answered with peer ID {got:?}, expected {expected}",
+                        self.api_url
                     ),
-                    _ => bail!("Kubo did not become healthy within {timeout:?} (POST {url})"),
+                    None => bail!(
+                        "Kubo did not become healthy within {timeout:?} ({})",
+                        self.api_url
+                    ),
                 }
             }
             tokio::time::sleep(Duration::from_secs(1)).await;
@@ -984,16 +1016,14 @@ mod tests {
         assert!(multiaddr_to_http_url("/ip4/127.0.0.1/udp/5001").is_err());
     }
 
-    #[test]
-    fn missing_api_file_says_kubo_is_not_running() {
+    #[tokio::test]
+    async fn missing_api_access_says_kubo_is_not_running() {
         let dir = tempfile::tempdir().unwrap();
-        let err = api_url_from_repo(dir.path()).unwrap_err().to_string();
-        assert!(err.contains("Kubo is not running"), "{err}");
         std::fs::write(dir.path().join("api"), "/ip4/127.0.0.1/tcp/41234\n").unwrap();
-        assert_eq!(
-            api_url_from_repo(dir.path()).unwrap(),
-            "http://127.0.0.1:41234"
-        );
+        let Err(err) = managed_client(dir.path(), dir.path()).await else {
+            panic!("a missing API access file must not yield a client");
+        };
+        assert!(err.to_string().contains("Kubo is not running"), "{err}");
     }
 
     #[test]
@@ -1088,25 +1118,61 @@ mod tests {
     }
 
     #[cfg(unix)]
-    async fn serve_id(peer_id: &'static str) -> String {
+    fn writes_api_file_then_sleeps(port: u16) -> String {
+        format!("echo /ip4/127.0.0.1/tcp/{port} > \"$IPFS_PATH/api\"\nexec sleep 30")
+    }
+
+    struct IdServer {
+        port: u16,
+        requests: Arc<std::sync::Mutex<Vec<String>>>,
+    }
+
+    impl IdServer {
+        fn url(&self) -> String {
+            format!("http://127.0.0.1:{}", self.port)
+        }
+
+        fn requests(&self) -> Vec<String> {
+            self.requests.lock().unwrap().clone()
+        }
+    }
+
+    async fn serve(status: &'static str, body: String) -> IdServer {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let addr = listener.local_addr().unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let requests = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let seen = Arc::clone(&requests);
         tokio::spawn(async move {
             while let Ok((mut socket, _)) = listener.accept().await {
+                let seen = Arc::clone(&seen);
+                let body = body.clone();
                 tokio::spawn(async move {
                     let mut buf = [0u8; 4096];
-                    let _ = socket.read(&mut buf).await;
-                    let body = format!(r#"{{"ID":"{peer_id}"}}"#);
+                    let n = socket.read(&mut buf).await.unwrap_or(0);
+                    seen.lock()
+                        .unwrap()
+                        .push(String::from_utf8_lossy(&buf[..n]).to_ascii_lowercase());
                     let resp = format!(
-                        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                        "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
                         body.len()
                     );
                     let _ = socket.write_all(resp.as_bytes()).await;
                 });
             }
         });
-        format!("http://{addr}")
+        IdServer { port, requests }
+    }
+
+    async fn serve_id(peer_id: &str) -> IdServer {
+        serve("200 OK", format!(r#"{{"ID":"{peer_id}"}}"#)).await
+    }
+
+    fn access(port: u16) -> ApiAccess {
+        ApiAccess {
+            port,
+            secret: ApiSecret::parse("abcd").unwrap(),
+        }
     }
 
     #[cfg(unix)]
@@ -1114,8 +1180,8 @@ mod tests {
     async fn daemon_wait_healthy_fails_fast_when_the_child_exits() {
         let dir = tempfile::tempdir().unwrap();
         let bin = fake_kubo(dir.path(), "exit 3", "mine");
-        let api = serve_id("mine").await;
-        let mut daemon = Daemon::spawn(&bin, dir.path(), api, &ApiSecret::generate())
+        let server = serve_id("mine").await;
+        let mut daemon = Daemon::spawn(&bin, dir.path(), &access(server.port))
             .await
             .unwrap();
         let _ = daemon.wait().await;
@@ -1125,16 +1191,21 @@ mod tests {
             .unwrap_err()
             .to_string();
         assert!(err.contains("exited"), "{err}");
+        assert!(server.requests().is_empty());
     }
 
     #[cfg(unix)]
     #[tokio::test]
     async fn daemon_wait_healthy_requires_the_repo_peer_id() {
         let dir = tempfile::tempdir().unwrap();
-        let bin = fake_kubo(dir.path(), "exec sleep 30", "mine");
 
         let foreign = serve_id("someone-else").await;
-        let mut daemon = Daemon::spawn(&bin, dir.path(), foreign, &ApiSecret::generate())
+        let bin = fake_kubo(
+            dir.path(),
+            &writes_api_file_then_sleeps(foreign.port),
+            "mine",
+        );
+        let mut daemon = Daemon::spawn(&bin, dir.path(), &access(foreign.port))
             .await
             .unwrap();
         let err = daemon
@@ -1149,7 +1220,8 @@ mod tests {
         daemon.stop(Duration::ZERO).await.unwrap();
 
         let own = serve_id("mine").await;
-        let mut daemon = Daemon::spawn(&bin, dir.path(), own, &ApiSecret::generate())
+        let bin = fake_kubo(dir.path(), &writes_api_file_then_sleeps(own.port), "mine");
+        let mut daemon = Daemon::spawn(&bin, dir.path(), &access(own.port))
             .await
             .unwrap();
         daemon
@@ -1161,6 +1233,61 @@ mod tests {
 
     #[cfg(unix)]
     #[tokio::test]
+    async fn daemon_wait_healthy_sends_nothing_until_kubo_writes_the_api_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let squatter = serve_id("mine").await;
+        std::fs::write(
+            dir.path().join("api"),
+            format!("/ip4/127.0.0.1/tcp/{}", squatter.port),
+        )
+        .unwrap();
+        let bin = fake_kubo(dir.path(), "exec sleep 30", "mine");
+        let mut daemon = Daemon::spawn(&bin, dir.path(), &access(squatter.port))
+            .await
+            .unwrap();
+        assert!(!dir.path().join("api").exists());
+        assert!(
+            daemon
+                .wait_healthy(dir.path(), Duration::from_secs(2))
+                .await
+                .is_err()
+        );
+        daemon.stop(Duration::ZERO).await.unwrap();
+        let requests = squatter.requests();
+        assert!(
+            requests.iter().all(|r| !r.contains("/api/v0/id")),
+            "{requests:?}"
+        );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn daemon_wait_healthy_refuses_without_a_readable_peer_id() {
+        let dir = tempfile::tempdir().unwrap();
+        let server = serve_id("mine").await;
+        let bin = fake_kubo(
+            dir.path(),
+            &writes_api_file_then_sleeps(server.port),
+            "mine",
+        );
+        std::fs::write(dir.path().join("config"), r#"{"Identity":{}}"#).unwrap();
+        let mut daemon = Daemon::spawn(&bin, dir.path(), &access(server.port))
+            .await
+            .unwrap();
+        let err = daemon
+            .wait_healthy(dir.path(), Duration::from_secs(5))
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("PeerID"), "{err}");
+        daemon.stop(Duration::ZERO).await.unwrap();
+        assert!(
+            server.requests().iter().all(|r| !r.contains("/api/v0/id")),
+            "no probe may carry the secret when the peer ID cannot be checked"
+        );
+    }
+
+    #[tokio::test]
     async fn ensure_own_daemon_rejects_an_api_with_another_peer_id() {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(
@@ -1168,53 +1295,88 @@ mod tests {
             r#"{"Identity":{"PeerID":"mine"}}"#,
         )
         .unwrap();
-        let foreign = crate::ipfs::IpfsClient::new(serve_id("someone-else").await);
+        let foreign = crate::ipfs::IpfsClient::new(serve_id("someone-else").await.url());
         let err = ensure_own_daemon(&foreign, dir.path())
             .await
             .unwrap_err()
             .to_string();
         assert!(
-            err.contains("someone-else") && err.contains("stale"),
+            err.contains("someone-else") && err.contains("not the Kubo"),
             "{err}"
         );
-        let own = crate::ipfs::IpfsClient::new(serve_id("mine").await);
+        let own = crate::ipfs::IpfsClient::new(serve_id("mine").await.url());
         ensure_own_daemon(&own, dir.path()).await.unwrap();
     }
 
+    #[tokio::test]
+    async fn managed_client_uses_the_port_stored_with_the_secret() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("config"),
+            r#"{"Identity":{"PeerID":"mine"}}"#,
+        )
+        .unwrap();
+        let stale = serve_id("someone-else").await;
+        let own = serve_id("mine").await;
+        std::fs::write(
+            dir.path().join("api"),
+            format!("/ip4/127.0.0.1/tcp/{}", stale.port),
+        )
+        .unwrap();
+        write_api_access(dir.path(), &access(own.port)).unwrap();
+        let client = managed_client(dir.path(), dir.path()).await.unwrap();
+        assert_eq!(client.api_url(), own.url());
+        assert!(stale.requests().is_empty());
+        assert!(
+            own.requests()[0].contains("authorization: bearer abcd"),
+            "{:?}",
+            own.requests()
+        );
+    }
+
     #[test]
-    fn api_secret_round_trips_through_a_private_file_and_stays_out_of_debug() {
+    fn api_access_round_trips_through_a_private_file_and_stays_out_of_debug() {
         let dir = tempfile::tempdir().unwrap();
         let state_dir = dir.path().join("state");
-        assert!(read_api_secret(&state_dir).unwrap().is_none());
-        let first = rotate_api_secret(&state_dir).unwrap();
-        assert_eq!(read_api_secret(&state_dir).unwrap(), Some(first.clone()));
-        let second = rotate_api_secret(&state_dir).unwrap();
-        assert_ne!(first, second);
-        assert_eq!(read_api_secret(&state_dir).unwrap(), Some(second.clone()));
-        assert_eq!(format!("{second:?}"), "<redacted>");
+        assert!(read_api_access(&state_dir).unwrap().is_none());
+        let first = ApiAccess::generate(4001);
+        write_api_access(&state_dir, &first).unwrap();
+        assert_eq!(read_api_access(&state_dir).unwrap(), Some(first.clone()));
+        let second = ApiAccess::generate(4002);
+        assert_ne!(first.secret, second.secret);
+        write_api_access(&state_dir, &second).unwrap();
+        assert_eq!(read_api_access(&state_dir).unwrap(), Some(second.clone()));
+        assert!(!format!("{second:?}").contains(&second.secret.0));
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            let mode = std::fs::metadata(api_secret_path(&state_dir))
+            let mode = std::fs::metadata(api_access_path(&state_dir))
                 .unwrap()
                 .permissions()
                 .mode();
             assert_eq!(mode & 0o777, 0o600);
         }
-        std::fs::write(api_secret_path(&state_dir), "not hex\n").unwrap();
-        assert!(read_api_secret(&state_dir).is_err());
+        std::fs::write(
+            api_access_path(&state_dir),
+            r#"{"port":4001,"secret":"not hex"}"#,
+        )
+        .unwrap();
+        assert!(read_api_access(&state_dir).is_err());
+        remove_api_access(&state_dir).unwrap();
+        assert!(read_api_access(&state_dir).unwrap().is_none());
+        remove_api_access(&state_dir).unwrap();
     }
 
     #[test]
-    fn api_authorizations_are_written_into_the_repo_config() {
+    fn api_access_is_written_into_the_repo_config() {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(
             dir.path().join("config"),
-            r#"{"Identity":{"PeerID":"mine"},"API":{"HTTPHeaders":{}}}"#,
+            r#"{"Identity":{"PeerID":"mine"},"API":{"HTTPHeaders":{}},"Addresses":{"Gateway":["/ip4/127.0.0.1/tcp/8080"]}}"#,
         )
         .unwrap();
-        let secret = ApiSecret::parse("abcd").unwrap();
-        set_api_authorizations(dir.path(), &secret).unwrap();
+        let api = access(41234);
+        set_api_access(dir.path(), &api).unwrap();
         let text = std::fs::read_to_string(dir.path().join("config")).unwrap();
         let config: serde_json::Value = serde_json::from_str(&text).unwrap();
         assert_eq!(config["Identity"]["PeerID"], "mine");
@@ -1223,12 +1385,42 @@ mod tests {
             config["API"]["Authorizations"],
             json!({"swing": {"AuthSecret": "bearer:abcd", "AllowedPaths": ["/api/v0"]}})
         );
-        assert_eq!(secret.authorization(), "Bearer abcd");
+        assert_eq!(
+            config["Addresses"],
+            json!({"API": ["/ip4/127.0.0.1/tcp/41234"], "Gateway": ["/ip4/127.0.0.1/tcp/8080"]})
+        );
+        assert_eq!(api.secret.authorization(), "Bearer abcd");
 
         std::fs::write(dir.path().join("config"), r#"{"API":null}"#).unwrap();
-        set_api_authorizations(dir.path(), &secret).unwrap();
+        set_api_access(dir.path(), &api).unwrap();
         let text = std::fs::read_to_string(dir.path().join("config")).unwrap();
-        assert!(text.contains("bearer:abcd"), "{text}");
+        assert!(
+            text.contains("bearer:abcd") && text.contains("/tcp/41234"),
+            "{text}"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn api_access_writes_through_a_symlinked_repo_config() {
+        let dir = tempfile::tempdir().unwrap();
+        let real = dir.path().join("real-config");
+        std::fs::write(&real, r#"{"Identity":{"PeerID":"mine"}}"#).unwrap();
+        let repo = dir.path().join("repo");
+        std::fs::create_dir(&repo).unwrap();
+        std::os::unix::fs::symlink(&real, repo.join("config")).unwrap();
+        set_api_access(&repo, &access(41234)).unwrap();
+        assert!(
+            std::fs::symlink_metadata(repo.join("config"))
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
+        assert!(
+            std::fs::read_to_string(&real)
+                .unwrap()
+                .contains("bearer:abcd")
+        );
     }
 
     #[tokio::test]
@@ -1345,6 +1537,50 @@ mod tests {
     }
 
     #[cfg(unix)]
+    async fn orphan_shutdown_request(access_port_matches: bool) -> String {
+        let dir = tempfile::tempdir().unwrap();
+        let mut child = std::process::Command::new("sleep")
+            .arg("30")
+            .spawn()
+            .unwrap();
+        let pid = child.id();
+        std::thread::spawn(move || child.wait());
+        let server = serve("500 Internal Server Error", String::new()).await;
+        let record = PidRecord {
+            pid,
+            api_port: server.port,
+            started_at: process_start_marker(pid).unwrap(),
+        };
+        std::fs::write(
+            dir.path().join("kubo.pid"),
+            serde_json::to_string(&record).unwrap(),
+        )
+        .unwrap();
+        let port = if access_port_matches {
+            server.port
+        } else {
+            pick_free_port().unwrap()
+        };
+        write_api_access(dir.path(), &access(port)).unwrap();
+
+        recover_orphan(dir.path(), dir.path()).await.unwrap();
+
+        assert!(!process_alive(pid));
+        let requests = server.requests();
+        assert_eq!(requests.len(), 1, "{requests:?}");
+        requests[0].clone()
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn recover_orphan_sends_the_secret_only_to_the_port_it_was_issued_for() {
+        let request = orphan_shutdown_request(true).await;
+        assert!(request.contains("authorization: bearer abcd"), "{request}");
+        let request = orphan_shutdown_request(false).await;
+        assert!(!request.contains("authorization"), "{request}");
+    }
+
+    #[cfg(unix)]
     #[tokio::test]
     async fn recover_orphan_does_not_kill_on_start_time_mismatch() {
         let dir = tempfile::tempdir().unwrap();
@@ -1401,24 +1637,21 @@ mod tests {
             .await
             .unwrap();
 
-        let api_port = pick_free_port().unwrap();
+        let api = ApiAccess::generate(pick_free_port().unwrap());
+        let api_port = api.port;
         let gateway_port = pick_free_port().unwrap();
-        let api_secret = rotate_api_secret(&dir.path().join("state")).unwrap();
         let settings = KuboSettings {
             storage_max: 123_456_789,
             provide_strategy: "pinned+mfs".to_string(),
-            api_port,
-            api_secret: api_secret.clone(),
+            api: api.clone(),
             gateway: SocketAddr::from(([127, 0, 0, 1], gateway_port)),
             swarm_port: None,
             public_gateway_hosts: vec!["example.com".to_string()],
         };
         apply_config(&bin, &repo, &settings).await.unwrap();
 
-        let api_url = format!("http://127.0.0.1:{api_port}");
-        let mut daemon = Daemon::spawn(&bin, &repo, api_url.clone(), &api_secret)
-            .await
-            .unwrap();
+        std::fs::write(repo.join("api"), "/ip4/127.0.0.1/tcp/1\n").unwrap();
+        let mut daemon = Daemon::spawn(&bin, &repo, &api).await.unwrap();
 
         let health = daemon.wait_healthy(&repo, Duration::from_secs(60)).await;
         if health.is_err() {
@@ -1426,11 +1659,10 @@ mod tests {
         }
         health.unwrap();
 
-        let anonymous = crate::ipfs::IpfsClient::new(api_url.clone());
+        let anonymous = crate::ipfs::IpfsClient::new(api.url());
         assert!(anonymous.peer_id().await.is_err());
-        let authorized = crate::ipfs::IpfsClient::with_secret(api_url.clone(), Some(&api_secret));
         assert_eq!(
-            authorized.peer_id().await.unwrap(),
+            api.client().peer_id().await.unwrap(),
             read_peer_id(&repo).unwrap()
         );
 
@@ -1457,8 +1689,10 @@ mod tests {
             json!([format!("/ip4/127.0.0.1/tcp/{gateway_port}")])
         );
 
-        let reported_api = api_url_from_repo(&repo).unwrap();
-        assert_eq!(reported_api, format!("http://127.0.0.1:{api_port}"));
+        assert_eq!(
+            std::fs::read_to_string(repo.join("api")).unwrap().trim(),
+            format!("/ip4/127.0.0.1/tcp/{api_port}")
+        );
 
         daemon.stop(Duration::from_secs(10)).await.unwrap();
     }
@@ -1474,30 +1708,27 @@ mod tests {
             .await
             .unwrap();
 
-        let api_port = pick_free_port().unwrap();
-        let api_secret = rotate_api_secret(&state_dir).unwrap();
+        let api = ApiAccess::generate(pick_free_port().unwrap());
         let settings = KuboSettings {
             storage_max: 123_456_789,
             provide_strategy: "pinned+mfs".to_string(),
-            api_port,
-            api_secret: api_secret.clone(),
+            api: api.clone(),
             gateway: SocketAddr::from(([127, 0, 0, 1], pick_free_port().unwrap())),
             swarm_port: None,
             public_gateway_hosts: vec![],
         };
         apply_config(bin, &repo, &settings).await.unwrap();
 
-        let api_url = format!("http://127.0.0.1:{api_port}");
-        let mut daemon = Daemon::spawn(bin, &repo, api_url.clone(), &api_secret)
-            .await
-            .unwrap();
+        let api_url = api.url();
+        let mut daemon = Daemon::spawn(bin, &repo, &api).await.unwrap();
         let pid = daemon.pid().unwrap();
-        write_pid_file(&state_dir, pid, api_port).unwrap();
+        write_pid_file(&state_dir, pid, api.port).unwrap();
 
         daemon
             .wait_healthy(&repo, Duration::from_secs(60))
             .await
             .unwrap();
+        write_api_access(&state_dir, &api).unwrap();
 
         // Simulate an orphan: the child must survive past this test's own process exit.
         std::mem::forget(daemon);

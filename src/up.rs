@@ -11,7 +11,6 @@ use crate::agent;
 use crate::auth;
 use crate::config::{Config, IpfsApi};
 use crate::dashboard;
-use crate::ipfs::IpfsClient;
 use crate::kubo;
 use crate::lock;
 use crate::ports;
@@ -71,15 +70,20 @@ async fn stop_daemon(daemon: kubo::Daemon, config: &Config, grace: Duration) {
 
 fn settle_stop(result: Result<()>, state_dir: &Path) {
     match result {
-        Ok(()) => {
-            if let Err(e) = kubo::remove_pid_file(state_dir) {
-                warn!(error = %e, "failed to remove kubo.pid");
-            }
-        }
+        Ok(()) => forget_daemon(state_dir),
         Err(e) => warn!(
             error = %e,
             "failed to stop the Kubo daemon; keeping kubo.pid so the next start can recover it"
         ),
+    }
+}
+
+fn forget_daemon(state_dir: &Path) {
+    if let Err(e) = kubo::remove_pid_file(state_dir) {
+        warn!(error = %e, "failed to remove kubo.pid");
+    }
+    if let Err(e) = kubo::remove_api_access(state_dir) {
+        warn!(error = %e, "failed to remove the Kubo API access");
     }
 }
 
@@ -113,7 +117,7 @@ async fn stop_agent(
 }
 
 enum StartOutcome {
-    Ready(Box<kubo::Daemon>, String, kubo::ApiSecret),
+    Ready(Box<kubo::Daemon>, kubo::ApiAccess),
     Retry,
     Cancelled,
 }
@@ -137,6 +141,10 @@ async fn start_kubo(
         };
     }
 
+    attempt!(
+        kubo::remove_api_access(&config.agent.state_dir),
+        "failed to remove the previous Kubo API access"
+    );
     let initialised = attempt!(
         kubo::ensure_repo(bin, &config.kubo.repo).await,
         "failed to prepare Kubo repo"
@@ -149,15 +157,11 @@ async fn start_kubo(
         kubo::pick_free_port(),
         "failed to pick a free port for the Kubo API"
     );
-    let api_secret = attempt!(
-        kubo::rotate_api_secret(&config.agent.state_dir),
-        "failed to write the Kubo API secret"
-    );
+    let api = kubo::ApiAccess::generate(api_port);
     let settings = kubo::KuboSettings {
         storage_max: config.kubo.storage_max,
         provide_strategy: config.kubo.provide_strategy.clone(),
-        api_port,
-        api_secret: api_secret.clone(),
+        api: api.clone(),
         gateway: config.kubo.gateway_listen,
         swarm_port: config.kubo.swarm_port,
         public_gateway_hosts: config.gateway.hosts.clone(),
@@ -167,9 +171,8 @@ async fn start_kubo(
         "failed to configure Kubo"
     );
 
-    let api_url = format!("http://127.0.0.1:{api_port}");
     let mut daemon = attempt!(
-        kubo::Daemon::spawn(bin, &config.kubo.repo, api_url.clone(), &api_secret).await,
+        kubo::Daemon::spawn(bin, &config.kubo.repo, &api).await,
         "failed to spawn the Kubo daemon"
     );
     if let Some(pid) = daemon.pid()
@@ -187,7 +190,7 @@ async fn start_kubo(
             stop_daemon(daemon, config, DAEMON_STOP_GRACE).await;
             return Ok(StartOutcome::Cancelled);
         }
-        Some(h) => h,
+        Some(h) => h.and_then(|()| kubo::write_api_access(&config.agent.state_dir, &api)),
     };
     if let Err(e) = health {
         warn!(error = %e, "Kubo did not become healthy");
@@ -202,8 +205,8 @@ async fn start_kubo(
         return Ok(StartOutcome::Retry);
     }
 
-    info!(api = %api_url, "kubo is ready");
-    Ok(StartOutcome::Ready(Box::new(daemon), api_url, api_secret))
+    info!(api = %api.url(), "kubo is ready");
+    Ok(StartOutcome::Ready(Box::new(daemon), api))
 }
 
 async fn bind_dashboard(
@@ -364,24 +367,23 @@ async fn run_unmanaged(
 ) -> Result<()> {
     let mut backoff = Backoff::new();
     loop {
-        let api_url = config.ipfs_api_url()?;
+        let ipfs = config.ipfs_client().await?;
         let health = tokio::select! {
-            res = kubo::wait_healthy(&api_url, UNMANAGED_HEALTH_TIMEOUT) => Some(res),
+            res = kubo::wait_healthy(&ipfs, UNMANAGED_HEALTH_TIMEOUT) => Some(res),
             _ = token.cancelled() => None,
         };
         let Some(health) = health else {
             return Ok(());
         };
         if let Err(e) = health {
-            warn!(error = %e, "external Kubo is not healthy yet");
+            warn!(error = %format!("{e:#}"), "external Kubo is not healthy yet");
             backoff.wait(Duration::ZERO, &token).await;
             continue;
         }
-        info!(api = %api_url, "external Kubo is ready");
-        dashboard.stats.set_kubo(Some(KuboTarget {
-            pid: None,
-            ipfs: IpfsClient::new(api_url),
-        }));
+        info!(api = %ipfs.api_url(), "external Kubo is ready");
+        dashboard
+            .stats
+            .set_kubo(Some(KuboTarget { pid: None, ipfs }));
 
         let started = Instant::now();
         let agent = agent::run_until(
@@ -439,19 +441,18 @@ async fn run_managed(
             return Ok(());
         }
 
-        let (mut daemon, api_url, api_secret) =
-            match start_kubo(&bin, &config, &mut backoff, &token).await? {
-                StartOutcome::Ready(daemon, api_url, api_secret) => (*daemon, api_url, api_secret),
-                StartOutcome::Retry => continue 'daemon,
-                StartOutcome::Cancelled => return Ok(()),
-            };
+        let (mut daemon, api) = match start_kubo(&bin, &config, &mut backoff, &token).await? {
+            StartOutcome::Ready(daemon, api) => (*daemon, api),
+            StartOutcome::Retry => continue 'daemon,
+            StartOutcome::Cancelled => return Ok(()),
+        };
         dashboard.stats.set_kubo(Some(KuboTarget {
             pid: daemon.pid(),
-            ipfs: IpfsClient::with_secret(api_url.clone(), Some(&api_secret)),
+            ipfs: daemon.ipfs().clone(),
         }));
         let mut managed_config = config.clone();
-        managed_config.ipfs.api = IpfsApi::Url(api_url);
-        managed_config.ipfs.api_secret = Some(api_secret);
+        managed_config.ipfs.api = IpfsApi::Url(api.url());
+        managed_config.ipfs.api_secret = Some(api.secret);
 
         let mut agent_token = token.child_token();
         let mut agent_handle = spawn_agent(
@@ -472,9 +473,7 @@ async fn run_managed(
                     }
                     dashboard.stats.set_kubo(None);
                     stop_agent(&agent_token, &mut agent_handle, "after kubo exited").await;
-                    if let Err(e) = kubo::remove_pid_file(&config.agent.state_dir) {
-                        warn!(error = %e, "failed to remove kubo.pid");
-                    }
+                    forget_daemon(&config.agent.state_dir);
                     backoff.wait(daemon_started.elapsed(), &token).await;
                     continue 'daemon;
                 }

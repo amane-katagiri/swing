@@ -245,7 +245,7 @@ Follow Set が無ければ `title: null`、`members: []`。
 
 - `sections` は `nostr`/`ipfs`/`policy`/`agent`/`publish`/`dashboard`/`kubo`/`gateway` の順で、`settings::SETTINGS`（[`../../architecture.md`](../../architecture.md#設定と環境変数)）の宣言順そのままを列挙する（そちらが正本）。カタログの設定はすべて TOML フィールドを持つので、`key` が無い項目は無い。
 - `secret_key` の値は常に `"(set, hidden)"` か `"(not set)"`（[`../dashboard.md`](../dashboard.md#秘密鍵を出さない仕組み) を参照）。`editable` は常に `false`（書けるのは `POST /api/setup` だけ）。
-- `ipfs.api` は `[kubo].managed = true` のとき固定文字列 `"managed"` になる（動的なポートを含む実際の URL ではなく、`swing up` が `<repo>/api` から解決した値であることを示す。[`../kubo.md`](../kubo.md#動的な-api-ポートと-repoapi)）。`managed = false` なら実際の URL（`[ipfs].api` の値）。
+- `ipfs.api` は `[kubo].managed = true` のとき固定文字列 `"managed"` になる（動的なポートを含む実際の URL ではなく、`swing up` が起動のたびに決める値であることを示す。[`../kubo.md`](../kubo.md#動的な-api-ポートと-repoapi)）。`managed = false` なら実際の URL（`[ipfs].api` の値）。
 - `kubo.binary`/`kubo.repo` はパスを文字列で返す（`binary` が未設定なら空文字）。`kubo.swarm_port` は常に文字列で、未設定なら `"-"`。`gateway.listen` は無効なら `"off"`。
 - `value` は文字列・真偽・数値・文字列配列のいずれか（常に生の値）。容量・時間の項目は読みやすい文字列を `display` に添える（`crate::format::format_bytes`・`format_duration_secs`。値を正確に（小数は 1 桁まで）表せるいちばん大きい単位で、容量は 1024 基数の `"100 GiB"`・`"1.5 KiB"`、時間は `"5m"` など）。個数系（`keep_versions` など）には `display` が付かず、無い項目はフィールドごと出ない。パスの項目（`kind: "path"`）の `value` は解決後のパスで、設定ファイルがあれば、設定ファイルに書いた相対パスと既定値は設定ファイルのディレクトリを起点にした絶対パスになる（[`../../architecture.md#設定と環境変数`](../../architecture.md#設定と環境変数)）。
 - `config_path` は常に何か文字列が入る（環境変数だけで動いている、かつ設定ファイルが無くても `null` にはならない。パスの決め方は [`../../architecture.md#設定と環境変数`](../../architecture.md#設定と環境変数) が正本）。`config_exists` はそのパスに実際にファイルがあるかどうか。

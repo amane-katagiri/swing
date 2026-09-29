@@ -131,7 +131,7 @@ fn load_document(path: &Path) -> Result<DocumentMut, EditError> {
 }
 
 // Renaming over a symlink would replace the link itself, so write to the file it points at.
-fn write_atomic(path: &Path, contents: &str) -> Result<()> {
+pub(crate) fn write_atomic(path: &Path, contents: &str) -> Result<()> {
     let target = match std::fs::canonicalize(path) {
         Ok(real) => real,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => path.to_path_buf(),

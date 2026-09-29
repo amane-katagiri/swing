@@ -281,6 +281,10 @@ impl IpfsClient {
         }
     }
 
+    pub fn api_url(&self) -> &str {
+        &self.api
+    }
+
     fn url(&self, path: &str) -> String {
         format!("{}{}", self.api, path)
     }
@@ -510,6 +514,10 @@ impl IpfsClient {
         let text = self.call("id", "", Duration::from_secs(10)).await?;
         let parsed: IdResponse = serde_json::from_str(&text).context("parsing id response")?;
         Ok(parsed.id)
+    }
+
+    pub async fn shutdown(&self, timeout: Duration) -> Result<()> {
+        self.call("shutdown", "", timeout).await.map(drop)
     }
 
     pub async fn bandwidth(&self) -> Result<Bandwidth> {

@@ -523,25 +523,16 @@ pub fn parse_bool(input: &str) -> Result<bool> {
 }
 
 impl Config {
-    pub fn ipfs_api_url(&self) -> Result<String> {
-        match &self.ipfs.api {
-            IpfsApi::Url(url) => Ok(url.clone()),
-            IpfsApi::Managed => crate::kubo::api_url_from_repo(&self.kubo.repo),
-        }
-    }
-
     pub async fn ipfs_client(&self) -> Result<crate::ipfs::IpfsClient> {
-        let url = self.ipfs_api_url()?;
-        if self.ipfs.api != IpfsApi::Managed {
-            return Ok(crate::ipfs::IpfsClient::with_secret(
-                url,
+        match &self.ipfs.api {
+            IpfsApi::Url(url) => Ok(crate::ipfs::IpfsClient::with_secret(
+                url.clone(),
                 self.ipfs.api_secret.as_ref(),
-            ));
+            )),
+            IpfsApi::Managed => {
+                crate::kubo::managed_client(&self.agent.state_dir, &self.kubo.repo).await
+            }
         }
-        let secret = crate::kubo::read_api_secret(&self.agent.state_dir)?;
-        let client = crate::ipfs::IpfsClient::with_secret(url, secret.as_ref());
-        crate::kubo::ensure_own_daemon(&client, &self.kubo.repo).await?;
-        Ok(client)
     }
 
     pub fn load(cli_path: Option<&Path>) -> Result<Self> {

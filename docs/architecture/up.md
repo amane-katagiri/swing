@@ -9,7 +9,7 @@
 - `managed = true`: Kubo を子プロセスとして起動・設定・監視し、その上で `agent::run_until`（[`agent.md`](agent.md)）を動かす。
 - `managed = false`: 外部の Kubo（`[ipfs].api`）のヘルスを待ってから `agent::run_until` を動かす。
 
-どちらも `up::run` が受け取ったトークン（[shutdown](#shutdownshutdownrs)）の下で動く。Kubo の起動・ヘルス待ちの失敗、Kubo の異常終了、agent の異常終了（managed は `Err` と panic、unmanaged は `Err` だけ）ではバックオフして再起動し、`up::run` は動き続ける。ただし managed の `locate_binary`・`version`・`recover_orphan` の失敗、unmanaged で Kubo API の URL を決められない場合（`Config::ipfs_api_url` のエラー）、managed の停止時の `Daemon::stop` の失敗（下記）では `up::run` ごとエラーで終わる。ダッシュボードの API サーバは agent の終了では止まらず（agent は抜けるときに `AppState::set_not_ready` を呼ぶだけ。後始末の順序は [`agent.md#シグナルと終了`](agent.md#シグナルと終了)）、`up::run` の終わりに止める。止まるのを最大 5 秒（`DASHBOARD_SHUTDOWN_TIMEOUT`）待ち、超えたら warn を出して待つのをやめる。
+どちらも `up::run` が受け取ったトークン（[shutdown](#shutdownshutdownrs)）の下で動く。Kubo の起動・ヘルス待ちの失敗、Kubo の異常終了、agent の異常終了（managed は `Err` と panic、unmanaged は `Err` だけ）ではバックオフして再起動し、`up::run` は動き続ける。ただし managed の `locate_binary`・`version`・`recover_orphan` の失敗、unmanaged で Kubo API のクライアントを作れない場合（`Config::ipfs_client` のエラー）、managed の停止時の `Daemon::stop` の失敗（下記）では `up::run` ごとエラーで終わる。ダッシュボードの API サーバは agent の終了では止まらず（agent は抜けるときに `AppState::set_not_ready` を呼ぶだけ。後始末の順序は [`agent.md#シグナルと終了`](agent.md#シグナルと終了)）、`up::run` の終わりに止める。止まるのを最大 5 秒（`DASHBOARD_SHUTDOWN_TIMEOUT`）待ち、超えたら warn を出して待つのをやめる。
 
 ## セットアップモード（鍵未設定）
 
@@ -80,8 +80,9 @@ Kubo バイナリの検出・バージョン確認・リポジトリの初期化
 
 ```
 loop {
-    wait_healthy(config.ipfs_api_url(), 30s)   // cancel されたら即終了
-    AppState.stats に RPC の URL を渡す（PID は分からないので渡さない。stats.md）
+    ipfs = config.ipfs_client()                // [ipfs].api の URL（秘密は付けない）
+    wait_healthy(ipfs, 30s)                    // cancel されたら即終了
+    AppState.stats に ipfs を渡す（PID は分からないので渡さない。stats.md）
     agent::run_until(config, token.child_token())
     // cancel されたら agent の終了を最大 15 秒（AGENT_STOP_TIMEOUT）待ち、超えたら warn を出して future を捨てて終了
     // Ok(()) なら終了。Err ならバックオフして最初から
@@ -92,16 +93,16 @@ loop {
 
 `run_managed` の始めに（`up::run` が呼ばれるたびに）`locate_binary` + `version`（不一致は warn）、続けて [`recover_orphan`](kubo.md#kubopid-と孤児-kubo-の回収managed-のみ) を行う。どれかが失敗したら `up::run` ごとエラーで終わる。`recover_orphan` はトークンの cancel と競争させ、cancel が先なら回収を途中でやめて `Ok(())` を返す（`kubo.pid` は残るので、次の起動で回収し直す）。以後ループ:
 
-1. `ensure_repo` → `pick_free_port` → `apply_config` → `Daemon::spawn(..., "http://127.0.0.1:<api_port>")` → `Daemon::wait_healthy(repo, 120s)`（PeerID の一致と子プロセスの終了も見る。[`kubo.md`](kubo.md#ヘルス待ちkubowait_healthy--daemonwait_healthy)）。
-   - いずれかの手順が失敗したら（ヘルス待ちが失敗した場合は daemon を `stop` してから）バックオフして 1 からやり直す。
-2. Kubo の PID と RPC の URL を測定の対象として `AppState.stats` に渡す（`Recorder::set_kubo`。Kubo が exit したら外す。[`stats.md`](stats.md#測り方)）。`config.ipfs.api` を `IpfsApi::Url(api_url)` に差し替え、`config.ipfs.api_secret` にその起動の RPC の秘密（[`kubo.md#rpc-の認証managed-のみ`](kubo.md#rpc-の認証managed-のみ)）を入れたコピーで `agent::run_until`（共有の `Arc<dashboard::AppState>` と `Arc<Notify>` を渡す）を子トークンとともに `tokio::spawn` する。`agent::run_until` は `Result<()>` を返すだけで、終了要求の種別（stop/restart）は持たない（下記「終了要求と exit code」）。
+1. `remove_api_access`（前回の `<state_dir>/kubo-api.json` を消す）→ `ensure_repo` → `pick_free_port` → `ApiAccess::generate`（ポートと新しい秘密）→ `apply_config` → `Daemon::spawn(..., &api)` → `Daemon::wait_healthy(repo, 120s)`（`<repo>/api`・PeerID の一致と子プロセスの終了も見る。[`kubo.md`](kubo.md#ヘルス待ちkubowait_healthy--daemonwait_healthy)）→ `write_api_access`（その回のポートと秘密を `kubo-api.json` に書く。[`kubo.md#rpc-の認証managed-のみ`](kubo.md#rpc-の認証managed-のみ)）。
+   - いずれかの手順が失敗したら（ヘルス待ちか `write_api_access` が失敗した場合は daemon を `stop` してから）バックオフして 1 からやり直す。
+2. Kubo の PID と `Daemon` の RPC クライアントを測定の対象として `AppState.stats` に渡す（`Recorder::set_kubo`。Kubo が exit したら外す。[`stats.md`](stats.md#測り方)）。`config.ipfs.api` を `IpfsApi::Url("http://127.0.0.1:<api_port>")` に差し替え、`config.ipfs.api_secret` にその起動の RPC の秘密（[`kubo.md#rpc-の認証managed-のみ`](kubo.md#rpc-の認証managed-のみ)）を入れたコピーで `agent::run_until`（共有の `Arc<dashboard::AppState>` と `Arc<Notify>` を渡す）を子トークンとともに `tokio::spawn` する。`agent::run_until` は `Result<()>` を返すだけで、終了要求の種別（stop/restart）は持たない（下記「終了要求と exit code」）。
 3. `tokio::select!` で次のいずれかを待つ:
-   - **Kubo が exit** → `error!` を出し、agent を cancel して最大 15 秒（`AGENT_STOP_TIMEOUT`）待つ（超えたら `abort()`）。`kubo.pid` を消し、バックオフして 1 からやり直す（Kubo・agent の両方を再起動）。
+   - **Kubo が exit** → `error!` を出し、agent を cancel して最大 15 秒（`AGENT_STOP_TIMEOUT`）待つ（超えたら `abort()`）。`kubo.pid` と `kubo-api.json` を消し、バックオフして 1 からやり直す（Kubo・agent の両方を再起動）。
    - **agent が Err（または panic）** → `warn!`／`error!` を出し、バックオフしてから **agent だけ**を同じ Kubo に対して再起動する（Kubo はそのまま）。バックオフ中に cancel されたら `Daemon::stop(20s)` して `Ok(())` を返す。
    - **agent が Ok**（cancel による正常終了） → `Daemon::stop(20s)` して `Ok(())` を返す。
    - **親トークンが cancel** → agent を cancel して最大 15 秒待ち（超えたら `abort()`）、`Daemon::stop(20s)` して `Ok(())` を返す。
 
-Kubo の停止（`stop_daemon`）は、1 のヘルス待ちの失敗・その待機中の cancel も含めどの経路でも同じ扱いで、`Daemon::stop` が失敗しても warn を出すだけで経路どおりに続ける（エラーにはしない）。親トークンの cancel は SIGTERM のほか `swing stop`・トレイ（`/api/shutdown`）、`/api/restart`、setup 後の再起動も通るので、停止の失敗で exit 1（サービスマネージャによる再起動）になったり、プロセス内再起動がプロセス終了になったりしない。`kubo.pid` は `Daemon::stop` が成功したときだけ消し、失敗したときは残して次回の [`recover_orphan`](kubo.md#kubopid-と孤児-kubo-の回収managed-のみ) に回収を任せる。
+Kubo の停止（`stop_daemon`）は、1 のヘルス待ちの失敗・その待機中の cancel も含めどの経路でも同じ扱いで、`Daemon::stop` が失敗しても warn を出すだけで経路どおりに続ける（エラーにはしない）。親トークンの cancel は SIGTERM のほか `swing stop`・トレイ（`/api/shutdown`）、`/api/restart`、setup 後の再起動も通るので、停止の失敗で exit 1（サービスマネージャによる再起動）になったり、プロセス内再起動がプロセス終了になったりしない。`kubo.pid` と `kubo-api.json` は `Daemon::stop` が成功したときだけ消し、失敗したときは残して次回の [`recover_orphan`](kubo.md#kubopid-と孤児-kubo-の回収managed-のみ) に回収を任せる。
 
 `run_managed` が `Ok(())` を返したときの `swing up` 全体の終わり方は `up::run` が別途持つ `ExitRequest` から決める（下記）。
 

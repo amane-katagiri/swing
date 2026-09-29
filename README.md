@@ -460,7 +460,7 @@ SWING は、常時起動のサーバでも、普段使いの PC でも動かせ�
 | 他の参加者への配送（上り） | 自分が持っているサイトがどれだけ読まれるかしだい | SWING からは制限できません（Kubo が配っています） |
 | IPFS ネットワークの維持（DHT など） | 何もしていなくても常に流れます | Kubo の設定（接続数・ルーティングの方式）と、保存しているブロックの数 |
 
-実際の量は、Kubo の `ipfs stats bw` で確かめられます（バイナリなら `IPFS_PATH=<[kubo] repo のパス> ipfs --api-auth="bearer:$(cat <state_dir>/kubo-api.secret)" stats bw`（repo の既定は `<state_dir>/kubo`。`swing up` が管理する Kubo の RPC は起動のたびに作り直す秘密を要求します）、Docker Compose なら `docker compose exec ipfs ipfs stats bw`）。
+実際の量は、Kubo の `ipfs stats bw` で確かめられます（バイナリなら `IPFS_PATH=<[kubo] repo のパス> ipfs --api-auth="bearer:$(jq -r .secret <state_dir>/kubo-api.json)" stats bw`（repo の既定は `<state_dir>/kubo`。`swing up` が管理する Kubo の RPC は起動のたびに作り直す秘密を要求し、`kubo-api.json` にはその回のポートと秘密が入っています）、Docker Compose なら `docker compose exec ipfs ipfs stats bw`）。
 
 月あたりの通信量に上限がある回線（モバイル回線・テザリングなど）では、今のところ SWING 側で通信量の合計を抑える設定はありません。つながっている間は SWING ごと止めてください。バイナリの `swing up` なら `swing stop`（またはトレイの「Stop」）で Kubo も止まりますが、Docker Compose の構成では `mirror` を止めても `ipfs` コンテナは配り続けるので、`docker compose stop` で両方止めます。IPFS の維持の通信を減らしたい場合は、Kubo の設定の `Swarm.ConnMgr`（接続数）や `Routing.Type`（`autoclient` にすると、ほかの peer の DHT の問い合わせに答えなくなります）を直接変えてください。SWING はこれらの設定に触れないので、変えた値はそのまま残ります。
 
@@ -472,7 +472,7 @@ TOML の設定ファイル（`swing.toml`）を使う場合と、環境変数だ
 
 SWING は公開の IPFS Mainnet をそのまま使うため、匿名性は提供しません。他の IPFS peer から、あなたの Peer ID・IP アドレス・提供している CID などの関連を観測される可能性があります。もともと公開 Web サイトを保存することが前提のツールなので、この点は許容した上でご利用ください。
 
-一方で、Kubo の RPC やローカルのゲートウェイ、ダッシュボード（管理 UI）は外部に公開しません。外部に公開する必要があるのは IPFS swarm 用のポート（`4001`）だけです。バイナリで `swing up` が Kubo を管理する場合、RPC はループバックのランダムなポートで待ち受けるため外部から触ることはできず、同じマシンの他のユーザーからも使えないよう、起動のたびに作り直す秘密（`<state_dir>/kubo-api.secret`）を要求します。`[ipfs].api` で外部の Kubo を使う場合、SWING はその RPC に認証を付けないので、同じマシンの他のユーザーやほかのコンテナから届かないようにしてください。Docker Compose の構成でも、Kubo の RPC（5001）はホストに公開されず、ゲートウェイ（`8080`）とダッシュボード（`8082`）はどちらも既定で `127.0.0.1` だけで待ち受けます。ダッシュボードは平文の HTTP なので、`SWING_DASHBOARD_BIND` を変えて平文のまま外部に出すと、ログインコードとログイン状態の cookie がそのまま流れます。外の端末から使う方法は下の「[ダッシュボードを外の端末から使う](#ダッシュボードを外の端末から使う)」、既知の弱点は [`docs/architecture/dashboard.md`](docs/architecture/dashboard.md#既知の弱点) を参照してください。内蔵ゲートウェイで外部に配信するのは、設定した `SWING_GATEWAY_HOSTS`（または `gateway.hosts`）のホストの DNSLink だけです。
+一方で、Kubo の RPC やローカルのゲートウェイ、ダッシュボード（管理 UI）は外部に公開しません。外部に公開する必要があるのは IPFS swarm 用のポート（`4001`）だけです。バイナリで `swing up` が Kubo を管理する場合、RPC はループバックのランダムなポートで待ち受けるため外部から触ることはできず、同じマシンの他のユーザーからも使えないよう、起動のたびに作り直す秘密（`<state_dir>/kubo-api.json`）を要求します。ただし Kubo は同じポートの `/debug/`（メトリクス・プロファイル・スタック）と `/logs` を秘密なしで返すので、同じマシンの他のユーザーはこれらを読めます（[`docs/architecture/kubo.md`](docs/architecture/kubo.md#既知の制限-api-ポートの認証のないエンドポイント)）。`[ipfs].api` で外部の Kubo を使う場合、SWING はその RPC に認証を付けないので、同じマシンの他のユーザーやほかのコンテナから届かないようにしてください。Docker Compose の構成でも、Kubo の RPC（5001）はホストに公開されず、ゲートウェイ（`8080`）とダッシュボード（`8082`）はどちらも既定で `127.0.0.1` だけで待ち受けます。ダッシュボードは平文の HTTP なので、`SWING_DASHBOARD_BIND` を変えて平文のまま外部に出すと、ログインコードとログイン状態の cookie がそのまま流れます。外の端末から使う方法は下の「[ダッシュボードを外の端末から使う](#ダッシュボードを外の端末から使う)」、既知の弱点は [`docs/architecture/dashboard.md`](docs/architecture/dashboard.md#既知の弱点) を参照してください。内蔵ゲートウェイで外部に配信するのは、設定した `SWING_GATEWAY_HOSTS`（または `gateway.hosts`）のホストの DNSLink だけです。
 
 Nostr の秘密鍵は、Docker Compose で動かす場合は `.env` に、バイナリで `swing.toml` を使う場合は `swing.toml` の `secret_key` に、どちらも平文で保存されます。サイト公開・ミラー参加専用の鍵を新しく作り、他の用途の鍵とは分けて扱うことをおすすめします。`.env` や `swing.toml` を Git にコミットしないよう注意してください。
 

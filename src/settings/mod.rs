@@ -6,6 +6,7 @@ use crate::config::{Config, Source};
 mod edit;
 mod example;
 
+pub(crate) use edit::write_atomic;
 pub use edit::{EditError, pin_addrs, setup, setup_keys, update};
 pub use example::{render_env_example, render_toml_example};
 
