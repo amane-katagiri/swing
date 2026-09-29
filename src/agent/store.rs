@@ -14,6 +14,24 @@ use super::{Agent, now_secs};
 
 const NIP05_ERROR_CACHE_TTL: u64 = 900;
 
+struct Storing<'a> {
+    paths: &'a std::sync::Mutex<std::collections::HashSet<String>>,
+    path: String,
+}
+
+impl<'a> Storing<'a> {
+    fn new(paths: &'a std::sync::Mutex<std::collections::HashSet<String>>, path: String) -> Self {
+        paths.lock().unwrap().insert(path.clone());
+        Self { paths, path }
+    }
+}
+
+impl Drop for Storing<'_> {
+    fn drop(&mut self) {
+        self.paths.lock().unwrap().remove(&self.path);
+    }
+}
+
 pub(super) struct Queued {
     running_created_at: u64,
     next: Option<SiteEvent>,
@@ -99,11 +117,7 @@ where
                 }
                 return;
             }
-            let prefix = format!("{pubkey_hex}:");
-            let active = queue
-                .range(prefix.clone()..)
-                .take_while(|(k, _)| k.starts_with(&prefix))
-                .count();
+            let active = state::account_entries(&*queue, &pubkey_hex).count();
             if active >= self.config.policy.max_sites_per_account {
                 debug!(site_key = %key, "too many sites of this account in progress; dropping until next poll");
                 return;
@@ -210,6 +224,10 @@ impl<C: KuboStore, N: Nip05Verify, R: ReportRelay> Agent<C, N, R> {
             return false;
         }
         let key = state::site_key(&pubkey_hex, &ev.d);
+        if self.rejected.lock().unwrap().get(&key) == Some(&ev.cid) {
+            debug!(cid = %ev.cid, site = %ev.d, "skip: this cid was already rejected after fetch");
+            return false;
+        }
 
         let precheck = {
             let state = self.state.lock().await;
@@ -237,6 +255,7 @@ impl<C: KuboStore, N: Nip05Verify, R: ReportRelay> Agent<C, N, R> {
             Ok(Fetched::Complete) => {}
             Ok(Fetched::TooLarge) => {
                 warn!(cid = %ev.cid, site = %ev.d, limit = limits.max_bytes, "content exceeds the fetch limit; aborted");
+                self.reject(&key, ev);
                 return false;
             }
             Err(e) => {
@@ -248,6 +267,7 @@ impl<C: KuboStore, N: Nip05Verify, R: ReportRelay> Agent<C, N, R> {
             Ok(true) => {}
             Ok(false) => {
                 warn!(cid = %ev.cid, site = %ev.d, reason = "not_a_directory", "cid is not a UnixFS directory; not storing");
+                self.reject(&key, ev);
                 return false;
             }
             Err(e) => {
@@ -256,17 +276,22 @@ impl<C: KuboStore, N: Nip05Verify, R: ReportRelay> Agent<C, N, R> {
             }
         }
 
-        let mut state = self.state.lock().await;
-        if !self.is_target(&ev.pubkey) {
-            info!(site = %ev.d, pubkey = %pubkey_hex, "author left the follow set during fetch; not storing");
-            return false;
-        }
         let path = self.layout.agent_version(&pubkey_hex, &ev.d, ev.created_at);
-        if let Err(e) = self.ipfs.mfs_put(&ev.cid, &path).await {
-            error!(cid = %ev.cid, path = %path, error = %e, "storing into MFS failed");
-            return false;
+        let _storing = Storing::new(&self.storing, path.clone());
+        {
+            let _state = self.state.lock().await;
+            if !self.is_target(&ev.pubkey) {
+                info!(site = %ev.d, pubkey = %pubkey_hex, "author left the follow set during fetch; not storing");
+                return false;
+            }
+            if let Err(e) = self.ipfs.mfs_put(&ev.cid, &path).await {
+                error!(cid = %ev.cid, path = %path, error = %e, "storing into MFS failed");
+                return false;
+            }
         }
-        let size = match self.ipfs.dag_size_local(&[ev.cid.as_str()]).await {
+        let size = self.ipfs.dag_size_local(&[ev.cid.as_str()]).await;
+        let mut state = self.state.lock().await;
+        let size = match size {
             Ok(size) => size,
             Err(e) => {
                 warn!(cid = %ev.cid, error = %e, "content is incomplete after fetch; will retry on next poll");
@@ -274,6 +299,11 @@ impl<C: KuboStore, N: Nip05Verify, R: ReportRelay> Agent<C, N, R> {
                 return false;
             }
         };
+        if !self.is_target(&ev.pubkey) {
+            info!(site = %ev.d, pubkey = %pubkey_hex, "author left the follow set during fetch; not storing");
+            self.remove_path(&path).await;
+            return false;
+        }
         if let Some(declared) = ev.size
             && declared < size
         {
@@ -284,6 +314,7 @@ impl<C: KuboStore, N: Nip05Verify, R: ReportRelay> Agent<C, N, R> {
         let Some(cid) = decision.store else {
             warn!(cid = %ev.cid, site = %ev.d, size, reason = %decision.reason, "rejected after fetch");
             self.remove_path(&path).await;
+            self.reject(&key, ev);
             return false;
         };
         state.apply_store(
@@ -295,11 +326,19 @@ impl<C: KuboStore, N: Nip05Verify, R: ReportRelay> Agent<C, N, R> {
                 stored_at: now_secs(),
             },
         );
+        self.rejected.lock().unwrap().remove(&key);
         let evicted = state.remove_versions(&key, &decision.evict);
         self.save(&state, "store").await;
         self.remove_versions(&key, &evicted).await;
         info!(cid = %cid, site = %ev.d, pubkey = %pubkey_hex, size, "stored");
         true
+    }
+
+    fn reject(&self, key: &SiteKey, ev: &SiteEvent) {
+        self.rejected
+            .lock()
+            .unwrap()
+            .insert(key.clone(), ev.cid.clone());
     }
 }
 
@@ -436,6 +475,56 @@ mod tests {
         fx.apply(fx.event(D, "bafy-honest", Some(1), 300)).await;
         assert!(fx.kubo().stores("bafy-honest"));
         assert_eq!(fx.site_bytes(D).await, 30);
+    }
+
+    #[tokio::test]
+    async fn a_cid_rejected_after_fetch_is_not_fetched_again_until_it_changes() {
+        let mut policy = default_policy();
+        policy.max_per_site = 50;
+        let kubo = sized(&[("bafy-big", 1_000), ("bafy-small", 10)]);
+        kubo.s.lock().unwrap().files.insert("bafy-file".into());
+        let fx = Fixture::new(policy, kubo);
+
+        fx.apply(fx.event(D, "bafy-big", None, 200)).await;
+        fx.apply(fx.event(D, "bafy-big", None, 200)).await;
+        fx.apply(fx.event("f.example", "bafy-file", None, 200))
+            .await;
+        fx.apply(fx.event("f.example", "bafy-file", None, 200))
+            .await;
+        assert_eq!(fx.kubo().fetched, vec!["bafy-big", "bafy-file"]);
+
+        fx.apply(fx.event(D, "bafy-small", None, 300)).await;
+        assert!(fx.kubo().stores("bafy-small"));
+    }
+
+    #[tokio::test]
+    async fn a_failed_fetch_is_retried() {
+        let kubo = FakeKubo::with(|s| {
+            s.fail_fetch.insert("bafy-new".into());
+        });
+        let fx = Fixture::new(default_policy(), kubo);
+
+        fx.apply(fx.event(D, "bafy-new", None, 200)).await;
+        fx.kubo().fail_fetch.clear();
+        fx.apply(fx.event(D, "bafy-new", None, 200)).await;
+
+        assert_eq!(fx.kubo().fetched, vec!["bafy-new", "bafy-new"]);
+        assert!(fx.kubo().stores("bafy-new"));
+    }
+
+    #[tokio::test]
+    async fn the_sweep_leaves_a_version_that_is_being_stored() {
+        let fx = Fixture::new(default_policy(), FakeKubo::default());
+        let path = fx.path(D, 200);
+        fx.kubo().mfs.insert(path.clone(), "bafy-new".into());
+
+        {
+            let _storing = Storing::new(&fx.agent.storing, path.clone());
+            fx.agent.sweep().await;
+            assert_eq!(fx.kubo().paths(), vec![path.clone()]);
+        }
+        fx.agent.sweep().await;
+        assert!(fx.kubo().paths().is_empty());
     }
 
     #[tokio::test]

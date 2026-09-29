@@ -54,7 +54,6 @@ impl VerificationResult {
         }
     }
 
-    /// A coarse, oracle-resistant classification of `Error`'s detail, safe to hand to a network caller.
     pub fn coarse_detail(&self) -> Option<&'static str> {
         match self {
             VerificationResult::Error(_, category) => Some(category.as_str()),
@@ -117,16 +116,33 @@ fn is_public_v4(ip: Ipv4Addr) -> bool {
         || (a == 192 && b == 0 && c == 0))
 }
 
-fn is_public_v6(ip: Ipv6Addr) -> bool {
+fn embedded_v4(ip: Ipv6Addr) -> Option<Ipv4Addr> {
     if let Some(v4) = ip.to_ipv4_mapped() {
+        return Some(v4);
+    }
+    let seg = ip.segments();
+    let low = || Ipv4Addr::from((u32::from(seg[6]) << 16) | u32::from(seg[7]));
+    match seg {
+        [0x0064, 0xff9b, 0, 0, 0, 0, _, _] => Some(low()),
+        [0x2002, hi, lo, ..] => Some(Ipv4Addr::from((u32::from(hi) << 16) | u32::from(lo))),
+        [0, 0, 0, 0, 0, 0, _, _] if !ip.is_unspecified() && !ip.is_loopback() => Some(low()),
+        _ => None,
+    }
+}
+
+fn is_public_v6(ip: Ipv6Addr) -> bool {
+    if let Some(v4) = embedded_v4(ip) {
         return is_public_v4(v4);
     }
-    let [s0, s1, ..] = ip.segments();
+    let [s0, s1, s2, ..] = ip.segments();
     !(ip.is_unspecified()
         || ip.is_loopback()
         || ip.is_multicast()
         || ip.is_unique_local()
         || ip.is_unicast_link_local()
+        || (s0 & 0xffc0) == 0xfec0
+        || (s0 == 0x2001 && s1 == 0)
+        || (s0 == 0x0064 && s1 == 0xff9b && s2 == 1)
         || (s0 == 0x2001 && s1 == 0x0db8))
 }
 
@@ -355,6 +371,17 @@ mod tests {
             "2001:db8::1",
             "::ffff:127.0.0.1",
             "::ffff:10.0.0.1",
+            "64:ff9b::7f00:1",
+            "64:ff9b::a00:1",
+            "64:ff9b:1::1",
+            "2002:7f00:1::1",
+            "2002:c0a8:101::1",
+            "::127.0.0.1",
+            "::10.0.0.1",
+            "fec0::1",
+            "feff::1",
+            "2001::1",
+            "2001:0:4136:e378:8000:63bf:3fff:fdd2",
         ] {
             assert!(!is_public_ip(ip.parse().unwrap()), "{ip} should be blocked");
         }
@@ -363,6 +390,9 @@ mod tests {
             "93.184.216.34",
             "2606:4700::1111",
             "::ffff:8.8.8.8",
+            "64:ff9b::808:808",
+            "2002:808:808::1",
+            "::8.8.8.8",
         ] {
             assert!(is_public_ip(ip.parse().unwrap()), "{ip} should be allowed");
         }

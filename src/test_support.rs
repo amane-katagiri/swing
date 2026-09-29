@@ -44,6 +44,7 @@ pub(crate) fn site_event_fixture(pubkey: PublicKey, d: &str, created_at: u64) ->
         title: None,
         message: None,
         created_at,
+        id: nostr_sdk::prelude::EventId::from_byte_array([0; 32]),
     }
 }
 

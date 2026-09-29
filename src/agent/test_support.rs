@@ -218,6 +218,7 @@ impl Fixture {
             title: None,
             message: None,
             created_at,
+            id: nostr_sdk::prelude::EventId::from_byte_array([0; 32]),
         }
     }
 

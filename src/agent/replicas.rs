@@ -21,6 +21,7 @@ pub(super) struct SentReport {
 pub(super) struct ReportBook {
     pub(super) loaded: bool,
     pub(super) sent: BTreeMap<SiteKey, SentReport>,
+    own_cids: BTreeMap<SiteKey, BTreeSet<String>>,
 }
 
 #[derive(Debug, Default)]
@@ -62,6 +63,25 @@ fn reports_to_send(
             continue;
         }
         out.push((key.clone(), BTreeSet::new()));
+    }
+    out
+}
+
+fn own_cids(
+    held: &Held,
+    previous: &BTreeMap<SiteKey, BTreeSet<String>>,
+    own_hex: &str,
+) -> BTreeMap<SiteKey, BTreeSet<String>> {
+    let canonical = |cid: &String| nostr::canonical_cid(cid).unwrap_or_else(|_| cid.clone());
+    let mut out: BTreeMap<SiteKey, BTreeSet<String>> = state::account_entries(&held.cids, own_hex)
+        .map(|(key, cids)| (key.clone(), cids.iter().map(canonical).collect()))
+        .collect();
+    for (key, cids) in previous {
+        if held.is_unknown(key) {
+            out.entry(key.clone())
+                .or_default()
+                .extend(cids.iter().cloned());
+        }
     }
     out
 }
@@ -168,6 +188,8 @@ impl<C: KuboStore, N: Nip05Verify, R: ReportRelay> Agent<C, N, R> {
     }
 
     pub(super) async fn record_replica_reports(&self) {
+        let own_cids = self.reports.lock().await.own_cids.clone();
+        let own_hex = self.own.to_hex();
         let kind = self.config.nostr.replica_event_kind;
         let since = self
             .activity
@@ -198,7 +220,15 @@ impl<C: KuboStore, N: Nip05Verify, R: ReportRelay> Agent<C, N, R> {
             else {
                 continue;
             };
-            if report.author == self.own && report.counts_at(now) {
+            let names_own_cid = own_cids
+                .get(&state::site_key(&own_hex, &report.d))
+                .is_some_and(|cids| !cids.is_disjoint(&report.cids));
+            // A report dated ahead of now is left for a later poll so the cursor never runs ahead of the clock.
+            if report.author == self.own
+                && names_own_cid
+                && report.created_at <= now
+                && report.counts_at(now)
+            {
                 self.activity.record_replica_report(report.created_at);
             }
         }
@@ -208,6 +238,7 @@ impl<C: KuboStore, N: Nip05Verify, R: ReportRelay> Agent<C, N, R> {
         let mut book = self.reports.lock().await;
         self.load_sent_reports(&mut book).await;
         let held = self.held().await;
+        book.own_cids = own_cids(&held, &book.own_cids, &self.own.to_hex());
         let now = now_secs();
         let ttl = self.config.agent.report_ttl.as_secs();
         for (key, cids) in reports_to_send(&held, &book.sent, now, ttl / 2) {
@@ -511,12 +542,22 @@ mod tests {
     }
 
     fn report_about_own(fx: &Fixture, reporter: &Keys, d: &str, created_at: u64) -> Event {
+        report_about_own_cid(fx, reporter, d, CID_A, created_at)
+    }
+
+    fn report_about_own_cid(
+        fx: &Fixture,
+        reporter: &Keys,
+        d: &str,
+        cid: &str,
+        created_at: u64,
+    ) -> Event {
         nostr::build_replica_report_builder(
             35981,
             35980,
             &fx.agent.own,
             d,
-            &BTreeSet::from([CID_A.to_string()]),
+            &BTreeSet::from([cid.to_string()]),
             Timestamp::from_secs(created_at + REPORT_TTL),
         )
         .custom_created_at(Timestamp::from_secs(created_at))
@@ -524,9 +565,43 @@ mod tests {
         .unwrap()
     }
 
+    async fn publish_own(fx: &Fixture, ds: &[&str]) {
+        {
+            let mut kubo = fx.kubo();
+            for d in ds {
+                kubo.mfs.insert(fx.publish_path(d, "100"), CID_A.into());
+            }
+        }
+        fx.agent.sync_reports().await;
+        fx.take_reports();
+    }
+
+    #[tokio::test]
+    async fn only_reports_naming_a_published_cid_up_to_now_move_the_replica_report_time() {
+        let fx = Fixture::new(default_policy(), FakeKubo::default());
+        publish_own(&fx, &[D]).await;
+        let now = now_secs();
+        let other = Keys::generate();
+        fx.relay().stored = vec![
+            report_about_own_cid(&fx, &other, D, CID_B, now - 10),
+            report_about_own(&fx, &other, "unpublished.example", now - 10),
+            report_about_own(&fx, &Keys::generate(), D, now + 600),
+        ];
+
+        fx.agent.record_replica_reports().await;
+        assert_eq!(fx.agent.activity.latest_replica_report_at(), Some(0));
+
+        fx.relay()
+            .stored
+            .push(report_about_own(&fx, &other, D, now - 5));
+        fx.agent.record_replica_reports().await;
+        assert_eq!(fx.agent.activity.latest_replica_report_at(), Some(now - 5));
+    }
+
     #[tokio::test]
     async fn reports_by_others_about_own_sites_advance_the_replica_report_time() {
         let fx = Fixture::new(default_policy(), FakeKubo::default());
+        publish_own(&fx, &[D, "b.example"]).await;
         let now = now_secs();
         let other = Keys::generate();
         let own_keys = fx.agent.reporter.keys.clone();
@@ -574,6 +649,7 @@ mod tests {
     #[tokio::test]
     async fn a_failed_fetch_keeps_the_replica_report_time() {
         let fx = Fixture::new(default_policy(), FakeKubo::default());
+        publish_own(&fx, &[D]).await;
         let now = now_secs();
         let other = Keys::generate();
         fx.relay().fail_fetch = true;

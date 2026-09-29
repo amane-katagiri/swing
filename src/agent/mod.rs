@@ -7,7 +7,7 @@ mod test_support;
 
 pub use lifecycle::run_until;
 
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, RwLock};
 
@@ -62,6 +62,8 @@ struct Agent<C, N, R> {
     targets: RwLock<HashSet<PublicKey>>,
     queue: Mutex<BTreeMap<SiteKey, Queued>>,
     permits: Semaphore,
+    storing: Mutex<HashSet<String>>,
+    rejected: Mutex<HashMap<SiteKey, String>>,
 }
 
 impl<C: KuboStore, N: Nip05Verify, R: ReportRelay> Agent<C, N, R> {
@@ -90,6 +92,8 @@ impl<C: KuboStore, N: Nip05Verify, R: ReportRelay> Agent<C, N, R> {
             targets: RwLock::new(HashSet::new()),
             queue: Mutex::new(BTreeMap::new()),
             permits,
+            storing: Mutex::new(HashSet::new()),
+            rejected: Mutex::new(HashMap::new()),
         }
     }
 
@@ -158,7 +162,12 @@ impl<C: KuboStore, N: Nip05Verify, R: ReportRelay> Agent<C, N, R> {
         for (path, error) in &garbage.unlisted {
             warn!(path = %path, error = %error, "listing MFS failed");
         }
+        let storing = self.storing.lock().unwrap().clone();
         for path in &garbage.paths {
+            let prefix = format!("{path}/");
+            if storing.iter().any(|p| p == path || p.starts_with(&prefix)) {
+                continue;
+            }
             self.remove_path(path).await;
         }
     }
@@ -457,6 +466,7 @@ mod tests {
             title: None,
             message: None,
             created_at: 100,
+            id: nostr_sdk::prelude::EventId::from_byte_array([0; 32]),
         };
 
         agent.apply_site_event(&ev).await;

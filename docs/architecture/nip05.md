@@ -27,7 +27,7 @@
 
 agent と dashboard は `HttpNip05Verifier::public_only()`、CLI の `swing publish`（`--site` で指定するドメイン、オペレーター自身の入力）は `HttpNip05Verifier::new()` を使う。`public_only()` は次の制限を加える。
 
-- 名前解決の結果から公開アドレス以外を除き、残らなければ `Error`。除外するのは IPv4 の unspecified・loopback・private・link-local・broadcast・documentation・multicast・`0.0.0.0/8`・`240.0.0.0/4`・`100.64.0.0/10`・`198.18.0.0/15`・`192.0.0.0/24`、IPv6 の unspecified・loopback・multicast・`fc00::/7`・`fe80::/10`・`2001:db8::/32`、中身がこれらの IPv4 である IPv4-mapped アドレス。
+- 名前解決の結果から公開アドレス以外を除き、残らなければ `Error`。除外するのは IPv4 の unspecified・loopback・private・link-local・broadcast・documentation・multicast・`0.0.0.0/8`・`240.0.0.0/4`・`100.64.0.0/10`・`198.18.0.0/15`・`192.0.0.0/24`、IPv6 の unspecified・loopback・multicast・`fc00::/7`・`fe80::/10`・`fec0::/10`（site-local）・`2001:db8::/32`・`2001::/32`（Teredo）・`64:ff9b:1::/48`（ローカル用 NAT64）。IPv4 を埋め込んだ IPv6（IPv4-mapped `::ffff:0:0/96`、NAT64 `64:ff9b::/96`、6to4 `2002::/16`、IPv4-compatible `::a.b.c.d`）は埋め込まれた IPv4 を取り出して IPv4 の規則で判定する。
 - プロキシ環境変数を無視する。
 
 dashboard の `POST /api/publish/upload` はネットワーク越しに渡ってくる `site`（`d` タグ）をこの verifier で検証する（SSRF 防止）。

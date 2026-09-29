@@ -419,6 +419,7 @@ mod tests {
             title: None,
             message: None,
             created_at: 100,
+            id: nostr_sdk::prelude::EventId::from_byte_array([0; 32]),
         }
     }
 

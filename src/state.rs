@@ -30,6 +30,15 @@ pub fn split_site_key(key: &str) -> Option<(&str, &str)> {
     key.split_once(':')
 }
 
+pub fn account_entries<'a, V>(
+    map: &'a BTreeMap<SiteKey, V>,
+    pubkey_hex: &str,
+) -> impl Iterator<Item = (&'a SiteKey, &'a V)> + use<'a, V> {
+    let prefix = site_key(pubkey_hex, "");
+    map.range(prefix.clone()..)
+        .take_while(move |(k, _)| k.starts_with(&prefix))
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct State {
     pub sites: BTreeMap<SiteKey, Vec<VersionRecord>>,
@@ -93,10 +102,7 @@ impl State {
     }
 
     pub fn account_bytes(&self, pubkey_hex: &str) -> u64 {
-        let prefix = format!("{pubkey_hex}:");
-        self.sites
-            .range(prefix.clone()..)
-            .take_while(|(k, _)| k.starts_with(&prefix))
+        account_entries(&self.sites, pubkey_hex)
             .flat_map(|(_, versions)| versions.iter())
             .map(|v| v.size)
             .sum()
@@ -111,12 +117,9 @@ impl State {
     }
 
     pub fn remove_account(&mut self, pubkey_hex: &str) -> Vec<SiteKey> {
-        let prefix = format!("{pubkey_hex}:");
-        let keys: BTreeSet<SiteKey> = self
-            .sites
-            .keys()
-            .chain(self.verifications.keys())
-            .filter(|k| k.starts_with(&prefix))
+        let keys: BTreeSet<SiteKey> = account_entries(&self.sites, pubkey_hex)
+            .map(|(k, _)| k)
+            .chain(account_entries(&self.verifications, pubkey_hex).map(|(k, _)| k))
             .cloned()
             .collect();
         for key in &keys {
@@ -126,19 +129,11 @@ impl State {
     }
 
     pub fn account_site_count(&self, pubkey_hex: &str) -> usize {
-        let prefix = format!("{pubkey_hex}:");
-        self.sites
-            .range(prefix.clone()..)
-            .take_while(|(k, _)| k.starts_with(&prefix))
-            .count()
+        account_entries(&self.sites, pubkey_hex).count()
     }
 
     pub fn prune_unstored_verifications(&mut self, pubkey_hex: &str, keep: usize) {
-        let prefix = format!("{pubkey_hex}:");
-        let mut unstored: Vec<(u64, SiteKey)> = self
-            .verifications
-            .range(prefix.clone()..)
-            .take_while(|(k, _)| k.starts_with(&prefix))
+        let mut unstored: Vec<(u64, SiteKey)> = account_entries(&self.verifications, pubkey_hex)
             .filter(|(k, _)| !self.sites.contains_key(*k))
             .map(|(k, v)| (v.checked_at, k.clone()))
             .collect();

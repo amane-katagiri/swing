@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 use anyhow::Result;
 use nostr_sdk::prelude::*;
@@ -40,6 +40,25 @@ impl Chosen {
             .get(author)
             .is_some_and(|s| s.contains(reporter))
             || self.own.contains(reporter)
+    }
+
+    fn trusted_reporters(&self, authors: &BTreeSet<PublicKey>) -> Vec<PublicKey> {
+        let own: BTreeSet<PublicKey> = self.own.iter().copied().collect();
+        let chosen: BTreeSet<PublicKey> = authors
+            .iter()
+            .filter_map(|a| self.author.get(a))
+            .flatten()
+            .copied()
+            .collect();
+        let mut seen = HashSet::new();
+        authors
+            .iter()
+            .chain(&own)
+            .chain(&chosen)
+            .copied()
+            .filter(|pk| seen.insert(*pk))
+            .take(nostr::budget::MAX_TRUSTED_REPORTERS)
+            .collect()
     }
 }
 
@@ -198,9 +217,14 @@ pub async fn fetch_for_sites(
         .iter()
         .map(|ev| nostr::site_coordinate(config.nostr.site_event_kind, &ev.pubkey, &ev.d))
         .collect();
-    let events = relay
-        .fetch_replica_reports(config.nostr.replica_event_kind, &coordinates)
-        .await?;
+    let kind = config.nostr.replica_event_kind;
+    let mut events = relay.fetch_replica_reports(kind, &coordinates).await?;
+    let authors: BTreeSet<PublicKey> = sites.iter().map(|ev| ev.pubkey).collect();
+    events.extend(
+        relay
+            .fetch_replica_reports_by(kind, &coordinates, &chosen.trusted_reporters(&authors))
+            .await?,
+    );
     Ok(collect_reports(
         events,
         config.nostr.replica_event_kind,
@@ -261,15 +285,14 @@ pub async fn collect(
     let chosen = fetch_chosen(relay, config, authors).await?;
     let reports = fetch_for_sites(relay, config, &sites, &chosen).await?;
 
-    let mut by_author: BTreeMap<String, Vec<&SiteEvent>> =
-        authors.iter().map(|pk| (pk.to_hex(), Vec::new())).collect();
+    let mut by_author: BTreeMap<PublicKey, Vec<&SiteEvent>> =
+        authors.iter().map(|pk| (*pk, Vec::new())).collect();
     for ev in sites {
-        by_author.entry(ev.pubkey.to_hex()).or_default().push(ev);
+        by_author.entry(ev.pubkey).or_default().push(ev);
     }
 
     let mut out = Vec::with_capacity(by_author.len());
-    for (author_hex, mut evs) in by_author {
-        let author = mirror::parse_pubkey_input(&author_hex)?;
+    for (author, mut evs) in by_author {
         evs.sort_by(|a, b| a.d.cmp(&b.d));
         let sites = evs
             .into_iter()

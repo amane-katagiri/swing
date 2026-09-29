@@ -53,8 +53,8 @@ Windows の `swing service stop` もこの `stop::run` を使う（失敗した�
 - `--url` は任意。指定すると `url` タグになり、[`url` の条件](nostr.md#検証)を満たさなければ `invalid --url: ...` でエラー終了する。省略すると `url` タグを付けない（IPFS だけで公開するサイト）。
 - `--nip05` 省略時は `[publish].nip05`。
 - `--check-dotfiles`・`--check-size`・`--check-unchanged` はサイトの確認のモード（`off`/`warn`/`require`）。省略時はそれぞれ `[publish].check_dotfiles`（既定 `require`）・`check_size`（既定 `warn`）・`check_unchanged`（既定 `require`）。`--nip05` を含めた 4 つのモードは表示や処理の前にまとめて解釈し（`publish::resolve_modes`）、不正な値は `invalid --<フラグ名>` でエラー終了する。
-- `--title` は任意。指定すると `title` タグになる。空文字・空白のみは付けない扱いにする。256 バイトを超える、または制御文字を含む場合は `invalid --title: ...` でエラー終了する。
-- `--message` はサイトイベントの `content` になる。最初に `Site: <d>`、`--url` があれば `URL:`、`--title` があれば `Title:`、`--message` があれば `Message:` を表示する。省略時は空文字。
+- `--title` は任意。指定すると `title` タグになる。空文字・空白のみは付けない扱いにする。256 バイトを超える、または制御文字か見えない書式文字（[`title` の条件](nostr.md#検証)）を含む場合は `invalid --title: ...` でエラー終了する。
+- `--message` はサイトイベントの `content` になる。長さは確かめないが、4096 バイトを超える更新メモは受け取る側の SWING が捨てる（[`content` の扱い](nostr.md#検証)）。最初に `Site: <d>`、`--url` があれば `URL:`、`--title` があれば `Title:`、`--message` があれば `Message:` を表示する。省略時は空文字。
 
 処理順:
 

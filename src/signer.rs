@@ -6,6 +6,7 @@ use anyhow::{Context, Result, anyhow, bail};
 use nostr_connect::prelude::{ErrorKind as ConnectErrorKind, NostrConnect};
 use nostr_sdk::prelude::*;
 use serde::{Deserialize, Serialize};
+use zeroize::Zeroizing;
 
 use crate::config::{Config, NostrConfig};
 
@@ -17,6 +18,10 @@ pub const RELAY_CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
 pub const APP_NAME: &str = "SWING";
 pub const MAX_PAIRING_RELAYS: usize = 5;
 const SECRET_BYTES: usize = 16;
+// A NIP-44 payload tops out near 87 KiB of base64, so the signer's answers need more room than site events.
+const MAX_SIGNER_EVENT_BYTES: u32 = 128 * 1024;
+const NO_ANSWER_IN_TIME: &str =
+    "the signer app did not answer in time; check that it is running and approve the request";
 
 pub fn remote_signer_path(state_dir: &Path) -> PathBuf {
     state_dir.join(REMOTE_SIGNER_FILE)
@@ -24,7 +29,7 @@ pub fn remote_signer_path(state_dir: &Path) -> PathBuf {
 
 #[derive(Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct RemoteSignerFile {
-    pub app_secret_key: String,
+    pub app_secret_key: Zeroizing<String>,
     pub signer_pubkey: String,
     pub relays: Vec<String>,
     pub user_pubkey: String,
@@ -44,7 +49,7 @@ impl RemoteSignerFile {
     pub fn load(state_dir: &Path) -> Result<Option<Self>> {
         let path = remote_signer_path(state_dir);
         let raw = match std::fs::read_to_string(&path) {
-            Ok(raw) => raw,
+            Ok(raw) => Zeroizing::new(raw),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
             Err(e) => return Err(e).with_context(|| format!("reading {}", path.display())),
         };
@@ -55,8 +60,11 @@ impl RemoteSignerFile {
 
     pub fn save(&self, state_dir: &Path) -> Result<()> {
         crate::auth::create_private_dir_all(state_dir)?;
-        let json = serde_json::to_string_pretty(self).context("serializing the remote signer")?;
-        crate::auth::write_private_file(&remote_signer_path(state_dir), &format!("{json}\n"))
+        let mut json = Zeroizing::new(
+            serde_json::to_string_pretty(self).context("serializing the remote signer")?,
+        );
+        json.push('\n');
+        crate::auth::write_private_file(&remote_signer_path(state_dir), &json)
     }
 
     pub fn user_public_key(&self) -> Result<PublicKey> {
@@ -166,7 +174,7 @@ impl RemoteSigner {
                 .with_context(|| format!("invalid relay {relay} in the remote signer file"))?;
         }
         Ok(Self {
-            client: Client::new(),
+            client: crate::nostr::bounded_client(MAX_SIGNER_EVENT_BYTES),
             app_keys,
             signer,
             user,
@@ -254,11 +262,7 @@ impl RemoteSigner {
         };
         tokio::time::timeout(self.timeout, answer)
             .await
-            .map_err(|_| {
-                anyhow!(
-                    "the signer app did not answer in time; check that it is running and approve the request"
-                )
-            })?
+            .map_err(|_| anyhow!(NO_ANSWER_IN_TIME))?
     }
 
     pub fn last_failure(&self) -> Option<SignFailure> {
@@ -311,9 +315,7 @@ fn check_signed(event: &Event, user: PublicKey, expected_id: EventId) -> Result<
 
 fn describe_connect_error(e: nostr_connect::prelude::Error) -> anyhow::Error {
     match e.kind() {
-        ConnectErrorKind::Timeout => anyhow!(
-            "the signer app did not answer in time; check that it is running and approve the request"
-        ),
+        ConnectErrorKind::Timeout => anyhow!(NO_ANSWER_IN_TIME),
         ConnectErrorKind::Rejected => anyhow!("the signer app refused the request: {e}"),
         _ => anyhow!("talking to the signer app failed: {e}"),
     }
@@ -540,7 +542,7 @@ async fn pair(
     *state.lock().expect("pairing state lock") = PairingState::Checking { user };
 
     let file = RemoteSignerFile {
-        app_secret_key: app_keys.secret_key().to_secret_hex(),
+        app_secret_key: app_keys.secret_key().to_secret_hex().into(),
         signer_pubkey: signer.to_hex(),
         relays: request.relays.iter().map(|r| r.to_string()).collect(),
         user_pubkey: user.to_hex(),
@@ -639,7 +641,7 @@ mod tests {
         assert!(RemoteSignerFile::load(dir.path()).unwrap().is_none());
         let app = Keys::generate();
         let file = RemoteSignerFile {
-            app_secret_key: app.secret_key().to_secret_hex(),
+            app_secret_key: app.secret_key().to_secret_hex().into(),
             signer_pubkey: Keys::generate().public_key().to_hex(),
             relays: vec!["wss://relay.example".to_string()],
             user_pubkey: Keys::generate().public_key().to_hex(),
@@ -649,7 +651,7 @@ mod tests {
             RemoteSignerFile::load(dir.path()).unwrap(),
             Some(file.clone())
         );
-        assert!(!format!("{file:?}").contains(&file.app_secret_key));
+        assert!(!format!("{file:?}").contains(file.app_secret_key.as_str()));
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
@@ -683,7 +685,7 @@ mod tests {
 
     fn saved_file() -> RemoteSignerFile {
         RemoteSignerFile {
-            app_secret_key: Keys::generate().secret_key().to_secret_hex(),
+            app_secret_key: Keys::generate().secret_key().to_secret_hex().into(),
             signer_pubkey: Keys::generate().public_key().to_hex(),
             relays: vec!["ws://127.0.0.1:1".to_string()],
             user_pubkey: Keys::generate().public_key().to_hex(),
@@ -910,7 +912,7 @@ mod tests {
         };
 
         let file = RemoteSignerFile {
-            app_secret_key: app.secret_key().to_secret_hex(),
+            app_secret_key: app.secret_key().to_secret_hex().into(),
             signer_pubkey: signer_keys.public_key().to_hex(),
             relays: vec![url.to_string()],
             user_pubkey: user.public_key().to_hex(),

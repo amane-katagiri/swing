@@ -1329,7 +1329,7 @@ mod tests {
 
     fn remote_signer_file(user: PublicKey) -> crate::signer::RemoteSignerFile {
         crate::signer::RemoteSignerFile {
-            app_secret_key: Keys::generate().secret_key().to_secret_hex(),
+            app_secret_key: Keys::generate().secret_key().to_secret_hex().into(),
             signer_pubkey: Keys::generate().public_key().to_hex(),
             relays: vec!["wss://relay.example".to_string()],
             user_pubkey: user.to_hex(),
@@ -1445,7 +1445,7 @@ mod tests {
         let state = setup_mode_state(dir.path());
         let user = Keys::generate().public_key();
         let file = crate::signer::RemoteSignerFile {
-            app_secret_key: Keys::generate().secret_key().to_secret_hex(),
+            app_secret_key: Keys::generate().secret_key().to_secret_hex().into(),
             signer_pubkey: Keys::generate().public_key().to_hex(),
             relays: vec!["wss://relay.example".to_string()],
             user_pubkey: user.to_hex(),

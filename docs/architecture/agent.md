@@ -71,18 +71,20 @@ Follow Set が決まった tick で行う。Follow Set の更新はこれより�
 
 ## 保存の順序
 
-1. 作者が今の Follow Set にいなければ warn を出して終わる。
+1. 作者が今の Follow Set にいなければ warn を出して終わる。同じサイトで同じ CID が以前 4・5・9 で拒否されていれば（下記）、debug を出して終わる。
 2. 事前判定: `size` タグ（無い、または `u64` としてパースできなければ不明）で `policy::decide` する。skip なら終わる。
 3. NIP-05 検証（`[policy].nip05` が `off` 以外）。`require` で `Verified` でなければ終わる。
 4. 取得: `dag/export` の CAR を読み捨てながらバイト数を数え、`policy::fetch_limit`（`max_update_size`・`max_per_site`・`max_per_account` の最小値）を超えたら打ち切る。`[agent].fetch_idle_timeout` か `[agent].fetch_timeout` を超えたら失敗。いずれも state と MFS は変えない。
 5. ディレクトリ確認: `files/stat /ipfs/<cid>` の `Type` を見る。`directory` でなければ `reason = "not_a_directory"` で warn を出して終わる（MFS にはまだ何も置いていないので消すものは無く、取得したブロックは Kubo の GC に任せる）。`files/stat` 自体が失敗したら取得の失敗と同じ扱いで終わる（次の poll で取り直す）。
-6. 以降は state のロックの中で行う。作者が Follow Set から外れていれば終わる。
-7. 版のパスに CID を置く（既存の項目は先に消す）。失敗したら終わる。
-8. `dag/stat`（`offline=true`）の `TotalSize` を実サイズとする。ブロックが欠けていればエラーになるので、7 のパスを消して終わる。`size` タグより大きければ warn を出す。
-9. 実サイズで `policy::decide` する。skip なら 7 のパスを消して終わる。
+6. 版のパスを「保存中」としてメモリに登録する（8〜10 が終わるまで。sweep はこのパスとその親ディレクトリを消さない）。state のロックを取り、作者が Follow Set から外れていれば終わる。
+7. 版のパスに CID を置く（既存の項目は先に消す）。失敗したら終わる。ここで state のロックを放す。
+8. `dag/stat`（`offline=true`）の `TotalSize` を実サイズとする。DAG をたどるので時間がかかる（タイムアウト 300 秒）ため、state のロックの外で行う。7 で MFS に置いてからたどるので、その間に Kubo の GC がブロックを消すことはない。
+9. state のロックを取り直す。8 でブロックが欠けていればエラーになるので、7 のパスを消して終わる。作者が Follow Set から外れていれば 7 のパスを消して終わる。`size` タグより大きければ warn を出す。実サイズで `policy::decide` する。skip なら 7 のパスを消して終わる。
 10. 新版を記録し、evict した版を `sites` から消して state を保存してから、evict した版のパスを消す。
 
 パスの削除に失敗しても state はそのままにし、sweep に任せる。
+
+取得した内容で拒否した版（4 の上限超過、5 の `not_a_directory`、9 の `policy::decide` の skip）は、サイトごとに最後に拒否した CID をメモリに覚え、同じ CID のイベントは 1 で終える。上限まで取得し直すのを poll ごとに繰り返さないためである。サイトが別の CID を出せば通常どおり処理し、保存に成功したらそのサイトの記録を消す。取得の失敗やブロックの欠けなど一時的な失敗は覚えず、次の poll で取り直す。記録は `state.json` に書かないので、agent を再起動すると消える（容量が空いたあとなどに取り直させたいときは再起動する）。
 
 ## sweep
 
@@ -105,7 +107,7 @@ state のロックの中で行う。
 - 「保存の順序」を同時に実行するタスクは最大 `concurrency` 個。
 - 同じ pubkey のタスクは同時に `max_sites_per_account` 個まで。超えたイベントは捨て、次の poll で拾い直す。
 - 同じサイト（`pubkey:d`）のタスクは同時に 1 つ。実行中に来たイベントは、実行中・待機中のものより `created_at` が新しいときだけ待機に置き（1 件、上書き）、実行後に同じタスクで続けて処理する。
-- 保存の順序の 6〜10、sweep、unfollow、突き合わせは state のロックの中で直列に行う。レプリカ報告の同期どうしは報告用のロックで直列になる（取る順は報告用 → state）。取得中の一時的なディスク使用量は最大で `concurrency` × `fetch_limit`。
+- 保存の順序の 6〜7 と 9〜10、sweep、unfollow、突き合わせは state のロックの中で直列に行う。レプリカ報告の同期どうしは報告用のロックで直列になる（取る順は報告用 → state）。取得中の一時的なディスク使用量は最大で `concurrency` × `fetch_limit`。
 
 ## レプリカ報告
 
@@ -136,7 +138,7 @@ state のロックの中で行う。
 ダッシュボードの `/api/activity`（[`dashboard/http-api.md`](dashboard/http-api.md#get-apiactivity)）のために、次の 2 つをメモリ上の `activity::Activity`（ダッシュボードの `AppState` と共有する。値は最大値を取るだけで下がらず、`state.json` には書かない）に記録する。
 
 - publish の時刻: 保存している CID を集めるときに一覧した `publish/<自分>/<site>/` の整数名（CID が空でないもの）の最大値。整数名はサイトイベントの `created_at` なので、同じ Kubo で `swing publish` した分も次の同期で拾う。一覧がすべて成功したら、版が無くても「確かめた」印を付ける（`/api/activity` で `0` になる）。
-- 他の報告者の報告の時刻: poll ごとに relay から `replica_event_kind` で `#p` が自分の報告を、前回までに記録した最大値を `since` に付けて取得する（まだ無ければ `since` 無し。`limit` は `capped_limit(MAX_SITES_PER_AUTHOR_LISTED, MAX_REPORTS_PER_SITE)`）。報告者が自分でない、`p` タグに自分がある、`parse_replica_report` でパースでき作者が自分、`ReplicaReport::counts_at(now)` が true（未来ずれの許容・`MAX_REPORT_AGE`・`expiration`）のものの `created_at` の最大値を記録する。`cid` 無し（取り下げ）の報告も数える。取得に成功したら、数える報告が無くても「確かめた」印を付ける（`/api/activity` で `0` になる）。`since` は記録した最大値が 0 なら付けない。取得に失敗したら warn を出し、値はそのまま。購読は増やさない。
+- 他の報告者の報告の時刻: poll ごとに relay から `replica_event_kind` で `#p` が自分の報告を、前回までに記録した最大値を `since` に付けて取得する（まだ無ければ `since` 無し。`limit` は `capped_limit(MAX_SITES_PER_AUTHOR_LISTED, MAX_REPORTS_PER_SITE)`）。報告者が自分でない、`p` タグに自分がある、`parse_replica_report` でパースでき作者が自分、`ReplicaReport::counts_at(now)` が true（未来ずれの許容・`MAX_REPORT_AGE`・`expiration`）、`created_at` が今以前、`cid` タグのどれかが自分のそのサイトで保存している CID（直前のレプリカ報告の同期で集めたもの。一覧に失敗したサイトは前回の値を使う）と一致する、のすべてを満たすものの `created_at` の最大値を記録する。`cid` 無し（取り下げ）の報告は数えない。`created_at` が今より先の報告は、未来ずれの許容内でも記録せず、`since` 以降なので時刻が追いついた後の poll で取り直して記録する。記録する値は今の時刻を超えないので、先の時刻を入れた報告 1 件で以後の報告が `since` から外れることはない。取得に成功したら、数える報告が無くても「確かめた」印を付ける（`/api/activity` で `0` になる）。`since` は記録した最大値が 0 なら付けない。取得に失敗したら warn を出し、値はそのまま。購読は増やさない。
 
 受信側で報告を数える規則（`replicas::collect_reports` / `ReplicaReport::counts_at`）は [「レプリカ報告の信頼度」](nostr.md#レプリカ報告の信頼度replicastier)。受信側は `created_at` から `nostr::MAX_REPORT_AGE`（7 日）を過ぎた報告を数えない（[取得と表示の上限](nostr.md#取得と表示の上限nostrbudget)）ので、`report_ttl` はそれ以下でないと設定の検証でエラーになる（[`../architecture.md`](../architecture.md#設定と環境変数)）。出し直しは `report_ttl / 2` ごとなので、上限の 7 日でも最新の報告は常に 3.5 日以内に出ている。
 
