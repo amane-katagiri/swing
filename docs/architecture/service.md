@@ -1,4 +1,4 @@
-# swing service（service.rs）
+# swing service（service/）
 
 [`../architecture.md`](../architecture.md) の一部。`swing up` そのものは [`up.md`](up.md)。サブコマンドの一覧は [`../architecture.md#cli`](../architecture.md#cli) を参照。
 
@@ -7,8 +7,9 @@
 - 登録する `swing` のコマンドは `<exe> up --config <config>`（`<exe>` は `current_exe()` の絶対パス。Windows ではこれを `conhost.exe` で包み、引数を足す。[下記](#windowsタスクスケジューラ)）。
 - 設定ファイルは `config::resolve_config_path` で決め、そのパスにファイルが無ければ「service install needs a config file (swing.toml): pass --config or set SWING_CONFIG」でエラー（環境変数だけで動かす構成は非対応）。パスは `canonicalize` して絶対パスにする。
 - 作業ディレクトリは設定ファイルの親ディレクトリ。設定ファイルに書いた相対パスと既定値は作業ディレクトリに関係なく設定ファイルのディレクトリから解決される（[`../architecture.md#設定と環境変数`](../architecture.md#設定と環境変数)）。
-- `--system` は Linux でのみ有効で、他 OS で指定すると「--system is only supported on Linux」でエラー。`--no-start` は登録だけ行い起動しない（`install` のみ）。
-- 生成する unit / plist / タスク XML / トレイの登録内容の文字列は純粋関数（`systemd_unit`・`launchd_plist`・`launchd_tray_plist`・`schtasks_xml`・`tray_run_command`）で作り、ユニットテストで検証している。以下の表は動作に効く値だけを挙げ、全文はこれらの関数が正本。OS 依存の実行部分（ファイル書き込み・`systemctl`/`launchctl`/`schtasks` の呼び出し）だけ `cfg(target_os = ...)` で分岐し、対象 3 OS 以外では `install`/`uninstall`/`start`/`status`/`stop` すべて「service management is not supported on this OS」でエラーになる。
+- `--system` は Linux でのみ有効で、他 OS で指定すると「--system is only supported on Linux」でエラー。`--no-start` は登録だけ行い起動しない（`install` のみ）。`--run-as <user>` は `install --system` でだけ使える（clap の `requires`。`service::install` も `--system` なしなら「--run-as is only valid with --system」でエラー）。launchd・タスクスケジューラへの登録はどれもログインユーザーのもので、システム全体への登録は無い。
+- 生成する unit / plist / タスク XML / トレイの登録内容の文字列は `service/templates.rs` の純粋関数（`systemd_unit`・`launchd_plist`・`launchd_tray_plist`・`schtasks_xml`・`tray_run_command`）で作り、ユニットテストで検証している。以下の表は動作に効く値だけを挙げ、全文はこれらの関数が正本。埋め込むパス（実行ファイル・設定ファイル・作業ディレクトリ・ログ・トレイ）とユーザー名に制御文字（改行・タブ・NUL など `char::is_control`）が入っていれば、「<何> contains a control character and cannot be written into a service definition: ...」でエラーにし、何も書き出さない（改行で unit の行や XML の外へ抜けられないように）。
+- OS 依存の実行部分（ファイル書き込み・`systemctl`/`launchctl`/`schtasks` の呼び出し）は `service/linux.rs`・`macos.rs`・`windows.rs` に置き、`mod.rs` は `cfg` でその 1 つを `platform` として選んで呼ぶ（どれも `install`・`uninstall`・`start`・`stop`・`is_installed`・`status` を同じ形で持つ）。対象 3 OS 以外では `unsupported.rs` が選ばれ、`install`/`uninstall`/`start`/`status`/`stop` すべて「service management is not supported on this OS」でエラーになる。外部コマンドの実行（`run_command`・`output_with_timeout`・出力の文字コード変換）は `service/process.rs`。
 - `service::is_installed(system)` は `swing` 本体が登録済みかどうかを `Option<bool>` で返す（`Some(true)` 登録済み、`Some(false)` 未登録、`None` 分からない）。Linux は unit ファイル、macOS は plist の有無で決まり、`None` は返さない。Windows は下記「Windows」の `schtasks` による判定。CLI からは使わず、`swing-tray` が使う（[`tray.md`](tray.md)）。
 
 ## タスクトレイの自動起動（Windows と macOS）
@@ -26,6 +27,8 @@
 |---|---|
 | unit パス（user） | `$XDG_CONFIG_HOME/systemd/user/swing.service`（既定 `~/.config/systemd/user/swing.service`） |
 | unit パス（`--system`） | `/etc/systemd/system/swing.service` |
+| 実行ユーザー（`--system`） | `User=<name>`（`Group=` は付けず、そのユーザーの主グループになる）。下記「system unit の実行ユーザー」 |
+| 制限（`--system`） | `NoNewPrivileges=yes`・`PrivateTmp=yes`・`ProtectSystem=full`（`/usr`・`/boot`・`/efi`・`/etc` を読み取り専用にする）・`ReadWritePaths="<workdir>"`（ダッシュボードの設定画面が設定ファイルを書き換えるので、設定ファイルのディレクトリは `/etc` の下でも書ける）。`ProtectHome` は付けない（設定と `state_dir` をホームに置く構成が普通のため）。user unit には何も付けない |
 | `ExecStart` | `<exe> up --config <config>` |
 | `WorkingDirectory` | 設定ファイルの親ディレクトリ |
 | 起動の順序と有効化 | `After=`・`Wants=network-online.target`、`WantedBy=default.target`（`--system` なら `multi-user.target`） |
@@ -33,13 +36,24 @@
 | 停止 | `KillSignal=SIGTERM`、`TimeoutStopSec=90`（`service::STOP_TIMEOUT`。`swing up` の強制終了までの猶予 70 秒より長い。[`up.md#停止の時間予算`](up.md#停止の時間予算)） |
 | ログ | journal（`journalctl [--user] -u swing -f`） |
 
-`ExecStart` の各パスは systemd の指定子（`%`）と環境変数の展開（`$`）が効かないよう引用・エスケープする（`quote_systemd_arg`）。
+`ExecStart` の各パスは systemd の指定子（`%`）と環境変数の展開（`$`）が効かないよう引用・エスケープする（`quote_systemd_arg`）。`ReadWritePaths` は引用して `%`・`\`・`"` をエスケープし（`quote_systemd_path`）、`WorkingDirectory` と `User` は `%` だけをエスケープする。
 
-- `install`: unit を書き出し → `systemctl [--user] daemon-reload` → `systemctl [--user] enable [--now] swing`（`--no-start` なら `--now` を付けない）。`--system` でなければ続けて UID を明示して `loginctl enable-linger <uid>` を試み、失敗したら `` Warning: could not run `loginctl enable-linger`. ... `` を標準出力に出す（インストール自体は失敗にしない）。
+- `install`: `--system` なら実行ユーザーを決め（下記）、unit を書き出し → `systemctl [--user] daemon-reload` → `systemctl [--user] enable [--now] swing`（`--no-start` なら `--now` を付けない）。`--system` でなければ続けて UID を明示して `loginctl enable-linger <uid>` を試み、失敗したら `` Warning: could not run `loginctl enable-linger`. ... `` を標準出力に出す（インストール自体は失敗にしない）。
 - `start`: `systemctl [--user] start swing`。
 - `uninstall`: `systemctl [--user] disable --now swing`（失敗は「未登録だったかもしれない」旨の注記のみ）→ unit ファイル削除 → `systemctl [--user] daemon-reload`。
 - `stop`: `systemctl [--user] stop swing`。SIGTERM で停止シーケンス（[`up.md#shutdownshutdownrs`](up.md#shutdownshutdownrs)）に入り、登録は残る（次のログイン/`systemctl start swing` で再び動く）。停止シーケンスは最悪でも 70 秒の watchdog までに終わるので `TimeoutStopSec` の SIGKILL には届かない。`systemctl stop` による終了なので、watchdog や 2 回目のシグナルで終了コードが 1 になっても systemd は再起動しない。
 - `status`: unit ファイルが無ければ `not installed` と出して終わる。あれば `systemctl [--user] status swing --no-pager` をそのまま実行し、標準入出力をそのまま引き継ぐ（終了コードは呼び出し元に伝播しない）。
+
+### system unit の実行ユーザー
+
+`--system` の unit は root では動かさない。`install --system` は次の順に実行ユーザーを決め、passwd（`getpwnam`・`getpwuid`）で引いた名前を `User=` に書く。引けなければ「no such user: <name>」「no user with uid <uid>」でエラー。
+
+1. `--run-as <user>`（名前か数字の uid）。明示すれば `root` も指定できる。
+2. 環境変数 `SUDO_UID`（`sudo swing service install --system` を実行したユーザー）。`0` のときは使わない。数字でなければエラー。
+3. 実行している uid（root でなければ）。
+4. どれでもなければ（root で直接実行し `--run-as` も無い）「refusing to register a system service that runs swing as root: ...」でエラーにし、unit を書かない。
+
+決めたユーザーは `The service runs as user <name>.` と表示する。`swing up` はそのユーザー（`HOME` もそのユーザーのもの）で設定ファイルと `state_dir` を読み書きし、Kubo のバイナリを実行するので、設定ファイルと `state_dir` はそのユーザーが書ける場所に置く。
 
 ## macOS（launchd）
 
@@ -81,7 +95,7 @@
 - `install`: XML を一時ファイルに書き、`schtasks /Create /TN swing /XML <tmpfile> /F` で登録してから一時ファイルを削除する。`schtasks` の出力は OEM コードページ（日本語環境では CP932）なので、失敗時の標準エラーと `status` の標準出力は UTF-8 として読めなければ OEM コードページとして変換して表示する。`--no-start` でなければ `schtasks /Run /TN swing` で即時起動する。
 - `start`: `schtasks /Run /TN swing`。
 - `uninstall`: トレイの登録を消した後、`stop`（下記）と同じグレースフルな停止を試みる。設定ファイルが見つからない・読めない・`stop::run` が失敗したときは `stop` と同じ `Warning: …` を出して続ける。続けて `schtasks /End /TN swing`（失敗は無視、既にグレースフルに止まっていれば no-op）→ `schtasks /Delete /TN swing /F`。
-- `stop`: 設定ファイルを `resolve_config_path(None)`（`--config` は取らない。`SWING_CONFIG`、無ければカレントディレクトリの `swing.toml`）で探して `Config::load` し、`stop::run`（[`cli.md#stop`](cli.md#stop)）を 60 秒のタイムアウトで呼ぶ。`install` と違って実行ファイルのパスは解決しない。次のときは `Warning: …` を標準出力に出して `schtasks /End /TN swing` にフォールバックする（`/End` が終わらせるのは `conhost.exe` で、`swing` は `--exit-with-parent` で親の終了を検知してグレースフルに止まる）。
+- `stop`: 設定ファイルを `resolve_config_path(None)`（`--config` は取らない。`SWING_CONFIG`、無ければカレントディレクトリの `swing.toml`）で探して `Config::load` し、`stop::run`（[`cli.md#stop`](cli.md#stop)）を 60 秒（`service::GRACEFUL_STOP_TIMEOUT`。`swing stop --timeout` の既定値と同じ定数）のタイムアウトで呼ぶ。`install` と違って実行ファイルのパスは解決しない。次のときは `Warning: …` を標準出力に出して `schtasks /End /TN swing` にフォールバックする（`/End` が終わらせるのは `conhost.exe` で、`swing` は `--exit-with-parent` で親の終了を検知してグレースフルに止まる）。
   - 設定ファイルが無い: `` Warning: could not find the config file (swing.toml) at <path> to stop swing through its dashboard; set SWING_CONFIG or run this from the directory containing swing.toml. Falling back to `schtasks /End`. ``
   - 設定ファイルを読めない（`Config::load` の失敗）: `` Warning: could not read the config file <path> to stop swing through its dashboard (<error>). Falling back to `schtasks /End`. ``
   - `stop::run` が失敗した: `` Warning: graceful stop failed (...); falling back to `schtasks /End`. ``

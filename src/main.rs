@@ -71,7 +71,7 @@ enum Command {
         restart: bool,
         #[arg(
             long,
-            default_value_t = 60,
+            default_value_t = service::GRACEFUL_STOP_TIMEOUT.as_secs(),
             help = "Seconds to wait for it to stop before giving up"
         )]
         timeout: u64,
@@ -277,6 +277,13 @@ enum ServiceCommand {
             help = "Register a systemd system unit instead of a user unit (Linux only)"
         )]
         system: bool,
+        #[arg(
+            long,
+            value_name = "USER",
+            requires = "system",
+            help = "User (name or uid) the system unit runs as; defaults to the sudo caller (Linux only)"
+        )]
+        run_as: Option<String>,
         #[arg(long, help = "Register without starting it now")]
         no_start: bool,
         #[arg(
@@ -434,9 +441,18 @@ async fn run_other(command: Command) -> Result<()> {
             ServiceCommand::Install {
                 config,
                 system,
+                run_as,
                 no_start,
                 no_tray,
-            } => service::install(config.as_deref(), system, no_start, no_tray),
+            } => service::install(
+                config.as_deref(),
+                &service::InstallOptions {
+                    system,
+                    run_as: run_as.as_deref(),
+                    no_start,
+                    no_tray,
+                },
+            ),
             ServiceCommand::Uninstall { system } => service::uninstall(system).await,
             ServiceCommand::Start { system } => service::start(system),
             ServiceCommand::Stop { system } => service::stop(system).await,

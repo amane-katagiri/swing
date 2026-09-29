@@ -69,13 +69,13 @@ swing/
     up.rs            `swing up` supervisor（Kubo の起動・監視、agent の起動・再起動、バックオフ）。詳細は architecture/up.md
     stats.rs         リソース使用量の記録（`swing up` の中で 60 秒ごとに測ってメモリに 24 時間分持つ）と stats サブコマンド。stats/process.rs が OS ごとにプロセスの CPU 時間とメモリを読む。詳細は architecture/stats.md
     kubo.rs          Kubo バイナリの検出・init・`ipfs config` 適用・子プロセスの起動と終了・ヘルス待ち・kubo.pid と孤児回収。詳細は architecture/kubo.md
-    lock.rs          多重起動防止のインスタンスロック（swing.lock）。詳細は architecture/up.md
+    lock.rs          多重起動防止のインスタンスロック（swing.lock、swing-tray の swing-tray.lock）。詳細は architecture/up.md
     ports.rs         セットアップモードでのポートのずらし方（`bind_shifting`・`free_addr`・`may_shift`）。詳細は architecture/up.md
     auth.rs          ダッシュボードのトークンファイル（dashboard.token）、HMAC 署名のセッション値、使い捨てログインコード。詳細は architecture/dashboard.md
     login.rs         `swing dashboard open`・`swing dashboard rotate-token`。詳細は architecture/cli.md
     gateway.rs       内蔵 gateway（axum）。Host 名での振り分けと Kubo gateway へのプロキシ。詳細は architecture/gateway.md
     host.rs          Host ヘッダをホスト名とポートに分ける厳密なパーサ（ダッシュボードのガードと内蔵 gateway が共有）
-    service.rs       `swing service install/uninstall/start/stop/status`（systemd / launchd / タスクスケジューラ）。詳細は architecture/service.md
+    service/         `swing service install/uninstall/start/stop/status`（mod.rs が入口、templates.rs が unit / plist / タスク XML の生成、process.rs が外部コマンドの実行、linux.rs・macos.rs・windows.rs が OS ごとの実行部分）。詳細は architecture/service.md
     settings/        全設定キーのカタログ（mod.rs）、`swing.example.toml`/`.env.example` の生成（example.rs）、`PUT /api/config`・`POST /api/setup` の書き込み（edit.rs）。詳細は下記「設定と環境変数」と architecture/dashboard.md
     stop.rs          `swing stop`（動いている `swing up` のダッシュボード API 経由。API に到達できなければ「動いていない」として終了する）。詳細は architecture/up.md, architecture/service.md
     shutdown.rs      `cancel_on_signal(grace)`（SIGINT/SIGTERM → CancellationToken、force-exit watchdog、2 回目のシグナルで即時終了）、`RUNTIME_SHUTDOWN_TIMEOUT`、`ExitRequest`/`Exit`（停止・再起動の要求と、`up::run` が返す `Exit::Stop`/`Exit::Restart`）。up/agent 共通
@@ -119,7 +119,7 @@ swing/
 ```
 swing up      [--config <path>] [--log-file <path>] [--no-port-shift]
 swing stop    [--config <path>] [--restart] [--timeout <secs>]
-swing service install   [--config <path>] [--system] [--no-start] [--no-tray]
+swing service install   [--config <path>] [--system [--run-as <user>]] [--no-start] [--no-tray]
 swing service uninstall [--system]
 swing service start     [--system]
 swing service stop      [--system]

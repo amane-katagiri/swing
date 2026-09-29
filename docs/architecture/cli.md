@@ -21,7 +21,7 @@
 ## stop
 
 ```
-swing stop [--config <path>] [--restart] [--timeout <secs>, 既定 60]
+swing stop [--config <path>] [--restart] [--timeout <secs>, 既定 60（service::GRACEFUL_STOP_TIMEOUT）]
 ```
 
 動いている `swing up` インスタンスに正常終了（グレースフルシャットダウン）、または `--restart` でプロセス内再起動を要求する（[`up.md#終了要求と-exit-codeshutdownexitrequest-shutdownexit`](up.md#終了要求と-exit-codeshutdownexitrequest-shutdownexit)）。`--timeout` は下記のポーリングの上限で、超えたらエラー終了する。
@@ -43,7 +43,7 @@ Windows の `swing service stop` もこの `stop::run` を使う（失敗した�
 
 ## service install / uninstall / start / stop / status
 
-`swing up` を OS のログイン/システムサービスとして登録する（systemd user unit・launchd LaunchAgent・Windows タスクスケジューラ）。`install` は `--config`（省略時は `SWING_CONFIG`、それも無ければ `./swing.toml`。解決したパスにファイルが無ければエラー）・`--system`（Linux のみ）・`--no-start`（登録だけで起動しない）・`--no-tray`（Windows と macOS で、`swing-tray` をログイン時に起動する登録をしない）を取る。`start`/`stop`/`status`/`uninstall` は `--system` のみ。`start` は登録済みのサービスを、`stop` は登録を残したままプロセスだけを、`uninstall` は止めてから登録を、サービス機構経由で操作する。上の `swing stop` とは別で、こちらはサービス機構を通す（Windows の `service stop` だけは [stop](#stop) の例外）。OS ごとの実体は [`service.md`](service.md) を参照。
+`swing up` を OS のログイン/システムサービスとして登録する（systemd user unit・launchd LaunchAgent・Windows タスクスケジューラ）。`install` は `--config`（省略時は `SWING_CONFIG`、それも無ければ `./swing.toml`。解決したパスにファイルが無ければエラー）・`--system`（Linux のみ）・`--run-as <user>`（`--system` と一緒にだけ使える。system unit を動かすユーザー）・`--no-start`（登録だけで起動しない）・`--no-tray`（Windows と macOS で、`swing-tray` をログイン時に起動する登録をしない）を取る。`start`/`stop`/`status`/`uninstall` は `--system` のみ。`start` は登録済みのサービスを、`stop` は登録を残したままプロセスだけを、`uninstall` は止めてから登録を、サービス機構経由で操作する。上の `swing stop` とは別で、こちらはサービス機構を通す（Windows の `service stop` だけは [stop](#stop) の例外）。OS ごとの実体は [`service.md`](service.md) を参照。
 
 ## publish
 

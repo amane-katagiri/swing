@@ -19,7 +19,7 @@ swing-tray [--config <path>]
 
 ## 多重起動の防止
 
-起動時に設定を読めたら、`<state_dir>/swing-tray.lock` を `File::try_lock` でロックする。ほかの `swing-tray` が同じ `state_dir` でロックしていれば、何も出さずに終了コード 0 で終わる。設定が読めないときや `state_dir` がまだ無いときはロックせずに起動する（`state_dir` は作らない）。ロックはプロセスが終わるまで持ち続ける。
+起動時に設定を読めたら、`lock::try_acquire(state_dir, "swing-tray.lock")`（`swing.lock` と同じ仕組み。`state_dir` が無ければ `0700` で作り、ロックファイルに自分の PID を書く。[`up.md`](up.md#多重起動の防止lockrs)）で `<state_dir>/swing-tray.lock` をロックする。ほかの `swing-tray` が同じ `state_dir` でロックしていれば、何も出さずに終了コード 0 で終わる。設定が読めないときとロックの取得そのものに失敗したとき（ディレクトリを作れない・ファイルを開けないなど）は、`swing-tray: <理由>; running without the single-instance lock` を標準エラーに出して、ロックせずに起動する。ロックはプロセスが終わるまで持ち続ける。
 
 ## メニュー
 

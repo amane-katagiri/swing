@@ -245,7 +245,7 @@ impl View {
     }
 }
 
-pub fn run(config_path: Option<PathBuf>, _lock: Option<std::fs::File>) -> ! {
+pub fn run(config_path: Option<PathBuf>, _lock: Option<swing::lock::InstanceLock>) -> ! {
     let lang = Lang::from_locale(sys_locale::get_locale().as_deref());
 
     #[allow(unused_mut)]

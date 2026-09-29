@@ -64,6 +64,8 @@ cp swing.example.toml swing.toml
 
 Linux では systemd のユーザーユニット、macOS では launchd の LaunchAgent、Windows ではタスクスケジューラに登録します。Windows と macOS では、`swing` と同じ場所にある `swing-tray.exe`・`SWING.app` も一緒に登録して起動します。トレイのアイコンから、ダッシュボードを開く・再起動・停止ができます。トレイが要らなければ `--no-tray` を付けてください。
 
+Linux でシステムユニットにするときは `sudo ./swing service install --system` とします。サービスは `sudo` を実行したユーザーの権限で動きます（別のユーザーにするなら `--run-as <user>`）。
+
 状態の確認は `swing service status`、停止は `swing service stop`、登録の削除は `swing service uninstall` です。
 
 ## よく使うコマンド

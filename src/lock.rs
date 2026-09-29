@@ -6,9 +6,7 @@ use anyhow::{Context, Result, bail};
 
 #[derive(Debug)]
 pub struct InstanceLock {
-    // Never read; kept alive so the OS releases the flock only when this is dropped.
-    #[allow(dead_code)]
-    file: std::fs::File,
+    _file: std::fs::File,
     path: PathBuf,
 }
 
@@ -18,9 +16,28 @@ impl InstanceLock {
     }
 }
 
+pub enum TryAcquire {
+    Acquired(InstanceLock),
+    Held { pid: Option<String> },
+}
+
 pub fn acquire(state_dir: &Path) -> Result<InstanceLock> {
+    match try_acquire(state_dir, "swing.lock")? {
+        TryAcquire::Acquired(lock) => Ok(lock),
+        TryAcquire::Held { pid: Some(pid) } => bail!(
+            "another swing instance is already running on {} (pid {pid})",
+            state_dir.display()
+        ),
+        TryAcquire::Held { pid: None } => bail!(
+            "another swing instance is already running on {}",
+            state_dir.display()
+        ),
+    }
+}
+
+pub fn try_acquire(state_dir: &Path, file_name: &str) -> Result<TryAcquire> {
     crate::auth::create_private_dir_all(state_dir)?;
-    let path = state_dir.join("swing.lock");
+    let path = state_dir.join(file_name);
     let mut file = OpenOptions::new()
         .read(true)
         .write(true)
@@ -38,16 +55,7 @@ pub fn acquire(state_dir: &Path) -> Result<InstanceLock> {
                 .ok()
                 .map(|_| existing.trim().to_string())
                 .filter(|s| !s.is_empty());
-            match pid {
-                Some(pid) => bail!(
-                    "another swing instance is already running on {} (pid {pid})",
-                    state_dir.display()
-                ),
-                None => bail!(
-                    "another swing instance is already running on {}",
-                    state_dir.display()
-                ),
-            }
+            return Ok(TryAcquire::Held { pid });
         }
         Err(std::fs::TryLockError::Error(e)) => {
             return Err(e).with_context(|| format!("locking {}", path.display()));
@@ -63,7 +71,7 @@ pub fn acquire(state_dir: &Path) -> Result<InstanceLock> {
     file.flush()
         .with_context(|| format!("flushing {}", path.display()))?;
 
-    Ok(InstanceLock { file, path })
+    Ok(TryAcquire::Acquired(InstanceLock { _file: file, path }))
 }
 
 #[cfg(test)]
@@ -100,6 +108,22 @@ mod tests {
         let lock = acquire(&state_dir).unwrap();
         assert_eq!(lock.path(), state_dir.join("swing.lock"));
         assert!(lock.path().is_file());
+    }
+
+    #[test]
+    fn try_acquire_uses_the_given_file_name_and_reports_a_held_lock() {
+        let dir = tempfile::tempdir().unwrap();
+        let state_dir = dir.path().join("state");
+        let TryAcquire::Acquired(first) = try_acquire(&state_dir, "swing-tray.lock").unwrap()
+        else {
+            panic!("first lock should be acquired");
+        };
+        assert_eq!(first.path(), state_dir.join("swing-tray.lock"));
+        assert!(matches!(
+            try_acquire(&state_dir, "swing-tray.lock").unwrap(),
+            TryAcquire::Held { .. }
+        ));
+        let _other = acquire(&state_dir).unwrap();
     }
 
     #[cfg(unix)]

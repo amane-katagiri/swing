@@ -18,18 +18,25 @@ fn config_arg() -> Result<Option<std::path::PathBuf>, &'static str> {
 }
 
 #[cfg(any(windows, target_os = "macos"))]
-fn single_instance(config_path: Option<&std::path::Path>) -> Option<std::fs::File> {
-    let config = swing::config::Config::load(config_path).ok()?;
-    let file = std::fs::OpenOptions::new()
-        .write(true)
-        .create(true)
-        .truncate(false)
-        .open(config.agent.state_dir.join("swing-tray.lock"))
-        .ok()?;
-    match file.try_lock() {
-        Ok(()) => Some(file),
-        Err(std::fs::TryLockError::WouldBlock) => std::process::exit(0),
-        Err(std::fs::TryLockError::Error(_)) => None,
+fn single_instance(config_path: Option<&std::path::Path>) -> Option<swing::lock::InstanceLock> {
+    use swing::lock::TryAcquire;
+
+    let config = match swing::config::Config::load(config_path) {
+        Ok(config) => config,
+        Err(e) => {
+            eprintln!(
+                "swing-tray: could not read the config ({e:#}); running without the single-instance lock"
+            );
+            return None;
+        }
+    };
+    match swing::lock::try_acquire(&config.agent.state_dir, "swing-tray.lock") {
+        Ok(TryAcquire::Acquired(lock)) => Some(lock),
+        Ok(TryAcquire::Held { .. }) => std::process::exit(0),
+        Err(e) => {
+            eprintln!("swing-tray: {e:#}; running without the single-instance lock");
+            None
+        }
     }
 }
 

@@ -62,8 +62,9 @@
 
 ## 多重起動の防止（lock.rs）
 
-公開しているのは `lock::acquire(state_dir) -> Result<InstanceLock>` と、ロックファイルのパスを返す `InstanceLock::path`。`up::run` は処理を始める前に最初に `acquire` を呼ぶ。
+公開しているのは `lock::acquire(state_dir) -> Result<InstanceLock>`、その下の `lock::try_acquire(state_dir, file_name) -> Result<TryAcquire>`（`Acquired(InstanceLock)` か、ほかのプロセスが持っていれば `Held { pid }`。`swing-tray` が `swing-tray.lock` に使う。[`tray.md`](tray.md#多重起動の防止)）と、ロックファイルのパスを返す `InstanceLock::path`。`up::run` は処理を始める前に最初に `acquire` を呼ぶ。`acquire` は `try_acquire(state_dir, "swing.lock")` の `Held` を下記のエラーにしたもの。
 
+- `state_dir` が無ければ `auth::create_private_dir_all` で `0700` で作る。
 - `<state_dir>/swing.lock` を作成（無ければ）・読み書きで開き、`std::fs::File::try_lock()`（advisory lock、OS が管理し、プロセスが `kill -9` で消えても自動的に外れる）を取る。
 - 取れたら中身を空にして自分の PID（`std::process::id()`）を書く。
 - 既に別のプロセスが取っていれば（`TryLockError::WouldBlock`）、ファイルの中身（相手の PID）を読んで `another swing instance is already running on <state_dir> (pid N)` でエラーにする（PID が読めなければ `(pid N)` を省く。Windows ではロックがファイル全体への強制ロックのため、常に省かれる）。
