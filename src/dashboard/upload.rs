@@ -96,7 +96,7 @@ fn random_upload_name() -> String {
 }
 
 pub async fn cleanup_upload_dir(state_dir: &Path) -> Result<()> {
-    let upload_dir = state_dir.join("upload");
+    let upload_dir = state_dir.join(crate::publish::DASHBOARD_UPLOAD_DIR);
     match tokio::fs::remove_dir_all(&upload_dir).await {
         Ok(()) => Ok(()),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
@@ -317,7 +317,11 @@ pub async fn publish_upload(
     State(state): State<Arc<AppState>>,
     mut multipart: Multipart,
 ) -> Result<Response, ApiError> {
-    let upload_root = state.config.agent.state_dir.join("upload");
+    let upload_root = state
+        .config
+        .agent
+        .state_dir
+        .join(crate::publish::DASHBOARD_UPLOAD_DIR);
     create_private_dir_all(&upload_root)
         .await
         .map_err(|e| internal("creating the upload directory failed", e))?;

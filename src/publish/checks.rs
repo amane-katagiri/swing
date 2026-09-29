@@ -11,7 +11,7 @@ use crate::nostr::SiteEvent;
 pub const SIZE_GUIDELINE: u64 = 512 << 20;
 pub const LISTED_DOTFILES: usize = 10;
 
-const DASHBOARD_UPLOAD_DIR: &str = "upload";
+pub const DASHBOARD_UPLOAD_DIR: &str = "upload";
 
 pub fn find_dotfiles<'a>(
     paths: impl IntoIterator<Item = &'a str>,

@@ -13,8 +13,8 @@ use crate::signer::Signer;
 mod checks;
 
 pub use checks::{
-    LISTED_DOTFILES, LocalChecks, SIZE_GUIDELINE, UnchangedOutcome, UnchangedStatus, find_dotfiles,
-    refuse_protected_paths,
+    DASHBOARD_UPLOAD_DIR, LISTED_DOTFILES, LocalChecks, SIZE_GUIDELINE, UnchangedOutcome,
+    UnchangedStatus, find_dotfiles, refuse_protected_paths,
 };
 
 fn versions_to_prune(names: &[String], keep: usize) -> Vec<String> {
