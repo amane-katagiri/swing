@@ -4,13 +4,16 @@
 
 | 優先度 | タスク | 出所 |
 |---|---|---|
+| 中 | `swing publish` が管理下の Kubo を使うとき、`<state_dir>/kubo-api.json` のポートに応答する相手を PeerID（公開情報）の一致だけで信じる。`swing up` が後片付けせずに死んだ後、そのポートを取ったローカルの別ユーザーが PeerID を返せば、`add` の結果の CID を選べる。`kubo.pid` の記録の pid が生きていて起動時刻とポートが一致することも確かめる | [セキュリティレビュー](log/2026-09-29-security-review-and-cleanup.md) |
+| 中 | `swing mirror add`（ダッシュボードの追加も）は、応答した relay に Follow Set が無く state.json にも無いと、空から作って追加した鍵だけの Follow Set を出す。relay が 1 つでも応答すればこうなるので、Follow Set が見つからないときは確認を求めるか、設定したすべての relay が EOSE を返したときだけ空から作る | [セキュリティレビュー](log/2026-09-29-security-review-and-cleanup.md) |
+| 低 | agent の送った報告の読み込み（`load_sent_reports`）は、relay が 1 つでも応答すれば読み込み済みにする。報告を持つ relay が時間切れだと取り下げの対象が欠ける（`report_ttl` で失効はする）。relay ごとに管理するか、定期的に読み直す | [セキュリティレビュー](log/2026-09-29-security-review-and-cleanup.md) |
 | 低 | NIP-46: セットアップ後に、同じアカウントのまま秘密鍵と署名アプリを切り替える操作をダッシュボードに用意する（設定画面に「署名の方法」を置く案）。秘密鍵に切り替えるときは今の公開鍵と同じ鍵だけを受け付け、秘密鍵を消す前に確認する。秘密鍵が環境変数（`SWING_NOSTR_SECRET_KEY`）由来なら、ダッシュボードからは消せないので案内だけにする。アカウント自体を変える操作は作らない（Follow Set・公開したサイト・レプリカ報告が前のアカウントに残るため。手作業で `secret_key` か `remote-signer.json` を書き換える）。今は `swing up` を止めて `remote-signer.json`（か `secret_key`）を消し、セットアップからやり直す（署名アプリどうしのつなぎ直しは公開画面からできる） | [NIP-46 対応](log/2026-09-24-nip46-remote-signer.md) |
 | 低 | NIP-46: 署名アプリが作った `bunker://` URI を貼って接続する方法（署名アプリ起点）。今は SWING が出す `nostrconnect://` の QR コードだけ | [NIP-46 対応](log/2026-09-24-nip46-remote-signer.md) |
 | 低 | Desktop 画面の表示倍率: WebKit では `zoom` の内側の文字サイズが整数 px に丸められ（175% で 12px が 12.25 デバイスピクセルになる）、150% では文字の位置が半ピクセルずれて、親のデスクトップもリンク集ページもぶれる。Linux の Playwright WebKit で確かめただけなので、Mac の Safari 実機（Retina で 110%〜175% にズームしたとき）でも起きるか確かめ、起きるなら対策を考える。GitHub の macOS ランナーの画面は等倍なので代わりにならない | [表示倍率を整数倍に揃える](log/2026-09-26-desktop-integer-scale.md) |
 | 中 | NIP-05 の実 HTTP 経路の統合テスト（ローカル TLS エンドポイント相手、`#[ignore]`） | レビュー |
-| 中 | 取得に失敗した CID を覚えて指数バックオフで再試行する。今は poll ごとに同じ CID の取得を試み、そのたびに最大 `SWING_FETCH_IDLE_TIMEOUT` の間、並行枠を 1 つ使う | レビュー（DoS） |
+| 低 | 取得に失敗した CID を指数バックオフで再試行する。今はサイトごとに `min_update_interval` に 1 回までに抑えているだけで、失敗が続いても間隔は伸びない | レビュー（DoS） |
 | 低 | レプリカ報告 1 件が持てる `cid` タグの数に上限が無い。誰でも 1 件の報告に大量の `cid` タグを詰め込める（サイトイベント・レプリカ報告・Follow Set の取得件数、1 作者が持つ `d` の数、Follow Set 1 件の `p` タグ数、`webring::crawl` のノード総数には [取得と表示の上限](log/2026-09-23-fetch-and-display-budgets.md) で上限を入れた） | レビュー（DoS） |
-| 低 | `/api/sites`・`/api/replicas`・`/api/webring` の GET はサーバ側でキャッシュせず、同時実行数の制限もレート制限も無い。`keys`/`root`/`key` を 100 件に制限したのはリクエスト 1 回あたりの入力サイズを抑えるだけで、relay を引く GET 自体は何度リクエストしても毎回 relay に取得しに行く | レビュー（DoS） |
+| 低 | `/api/sites`・`/api/replicas`・`/api/webring` の GET はサーバ側でキャッシュせず、レート制限も無い。同時実行は 4 本までに抑えたが、relay を引く GET 自体は何度リクエストしても毎回 relay に取得しに行く | レビュー（DoS） |
 | 低 | `/api/status` が重い。サイト単位で DAG をたどるため保存量に比例して時間がかかるが、進捗表示もタイムアウトも無い（フロントはボタンを押したときだけ呼ぶ運用でしのいでいる） | レビュー |
 | 低 | 容量の上限判定を実容量（版どうしの共有を数えない値）で行う。今は版ごとの `dag/stat` の和で判定していて、差分更新のサイトを実際より大きく見積もる。evict の途中経過ごとに測り直す必要があるので、`policy::decide` に suffix union の表を渡すなど、純粋関数のまま保てる形にする | [実容量の表示](log/2026-09-22-actual-storage-size.md) |
 | 低 | `SWING_DASHBOARD_GATEWAY` を環境変数で空文字にできない（他の環境変数と同じく空文字は「未設定」として扱われ、既定値に戻る）。TOML の `gateway = ""` でなら無効にできる | レビュー |
