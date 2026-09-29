@@ -124,9 +124,14 @@ impl<C: KuboStore, N: Nip05Verify, R: ReportRelay> Agent<C, N, R> {
                         let Ok(created_at) = v.name.parse::<u64>() else {
                             continue;
                         };
-                        if !v.cid.is_empty() {
-                            self.activity.record_published(created_at);
-                            cids.insert(v.cid);
+                        match nostr::canonical_cid(&v.cid) {
+                            Ok(cid) => {
+                                self.activity.record_published(created_at);
+                                cids.insert(cid);
+                            }
+                            Err(e) => {
+                                warn!(path = %path, version = %v.name, error = %e, "skipping a published version whose MFS entry is not a valid site CID");
+                            }
                         }
                     }
                     if !cids.is_empty() {
@@ -399,6 +404,9 @@ mod tests {
 
     const CID_A: &str = "bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi";
     const CID_B: &str = "QmYwAPJzv5CZsnA9LqYKXfRSZryVXxNn7ZP1FyEBgvJvHR";
+    const CID_MIRRORED: &str = "bafybeigzhpfl7lkz4hnmxg6c4mutrtiqnxpsueszwpz3dy2vu7x4ji27qq";
+    const CID_PUBLISHED: &str = "bafybeifqjzpkean3aqgk4u7wsp3khcr6ac3c3jqdtsrer7wnlg37zbbisq";
+    const CID_AB: &str = "bafybeih3ryqpylsmh4siyygdtplff46bgrzjro4xpofu2widxbifkyqgam";
 
     #[tokio::test]
     async fn reports_left_on_relays_are_withdrawn_or_kept_on_startup() {
@@ -506,7 +514,7 @@ mod tests {
         fx.agent.state.lock().await.apply_store(
             &fx.own_key(D),
             VersionRecord {
-                cid: "bafy-mirrored".into(),
+                cid: CID_MIRRORED.into(),
                 size: 1,
                 created_at: 100,
                 stored_at: 100,
@@ -515,13 +523,15 @@ mod tests {
         {
             let mut kubo = fx.kubo();
             kubo.mfs
-                .insert(fx.publish_path(D, "100"), "bafy-mirrored".into());
+                .insert(fx.publish_path(D, "100"), CID_MIRRORED.into());
             kubo.mfs
-                .insert(fx.publish_path(D, "200"), "bafy-published".into());
+                .insert(fx.publish_path(D, "200"), CID_PUBLISHED.into());
+            kubo.mfs
+                .insert(fx.publish_path(D, "250"), "bafy-planted".into());
             kubo.mfs
                 .insert(fx.publish_path(D, "notes.txt"), "bafy-ignored".into());
             kubo.mfs
-                .insert(fx.publish_path("a/b.example", "300"), "bafy-ab".into());
+                .insert(fx.publish_path("a/b.example", "300"), CID_AB.into());
             let other = fx.agent.layout.publish_version(&fx.pubkey.to_hex(), D, 1);
             kubo.mfs.insert(other, "bafy-not-mine".into());
         }
@@ -529,8 +539,8 @@ mod tests {
         fx.agent.sync_reports().await;
 
         let mut expected = vec![
-            (fx.own_key(D), cids(&["bafy-mirrored", "bafy-published"])),
-            (fx.own_key("a/b.example"), cids(&["bafy-ab"])),
+            (fx.own_key(D), cids(&[CID_PUBLISHED, CID_MIRRORED])),
+            (fx.own_key("a/b.example"), cids(&[CID_AB])),
         ];
         expected.sort();
         assert_eq!(fx.take_reports(), expected);
@@ -548,10 +558,12 @@ mod tests {
 
         {
             let mut kubo = fx.kubo();
-            kubo.mfs.insert(fx.publish_path(D, "100"), "bafy-a".into());
+            kubo.mfs.insert(fx.publish_path(D, "100"), CID_A.into());
             kubo.mfs
-                .insert(fx.publish_path("a/b.example", "300"), "bafy-b".into());
+                .insert(fx.publish_path("a/b.example", "300"), CID_AB.into());
             kubo.mfs.insert(fx.publish_path(D, "999999"), String::new());
+            kubo.mfs
+                .insert(fx.publish_path(D, "888888"), "bafy-planted".into());
             kubo.mfs
                 .insert(fx.publish_path(D, "notes.txt"), "bafy-n".into());
         }

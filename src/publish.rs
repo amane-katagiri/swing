@@ -17,15 +17,16 @@ pub use checks::{
     UnchangedStatus, find_dotfiles, refuse_protected_paths,
 };
 
-fn versions_to_prune(names: &[String], keep: usize) -> Vec<String> {
+fn versions_to_prune(names: &[String], current: u64, keep: usize) -> Vec<String> {
     let mut versions: Vec<(u64, &String)> = names
         .iter()
         .filter_map(|name| name.parse::<u64>().ok().map(|t| (t, name)))
+        .filter(|&(t, _)| t != current)
         .collect();
     versions.sort_by(|a, b| b.cmp(a));
     versions
         .into_iter()
-        .skip(keep)
+        .skip(keep.saturating_sub(1))
         .map(|(_, name)| name.clone())
         .collect()
 }
@@ -72,6 +73,7 @@ impl PruneOutcome {
 pub async fn prune_old_versions_collect(
     ipfs: &IpfsClient,
     site_path: &str,
+    current: u64,
     keep: usize,
 ) -> PruneOutcome {
     let names = match ipfs.mfs_list(site_path).await {
@@ -84,7 +86,7 @@ pub async fn prune_old_versions_collect(
         }
     };
     let mut attempts = Vec::new();
-    for name in versions_to_prune(&names, keep) {
+    for name in versions_to_prune(&names, current, keep) {
         let path = format!("{site_path}/{name}");
         match ipfs.mfs_remove(&path).await {
             Ok(()) => attempts.push(PruneAttempt::Removed(name)),
@@ -481,7 +483,7 @@ pub async fn run(
     println!();
     println!("IPFS");
 
-    let ipfs = IpfsClient::new(config.ipfs_api_url()?);
+    let ipfs = config.ipfs_client().await?;
     let layout = MfsLayout::new(config.ipfs.mfs_root.clone());
     let created_at = Timestamp::now();
     let stage = add_and_measure(&ipfs, &layout, &pubkey_hex, &d, created_at.as_secs(), dir).await?;
@@ -525,7 +527,13 @@ pub async fn run(
     println!();
     println!("Old versions (keeping {})", config.publish.keep_versions);
     let site_path = layout.publish_site(&pubkey_hex, &d);
-    let prune = prune_old_versions_collect(&ipfs, &site_path, config.publish.keep_versions).await;
+    let prune = prune_old_versions_collect(
+        &ipfs,
+        &site_path,
+        created_at.as_secs(),
+        config.publish.keep_versions,
+    )
+    .await;
     print_prune_lines(&site_path, &prune);
 
     println!();
@@ -538,13 +546,23 @@ mod tests {
     use super::*;
 
     #[test]
-    fn versions_to_prune_keeps_the_newest_numeric_entries() {
+    fn versions_to_prune_keeps_the_current_and_the_newest_others() {
         let names: Vec<String> = ["100", "300", "junk", "200", "50"]
             .iter()
             .map(|s| s.to_string())
             .collect();
-        assert_eq!(versions_to_prune(&names, 2), vec!["100", "50"]);
-        assert!(versions_to_prune(&names, 4).is_empty());
+        assert_eq!(versions_to_prune(&names, 300, 2), vec!["100", "50"]);
+        assert!(versions_to_prune(&names, 300, 4).is_empty());
+    }
+
+    #[test]
+    fn versions_to_prune_never_removes_the_current_version() {
+        let names: Vec<String> = ["100", "999999", "200"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        assert_eq!(versions_to_prune(&names, 200, 1), vec!["999999", "100"]);
+        assert_eq!(versions_to_prune(&names, 200, 2), vec!["100"]);
     }
 
     #[test]

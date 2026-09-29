@@ -66,6 +66,14 @@ async fn run_gc() {
 // Requires a local Kubo daemon; run with `cargo test --test kubo_integration -- --ignored --test-threads=1`.
 #[tokio::test]
 #[ignore]
+async fn peer_id_reads_the_id_rpc() {
+    let client = IpfsClient::new(kubo_api());
+    let id = client.peer_id().await.expect("id");
+    assert!(id.starts_with("12D3Koo") || id.starts_with("Qm"), "{id}");
+}
+
+#[tokio::test]
+#[ignore]
 async fn add_dir_into_mfs_round_trip() {
     let client = IpfsClient::new(kubo_api());
     let root = unique_root("add");

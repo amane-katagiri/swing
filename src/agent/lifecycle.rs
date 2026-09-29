@@ -11,7 +11,6 @@ use tracing::{debug, error, info, warn};
 use crate::config::{Config, Listen};
 use crate::dashboard;
 use crate::gateway;
-use crate::ipfs::IpfsClient;
 use crate::nip05::HttpNip05Verifier;
 use crate::nostr::{self, RelayClient};
 use crate::state::State;
@@ -33,7 +32,7 @@ pub async fn run_until(
     let relay = Arc::new(RelayClient::connect(signer, &config.nostr.relays).await?);
     info!(relays = ?relay.relays(), "connected to relays");
 
-    let ipfs = IpfsClient::new(config.ipfs_api_url()?);
+    let ipfs = config.ipfs_client().await?;
     let dashboard_ipfs = ipfs.clone();
     let state_path = config.agent.state_dir.join("state.json");
     let state = State::load(&state_path).await?;

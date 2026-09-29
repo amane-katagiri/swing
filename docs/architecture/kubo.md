@@ -35,6 +35,7 @@
 | `Addresses.API` | `["/ip4/127.0.0.1/tcp/<api_port>"]` | `api_port` は起動のたびに動的に選ぶ（下記） |
 | `Addresses.Gateway` | `[kubo].gateway_listen` を multiaddr にしたもの（`/ip4/.../tcp/...` か `/ip6/.../tcp/...`） | |
 | `Addresses.Swarm` | `[kubo].swarm_port` が `Some` のときだけ、Kubo の既定の Swarm リスト 8 本のポートをすべてこの値に置き換えたもの | `None` なら触らない（Kubo の既定のまま） |
+| `API.Authorizations` | `{"swing": {"AuthSecret": "bearer:<secret>", "AllowedPaths": ["/api/v0"]}}` | `ipfs config` を使わず、最後に `<repo>/config` の JSON を読んで書き換える（秘密をコマンドラインに載せないため）。書き戻しは一時ファイル（unix は 0600）からの rename。値は下記「[RPC の認証](#rpc-の認証managed-のみ)」 |
 
 `ipfs config` の実行が失敗したら stderr を含めてエラーにする。compose の外部 Kubo コンテナは `docker/kubo-init.d/001-swing-config.sh` で、このうち `Datastore.StorageMax`・`Provide.Strategy`・`Gateway.NoFetch`・`Gateway.NoDNSLink`・`Gateway.PublicGateways` の 5 つのキーを設定する（`Addresses.*` は設定しない。値の渡し方は [`docker.md#kubo-の設定`](docker.md#kubo-の設定)）。
 
@@ -44,17 +45,30 @@
 
 Kubo は `Host` と `X-Forwarded-Host` をそのまま信じるので、Kubo の Gateway ポートを外部に直接公開しない。内蔵 gateway（[`gateway.md`](gateway.md)）や compose の `mirror` コンテナを前段に置く。
 
+### RPC の認証（managed のみ）
+
+managed の Kubo の RPC は Kubo の `API.Authorizations` で Bearer トークンを要求する。同じマシンの別のユーザーが RPC を叩いて、MFS の `publish/<自分>/...` に任意の CID を置く（agent がそれをレプリカ報告に載せて署名する）・設定を変える・ミラーを消す・止める、といったことを防ぐため。
+
+- 秘密は 32 バイトの乱数の 16 進（`kubo::ApiSecret`。`Debug` は `<redacted>`）。`start_kubo`（`up.rs`）が Kubo を起動するたびに `kubo::rotate_api_secret` で作り直し、`<state_dir>/kubo-api.secret` に書く（`auth::write_private_file`。unix は 0600、`state_dir` が無ければ 0700 で作る）。書けなければその回の起動を失敗としてバックオフする。
+- 作った秘密は `KuboSettings.api_secret` として `apply_config` が `API.Authorizations` に書き（上表）、`Daemon::spawn` に渡す。`Daemon` はヘルス待ちと RPC シャットダウンでこれを送る。agent に渡す設定のコピーには `config.ipfs.api_secret` として入れ（[`up.md#managed`](up.md#managed)）、ダッシュボードの統計（`KuboTarget`）の `IpfsClient` にも持たせる。
+- クライアントは `ipfs::kubo_http_client(Some(&secret))` で作り、すべてのリクエストに既定のヘッダー `Authorization: Bearer <secret>`（sensitive 指定）を付ける。`IpfsClient::with_secret(api, secret)` がこれを使う（`IpfsClient::new(api)` は秘密なし）。
+- `kubo::read_api_secret(state_dir)` はファイルを読む。無ければ `None`、中身が 16 進でなければエラー。孤児回収（下記）はこれで読んだ秘密を付けて RPC シャットダウンを送る（読めなければ warn を出して秘密なしで送る）。
+- 秘密は Kubo を起動するたびに変わるので、止まった Kubo の古い `<repo>/api` のポートを別のプロセスが先に取っていて、`swing publish` がそこへ秘密を送ってしまっても、その秘密は次に起動する Kubo では使えない。
+
+unmanaged（`[ipfs].api`）の Kubo には秘密を送らず、認証は SWING では設定しない。同じマシンの他のユーザーからその RPC に届くなら、それらのユーザーは上記の操作ができる。Docker Compose の構成では、Kubo の RPC（5001）はホストに公開せず compose の内部ネットワークだけで待ち受けるので、届くのは同じネットワークのコンテナ（`mirror`）だけ（[`docker.md`](docker.md)）。
+
 ### 動的な API ポートと `<repo>/api`
 
 `kubo::pick_free_port()` が `127.0.0.1:0` を bind してすぐ解放し、空いている TCP ポートを 1 つ返す。`swing up` は Kubo を起動するたびにこれで API ポートを選び、`Addresses.API` に設定する。Kubo は起動時に実際に listen したアドレスを `<repo>/api` に multiaddr（例 `/ip4/127.0.0.1/tcp/54321`）で書き出す。
 
 - `kubo::api_url_from_repo(repo)`: `<repo>/api` を読んで `multiaddr_to_http_url` で HTTP URL に変換する。ファイルが無ければ「Kubo is not running（`swing up` を起動するか、`[kubo].managed = false` にして `[ipfs].api` で外部の Kubo を指すよう案内する）」という趣旨のエラーにする。
 - `kubo::multiaddr_to_http_url(addr)`: `/ip4/<ip>/tcp/<port>` → `http://<ip>:<port>`、`/ip6/<ip>/tcp/<port>` → `http://[<ip>]:<port>`（`[::1]` のように角括弧を付ける）。`/dns4`・`/dns6`・`/dns` も同様にホスト名をそのまま使う。それ以外のプロトコルや `tcp` 以外はエラー。
-- `Config::ipfs_api_url()`（`src/config/mod.rs`）は `[ipfs].api` が `Url` ならそのまま返し、`Managed` なら `api_url_from_repo(&config.kubo.repo)` を呼ぶ。CLI の `swing publish` はこれを経由して、`swing up` が管理している Kubo の実際のポートを見つける。agent（`agent/lifecycle.rs`）と unmanaged の `swing up` のヘルス待ちも同じ関数で URL を得る（managed の agent には `swing up` が `[ipfs].api` を実際の URL に差し替えた設定を渡す。[`up.md#managed`](up.md#managed)）。
+- `Config::ipfs_api_url()`（`src/config/mod.rs`）は `[ipfs].api` が `Url` ならそのまま返し、`Managed` なら `api_url_from_repo(&config.kubo.repo)` を呼ぶ。unmanaged の `swing up` のヘルス待ちはこれで URL を得る。
+- `Config::ipfs_client()`（async）は RPC のクライアントを作る。`Url` ならその URL と `config.ipfs.api_secret`（設定ファイルからは入らず、`swing up` が managed の agent に渡すコピーにだけ入る）で作る。`Managed` なら `api_url_from_repo` の URL と `read_api_secret(<state_dir>)` の秘密で作り、`kubo::ensure_own_daemon` で、その API の `id` の `ID` が `<repo>/config` の `Identity.PeerID` と一致することを確かめる（一致しなければ `<repo>/api` が古いとしてエラー。PeerID が読めなくてもエラー）。CLI の `swing publish` はこれを経由して、`swing up` が管理している Kubo の実際のポートを見つける。agent（`agent/lifecycle.rs`）も同じ関数でクライアントを作る（managed の agent には `swing up` が `[ipfs].api` を実際の URL に差し替え、`api_secret` を入れた設定を渡す。[`up.md#managed`](up.md#managed)）。
 
 `Daemon::wait_healthy` はこのファイルを読まない。起動直後はまだ `<repo>/api` が存在しないため、`swing up` は選んだポート番号から直接 `http://127.0.0.1:<api_port>` を組み立てて `Daemon` に渡し、それでヘルスチェックする。
 
-Kubo の RPC を呼ぶ HTTP クライアントはすべて `ipfs::kubo_http_client()`（`IpfsClient`・ヘルス待ち・RPC シャットダウン・孤児回収）で作り、プロキシの環境変数（`HTTP_PROXY` など）やシステムのプロキシ設定を使わない（`no_proxy`）。プロキシが `add` の `Hash` や `dag/stat` の応答を差し替えて、publish に別の CID へ署名させることを防ぐため。
+Kubo の RPC を呼ぶ HTTP クライアントはすべて `ipfs::kubo_http_client(secret)`（`IpfsClient`・ヘルス待ち・RPC シャットダウン・孤児回収）で作り、プロキシの環境変数（`HTTP_PROXY` など）やシステムのプロキシ設定を使わない（`no_proxy`）。プロキシが `add` の `Hash` や `dag/stat` の応答を差し替えて、publish に別の CID へ署名させることを防ぐため。
 
 ### デーモンの起動（`kubo::Daemon::spawn`）
 
@@ -62,7 +76,7 @@ Kubo の RPC を呼ぶ HTTP クライアントはすべて `ipfs::kubo_http_clie
 <bin> daemon --migrate=true --enable-gc --agent-version-suffix=swing
 ```
 
-`Daemon::spawn(bin, repo, api_url)` は起動する Kubo の API URL（`Addresses.API` に設定したものと同じ、`http://127.0.0.1:<api_port>`）を受け取って `Daemon` に持たせる。`Daemon::stop`（下記）がこれを使って RPC シャットダウンを呼ぶ。
+`Daemon::spawn(bin, repo, api_url, api_secret)` は起動する Kubo の API URL（`Addresses.API` に設定したものと同じ、`http://127.0.0.1:<api_port>`）と RPC の秘密を受け取り、秘密を付けるクライアントとともに `Daemon` に持たせる。`Daemon::wait_healthy` と `Daemon::stop`（下記）がこれを使う。
 
 - `IPFS_PATH=<repo>`。stdin は `/dev/null` 相当、stdout/stderr は pipe。
 - Linux（`cfg(target_os = "linux")`）のみ、`pre_exec` で `PR_SET_PDEATHSIG(SIGTERM)` を設定する。swing プロセスが SIGKILL 等で消えても、Linux では子の Kubo に SIGTERM が届く。
@@ -103,7 +117,7 @@ Kubo の RPC を呼ぶ HTTP クライアントはすべて `ipfs::kubo_http_clie
 
 - `kubo.pid` が無ければ何もしない。読めなければ warn を出してファイルを消すだけで、何も kill しない。
 - まずその `pid` の今の開始時刻を取り直し、記録と比べる。プロセスがもう無い、または開始時刻が一致しない（PID の再利用）なら、API にも何も送らず kill もせずにファイルを消す。
-- 一致したら記録の `api_port` に API でのシャットダウンを送り（タイムアウト 3 秒、`ORPHAN_SHUTDOWN_RPC_TIMEOUT`）、応答があればその `pid` の終了を最大 30 秒（`ORPHAN_SHUTDOWN_GRACE`）待つ。終われば完了。
+- 一致したら記録の `api_port` に API でのシャットダウンを `<state_dir>/kubo-api.secret` の秘密を付けて送り（タイムアウト 3 秒、`ORPHAN_SHUTDOWN_RPC_TIMEOUT`）、応答があればその `pid` の終了を最大 30 秒（`ORPHAN_SHUTDOWN_GRACE`）待つ。終われば完了。
 - API で終わらなければ強制終了する（unix は SIGTERM → 最大 30 秒（`ORPHAN_SIGTERM_GRACE`）→ SIGKILL → 最大 10 秒（`ORPHAN_KILL_WAIT`）、Windows は `taskkill /T /F` → 最大 10 秒（`ORPHAN_KILL_WAIT`））。
 - 強制終了しても終わらなければエラーを返し、`swing up` は Kubo を起動せずに終了する。
 - `swing up` が Kubo を止めるとき（`up.rs` の `stop_daemon`）は、`Daemon::stop` が成功したときだけ `kubo.pid` を消す。失敗したら（Kubo が残っているかもしれないので）warn を出してファイルを残し、次の起動の `recover_orphan` に任せる。Kubo が自分で exit したとき（[`up.md#managed`](up.md#managed)）は消す。
@@ -143,6 +157,7 @@ MFS から消したコンテンツや打ち切った取得のブロックは、K
 | 一覧 | `files/ls?arg={path}&long=true` → `Entries`（`Type` 1 がディレクトリ） | 60 秒 |
 | CID の確認 | `files/stat?arg={path}&hash=true` → `Hash` | 60 秒 |
 | ディレクトリ判定 | `files/stat?arg=/ipfs/{cid}` → `Type`（`directory` か `file`） | 60 秒 |
+| PeerID | `id` → `ID` | 10 秒 |
 | add（publish） | `add?recursive=true&cid-version=1&pin=false&quieter=true&wrap-with-directory=false&to-files={path}` | 300 秒 |
 
 - `dag/stat` に CID を複数渡すと、`TotalSize` はそれらをまとめた重複排除後のサイズ（同じブロックを 1 回だけ数えた合計）になる。1 つでもブロックが欠けていれば呼び出し全体が失敗する。CID を 1 つも渡さないときは呼ばずに 0 を返す。

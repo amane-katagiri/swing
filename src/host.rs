@@ -26,9 +26,25 @@ pub fn extract_host(host_header: &str) -> String {
     split_host_port(host_header).0.to_ascii_lowercase()
 }
 
+pub fn is_loopback_name(host: &str) -> bool {
+    ["localhost", "127.0.0.1", "::1"]
+        .iter()
+        .any(|name| host.eq_ignore_ascii_case(name))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn loopback_names_match_regardless_of_case() {
+        for name in ["localhost", "LocalHost", "127.0.0.1", "::1"] {
+            assert!(is_loopback_name(name), "{name}");
+        }
+        for name in ["localhost.example", "127.0.0.2", "example.com"] {
+            assert!(!is_loopback_name(name), "{name}");
+        }
+    }
 
     #[test]
     fn extract_host_strips_port_when_present() {

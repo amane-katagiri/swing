@@ -19,7 +19,7 @@ pub const DEFAULT_RELAYS: [&str; 5] = [
 
 pub const DEFAULT_MAX_UPDATE_SIZE: u64 = 2 << 30;
 
-#[derive(Debug, Clone, Deserialize, Default)]
+#[derive(Clone, Deserialize, Default)]
 #[serde(default)]
 pub struct NostrFile {
     pub secret_key: Option<String>,
@@ -27,6 +27,21 @@ pub struct NostrFile {
     pub mirror_set: Option<String>,
     pub site_event_kind: Option<u16>,
     pub replica_event_kind: Option<u16>,
+}
+
+impl std::fmt::Debug for NostrFile {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("NostrFile")
+            .field(
+                "secret_key",
+                &self.secret_key.as_ref().map(|_| "<redacted>"),
+            )
+            .field("relays", &self.relays)
+            .field("mirror_set", &self.mirror_set)
+            .field("site_event_kind", &self.site_event_kind)
+            .field("replica_event_kind", &self.replica_event_kind)
+            .finish()
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -210,6 +225,7 @@ pub enum IpfsApi {
 #[derive(Debug, Clone)]
 pub struct IpfsConfig {
     pub api: IpfsApi,
+    pub api_secret: Option<crate::kubo::ApiSecret>,
     pub mfs_root: String,
 }
 
@@ -363,9 +379,22 @@ fn load_file(cli_path: Option<&Path>) -> Result<(ConfigFile, PathBuf, bool)> {
     }
     let text = std::fs::read_to_string(&path)
         .with_context(|| format!("reading config file {}", path.display()))?;
-    let file: ConfigFile =
-        toml::from_str(&text).with_context(|| format!("parsing config file {}", path.display()))?;
+    let file = parse_config_file(&text)
+        .with_context(|| format!("parsing config file {}", path.display()))?;
     Ok((file, path, true))
+}
+
+// toml's own Display quotes the offending source line, which can be the secret key.
+fn parse_config_file(text: &str) -> Result<ConfigFile> {
+    toml::from_str(text).map_err(|e| {
+        let Some(span) = e.span() else {
+            return anyhow::anyhow!("{}", e.message());
+        };
+        let before = text.get(..span.start).unwrap_or(text);
+        let line = before.matches('\n').count() + 1;
+        let column = before.rsplit('\n').next().map_or(0, |l| l.chars().count()) + 1;
+        anyhow::anyhow!("line {line}, column {column}: {}", e.message())
+    })
 }
 
 pub(crate) fn env_var(name: &str) -> Option<String> {
@@ -475,7 +504,7 @@ pub(crate) fn build_config_from_str(
     text: &str,
     get_env: impl Fn(&str) -> Option<String>,
 ) -> Result<Config> {
-    let file: ConfigFile = toml::from_str(text).context("parsing config file")?;
+    let file = parse_config_file(text).context("parsing config file")?;
     build::build_config(file, None, get_env)
 }
 
@@ -493,6 +522,20 @@ impl Config {
             IpfsApi::Url(url) => Ok(url.clone()),
             IpfsApi::Managed => crate::kubo::api_url_from_repo(&self.kubo.repo),
         }
+    }
+
+    pub async fn ipfs_client(&self) -> Result<crate::ipfs::IpfsClient> {
+        let url = self.ipfs_api_url()?;
+        if self.ipfs.api != IpfsApi::Managed {
+            return Ok(crate::ipfs::IpfsClient::with_secret(
+                url,
+                self.ipfs.api_secret.as_ref(),
+            ));
+        }
+        let secret = crate::kubo::read_api_secret(&self.agent.state_dir)?;
+        let client = crate::ipfs::IpfsClient::with_secret(url, secret.as_ref());
+        crate::kubo::ensure_own_daemon(&client, &self.kubo.repo).await?;
+        Ok(client)
     }
 
     pub fn load(cli_path: Option<&Path>) -> Result<Self> {
@@ -518,6 +561,35 @@ impl Config {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn config_parse_errors_point_at_the_line_without_quoting_it() {
+        let secret = "nsec1qqqqsecretqqqq";
+        let text = format!("[nostr]\nsecret_key = \"{secret}\"\nrelays = 5\n");
+        let err = format!("{:#}", parse_config_file(&text).unwrap_err());
+        assert!(!err.contains(secret), "{err}");
+        assert!(err.contains("line 3, column 10"), "{err}");
+
+        let text = format!("[nostr]\nsecret_key = \"{secret}\n");
+        let err = format!("{:#}", parse_config_file(&text).unwrap_err());
+        assert!(!err.contains(secret), "{err}");
+        assert!(err.contains("line 2"), "{err}");
+    }
+
+    #[test]
+    fn nostr_file_debug_redacts_the_secret_key() {
+        let file = NostrFile {
+            secret_key: Some("nsec1qqqqsecretqqqq".to_string()),
+            mirror_set: Some("set".to_string()),
+            ..Default::default()
+        };
+        let text = format!("{file:?}");
+        assert!(!text.contains("secretqqqq"), "{text}");
+        assert!(
+            text.contains("<redacted>") && text.contains("set"),
+            "{text}"
+        );
+    }
 
     #[test]
     fn parse_size_units() {

@@ -8,6 +8,7 @@ use futures_util::StreamExt;
 use reqwest::multipart::{Form, Part};
 use serde::Deserialize;
 
+use crate::kubo::ApiSecret;
 use crate::mfs;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -250,21 +251,32 @@ async fn read_body(resp: reqwest::Response, what: &str) -> Result<String> {
     Ok(String::from_utf8_lossy(&body).into_owned())
 }
 
-fn query_path(path: &str) -> String {
-    percent_encode_relative_path(path)
-}
-
-pub fn kubo_http_client() -> reqwest::Client {
+pub fn kubo_http_client(api_secret: Option<&ApiSecret>) -> reqwest::Client {
+    let mut headers = reqwest::header::HeaderMap::new();
+    if let Some(secret) = api_secret {
+        headers.insert(reqwest::header::AUTHORIZATION, secret.authorization());
+    }
     reqwest::Client::builder()
         .no_proxy()
+        .default_headers(headers)
         .build()
         .expect("reqwest client uses only built-in TLS options")
 }
 
+#[derive(Debug, Deserialize)]
+struct IdResponse {
+    #[serde(rename = "ID")]
+    id: String,
+}
+
 impl IpfsClient {
     pub fn new(api: impl Into<String>) -> Self {
+        Self::with_secret(api, None)
+    }
+
+    pub fn with_secret(api: impl Into<String>, api_secret: Option<&ApiSecret>) -> Self {
         Self {
-            http: kubo_http_client(),
+            http: kubo_http_client(api_secret),
             api: api.into().trim_end_matches('/').to_string(),
         }
     }
@@ -333,7 +345,7 @@ impl IpfsClient {
         self.mfs_remove(mfs_path).await?;
         let url = self.url(&format!(
             "/api/v0/add?recursive=true&cid-version=1&pin=false&quieter=true&wrap-with-directory=false&to-files={}",
-            query_path(mfs_path)
+            percent_encode_relative_path(mfs_path)
         ));
         let request = self
             .http
@@ -354,7 +366,7 @@ impl IpfsClient {
     pub async fn fetch_dag(&self, cid: &str, limits: FetchLimits) -> Result<Fetched> {
         let url = self.url(&format!(
             "/api/v0/dag/export?arg={}&progress=false",
-            urlencoding_cid(cid)
+            percent_encode_segment(cid)
         ));
         let fetch = async {
             let resp = tokio::time::timeout(limits.idle, self.http.post(&url).send())
@@ -390,7 +402,7 @@ impl IpfsClient {
         }
         let args: String = cids
             .iter()
-            .map(|cid| format!("arg={}&", urlencoding_cid(cid)))
+            .map(|cid| format!("arg={}&", percent_encode_segment(cid)))
             .collect();
         let text = self
             .call(
@@ -407,7 +419,7 @@ impl IpfsClient {
     async fn mfs_mkdir(&self, path: &str) -> Result<()> {
         self.call(
             "files/mkdir",
-            &format!("arg={}&parents=true", query_path(path)),
+            &format!("arg={}&parents=true", percent_encode_relative_path(path)),
             Duration::from_secs(60),
         )
         .await?;
@@ -422,8 +434,8 @@ impl IpfsClient {
             "files/cp",
             &format!(
                 "arg=/ipfs/{}&arg={}&offline=true",
-                urlencoding_cid(cid),
-                query_path(path)
+                percent_encode_segment(cid),
+                percent_encode_relative_path(path)
             ),
             Duration::from_secs(60),
         )
@@ -436,7 +448,10 @@ impl IpfsClient {
         let text = self
             .call(
                 "files/rm",
-                &format!("arg={}&recursive=true&force=true", query_path(path)),
+                &format!(
+                    "arg={}&recursive=true&force=true",
+                    percent_encode_relative_path(path)
+                ),
                 Duration::from_secs(60),
             )
             .await?;
@@ -450,7 +465,7 @@ impl IpfsClient {
         let text = match self
             .call(
                 "files/ls",
-                &format!("arg={}&long=true", query_path(path)),
+                &format!("arg={}&long=true", percent_encode_relative_path(path)),
                 Duration::from_secs(60),
             )
             .await
@@ -477,7 +492,7 @@ impl IpfsClient {
         let text = match self
             .call(
                 "files/stat",
-                &format!("arg={}&hash=true", query_path(path)),
+                &format!("arg={}&hash=true", percent_encode_relative_path(path)),
                 Duration::from_secs(60),
             )
             .await
@@ -491,6 +506,12 @@ impl IpfsClient {
         Ok(Some(parsed.hash))
     }
 
+    pub async fn peer_id(&self) -> Result<String> {
+        let text = self.call("id", "", Duration::from_secs(10)).await?;
+        let parsed: IdResponse = serde_json::from_str(&text).context("parsing id response")?;
+        Ok(parsed.id)
+    }
+
     pub async fn bandwidth(&self) -> Result<Bandwidth> {
         let text = self.call("stats/bw", "", Duration::from_secs(10)).await?;
         serde_json::from_str(&text).context("parsing stats/bw response")
@@ -500,7 +521,7 @@ impl IpfsClient {
         let text = self
             .call(
                 "files/stat",
-                &format!("arg=/ipfs/{}", urlencoding_cid(cid)),
+                &format!("arg=/ipfs/{}", percent_encode_segment(cid)),
                 Duration::from_secs(60),
             )
             .await?;
@@ -508,10 +529,6 @@ impl IpfsClient {
             serde_json::from_str(&text).context("parsing files/stat response")?;
         Ok(parsed.kind == "directory")
     }
-}
-
-fn urlencoding_cid(cid: &str) -> String {
-    percent_encode_segment(cid)
 }
 
 #[cfg(test)]

@@ -28,7 +28,7 @@
 | unit パス（user） | `$XDG_CONFIG_HOME/systemd/user/swing.service`（既定 `~/.config/systemd/user/swing.service`） |
 | unit パス（`--system`） | `/etc/systemd/system/swing.service` |
 | 実行ユーザー（`--system`） | `User=<name>`（`Group=` は付けず、そのユーザーの主グループになる）。下記「system unit の実行ユーザー」 |
-| 制限（`--system`） | `NoNewPrivileges=yes`・`PrivateTmp=yes`・`ProtectSystem=full`（`/usr`・`/boot`・`/efi`・`/etc` を読み取り専用にする）・`ReadWritePaths="<workdir>"`（ダッシュボードの設定画面が設定ファイルを書き換えるので、設定ファイルのディレクトリは `/etc` の下でも書ける）。`ProtectHome` は付けない（設定と `state_dir` をホームに置く構成が普通のため）。user unit には何も付けない |
+| 制限（`--system`） | `NoNewPrivileges=yes`・`PrivateTmp=yes`・`ProtectSystem=full`（`/usr`・`/boot`・`/efi`・`/etc` を読み取り専用にする）・`ReadWritePaths="<workdir>"`（ダッシュボードの設定画面が設定ファイルを書き換えるので、設定ファイルのディレクトリは `/etc` の下でも書ける）。インストール時に設定を読み（`Config::load`。そのときの環境変数も効く）、`[agent].state_dir` と `[kubo].repo` が絶対パスで `<workdir>` の外にあれば、それぞれ `"-<path>"` として同じ行に足す（`-` は存在しなくても unit を失敗させない指定）。設定を読めなければ警告を出して `<workdir>` だけにする。`ProtectHome` は付けない（設定と `state_dir` をホームに置く構成が普通のため）。user unit には何も付けない |
 | `ExecStart` | `<exe> up --config <config>` |
 | `WorkingDirectory` | 設定ファイルの親ディレクトリ |
 | 起動の順序と有効化 | `After=`・`Wants=network-online.target`、`WantedBy=default.target`（`--system` なら `multi-user.target`） |

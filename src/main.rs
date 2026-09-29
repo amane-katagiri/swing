@@ -358,9 +358,14 @@ fn init_tracing(log_file: Option<&PathBuf>, default_filter: &str) -> Result<()> 
         EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(default_filter));
     match log_file {
         Some(path) => {
-            let file = std::fs::OpenOptions::new()
-                .create(true)
-                .append(true)
+            let mut options = std::fs::OpenOptions::new();
+            options.create(true).append(true);
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::OpenOptionsExt;
+                options.mode(0o600);
+            }
+            let file = options
                 .open(path)
                 .with_context(|| format!("opening log file {}", path.display()))?;
             tracing_subscriber::fmt()

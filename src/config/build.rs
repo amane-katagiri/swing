@@ -239,7 +239,11 @@ fn resolve_ipfs<E: Fn(&str) -> Option<String>>(
         "/swing".to_string(),
     )?;
 
-    Ok(IpfsConfig { api, mfs_root })
+    Ok(IpfsConfig {
+        api,
+        api_secret: None,
+        mfs_root,
+    })
 }
 
 fn resolve_policy<E: Fn(&str) -> Option<String>>(
@@ -583,7 +587,7 @@ fn check_gateway_hosts_apart_from_dashboard(
     allowed_hosts: &[String],
 ) -> Result<()> {
     for host in gateway_hosts {
-        if ["localhost", "127.0.0.1"].contains(&host.as_str())
+        if crate::host::is_loopback_name(host)
             || allowed_hosts.iter().any(|h| h.eq_ignore_ascii_case(host))
         {
             bail!(

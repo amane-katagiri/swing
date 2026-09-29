@@ -113,7 +113,7 @@ async fn stop_agent(
 }
 
 enum StartOutcome {
-    Ready(Box<kubo::Daemon>, String),
+    Ready(Box<kubo::Daemon>, String, kubo::ApiSecret),
     Retry,
     Cancelled,
 }
@@ -149,10 +149,15 @@ async fn start_kubo(
         kubo::pick_free_port(),
         "failed to pick a free port for the Kubo API"
     );
+    let api_secret = attempt!(
+        kubo::rotate_api_secret(&config.agent.state_dir),
+        "failed to write the Kubo API secret"
+    );
     let settings = kubo::KuboSettings {
         storage_max: config.kubo.storage_max,
         provide_strategy: config.kubo.provide_strategy.clone(),
         api_port,
+        api_secret: api_secret.clone(),
         gateway: config.kubo.gateway_listen,
         swarm_port: config.kubo.swarm_port,
         public_gateway_hosts: config.gateway.hosts.clone(),
@@ -164,7 +169,7 @@ async fn start_kubo(
 
     let api_url = format!("http://127.0.0.1:{api_port}");
     let mut daemon = attempt!(
-        kubo::Daemon::spawn(bin, &config.kubo.repo, api_url.clone()).await,
+        kubo::Daemon::spawn(bin, &config.kubo.repo, api_url.clone(), &api_secret).await,
         "failed to spawn the Kubo daemon"
     );
     if let Some(pid) = daemon.pid()
@@ -198,7 +203,7 @@ async fn start_kubo(
     }
 
     info!(api = %api_url, "kubo is ready");
-    Ok(StartOutcome::Ready(Box::new(daemon), api_url))
+    Ok(StartOutcome::Ready(Box::new(daemon), api_url, api_secret))
 }
 
 async fn bind_dashboard(
@@ -434,17 +439,19 @@ async fn run_managed(
             return Ok(());
         }
 
-        let (mut daemon, api_url) = match start_kubo(&bin, &config, &mut backoff, &token).await? {
-            StartOutcome::Ready(daemon, api_url) => (*daemon, api_url),
-            StartOutcome::Retry => continue 'daemon,
-            StartOutcome::Cancelled => return Ok(()),
-        };
+        let (mut daemon, api_url, api_secret) =
+            match start_kubo(&bin, &config, &mut backoff, &token).await? {
+                StartOutcome::Ready(daemon, api_url, api_secret) => (*daemon, api_url, api_secret),
+                StartOutcome::Retry => continue 'daemon,
+                StartOutcome::Cancelled => return Ok(()),
+            };
         dashboard.stats.set_kubo(Some(KuboTarget {
             pid: daemon.pid(),
-            ipfs: IpfsClient::new(api_url.clone()),
+            ipfs: IpfsClient::with_secret(api_url.clone(), Some(&api_secret)),
         }));
         let mut managed_config = config.clone();
         managed_config.ipfs.api = IpfsApi::Url(api_url);
+        managed_config.ipfs.api_secret = Some(api_secret);
 
         let mut agent_token = token.child_token();
         let mut agent_handle = spawn_agent(

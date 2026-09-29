@@ -130,9 +130,7 @@ fn log_path(workdir: &Path) -> PathBuf {
 // path; create_new() with a random suffix closes that race.
 fn write_service_file_new(path: &Path, content: impl AsRef<[u8]>) -> Result<()> {
     use std::io::Write;
-    let mut file = std::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
+    let mut file = crate::auth::private_file_options()
         .open(path)
         .with_context(|| format!("creating {}", path.display()))?;
     file.write_all(content.as_ref())

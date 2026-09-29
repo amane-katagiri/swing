@@ -104,6 +104,22 @@ pub fn is_installed(system: bool) -> Option<bool> {
     Some(unit_path(system).is_ok_and(|p| p.exists()))
 }
 
+fn writable_paths(config: &Path) -> Vec<PathBuf> {
+    match crate::config::Config::load(Some(config)) {
+        Ok(config) => [config.agent.state_dir, config.kubo.repo]
+            .into_iter()
+            .filter(|p| p.is_absolute())
+            .collect(),
+        Err(e) => {
+            println!(
+                "Warning: could not read {} ({e:#}); the unit only lets swing write under the config file's directory, so keep [agent].state_dir and [kubo].repo there.",
+                config.display()
+            );
+            Vec::new()
+        }
+    }
+}
+
 pub fn install(exe: &Path, config: &Path, workdir: &Path, opts: &InstallOptions<'_>) -> Result<()> {
     let system = opts.system;
     let user = if system {
@@ -111,8 +127,16 @@ pub fn install(exe: &Path, config: &Path, workdir: &Path, opts: &InstallOptions<
     } else {
         None
     };
+    let writable = if system {
+        writable_paths(config)
+    } else {
+        Vec::new()
+    };
     let scope = match &user {
-        Some(user) => SystemdScope::System { user },
+        Some(user) => SystemdScope::System {
+            user,
+            writable: &writable,
+        },
         None => SystemdScope::User,
     };
     let unit = systemd_unit(exe, config, workdir, &scope)?;

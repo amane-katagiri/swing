@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use anyhow::{Result, bail};
 
@@ -44,7 +44,10 @@ fn quote_systemd_arg(arg: &str) -> String {
 
 pub enum SystemdScope<'a> {
     User,
-    System { user: &'a str },
+    System {
+        user: &'a str,
+        writable: &'a [PathBuf],
+    },
 }
 
 pub fn systemd_unit(
@@ -63,8 +66,13 @@ pub fn systemd_unit(
     );
     let (system_directives, wanted_by) = match scope {
         SystemdScope::User => (String::new(), "default.target"),
-        SystemdScope::System { user } => {
+        SystemdScope::System { user, writable } => {
             reject_control_chars("service user", user)?;
+            let mut read_write = vec![quote_systemd_path(&workdir)];
+            for path in writable.iter().filter(|p| !p.starts_with(&workdir)) {
+                let path = text("writable path", path)?;
+                read_write.push(quote_systemd_path(&format!("-{path}")));
+            }
             (
                 format!(
                     "User={user}\n\
@@ -73,7 +81,7 @@ PrivateTmp=yes\n\
 ProtectSystem=full\n\
 ReadWritePaths={read_write}\n",
                     user = escape_systemd_specifiers(user),
-                    read_write = quote_systemd_path(&workdir),
+                    read_write = read_write.join(" "),
                 ),
                 "multi-user.target",
             )
@@ -280,7 +288,10 @@ pub fn schtasks_xml(
 mod tests {
     use super::*;
 
-    const SYSTEM: SystemdScope<'static> = SystemdScope::System { user: "swing" };
+    const SYSTEM: SystemdScope<'static> = SystemdScope::System {
+        user: "swing",
+        writable: &[],
+    };
 
     #[test]
     fn tray_plist_runs_the_tray_with_the_config_in_gui_sessions_only() {
@@ -366,6 +377,41 @@ mod tests {
     }
 
     #[test]
+    fn systemd_unit_system_scope_adds_writable_paths_outside_the_workdir() {
+        let writable = [
+            PathBuf::from("/etc/swing/data"),
+            PathBuf::from("/srv/swing state"),
+            PathBuf::from("/srv/kubo"),
+        ];
+        let unit = systemd_unit(
+            Path::new("/usr/bin/swing"),
+            Path::new("/etc/swing/swing.toml"),
+            Path::new("/etc/swing"),
+            &SystemdScope::System {
+                user: "swing",
+                writable: &writable,
+            },
+        )
+        .unwrap();
+        assert!(
+            unit.contains("ReadWritePaths=\"/etc/swing\" \"-/srv/swing state\" \"-/srv/kubo\"\n")
+        );
+        let injected = [PathBuf::from("/srv/x\nUser=root")];
+        assert!(
+            systemd_unit(
+                Path::new("/usr/bin/swing"),
+                Path::new("/etc/swing/swing.toml"),
+                Path::new("/etc/swing"),
+                &SystemdScope::System {
+                    user: "swing",
+                    writable: &injected,
+                },
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
     fn systemd_unit_quotes_paths_with_spaces_and_escapes() {
         let unit = systemd_unit(
             Path::new("/home/u/my apps/swing"),
@@ -417,6 +463,7 @@ mod tests {
             good,
             &SystemdScope::System {
                 user: "u\nUser=root",
+                writable: &[],
             },
         )
         .unwrap_err();

@@ -522,9 +522,13 @@ pub(super) async fn run_publish(
     state.activity.record_published(created_at.as_secs());
 
     let site_path = layout.publish_site(&pubkey_hex, &fields.site);
-    let prune =
-        publish::prune_old_versions_collect(&ipfs, &site_path, state.config.publish.keep_versions)
-            .await;
+    let prune = publish::prune_old_versions_collect(
+        &ipfs,
+        &site_path,
+        created_at.as_secs(),
+        state.config.publish.keep_versions,
+    )
+    .await;
 
     Ok(PublishOutcome::Success(Box::new(dto::PublishResultDto {
         published: true,
