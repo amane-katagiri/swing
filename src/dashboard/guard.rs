@@ -34,12 +34,15 @@ fn cookie_values<'a>(headers: &'a HeaderMap, name: &'a str) -> impl Iterator<Ite
         })
 }
 
-pub fn authorized(headers: &HeaderMap, host_header: &str, token: &str) -> bool {
-    let bearer = headers
+fn bearer_token(headers: &HeaderMap) -> Option<&str> {
+    headers
         .get(header::AUTHORIZATION)
         .and_then(|v| v.to_str().ok())
-        .and_then(|v| v.strip_prefix("Bearer "));
-    if let Some(presented) = bearer {
+        .and_then(|v| v.strip_prefix("Bearer "))
+}
+
+pub fn authorized(headers: &HeaderMap, host_header: &str, token: &str) -> bool {
+    if let Some(presented) = bearer_token(headers) {
         return auth::token_matches(token, presented.trim());
     }
     let name = session_cookie_name(host_header);
@@ -112,7 +115,10 @@ pub async fn security_middleware(
         return guarded_error(StatusCode::FORBIDDEN, "host not allowed", is_api);
     }
 
-    if req.method() != Method::GET && req.method() != Method::HEAD {
+    let safe_method = req.method() == Method::GET || req.method() == Method::HEAD;
+    // Same-site pages still carry the SameSite=Strict cookie, so cookie-authenticated reads need the marker too.
+    let needs_marker = !safe_method || (is_api && bearer_token(req.headers()).is_none());
+    if needs_marker {
         let has_marker = req
             .headers()
             .get(DASHBOARD_MARKER_HEADER)

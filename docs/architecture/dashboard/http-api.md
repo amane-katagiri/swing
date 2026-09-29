@@ -21,12 +21,12 @@
 | 422 | publish の NIP-05・ドットファイル・サイズの確認の `require` 失敗だけ |
 | 500 | ファイルの読み書きなど内部の失敗。詳細（パスや OS のエラー）は `error!` でログにだけ出し、本文は常に `{"error": "internal error; see the swing log for details"}`（`api::ApiError::Internal`） |
 | 502 | relay・Kubo・Nostr 発行・署名アプリの失敗 |
-| 503 | agent の未準備・セットアップモード（下記） |
+| 503 | agent の未準備・セットアップモード・relay を引く API の同時実行数の上限（下記） |
 
 ### 認証とガード
 
 - `POST /api/login`・`POST /api/identity` 以外の `/api/*` は認証が要る。`Authorization: Bearer <token>` かセッション cookie が無い・合わなければ 401 `{"error": "missing or invalid dashboard token or session"}`（仕組みは [`../dashboard.md#認証srcauthrs-srcdashboardsessionrs`](../dashboard.md#認証srcauthrs-srcdashboardsessionrs)）。
-- GET 以外のエンドポイント（`POST /api/login`・`POST /api/identity`・`POST /api/publish/upload` を含む）は、`X-Swing-Dashboard: 1` ヘッダと Origin の検証を通す（[`../dashboard.md#ガードsrcdashboardguardrs`](../dashboard.md#ガードsrcdashboardguardrs)）。
+- GET 以外のエンドポイント（`POST /api/login`・`POST /api/identity`・`POST /api/publish/upload` を含む）と、`Authorization: Bearer` を付けない GET/HEAD（セッション cookie で読む場合）は、`X-Swing-Dashboard: 1` ヘッダと Origin の検証を通す（[`../dashboard.md#ガードsrcdashboardguardrs`](../dashboard.md#ガードsrcdashboardguardrs)）。
 
 ### agent の準備状態とセットアップモード
 
@@ -45,7 +45,7 @@ API は `swing up` の寿命で動き続ける（[`../up.md`](../up.md)）。
 ### 件数と負荷
 
 - `keys`（mirror add/remove）・`root`（webring）・`key`（replicas）は 1 リクエストあたり最大 100 件、超えると 400。
-- relay を引く API（sites・mirror・webring・replicas）はサーバ側でキャッシュせず、同時実行数の制限やレート制限も無い。
+- relay を引く GET の API（`/api/sites`・`/api/mirror`・`/api/webring`・`/api/replicas`・`/api/publish/sites`）はサーバ側でキャッシュしない。同時に relay を引けるのはこれらを合わせて 4 本（`AppState.relay_queries` のセマフォ、`RELAY_QUERY_PERMITS`）までで、空きを最大 20 秒（`RELAY_QUERY_WAIT`）待っても取れなければ 503 `{"error": "too many relay queries are running; try again later"}`。件数の検証（400）はその前、agent の準備（503 `agent is not ready`）は空きを取った後に判定する。レート制限は無い。
 - API を叩く CLI サブコマンドの一覧は [`../cli.md#共通`](../cli.md#共通)（クライアント実装は `src/api_client.rs::ApiClient`）。
 
 ## 既知の性質

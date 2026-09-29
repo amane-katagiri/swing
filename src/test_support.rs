@@ -214,3 +214,26 @@ pub(crate) fn serve_test_signer(uri: &str, user: &Keys, sign: bool) {
         remote.serve(TestSigner { sign }).await
     });
 }
+
+pub(crate) fn identity_route<F>(answer: F) -> axum::routing::MethodRouter
+where
+    F: Fn() -> (&'static str, String) + Clone + Send + Sync + 'static,
+{
+    use crate::dashboard::dto::{IdentityDto, IdentityRequestDto};
+    use axum::Json;
+
+    axum::routing::post(move |Json(req): Json<IdentityRequestDto>| async move {
+        let (token, instance) = answer();
+        Json(IdentityDto {
+            proof: crate::auth::identity_proof(token, &req.nonce),
+            instance,
+        })
+    })
+}
+
+pub(crate) async fn serve_router(router: axum::Router) -> std::net::SocketAddr {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    addr
+}

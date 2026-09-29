@@ -38,7 +38,7 @@ Windows の `swing service stop` もこの `stop::run` を使う（失敗した�
 
 実装は `src/login.rs`（URL の組み立ては `login::request_link`、ブラウザで開くのは `login::open_browser`。どちらも `swing-tray` と共通。[`tray.md`](tray.md)）。認証の仕組みは [`dashboard.md#認証srcauthrs-srcdashboardsessionrs`](dashboard.md#認証srcauthrs-srcdashboardsessionrs)。
 
-- `dashboard open [--config] [--no-browser]`: `POST /api/login-code` で使い捨てのログインコードをもらい、`<[dashboard].public_url>/login?code=<code>`（`public_url` 未設定時の URL の決め方は [`dashboard.md#設定dashboard`](dashboard.md#設定dashboard)）とコード（`login code (single use, valid for 5 minutes): ...`）を標準出力に出す。`--no-browser` が無ければ続けて OS の既定ブラウザで URL を開く（Linux は `xdg-open`、macOS は `open`、Windows は `rundll32 url.dll,FileProtocolHandler`）。開けなければ標準エラーに案内を出すだけで正常終了する。`[dashboard].ui = false` ならエラー終了する。`swing up` が動いていなければ `swing up is not running (...)` でエラー終了する。
+- `dashboard open [--config] [--no-browser]`: `POST /api/login-code` で使い捨てのログインコードをもらい、`<[dashboard].public_url>/login?code=<code>`（`public_url` 未設定時の URL の決め方は [`dashboard.md#設定dashboard`](dashboard.md#設定dashboard)）とコード（`login code (single use, valid for 5 minutes): ...`）を標準出力に出す。`--no-browser` が無ければ続けて OS の既定ブラウザで URL を開く（Linux は `xdg-open`、macOS は `open`、Windows は `rundll32 url.dll,FileProtocolHandler`）。開けなければ標準エラーに案内を出すだけで正常終了する。`[dashboard].ui = false` ならエラー終了する。`swing up` が動いていなければ `swing up is not running (...)` でエラー終了する。返ってきたコードが小文字の hex 32 文字でなければ、URL もコードも出さず、ブラウザも開かずに `the dashboard at <addr> returned a malformed login code` でエラー終了する。
 - `dashboard rotate-token [--config]`: `POST /api/token/rotate` でトークンを作り直す（ブラウザのセッションはすべて無効になる）。`swing up` が動いていなければ `<state_dir>/dashboard.token` を直接書き換える。
 
 ## service install / uninstall / start / stop / status

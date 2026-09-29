@@ -140,6 +140,13 @@ mod tests {
             .unwrap()
     }
 
+    fn dashboard_get(uri: &str) -> Request<Body> {
+        let mut req = get(uri);
+        req.headers_mut()
+            .insert("x-swing-dashboard", "1".parse().unwrap());
+        req
+    }
+
     fn post_json(uri: &str, body: &str) -> Request<Body> {
         Request::builder()
             .method("POST")
@@ -175,7 +182,7 @@ mod tests {
     #[tokio::test]
     async fn api_requires_authentication_but_static_ui_does_not() {
         let state = test_state();
-        let resp = call_anonymous(router(Arc::clone(&state)), get("/api/overview")).await;
+        let resp = call_anonymous(router(Arc::clone(&state)), dashboard_get("/api/overview")).await;
         assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
         assert_eq!(resp.headers().get("cache-control").unwrap(), "no-store");
         let resp = call_anonymous(router(Arc::clone(&state)), get("/")).await;
@@ -186,6 +193,39 @@ mod tests {
             .insert("authorization", "Bearer wrong".parse().unwrap());
         let resp = call_anonymous(router(state), req).await;
         assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn cookie_authenticated_reads_need_the_dashboard_marker() {
+        let state = test_state();
+        let session = crate::auth::new_session(TEST_TOKEN, crate::auth::DASHBOARD_SESSION);
+        let cookie = format!("swing_session_8082={session}");
+
+        for method in ["GET", "HEAD"] {
+            let mut req = get("/api/overview");
+            *req.method_mut() = method.parse().unwrap();
+            req.headers_mut().insert("cookie", cookie.parse().unwrap());
+            let resp = call_anonymous(router(Arc::clone(&state)), req).await;
+            assert_eq!(resp.status(), StatusCode::FORBIDDEN, "{method}");
+        }
+
+        let mut req = dashboard_get("/api/overview");
+        req.headers_mut().insert("cookie", cookie.parse().unwrap());
+        req.headers_mut()
+            .insert("origin", "http://127.0.0.1:8080".parse().unwrap());
+        let resp = call_anonymous(router(Arc::clone(&state)), req).await;
+        assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+
+        let mut req = dashboard_get("/api/overview");
+        req.headers_mut().insert("cookie", cookie.parse().unwrap());
+        let resp = call_anonymous(router(Arc::clone(&state)), req).await;
+        assert_eq!(resp.status(), StatusCode::OK);
+
+        let resp = call(router(Arc::clone(&state)), get("/api/overview")).await;
+        assert_eq!(resp.status(), StatusCode::OK);
+
+        let resp = call_anonymous(router(state), get("/")).await;
+        assert_eq!(resp.status(), StatusCode::OK);
     }
 
     #[tokio::test]
@@ -202,7 +242,7 @@ mod tests {
         assert!(cookie.contains("SameSite=Strict"));
         assert!(cookie.contains("Max-Age=2592000"));
 
-        let mut req = get("/api/overview");
+        let mut req = dashboard_get("/api/overview");
         req.headers_mut()
             .insert("cookie", cookie_pair(&cookie).parse().unwrap());
         let resp = call_anonymous(router(Arc::clone(&state)), req).await;
@@ -286,7 +326,7 @@ mod tests {
 
         let resp = call(router(Arc::clone(&state)), get("/api/overview")).await;
         assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
-        let mut req = get("/api/overview");
+        let mut req = dashboard_get("/api/overview");
         req.headers_mut().insert(
             "cookie",
             format!("swing_session_8082={session}").parse().unwrap(),

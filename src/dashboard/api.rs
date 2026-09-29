@@ -25,6 +25,7 @@ use super::AppState;
 use super::dto;
 
 const MAX_KEYS: usize = 100;
+const RELAY_QUERY_WAIT: std::time::Duration = std::time::Duration::from_secs(20);
 
 pub enum ApiError {
     BadRequest(String),
@@ -32,6 +33,7 @@ pub enum ApiError {
     PayloadTooLarge(String),
     NotReady,
     NotConfigured,
+    Busy,
     Upstream(String),
     Conflict(String),
     Internal(String),
@@ -50,6 +52,10 @@ impl IntoResponse for ApiError {
             ApiError::NotConfigured => (
                 StatusCode::SERVICE_UNAVAILABLE,
                 "agent is not configured".to_string(),
+            ),
+            ApiError::Busy => (
+                StatusCode::SERVICE_UNAVAILABLE,
+                "too many relay queries are running; try again later".to_string(),
             ),
             ApiError::Upstream(msg) => (StatusCode::BAD_GATEWAY, msg),
             ApiError::Conflict(msg) => (StatusCode::CONFLICT, msg),
@@ -82,12 +88,26 @@ impl AppState {
         self.relay().await.ok_or_else(|| not_ready(self))
     }
 
+    async fn relay_query_permit(&self) -> Result<tokio::sync::SemaphorePermit<'_>, ApiError> {
+        acquire_within(&self.relay_queries, RELAY_QUERY_WAIT).await
+    }
+
     async fn require_ipfs(&self) -> Result<crate::ipfs::IpfsClient, ApiError> {
         self.ipfs().await.ok_or_else(|| not_ready(self))
     }
 
     fn require_own_pubkey(&self) -> Result<PublicKey, ApiError> {
         self.own_pubkey.ok_or_else(|| not_ready(self))
+    }
+}
+
+async fn acquire_within(
+    semaphore: &tokio::sync::Semaphore,
+    wait: std::time::Duration,
+) -> Result<tokio::sync::SemaphorePermit<'_>, ApiError> {
+    match tokio::time::timeout(wait, semaphore.acquire()).await {
+        Ok(Ok(permit)) => Ok(permit),
+        _ => Err(ApiError::Busy),
     }
 }
 
@@ -168,6 +188,7 @@ pub async fn stats(
 }
 
 pub async fn sites(State(state): State<Arc<AppState>>) -> Result<Json<dto::SitesDto>, ApiError> {
+    let _permit = state.relay_query_permit().await?;
     let relay = state.require_relay().await?;
     let view = mirror::collect_sites(&relay, &state.config)
         .await
@@ -189,6 +210,7 @@ pub async fn status(State(state): State<Arc<AppState>>) -> Result<Json<dto::Stat
 pub async fn mirror_list(
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<dto::MirrorListDto>, ApiError> {
+    let _permit = state.relay_query_permit().await?;
     let relay = state.require_relay().await?;
     let view = mirror::collect_mirror_list(&relay, &state.config)
         .await
@@ -292,6 +314,7 @@ pub async fn webring(
             "root must include at most {MAX_KEYS} entries"
         )));
     }
+    let _permit = state.relay_query_permit().await?;
     let relay = state.require_relay().await?;
     let roots = if root_inputs.is_empty() {
         vec![state.require_own_pubkey()?]
@@ -320,6 +343,7 @@ pub async fn replicas(
             "key must include at most {MAX_KEYS} entries"
         )));
     }
+    let _permit = state.relay_query_permit().await?;
     let relay = state.require_relay().await?;
     let authors = if key_inputs.is_empty() {
         vec![state.require_own_pubkey()?]
@@ -527,6 +551,7 @@ pub(super) async fn run_publish(
 pub async fn publish_sites(
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<dto::PublishSitesDto>, ApiError> {
+    let _permit = state.relay_query_permit().await?;
     let relay = state.require_relay().await?;
     let own_pubkey = state.require_own_pubkey()?;
     let events = relay
@@ -651,6 +676,31 @@ mod tests {
         let text = String::from_utf8(body.to_vec()).unwrap();
         assert!(!text.contains(&secret_hex));
         assert!(text.contains("\"(set, hidden)\""));
+    }
+
+    #[tokio::test]
+    async fn relay_queries_are_refused_once_every_permit_stays_taken() {
+        use axum::response::IntoResponse;
+        use std::time::Duration;
+        let semaphore = tokio::sync::Semaphore::new(1);
+        let held = super::acquire_within(&semaphore, Duration::ZERO)
+            .await
+            .ok()
+            .unwrap();
+        let refused = super::acquire_within(&semaphore, Duration::from_millis(10)).await;
+        let Err(err) = refused else {
+            panic!("expected Busy");
+        };
+        assert_eq!(
+            err.into_response().status(),
+            StatusCode::SERVICE_UNAVAILABLE
+        );
+        drop(held);
+        assert!(
+            super::acquire_within(&semaphore, Duration::ZERO)
+                .await
+                .is_ok()
+        );
     }
 
     #[tokio::test]

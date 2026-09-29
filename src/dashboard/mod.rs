@@ -23,7 +23,7 @@ use axum::http::StatusCode;
 use axum::routing::{get, post};
 use nostr_sdk::prelude::{PublicKey, Timestamp};
 use tokio::net::TcpListener;
-use tokio::sync::{Mutex, Notify, RwLock, oneshot};
+use tokio::sync::{Mutex, Notify, RwLock, Semaphore, oneshot};
 use tower_http::timeout::TimeoutLayer;
 use tracing::info;
 
@@ -39,6 +39,7 @@ use crate::stats;
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(120);
 const UPLOAD_TIMEOUT: Duration = Duration::from_secs(30 * 60);
 const INSTANCE_ID_BYTES: usize = 8;
+const RELAY_QUERY_PERMITS: usize = 4;
 
 #[derive(Default)]
 pub struct ConfigWrites {
@@ -54,6 +55,7 @@ pub struct AppState {
     pub started_at: u64,
     pub instance: String,
     pub publish_lock: Mutex<()>,
+    relay_queries: Semaphore,
     pub config_writes: Mutex<ConfigWrites>,
     pub own_pubkey: Option<PublicKey>,
     pub signer: Option<Signer>,
@@ -99,6 +101,7 @@ impl AppState {
             started_at: Timestamp::now().as_secs(),
             instance: auth::random_hex(INSTANCE_ID_BYTES),
             publish_lock: Mutex::new(()),
+            relay_queries: Semaphore::new(RELAY_QUERY_PERMITS),
             config_writes: Mutex::new(ConfigWrites::default()),
             own_pubkey,
             signer,

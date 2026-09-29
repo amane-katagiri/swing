@@ -24,9 +24,38 @@ pub fn token_path(state_dir: &Path) -> PathBuf {
 pub fn read_token(state_dir: &Path) -> Result<Option<String>> {
     let path = token_path(state_dir);
     match std::fs::read_to_string(&path) {
-        Ok(s) => Ok(Some(s.trim().to_string()).filter(|t| !t.is_empty())),
+        Ok(s) => {
+            #[cfg(unix)]
+            warn_if_readable_by_others(state_dir, &path);
+            Ok(Some(s.trim().to_string()).filter(|t| !t.is_empty()))
+        }
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
         Err(e) => Err(e).with_context(|| format!("reading {}", path.display())),
+    }
+}
+
+#[cfg(unix)]
+fn broader_than(path: &Path, allowed: u32) -> Option<u32> {
+    use std::os::unix::fs::PermissionsExt;
+    let mode = std::fs::metadata(path).ok()?.permissions().mode() & 0o777;
+    (mode & !allowed != 0).then_some(mode)
+}
+
+#[cfg(unix)]
+fn warn_if_readable_by_others(state_dir: &Path, token_file: &Path) {
+    if let Some(mode) = broader_than(token_file, 0o600) {
+        tracing::warn!(
+            path = %token_file.display(),
+            mode = format_args!("{mode:o}"),
+            "the dashboard token file is accessible to other users; restrict it to 0600"
+        );
+    }
+    if let Some(mode) = broader_than(state_dir, 0o700) {
+        tracing::warn!(
+            path = %state_dir.display(),
+            mode = format_args!("{mode:o}"),
+            "the state directory holding the dashboard token is accessible to other users; restrict it to 0700"
+        );
     }
 }
 
@@ -45,6 +74,10 @@ pub fn write_new_token(state_dir: &Path) -> Result<String> {
 }
 
 pub(crate) fn create_private_dir_all(path: &Path) -> Result<()> {
+    create_private_dir_all_io(path).with_context(|| format!("creating {}", path.display()))
+}
+
+pub(crate) fn create_private_dir_all_io(path: &Path) -> std::io::Result<()> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::DirBuilderExt;
@@ -52,11 +85,10 @@ pub(crate) fn create_private_dir_all(path: &Path) -> Result<()> {
             .recursive(true)
             .mode(0o700)
             .create(path)
-            .with_context(|| format!("creating {}", path.display()))
     }
     #[cfg(not(unix))]
     {
-        std::fs::create_dir_all(path).with_context(|| format!("creating {}", path.display()))
+        std::fs::create_dir_all(path)
     }
 }
 
@@ -201,6 +233,11 @@ pub fn verify_identity_proof(token: &str, nonce: &str, proof: &str) -> bool {
 #[derive(Default)]
 pub struct LoginCodes {
     codes: Mutex<HashMap<String, Instant>>,
+}
+
+pub fn is_login_code(code: &str) -> bool {
+    code.len() == LOGIN_CODE_BYTES * 2
+        && code.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
 }
 
 impl LoginCodes {
@@ -366,6 +403,32 @@ mod tests {
         let rotated = write_new_token(dir.path()).unwrap();
         assert_ne!(rotated, first);
         assert_eq!(read_token(dir.path()).unwrap(), Some(rotated));
+    }
+
+    #[test]
+    fn issued_login_codes_are_recognized() {
+        let code = LoginCodes::default().issue();
+        assert!(is_login_code(&code));
+        assert!(!is_login_code(&code.to_ascii_uppercase()));
+        assert!(!is_login_code(&code[1..]));
+        assert!(!is_login_code(&format!("{}\x1b", &code[1..])));
+        assert!(!is_login_code(""));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn broader_than_reports_modes_beyond_the_allowed_bits() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("f");
+        std::fs::write(&file, "x").unwrap();
+        std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o600)).unwrap();
+        assert_eq!(broader_than(&file, 0o600), None);
+        std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o644)).unwrap();
+        assert_eq!(broader_than(&file, 0o600), Some(0o644));
+        std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o400)).unwrap();
+        assert_eq!(broader_than(&file, 0o600), None);
+        assert_eq!(broader_than(&dir.path().join("missing"), 0o600), None);
     }
 
     #[cfg(unix)]

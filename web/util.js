@@ -238,9 +238,8 @@ export async function copyWithFeedback(button, text) {
 export async function apiFetch(path, opts) {
   const options = opts || {};
   const method = (options.method || 'GET').toUpperCase();
-  const headers = Object.assign({}, options.headers);
+  const headers = Object.assign({ 'X-Swing-Dashboard': '1' }, options.headers);
   if (method !== 'GET' && method !== 'HEAD') {
-    headers['X-Swing-Dashboard'] = '1';
     headers['Content-Type'] = 'application/json';
   }
   let res;

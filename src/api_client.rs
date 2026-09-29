@@ -22,6 +22,7 @@ pub enum ApiClientError {
 }
 
 const MAX_ERROR_CHARS: usize = 500;
+const MAX_UNVERIFIED_BODY_BYTES: usize = 64 * 1024;
 
 impl fmt::Display for ApiClientError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -47,6 +48,25 @@ impl std::error::Error for ApiClientError {}
 #[derive(Debug, serde::Deserialize)]
 struct ErrorBody {
     error: String,
+}
+
+async fn read_capped(mut resp: reqwest::Response, limit: usize) -> Option<Vec<u8>> {
+    if resp.content_length().is_some_and(|len| len > limit as u64) {
+        return None;
+    }
+    let mut buf = Vec::new();
+    while let Some(chunk) = resp.chunk().await.ok()? {
+        if buf.len() + chunk.len() > limit {
+            return None;
+        }
+        buf.extend_from_slice(&chunk);
+    }
+    Some(buf)
+}
+
+async fn read_small_json<T: DeserializeOwned>(resp: reqwest::Response) -> Option<T> {
+    let bytes = read_capped(resp, MAX_UNVERIFIED_BODY_BYTES).await?;
+    serde_json::from_slice(&bytes).ok()
 }
 
 // An unspecified bind address (0.0.0.0/::) isn't connectable; loopback also satisfies the dashboard's Host guard.
@@ -103,10 +123,9 @@ impl ApiClient {
             .send()
             .await;
         let resp = self.check_status(result).await?;
-        let body = resp
-            .json::<IdentityDto>()
+        let body = read_small_json::<IdentityDto>(resp)
             .await
-            .map_err(|_| ApiClientError::NotSwing(self.addr))?;
+            .ok_or(ApiClientError::NotSwing(self.addr))?;
         match &self.token {
             Some(token) if !auth::verify_identity_proof(token, &nonce, &body.proof) => {
                 Err(ApiClientError::NotSwing(self.addr))
@@ -116,6 +135,7 @@ impl ApiClient {
     }
 
     async fn send(&self, builder: RequestBuilder) -> Result<reqwest::Response, ApiClientError> {
+        let builder = builder.header("X-Swing-Dashboard", "1");
         let builder = match &self.token {
             Some(token) => {
                 self.identity().await?;
@@ -150,11 +170,9 @@ impl ApiClient {
         };
         let status = resp.status();
         if !status.is_success() {
-            let message = resp
-                .json::<ErrorBody>()
+            let message = read_small_json::<ErrorBody>(resp)
                 .await
-                .map(|b| b.error)
-                .unwrap_or_else(|_| status.to_string());
+                .map_or_else(|| status.to_string(), |b| b.error);
             return Err(ApiClientError::Http { status, message });
         }
         Ok(resp)
@@ -175,14 +193,8 @@ impl ApiClient {
         self.finish(self.client.get(self.url(path))).await
     }
 
-    fn post_request(&self, path: &str) -> RequestBuilder {
-        self.client
-            .post(self.url(path))
-            .header("X-Swing-Dashboard", "1")
-    }
-
     pub async fn post<T: DeserializeOwned>(&self, path: &str) -> Result<T, ApiClientError> {
-        self.finish(self.post_request(path)).await
+        self.finish(self.client.post(self.url(path))).await
     }
 
     pub async fn post_json<B: Serialize, T: DeserializeOwned>(
@@ -190,13 +202,15 @@ impl ApiClient {
         path: &str,
         body: &B,
     ) -> Result<T, ApiClientError> {
-        self.finish(self.post_request(path).json(body)).await
+        self.finish(self.client.post(self.url(path)).json(body))
+            .await
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::{identity_route, serve_router};
     use axum::Json;
     use axum::routing::get;
     use serde::{Deserialize, Serialize};
@@ -238,15 +252,6 @@ mod tests {
             .into_response()
     }
 
-    async fn spawn(router: axum::Router) -> SocketAddr {
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let addr = listener.local_addr().unwrap();
-        tokio::spawn(async move {
-            axum::serve(listener, router).await.unwrap();
-        });
-        addr
-    }
-
     #[tokio::test]
     async fn get_against_a_stopped_server_is_unreachable() {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -265,7 +270,7 @@ mod tests {
     #[tokio::test]
     async fn get_success_decodes_the_body() {
         let router = axum::Router::new().route("/ping", get(ready));
-        let addr = spawn(router).await;
+        let addr = serve_router(router).await;
 
         let client = ApiClient::new(addr, None);
         let pong = client.get::<Pong>("/ping").await.unwrap();
@@ -275,7 +280,7 @@ mod tests {
     #[tokio::test]
     async fn get_503_extracts_the_error_message() {
         let router = axum::Router::new().route("/ping", get(not_ready));
-        let addr = spawn(router).await;
+        let addr = serve_router(router).await;
 
         let client = ApiClient::new(addr, None);
         let err = client.get::<Pong>("/ping").await.unwrap_err();
@@ -296,13 +301,50 @@ mod tests {
             .to_string()
     }
 
-    fn identity_route(token: &'static str) -> axum::routing::MethodRouter {
-        axum::routing::post(move |Json(req): Json<IdentityRequestDto>| async move {
-            Json(IdentityDto {
-                proof: auth::identity_proof(token, &req.nonce),
-                instance: "inst".to_string(),
-            })
-        })
+    #[tokio::test]
+    async fn oversized_answers_are_not_read_whole() {
+        let huge = "x".repeat(MAX_UNVERIFIED_BODY_BYTES + 1);
+        let proof = huge.clone();
+        let router = axum::Router::new()
+            .route(
+                "/api/identity",
+                axum::routing::post(move || {
+                    let proof = proof.clone();
+                    async move {
+                        Json(IdentityDto {
+                            proof,
+                            instance: "inst".to_string(),
+                        })
+                    }
+                }),
+            )
+            .route(
+                "/fail",
+                get(move || {
+                    let huge = huge.clone();
+                    async move {
+                        (
+                            axum::http::StatusCode::BAD_REQUEST,
+                            Json(serde_json::json!({ "error": huge })),
+                        )
+                    }
+                }),
+            );
+        let addr = serve_router(router).await;
+
+        let client = ApiClient::new(addr, Some("tok".to_string()));
+        assert!(matches!(
+            client.identity().await,
+            Err(ApiClientError::NotSwing(_))
+        ));
+        let anonymous = ApiClient::new(addr, None);
+        match anonymous.get::<Pong>("/fail").await.unwrap_err() {
+            ApiClientError::Http { status, message } => {
+                assert_eq!(status, StatusCode::BAD_REQUEST);
+                assert_eq!(message, status.to_string());
+            }
+            other => panic!("expected Http error, got {other:?}"),
+        }
     }
 
     #[tokio::test]
@@ -313,8 +355,11 @@ mod tests {
                 get(|h| async move { Json(echo_authorization(h).await) })
                     .post(|h| async move { Json(echo_authorization(h).await) }),
             )
-            .route("/api/identity", identity_route("tok"));
-        let addr = spawn(router).await;
+            .route(
+                "/api/identity",
+                identity_route(|| ("tok", "inst".to_string())),
+            );
+        let addr = serve_router(router).await;
 
         let client = ApiClient::new(addr, Some("tok".to_string()));
         assert_eq!(client.get::<String>("/auth").await.unwrap(), "Bearer tok");
@@ -339,15 +384,18 @@ mod tests {
                     }
                 }),
             )
-            .route("/api/identity", identity_route("other"));
-        let addr = spawn(router).await;
+            .route(
+                "/api/identity",
+                identity_route(|| ("other", "inst".to_string())),
+            );
+        let addr = serve_router(router).await;
 
         let client = ApiClient::new(addr, Some("tok".to_string()));
         let err = client.get::<String>("/auth").await.unwrap_err();
         assert!(matches!(err, ApiClientError::NotSwing(a) if a == addr));
         assert!(seen.lock().unwrap().is_empty());
 
-        let squatter = spawn(axum::Router::new().route("/auth", get(ready))).await;
+        let squatter = serve_router(axum::Router::new().route("/auth", get(ready))).await;
         let client = ApiClient::new(squatter, Some("tok".to_string()));
         assert!(client.get::<Pong>("/auth").await.is_err());
     }
@@ -375,22 +423,16 @@ mod tests {
             )
             .route(
                 "/api/identity",
-                axum::routing::post(move |Json(req): Json<IdentityRequestDto>| {
-                    let answer = std::sync::Arc::clone(&answer);
-                    async move {
-                        let token = if answer.load(Ordering::SeqCst) {
-                            "other"
-                        } else {
-                            "tok"
-                        };
-                        Json(IdentityDto {
-                            proof: auth::identity_proof(token, &req.nonce),
-                            instance: "inst".to_string(),
-                        })
-                    }
+                identity_route(move || {
+                    let token = if answer.load(Ordering::SeqCst) {
+                        "other"
+                    } else {
+                        "tok"
+                    };
+                    (token, "inst".to_string())
                 }),
             );
-        let addr = spawn(router).await;
+        let addr = serve_router(router).await;
 
         let client = ApiClient::new(addr, Some("tok".to_string()));
         assert_eq!(client.get::<String>("/auth").await.unwrap(), "Bearer tok");

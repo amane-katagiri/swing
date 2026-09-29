@@ -72,8 +72,7 @@ async fn wait(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::auth;
-    use crate::dashboard::dto::{IdentityDto, IdentityRequestDto};
+    use crate::test_support::{identity_route, serve_router};
     use axum::Json;
     use axum::http::HeaderMap;
     use axum::routing::{any, post};
@@ -83,18 +82,6 @@ mod tests {
 
     const TOKEN: &str = "tok";
     const FAST: Duration = Duration::from_millis(20);
-
-    fn identity_route(instance: Arc<Mutex<String>>) -> axum::routing::MethodRouter {
-        post(move |Json(req): Json<IdentityRequestDto>| {
-            let instance = Arc::clone(&instance);
-            async move {
-                Json(IdentityDto {
-                    proof: auth::identity_proof(TOKEN, &req.nonce),
-                    instance: instance.lock().unwrap().clone(),
-                })
-            }
-        })
-    }
 
     #[tokio::test]
     async fn stop_never_sends_the_token_to_whoever_answers_after_shutdown() {
@@ -108,19 +95,13 @@ mod tests {
         let router = axum::Router::new()
             .route(
                 "/api/identity",
-                post(move |Json(req): Json<IdentityRequestDto>| {
-                    let answer = Arc::clone(&answer);
-                    async move {
-                        let token = if answer.load(Ordering::SeqCst) {
-                            "other"
-                        } else {
-                            TOKEN
-                        };
-                        Json(IdentityDto {
-                            proof: auth::identity_proof(token, &req.nonce),
-                            instance: "inst".to_string(),
-                        })
-                    }
+                identity_route(move || {
+                    let token = if answer.load(Ordering::SeqCst) {
+                        "other"
+                    } else {
+                        TOKEN
+                    };
+                    (token, "inst".to_string())
                 }),
             )
             .route(
@@ -142,9 +123,7 @@ mod tests {
                     Json(serde_json::json!({}))
                 }
             }));
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let addr = listener.local_addr().unwrap();
-        tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+        let addr = serve_router(router).await;
 
         let client = ApiClient::new(addr, Some(TOKEN.to_string()));
         let err = wait(&client, false, Duration::from_millis(300), FAST)
@@ -169,7 +148,10 @@ mod tests {
         let instance = Arc::new(Mutex::new("old".to_string()));
         let flip = Arc::clone(&instance);
         let router = axum::Router::new()
-            .route("/api/identity", identity_route(Arc::clone(&instance)))
+            .route(
+                "/api/identity",
+                identity_route(move || (TOKEN, instance.lock().unwrap().clone())),
+            )
             .route(
                 "/api/restart",
                 post(move || {
@@ -180,9 +162,7 @@ mod tests {
                     }
                 }),
             );
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let addr = listener.local_addr().unwrap();
-        tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+        let addr = serve_router(router).await;
 
         let client = ApiClient::new(addr, Some(TOKEN.to_string()));
         wait(&client, true, Duration::from_secs(5), FAST)

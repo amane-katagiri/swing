@@ -106,13 +106,9 @@ pub async fn cleanup_upload_dir(state_dir: &Path) -> Result<()> {
 
 async fn create_private_dir_all(path: &Path) -> std::io::Result<()> {
     let path = path.to_path_buf();
-    tokio::task::spawn_blocking(move || crate::auth::create_private_dir_all(&path))
+    tokio::task::spawn_blocking(move || crate::auth::create_private_dir_all_io(&path))
         .await
         .map_err(std::io::Error::other)?
-        .map_err(|e| match e.downcast::<std::io::Error>() {
-            Ok(io) => io,
-            Err(other) => std::io::Error::other(other),
-        })
 }
 
 async fn create_private_file(path: &Path) -> std::io::Result<tokio::fs::File> {
@@ -148,7 +144,6 @@ async fn read_text_field(
     String::from_utf8(buf).map_err(|_| ApiError::BadRequest(format!("{name} must be UTF-8")))
 }
 
-// Another upload entry already occupies this path as a file or a directory (e.g. `a` and `a/b`).
 fn path_conflict_or_internal(filename: &str, e: std::io::Error) -> ApiError {
     use std::io::ErrorKind;
     match e.kind() {
@@ -443,9 +438,15 @@ mod tests {
     async fn create_private_dir_all_makes_new_dirs_0700() {
         use std::os::unix::fs::PermissionsExt;
         let dir = tempfile::tempdir().unwrap();
-        let nested = dir.path().join("upload").join("abc");
+        let nested = dir
+            .path()
+            .join(crate::publish::DASHBOARD_UPLOAD_DIR)
+            .join("abc");
         create_private_dir_all(&nested).await.unwrap();
-        for p in [dir.path().join("upload"), nested] {
+        for p in [
+            dir.path().join(crate::publish::DASHBOARD_UPLOAD_DIR),
+            nested,
+        ] {
             let mode = std::fs::metadata(&p).unwrap().permissions().mode();
             assert_eq!(mode & 0o777, 0o700, "{}", p.display());
         }
@@ -507,7 +508,7 @@ mod tests {
     }
 
     fn upload_dir_entries(state_dir: &Path) -> Vec<PathBuf> {
-        match std::fs::read_dir(state_dir.join("upload")) {
+        match std::fs::read_dir(state_dir.join(crate::publish::DASHBOARD_UPLOAD_DIR)) {
             Ok(entries) => entries.filter_map(|e| e.ok().map(|e| e.path())).collect(),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Vec::new(),
             Err(e) => panic!("reading upload dir: {e}"),
@@ -810,7 +811,10 @@ mod tests {
     #[test]
     fn upload_dir_guard_removes_the_dir_on_drop() {
         let dir = tempfile::tempdir().unwrap();
-        let dest = dir.path().join("upload").join("abc");
+        let dest = dir
+            .path()
+            .join(crate::publish::DASHBOARD_UPLOAD_DIR)
+            .join("abc");
         std::fs::create_dir_all(&dest).unwrap();
         std::fs::write(dest.join("partial.bin"), b"data").unwrap();
         drop(UploadDirGuard::new(dest.clone()));
@@ -820,14 +824,15 @@ mod tests {
     #[tokio::test]
     async fn upload_dir_guard_cleanup_removes_the_dir_once() {
         let dir = tempfile::tempdir().unwrap();
-        let dest = dir.path().join("upload").join("abc");
+        let dest = dir
+            .path()
+            .join(crate::publish::DASHBOARD_UPLOAD_DIR)
+            .join("abc");
         std::fs::create_dir_all(&dest).unwrap();
         UploadDirGuard::new(dest.clone()).cleanup().await;
         assert!(!dest.exists());
     }
 
-    // Regression test for the bug where TimeoutLayer (or a client disconnect) drops the handler
-    // future mid-`.await`, skipping the post-await cleanup and leaking `<state_dir>/upload/<id>/`.
     #[tokio::test]
     async fn upload_temp_dir_is_removed_when_the_request_is_cancelled_mid_upload() {
         let dir = tempfile::tempdir().unwrap();

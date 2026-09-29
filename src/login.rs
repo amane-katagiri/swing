@@ -53,6 +53,12 @@ pub async fn request_link(config: &Config) -> Result<LoginLink> {
         .post::<LoginCodeDto>("/api/login-code")
         .await
         .map_err(|e| anyhow!("{e}"))?;
+    if !auth::is_login_code(&dto.code) {
+        bail!(
+            "the dashboard at {} returned a malformed login code",
+            client.addr()
+        );
+    }
     let base = config
         .dashboard
         .public_url
@@ -97,5 +103,46 @@ pub async fn rotate_token(config: &Config) -> Result<()> {
             Ok(())
         }
         Err(e) => bail!("{e}"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_support::serve_router;
+    use axum::Json;
+
+    async fn link_from(code: &'static str) -> Result<LoginLink> {
+        let router = axum::Router::new().route(
+            "/api/login-code",
+            axum::routing::post(move || async move {
+                Json(serde_json::json!({ "code": code, "expires_in": 300 }))
+            }),
+        );
+        let addr = serve_router(router).await;
+        let dir = tempfile::tempdir().unwrap();
+        let toml = format!(
+            "[nostr]\nrelays = [\"wss://relay.example\"]\n[agent]\nstate_dir = {:?}\n[dashboard]\nlisten = \"{addr}\"\n",
+            dir.path().display().to_string()
+        );
+        let config = crate::config::build_config_from_str(&toml, |_| None).unwrap();
+        request_link(&config).await
+    }
+
+    #[tokio::test]
+    async fn malformed_login_codes_are_neither_printed_nor_opened() {
+        let good = "0123456789abcdef0123456789abcdef";
+        let link = link_from(good).await.unwrap();
+        assert!(link.url.ends_with(&format!("/login?code={good}")));
+        for bad in [
+            "x&next=//evil",
+            "0123456789ABCDEF0123456789ABCDEF",
+            "\u{1b}]0;x\u{7}",
+        ] {
+            let Err(err) = link_from(bad).await else {
+                panic!("accepted {bad:?}");
+            };
+            assert!(err.to_string().contains("malformed login code"), "{err}");
+        }
     }
 }
