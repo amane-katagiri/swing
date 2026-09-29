@@ -6,6 +6,7 @@ use super::time::format_unix_timestamp;
 use super::{MirrorListView, MirrorSet, SiteRow, SitesView, npub};
 use crate::config::Config;
 use crate::dashboard::dto;
+use crate::format::sanitize_display_text;
 use crate::{nostr, replicas};
 
 pub(super) fn print_mirror_set(mirror_set_name: &str, set: &MirrorSet) {
@@ -101,19 +102,6 @@ pub(super) fn format_site_line(row: &SiteRow, status: &str) -> String {
 }
 
 pub(super) const MAX_MESSAGE_DISPLAY_CHARS: usize = 200;
-
-pub(super) fn sanitize_display_text(text: &str, max_chars: usize) -> String {
-    let cleaned: Vec<char> = text
-        .chars()
-        .filter(|c| c.is_control() || !nostr::is_unsafe_char(*c))
-        .map(|c| if c.is_control() { ' ' } else { c })
-        .collect();
-    let mut shown: String = cleaned.iter().take(max_chars).collect();
-    if cleaned.len() > max_chars {
-        shown.push('\u{2026}');
-    }
-    shown.trim().to_string()
-}
 
 pub(super) fn format_title_line(title: &str) -> String {
     format!(

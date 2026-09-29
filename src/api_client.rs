@@ -21,13 +21,18 @@ pub enum ApiClientError {
     Other(anyhow::Error),
 }
 
+const MAX_ERROR_CHARS: usize = 500;
+
 impl fmt::Display for ApiClientError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Unreachable(addr) => {
                 write!(f, "swing up is not running (cannot connect to {addr})")
             }
-            Self::Http { message, .. } => f.write_str(message),
+            Self::Http { message, .. } => f.write_str(&crate::format::sanitize_display_text(
+                message,
+                MAX_ERROR_CHARS,
+            )),
             Self::NotSwing(addr) => write!(
                 f,
                 "the server at {addr} did not prove it knows this swing's dashboard token; not sending the token (another program may be using the dashboard port, or the token was rotated)"
@@ -196,6 +201,23 @@ mod tests {
     use axum::routing::get;
     use serde::{Deserialize, Serialize};
     use tokio::net::TcpListener;
+
+    #[test]
+    fn http_error_display_strips_terminal_controls() {
+        let err = ApiClientError::Http {
+            status: StatusCode::BAD_REQUEST,
+            message: "bad\x1b]0;owned\x07 \u{202e}input".to_string(),
+        };
+        let shown = err.to_string();
+        assert!(
+            !shown.chars().any(|c| c.is_control() || c == '\u{202e}'),
+            "{shown:?}"
+        );
+        assert!(
+            shown.starts_with("bad") && shown.ends_with("input"),
+            "{shown:?}"
+        );
+    }
 
     #[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
     struct Pong {

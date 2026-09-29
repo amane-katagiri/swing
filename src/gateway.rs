@@ -65,6 +65,7 @@ fn strip_hop_by_hop(headers: &mut HeaderMap, extra: &[String]) {
 pub fn client() -> Result<reqwest::Client> {
     reqwest::Client::builder()
         .redirect(reqwest::redirect::Policy::none())
+        .no_proxy()
         .connect_timeout(Duration::from_secs(10))
         .build()
         .context("building gateway http client")

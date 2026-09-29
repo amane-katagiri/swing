@@ -48,6 +48,19 @@ pub fn format_duration_secs(secs: u64) -> String {
     format!("{secs}s")
 }
 
+pub fn sanitize_display_text(text: &str, max_chars: usize) -> String {
+    let cleaned: Vec<char> = text
+        .chars()
+        .filter(|c| c.is_control() || !crate::nostr::is_unsafe_char(*c))
+        .map(|c| if c.is_control() { ' ' } else { c })
+        .collect();
+    let mut shown: String = cleaned.iter().take(max_chars).collect();
+    if cleaned.len() > max_chars {
+        shown.push('\u{2026}');
+    }
+    shown.trim().to_string()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
