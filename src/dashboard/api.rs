@@ -393,6 +393,8 @@ pub(super) async fn run_publish(
         publish::resolve_modes(&fields.modes, &state.config.publish).map_err(|(name, e)| {
             ApiError::BadRequest(format!("invalid {}: {e:#}", name.replace('-', "_")))
         })?;
+    publish::refuse_protected_paths(dir, &state.config)
+        .map_err(|e| ApiError::BadRequest(format!("{e:#}")))?;
 
     let Ok(_permit) = state.publish_lock.try_lock() else {
         return Err(ApiError::Conflict(
