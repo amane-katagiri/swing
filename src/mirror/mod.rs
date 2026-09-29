@@ -75,10 +75,9 @@ async fn current_follow_set(
     config: &Config,
 ) -> Result<(Option<Event>, Option<&'static str>)> {
     let fetched = relay.fetch_follow_set(&config.nostr.mirror_set).await?;
-    let saved = load_state(config)
-        .await?
-        .follow_set
-        .filter(|ev| nostr::is_follow_set_of(ev, &relay.public_key(), &config.nostr.mirror_set));
+    let saved = load_state(config).await?.follow_set.filter(|ev| {
+        nostr::is_saved_follow_set_of(ev, &relay.public_key(), &config.nostr.mirror_set)
+    });
     Ok(newest_follow_set(
         fetched,
         saved,

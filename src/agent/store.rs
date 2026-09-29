@@ -14,37 +14,100 @@ use super::{Agent, now_secs};
 
 const NIP05_ERROR_CACHE_TTL: u64 = 900;
 const REJECTED_PER_ACCOUNT: usize = 50;
+const ATTEMPTS_PER_ACCOUNT: usize = 50;
 
 #[derive(Default)]
-pub(super) struct Rejected {
-    cids: std::collections::BTreeMap<SiteKey, (String, u64)>,
+struct SiteAttempts {
+    rejected: Vec<(String, u64)>,
+    tried_at: Option<u64>,
+}
+
+// Stored versions only throttle sites that already made it in, so new or rejected sites are throttled here.
+#[derive(Default)]
+pub(super) struct Attempts {
+    sites: std::collections::BTreeMap<SiteKey, SiteAttempts>,
     next: u64,
 }
 
-impl Rejected {
-    fn contains(&self, key: &str, cid: &str) -> bool {
-        self.cids.get(key).is_some_and(|(c, _)| c == cid)
+impl Attempts {
+    fn is_rejected(&self, key: &str, cid: &str) -> bool {
+        self.sites
+            .get(key)
+            .is_some_and(|s| s.rejected.iter().any(|(c, _)| c == cid))
     }
 
-    fn remove(&mut self, key: &str) {
-        self.cids.remove(key);
+    fn try_attempt(
+        &mut self,
+        key: &SiteKey,
+        stored: bool,
+        now: u64,
+        window: u64,
+        per_account: usize,
+    ) -> Result<(), &'static str> {
+        let recent = |at: &u64| now.saturating_sub(*at) < window;
+        let entry = self.sites.get(key);
+        if stored && entry.is_none_or(|e| e.rejected.is_empty()) {
+            return Ok(());
+        }
+        if entry.and_then(|e| e.tried_at.as_ref()).is_some_and(recent) {
+            return Err("fetch_attempt_interval");
+        }
+        let Some((account, _)) = state::split_site_key(key) else {
+            return Ok(());
+        };
+        let account = account.to_string();
+        let recent_attempts = state::account_entries(&self.sites, &account)
+            .filter(|(k, e)| *k != key && e.tried_at.as_ref().is_some_and(recent))
+            .count();
+        if recent_attempts >= per_account.clamp(1, ATTEMPTS_PER_ACCOUNT) {
+            return Err("fetch_attempts_per_account");
+        }
+        self.sites.entry(key.clone()).or_default().tried_at = Some(now);
+        let stale: Vec<SiteKey> = state::account_entries(&self.sites, &account)
+            .filter(|(_, e)| e.rejected.is_empty() && !e.tried_at.as_ref().is_some_and(recent))
+            .map(|(k, _)| k.clone())
+            .collect();
+        for k in stale {
+            self.sites.remove(&k);
+        }
+        Ok(())
     }
 
-    fn insert(&mut self, key: SiteKey, cid: String) {
+    fn clear(&mut self, key: &str) {
+        self.sites.remove(key);
+    }
+
+    fn reject(&mut self, key: &SiteKey, cid: String) {
         self.next += 1;
-        let account = state::split_site_key(&key).map(|(pk, _)| pk.to_string());
-        self.cids.insert(key, (cid, self.next));
-        let Some(account) = account else {
+        let seq = self.next;
+        let entry = self.sites.entry(key.clone()).or_default();
+        if !entry.rejected.iter().any(|(c, _)| *c == cid) {
+            entry.rejected.push((cid, seq));
+        }
+        let Some((account, _)) = state::split_site_key(key) else {
             return;
         };
-        let entries: Vec<(&SiteKey, u64)> = state::account_entries(&self.cids, &account)
-            .map(|(k, (_, seq))| (k, *seq))
-            .collect();
-        if entries.len() > REJECTED_PER_ACCOUNT
-            && let Some(oldest) = entries.into_iter().min_by_key(|(_, seq)| *seq)
-        {
-            let oldest = oldest.0.clone();
-            self.cids.remove(&oldest);
+        let account = account.to_string();
+        loop {
+            let rejected: Vec<(&SiteKey, usize, u64)> =
+                state::account_entries(&self.sites, &account)
+                    .flat_map(|(k, e)| {
+                        e.rejected
+                            .iter()
+                            .enumerate()
+                            .map(move |(i, (_, seq))| (k, i, *seq))
+                    })
+                    .collect();
+            if rejected.len() <= REJECTED_PER_ACCOUNT {
+                return;
+            }
+            let Some((k, i, _)) = rejected.into_iter().min_by_key(|(_, _, seq)| *seq) else {
+                return;
+            };
+            let k = k.clone();
+            if let Some(e) = self.sites.get_mut(&k) {
+                e.rejected.remove(i);
+            }
         }
     }
 }
@@ -265,14 +328,17 @@ impl<C: KuboStore, N: Nip05Verify, R: ReportRelay> Agent<C, N, R> {
             );
             return false;
         }
-        if self.rejected.lock().unwrap().contains(key, &ev.cid) {
+        if self.attempts.lock().unwrap().is_rejected(key, &ev.cid) {
             debug!(cid = %ev.cid, site = %ev.d, "skip: this cid was already rejected after fetch");
             return false;
         }
 
-        let precheck = {
+        let (precheck, stored) = {
             let state = self.state.lock().await;
-            decide(&state, key, pubkey_hex, ev, ev.size, &self.config)
+            (
+                decide(&state, key, pubkey_hex, ev, ev.size, &self.config),
+                state.sites.contains_key(key),
+            )
         };
         if precheck.store.is_none() {
             info!(site = %ev.d, pubkey = %pubkey_hex, reason = %precheck.reason, "skip");
@@ -285,6 +351,17 @@ impl<C: KuboStore, N: Nip05Verify, R: ReportRelay> Agent<C, N, R> {
             if nip05_mode == CheckMode::Require && !verified {
                 return false;
             }
+        }
+        let policy = &self.config.policy;
+        if let Err(reason) = self.attempts.lock().unwrap().try_attempt(
+            key,
+            stored,
+            now_secs(),
+            policy.min_update_interval,
+            policy.max_sites_per_account,
+        ) {
+            debug!(site = %ev.d, pubkey = %pubkey_hex, reason, "skip");
+            return false;
         }
         true
     }
@@ -372,7 +449,7 @@ impl<C: KuboStore, N: Nip05Verify, R: ReportRelay> Agent<C, N, R> {
                 stored_at: now_secs(),
             },
         );
-        self.rejected.lock().unwrap().remove(key);
+        self.attempts.lock().unwrap().clear(key);
         let evicted = state.remove_versions(key, &decision.evict);
         self.save(&state, "store").await;
         self.remove_versions(key, &evicted).await;
@@ -381,10 +458,7 @@ impl<C: KuboStore, N: Nip05Verify, R: ReportRelay> Agent<C, N, R> {
     }
 
     fn reject(&self, key: &SiteKey, ev: &SiteEvent) {
-        self.rejected
-            .lock()
-            .unwrap()
-            .insert(key.clone(), ev.cid.clone());
+        self.attempts.lock().unwrap().reject(key, ev.cid.clone());
     }
 }
 
@@ -399,24 +473,77 @@ mod tests {
 
     #[test]
     fn rejected_cids_keep_only_the_newest_per_account() {
-        let mut rejected = Rejected::default();
+        let mut attempts = Attempts::default();
         let other = state::site_key("bb", "x.example");
-        rejected.insert(other.clone(), "keep".into());
-        for i in 0..=REJECTED_PER_ACCOUNT {
-            rejected.insert(
-                state::site_key("aa", &format!("{i}.example")),
+        attempts.reject(&other, "keep".into());
+        let alternating = state::site_key("aa", "alt.example");
+        attempts.reject(&alternating, "big-1".into());
+        attempts.reject(&alternating, "big-2".into());
+        attempts.reject(&alternating, "big-1".into());
+        assert!(attempts.is_rejected(&alternating, "big-1"));
+        assert!(attempts.is_rejected(&alternating, "big-2"));
+        for i in 0..REJECTED_PER_ACCOUNT {
+            attempts.reject(
+                &state::site_key("aa", &format!("{i}.example")),
                 format!("c{i}"),
             );
         }
-        assert!(!rejected.contains(&state::site_key("aa", "0.example"), "c0"));
-        assert!(rejected.contains(&state::site_key("aa", "1.example"), "c1"));
-        let last = REJECTED_PER_ACCOUNT;
-        assert!(rejected.contains(
+        assert!(!attempts.is_rejected(&alternating, "big-1"));
+        assert!(!attempts.is_rejected(&alternating, "big-2"));
+        assert!(attempts.is_rejected(&state::site_key("aa", "0.example"), "c0"));
+        let last = REJECTED_PER_ACCOUNT - 1;
+        assert!(attempts.is_rejected(
             &state::site_key("aa", &format!("{last}.example")),
             &format!("c{last}")
         ));
-        assert!(rejected.contains(&other, "keep"));
-        assert_eq!(rejected.cids.len(), REJECTED_PER_ACCOUNT + 1);
+        assert!(attempts.is_rejected(&other, "keep"));
+        let total: usize = attempts.sites.values().map(|s| s.rejected.len()).sum();
+        assert_eq!(total, REJECTED_PER_ACCOUNT + 1);
+    }
+
+    #[test]
+    fn unstored_or_rejected_sites_get_one_attempt_per_interval() {
+        let mut attempts = Attempts::default();
+        let a = state::site_key("aa", "a.example");
+        assert_eq!(attempts.try_attempt(&a, false, 1000, 600, 10), Ok(()));
+        assert_eq!(
+            attempts.try_attempt(&a, false, 1599, 600, 10),
+            Err("fetch_attempt_interval")
+        );
+        assert_eq!(attempts.try_attempt(&a, false, 1600, 600, 10), Ok(()));
+
+        let stored = state::site_key("aa", "stored.example");
+        assert_eq!(attempts.try_attempt(&stored, true, 1000, 600, 10), Ok(()));
+        assert_eq!(attempts.try_attempt(&stored, true, 1001, 600, 10), Ok(()));
+        attempts.reject(&stored, "big".into());
+        assert_eq!(attempts.try_attempt(&stored, true, 1002, 600, 10), Ok(()));
+        assert_eq!(
+            attempts.try_attempt(&stored, true, 1003, 600, 10),
+            Err("fetch_attempt_interval")
+        );
+        attempts.clear(&stored);
+        assert_eq!(attempts.try_attempt(&stored, true, 1004, 600, 10), Ok(()));
+
+        assert_eq!(attempts.try_attempt(&a, false, 5000, 0, 10), Ok(()));
+        assert_eq!(attempts.try_attempt(&a, false, 5000, 0, 10), Ok(()));
+    }
+
+    #[test]
+    fn new_d_tags_of_one_account_are_throttled_together() {
+        let mut attempts = Attempts::default();
+        for i in 0..3 {
+            let key = state::site_key("aa", &format!("{i}.example"));
+            assert_eq!(attempts.try_attempt(&key, false, 1000, 600, 3), Ok(()));
+        }
+        let fourth = state::site_key("aa", "3.example");
+        assert_eq!(
+            attempts.try_attempt(&fourth, false, 1000, 600, 3),
+            Err("fetch_attempts_per_account")
+        );
+        let other = state::site_key("bb", "0.example");
+        assert_eq!(attempts.try_attempt(&other, false, 1000, 600, 3), Ok(()));
+        assert_eq!(attempts.try_attempt(&fourth, false, 1600, 600, 3), Ok(()));
+        assert_eq!(state::account_entries(&attempts.sites, "aa").count(), 1);
     }
 
     #[tokio::test]
@@ -563,6 +690,31 @@ mod tests {
 
         fx.apply(fx.event(D, "bafy-small", None, 300)).await;
         assert!(fx.kubo().stores("bafy-small"));
+    }
+
+    #[tokio::test]
+    async fn alternating_oversized_cids_are_fetched_once_each_and_throttled() {
+        let mut policy = default_policy();
+        policy.max_per_site = 50;
+        let kubo = sized(&[("bafy-big-1", 1_000), ("bafy-big-2", 1_000)]);
+        let fx = Fixture::new(policy, kubo);
+
+        for (cid, at) in [
+            ("bafy-big-1", 200),
+            ("bafy-big-2", 201),
+            ("bafy-big-1", 202),
+        ] {
+            fx.apply(fx.event(D, cid, None, at)).await;
+        }
+        assert_eq!(fx.kubo().fetched, vec!["bafy-big-1", "bafy-big-2"]);
+
+        let mut policy = default_policy();
+        policy.min_update_interval = 3600;
+        let fx = Fixture::new(policy, sized(&[("bafy-big-1", 1_000)]));
+        fx.kubo().fail_fetch.insert("bafy-new".into());
+        fx.apply(fx.event(D, "bafy-new", None, 200)).await;
+        fx.apply(fx.event(D, "bafy-new", None, 201)).await;
+        assert_eq!(fx.kubo().fetched, vec!["bafy-new"]);
     }
 
     #[tokio::test]

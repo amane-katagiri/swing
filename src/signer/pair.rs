@@ -2,10 +2,9 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use anyhow::{Context, Result, anyhow, bail};
-use nostr_connect::prelude::{ErrorKind as ConnectErrorKind, NostrConnect};
 use nostr_sdk::prelude::*;
 
-use super::{NO_ANSWER_IN_TIME, RemoteSigner, RemoteSignerFile};
+use super::{Channel, MAX_SIGNER_EVENT_BYTES, NO_ANSWER_IN_TIME, RemoteSigner, RemoteSignerFile};
 use crate::config::NostrConfig;
 
 pub const PAIRING_TIMEOUT: Duration = Duration::from_secs(10 * 60);
@@ -14,14 +13,6 @@ pub const RELAY_CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
 pub const APP_NAME: &str = "SWING";
 pub const MAX_PAIRING_RELAYS: usize = 5;
 const SECRET_BYTES: usize = 16;
-
-fn describe_connect_error(e: nostr_connect::prelude::Error) -> anyhow::Error {
-    match e.kind() {
-        ConnectErrorKind::Timeout => anyhow!(NO_ANSWER_IN_TIME),
-        ConnectErrorKind::Rejected => anyhow!("the signer app refused the request: {e}"),
-        _ => anyhow!("talking to the signer app failed: {e}"),
-    }
-}
 
 pub fn requested_perms(kinds: &[u16]) -> String {
     std::iter::once("get_public_key".to_string())
@@ -200,32 +191,38 @@ async fn pair(
     request: &PairingRequest,
     state: &Mutex<PairingState>,
 ) -> Result<PairedSigner> {
-    let client_uri = NostrConnectUri::client_with_secret(
-        app_keys.public_key(),
-        request.relays.iter().cloned(),
-        APP_NAME,
-        secret.clone(),
-    );
-    let connect = NostrConnect::new(client_uri, app_keys.clone(), request.pairing_timeout, None)
-        .map_err(|e| anyhow!("preparing the signer app connection: {e}"))?;
+    let relays: Vec<String> = request.relays.iter().map(|r| r.to_string()).collect();
+    let client = crate::nostr::bounded_client(MAX_SIGNER_EVENT_BYTES);
+    let notifications = client.notifications();
     let connected = async {
-        let user = connect
-            .get_public_key_async()
-            .await
-            .map_err(describe_connect_error)?;
-        let signer = match connect.bunker_uri().await.map_err(describe_connect_error)? {
-            NostrConnectUri::Bunker {
-                remote_signer_public_key,
-                ..
-            } => remote_signer_public_key,
-            NostrConnectUri::Client { .. } => bail!("the signer app did not identify itself"),
-        };
+        super::listen(&client, &relays, app_keys.public_key()).await?;
+        let signer = tokio::time::timeout(
+            request.pairing_timeout,
+            await_connect(&app_keys, &secret, notifications),
+        )
+        .await
+        .map_err(|_| anyhow!(NO_ANSWER_IN_TIME))??;
+        let channel = Channel::listening(
+            client.clone(),
+            app_keys.clone(),
+            signer,
+            relays.clone(),
+            request.pairing_timeout,
+        );
+        let user = channel
+            .request(NostrConnectRequest::GetPublicKey)
+            .await?
+            .to_get_public_key()
+            .context("the signer app answered with something other than a public key")?;
         Ok((user, signer))
     };
     let unreachable = async {
         tokio::time::sleep(request.relay_timeout).await;
-        let status = connect.status().await;
-        if status.values().any(|s| *s == RelayStatus::Connected) {
+        let relays = client.relays().await;
+        if relays
+            .values()
+            .any(|r| r.status() == RelayStatus::Connected)
+        {
             std::future::pending().await
         } else {
             let relays: Vec<&str> = request.relays.iter().map(|r| r.as_str()).collect();
@@ -239,14 +236,14 @@ async fn pair(
         result = connected => result,
         result = unreachable => result,
     };
-    connect.shutdown().await;
+    client.shutdown().await;
     let (user, signer) = connected?;
     *state.lock().expect("pairing state lock") = PairingState::Checking { user };
 
     let file = RemoteSignerFile {
         app_secret_key: app_keys.secret_key().to_secret_hex().into(),
         signer_pubkey: signer.to_hex(),
-        relays: request.relays.iter().map(|r| r.to_string()).collect(),
+        relays,
         user_pubkey: user.to_hex(),
     };
     let probe_error = probe(&file, request).await.err().map(|e| format!("{e:#}"));
@@ -256,6 +253,55 @@ async fn pair(
         probe_signed: probe_error.is_none(),
         probe_error,
     })
+}
+
+// nostr-connect also accepts a bare "ack", which anyone who sees the app key in a relay subscription could send first.
+async fn await_connect(
+    app_keys: &Keys,
+    secret: &str,
+    mut notifications: impl futures_util::Stream<Item = ClientNotification> + Unpin,
+) -> Result<PublicKey> {
+    while let Some(notification) = notifications.next().await {
+        let ClientNotification::Event { event, .. } = notification else {
+            continue;
+        };
+        if is_connect_with_secret(app_keys, secret, &event) {
+            return Ok(event.pubkey);
+        }
+    }
+    bail!("the connection to the relay closed")
+}
+
+fn is_connect_with_secret(app_keys: &Keys, secret: &str, event: &Event) -> bool {
+    if event.kind != Kind::NostrConnect {
+        return false;
+    }
+    let Ok(text) = nip44::decrypt(app_keys.secret_key(), &event.pubkey, &event.content) else {
+        return false;
+    };
+    let Ok(message) = NostrConnectMessage::from_json(text) else {
+        return false;
+    };
+    if !message.is_response() {
+        return false;
+    }
+    match message.to_response(NostrConnectMethod::Connect) {
+        Ok(NostrConnectResponse {
+            result: Some(ResponseResult::ConnectSecret(echoed)),
+            error: None,
+        }) => echoed == secret,
+        Ok(NostrConnectResponse {
+            result: Some(ResponseResult::Ack),
+            ..
+        }) => {
+            tracing::warn!(
+                signer = %event.pubkey,
+                "ignoring a pairing answer that does not echo the secret"
+            );
+            false
+        }
+        _ => false,
+    }
 }
 
 // A fresh connection, so this also exercises how the agent reconnects after a restart.
@@ -411,6 +457,114 @@ mod tests {
         );
         assert!(remote.last_failure().unwrap().message.contains("refused"));
         remote.shutdown().await;
+    }
+
+    fn connect_answer(from: &Keys, app: &PublicKey, result: ResponseResult) -> Event {
+        let message = NostrConnectMessage::response("x", NostrConnectResponse::with_result(result));
+        NostrConnectEventBuilder::new(*app, message)
+            .finalize(from)
+            .unwrap()
+    }
+
+    #[test]
+    fn only_a_connect_answer_echoing_the_secret_identifies_the_signer() {
+        let app = Keys::generate();
+        let signer = Keys::generate();
+        let secret = "s3cret";
+        let echoed = connect_answer(
+            &signer,
+            &app.public_key(),
+            ResponseResult::ConnectSecret(secret.to_string()),
+        );
+        assert!(is_connect_with_secret(&app, secret, &echoed));
+        let ack = connect_answer(&signer, &app.public_key(), ResponseResult::Ack);
+        assert!(!is_connect_with_secret(&app, secret, &ack));
+        let wrong = connect_answer(
+            &signer,
+            &app.public_key(),
+            ResponseResult::ConnectSecret("guess".to_string()),
+        );
+        assert!(!is_connect_with_secret(&app, secret, &wrong));
+    }
+
+    #[tokio::test]
+    async fn an_ack_racing_the_signer_does_not_take_over_the_pairing() {
+        let relay = LocalRelay::new();
+        relay.run().await.unwrap();
+        let pairing = Pairing::start(PairingRequest {
+            relays: vec![relay.url().await],
+            perms: requested_perms(&[35981]),
+            probe_kind: 35981,
+            pairing_timeout: Duration::from_secs(10),
+            relay_timeout: Duration::from_secs(5),
+            probe_timeout: Duration::from_secs(3),
+        })
+        .unwrap();
+        let NostrConnectUri::Client {
+            public_key: app, ..
+        } = NostrConnectUri::parse(pairing.uri()).unwrap()
+        else {
+            panic!("not a nostrconnect URI");
+        };
+
+        let attacker = Keys::generate();
+        let client = Client::new();
+        client.add_relay(relay.url().await).await.unwrap();
+        client.connect().and_wait(Duration::from_secs(5)).await;
+        client
+            .subscribe(
+                Filter::new()
+                    .kind(Kind::NostrConnect)
+                    .pubkey(attacker.public_key())
+                    .limit(0),
+            )
+            .await
+            .unwrap();
+        let mut requests = client.notifications();
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        client
+            .send_event(&connect_answer(&attacker, &app, ResponseResult::Ack))
+            .await
+            .unwrap();
+        let answering = {
+            let (attacker, client) = (attacker.clone(), client.clone());
+            tokio::spawn(async move {
+                while let Some(notification) = requests.next().await {
+                    let ClientNotification::Event { event, .. } = notification else {
+                        continue;
+                    };
+                    let text = nip44::decrypt(attacker.secret_key(), &event.pubkey, &event.content)
+                        .unwrap();
+                    let message = NostrConnectMessage::from_json(text).unwrap();
+                    let answer = NostrConnectMessage::response(
+                        message.id(),
+                        NostrConnectResponse::with_result(ResponseResult::GetPublicKey(
+                            attacker.public_key(),
+                        )),
+                    );
+                    let reply = NostrConnectEventBuilder::new(event.pubkey, answer)
+                        .finalize(&attacker)
+                        .unwrap();
+                    client.send_event(&reply).await.unwrap();
+                }
+            })
+        };
+
+        let user = Keys::generate();
+        crate::test_support::serve_test_signer(pairing.uri(), &user, true);
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(20);
+        let paired = loop {
+            match pairing.state() {
+                PairingState::Ready(paired) => break *paired,
+                PairingState::Failed(e) => panic!("pairing failed: {e}"),
+                _ if tokio::time::Instant::now() > deadline => panic!("pairing timed out"),
+                _ => tokio::time::sleep(Duration::from_millis(100)).await,
+            }
+        };
+        assert_eq!(paired.user, user.public_key());
+        assert_ne!(paired.file.signer_pubkey, attacker.public_key().to_hex());
+        answering.abort();
+        client.shutdown().await;
     }
 
     #[tokio::test]

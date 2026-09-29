@@ -157,6 +157,11 @@ fn site_event_of(
         );
         return None;
     }
+    // nostr-sdk skips the signature check for an id it has verified before.
+    if !event.verify_id() {
+        debug!(event_id = %event.id, "ignoring a site event whose id does not match it");
+        return None;
+    }
     nostr::parse_site_event(event, site_event_kind)
         .inspect_err(|e| warn!(error = %e, "skipping invalid site event"))
         .ok()
@@ -186,5 +191,26 @@ async fn shutdown_gateway(
                 "gateway server did not shut down in time; leaving it behind"
             ),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_support::{CID_A, keys};
+
+    #[test]
+    fn site_notifications_whose_id_does_not_match_are_ignored() {
+        let k = keys();
+        let event = EventBuilder::new(Kind::Custom(35980), "")
+            .tag(Tag::identifier("a.example"))
+            .tag(Tag::custom("cid", [CID_A.to_string()]))
+            .finalize(&k)
+            .unwrap();
+        let id = SubscriptionId::new(nostr::SITE_SUBSCRIPTION_ID);
+        assert!(site_event_of(&event, &id, 35980).is_some());
+        let mut tampered = event;
+        tampered.content = "changed".to_string();
+        assert!(site_event_of(&tampered, &id, 35980).is_none());
     }
 }

@@ -50,7 +50,7 @@ where
         let stored = state
             .follow_set
             .clone()
-            .filter(|ev| nostr::is_follow_set_of(ev, &own, &config.nostr.mirror_set));
+            .filter(|ev| nostr::is_saved_follow_set_of(ev, &own, &config.nostr.mirror_set));
         let choice = nostr::choose_follow_set(fetched, fetch_succeeded, stored, now_secs());
         if let Some(choice) = &choice
             && choice.save

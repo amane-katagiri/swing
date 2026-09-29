@@ -63,7 +63,7 @@ struct Agent<C, N, R> {
     queue: Mutex<BTreeMap<SiteKey, Queued>>,
     permits: Semaphore,
     storing: Mutex<HashSet<String>>,
-    rejected: Mutex<store::Rejected>,
+    attempts: Mutex<store::Attempts>,
 }
 
 impl<C: KuboStore, N: Nip05Verify, R: ReportRelay> Agent<C, N, R> {
@@ -93,7 +93,7 @@ impl<C: KuboStore, N: Nip05Verify, R: ReportRelay> Agent<C, N, R> {
             queue: Mutex::new(BTreeMap::new()),
             permits,
             storing: Mutex::new(HashSet::new()),
-            rejected: Mutex::default(),
+            attempts: Mutex::default(),
         }
     }
 

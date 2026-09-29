@@ -8,7 +8,10 @@ pub fn is_follow_set_of(event: &Event, author: &PublicKey, mirror_set: &str) -> 
     event.kind == Kind::Custom(30000)
         && event.pubkey == *author
         && event.tags.identifier().as_deref() == Some(mirror_set)
-        && event.verify().is_ok()
+}
+
+pub fn is_saved_follow_set_of(event: &Event, author: &PublicKey, mirror_set: &str) -> bool {
+    is_follow_set_of(event, author, mirror_set) && event.verify().is_ok()
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -155,7 +158,9 @@ mod tests {
 
         let mut tampered = ev.clone();
         tampered.content = "changed".to_string();
-        assert!(!is_follow_set_of(&tampered, &k.public_key(), "swing"));
+        assert!(is_follow_set_of(&tampered, &k.public_key(), "swing"));
+        assert!(is_saved_follow_set_of(&ev, &k.public_key(), "swing"));
+        assert!(!is_saved_follow_set_of(&tampered, &k.public_key(), "swing"));
 
         let site = EventBuilder::new(Kind::Custom(35980), "")
             .tag(Tag::identifier("swing"))

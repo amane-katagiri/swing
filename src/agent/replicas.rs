@@ -249,7 +249,9 @@ impl<C: KuboStore, N: Nip05Verify, R: ReportRelay> Agent<C, N, R> {
         let own = state
             .follow_set
             .as_ref()
-            .filter(|ev| nostr::is_follow_set_of(ev, &self.own, &self.config.nostr.mirror_set))
+            .filter(|ev| {
+                nostr::is_saved_follow_set_of(ev, &self.own, &self.config.nostr.mirror_set)
+            })
             .map(|ev| nostr::extract_follow_set_pubkeys(ev).into_iter().collect())
             .unwrap_or_default();
         Chosen::from_own(own)

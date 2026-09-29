@@ -13,7 +13,7 @@ pub use client::{
 };
 pub use follow::{
     FollowSetChoice, choose_follow_set, extract_follow_set_pubkeys, follow_set_pubkeys_capped,
-    is_follow_set_of,
+    is_follow_set_of, is_saved_follow_set_of,
 };
 pub use report::{
     MAX_REPORT_AGE, ReplicaReport, build_replica_report_builder, parse_replica_report,
@@ -42,10 +42,15 @@ pub mod budget {
     pub const MAX_REFERENCING_LISTED: usize = 50;
     pub const MAX_RELAY_FETCH_LIMIT: usize = 10_000;
     pub const AUTHORS_PER_FILTER: usize = 50;
+    pub const AUTHORS_PER_SPLIT_REQ: usize = 10;
     pub const COORDINATES_PER_FILTER: usize = 250;
     pub const MAX_TRUSTED_REPORTERS: usize = 1000;
     pub const MAX_RELAY_MESSAGE_BYTES: u32 = 128 * 1024;
-    pub const MAX_EVENT_BYTES: u32 = 64 * 1024;
+    pub const MAX_EVENT_BYTES: u32 = 16 * 1024;
+    pub const MAX_FOLLOW_SET_EVENT_BYTES: u32 = 64 * 1024;
+    pub const MAX_FETCH_TOTAL_EVENTS: usize = 50_000;
+    pub const MAX_FETCH_TOTAL_BYTES: usize = 64 * 1024 * 1024;
+    pub const FETCH_CONCURRENCY: usize = 4;
     pub const MAX_EVENT_TAGS: u16 = 600;
     pub const MAX_CONTENT_BYTES: usize = 4096;
 }

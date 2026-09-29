@@ -132,7 +132,7 @@ impl Signer {
     pub fn signer_relays(&self) -> &[String] {
         match self {
             Self::Local(_) => &[],
-            Self::Remote(remote) => &remote.relays,
+            Self::Remote(remote) => &remote.channel.relays,
         }
     }
 
@@ -150,63 +150,48 @@ impl Signer {
     }
 }
 
-// No `connect` is sent: the pairing already told the signer about this app, and signers such as Primal refuse a second `connect` carrying the pairing secret.
 #[derive(Debug)]
-pub struct RemoteSigner {
+struct Channel {
     client: Client,
     app_keys: Keys,
     signer: PublicKey,
-    user: PublicKey,
     relays: Vec<String>,
     timeout: Duration,
     started: tokio::sync::OnceCell<()>,
-    last_failure: Mutex<Option<SignFailure>>,
 }
 
-impl RemoteSigner {
-    pub fn from_file(file: &RemoteSignerFile, timeout: Duration) -> Result<Self> {
-        let app_keys = Keys::parse(&file.app_secret_key)
-            .context("invalid app_secret_key in the remote signer file")?;
-        let signer = PublicKey::from_hex(&file.signer_pubkey)
-            .context("invalid signer_pubkey in the remote signer file")?;
-        let user = file.user_public_key()?;
-        for relay in &file.relays {
-            RelayUrl::parse(relay)
-                .with_context(|| format!("invalid relay {relay} in the remote signer file"))?;
-        }
-        Ok(Self {
+impl Channel {
+    fn new(app_keys: Keys, signer: PublicKey, relays: Vec<String>, timeout: Duration) -> Self {
+        Self {
             client: crate::nostr::bounded_client(MAX_SIGNER_EVENT_BYTES),
             app_keys,
             signer,
-            user,
-            relays: file.relays.clone(),
+            relays,
             timeout,
             started: tokio::sync::OnceCell::new(),
-            last_failure: Mutex::new(None),
-        })
+        }
+    }
+
+    fn listening(
+        client: Client,
+        app_keys: Keys,
+        signer: PublicKey,
+        relays: Vec<String>,
+        timeout: Duration,
+    ) -> Self {
+        Self {
+            client,
+            app_keys,
+            signer,
+            relays,
+            timeout,
+            started: tokio::sync::OnceCell::new_with(Some(())),
+        }
     }
 
     async fn start(&self) -> Result<()> {
         self.started
-            .get_or_try_init(|| async {
-                for relay in &self.relays {
-                    self.client
-                        .add_relay(relay.as_str())
-                        .await
-                        .with_context(|| format!("adding relay {relay}"))?;
-                }
-                self.client.connect().await;
-                // `since` would drop answers from a signer whose clock runs behind this one.
-                let filter = Filter::new()
-                    .kind(Kind::NostrConnect)
-                    .pubkey(self.app_keys.public_key())
-                    .limit(0);
-                self.client
-                    .subscribe(filter)
-                    .await
-                    .context("subscribing to the signer app's answers")?;
-                Ok::<(), anyhow::Error>(())
-            })
+            .get_or_try_init(|| listen(&self.client, &self.relays, self.app_keys.public_key()))
             .await?;
         Ok(())
     }
@@ -266,6 +251,54 @@ impl RemoteSigner {
             .map_err(|_| anyhow!(NO_ANSWER_IN_TIME))?
     }
 
+    async fn shutdown(&self) {
+        self.client.shutdown().await;
+    }
+}
+
+async fn listen(client: &Client, relays: &[String], app: PublicKey) -> Result<()> {
+    for relay in relays {
+        client
+            .add_relay(relay.as_str())
+            .await
+            .with_context(|| format!("adding relay {relay}"))?;
+    }
+    client.connect().await;
+    // `since` would drop answers from a signer whose clock runs behind this one.
+    let filter = Filter::new().kind(Kind::NostrConnect).pubkey(app).limit(0);
+    client
+        .subscribe(filter)
+        .await
+        .context("subscribing to the signer app's answers")?;
+    Ok(())
+}
+
+// No `connect` is sent: the pairing already told the signer about this app, and signers such as Primal refuse a second `connect` carrying the pairing secret.
+#[derive(Debug)]
+pub struct RemoteSigner {
+    channel: Channel,
+    user: PublicKey,
+    last_failure: Mutex<Option<SignFailure>>,
+}
+
+impl RemoteSigner {
+    pub fn from_file(file: &RemoteSignerFile, timeout: Duration) -> Result<Self> {
+        let app_keys = Keys::parse(&file.app_secret_key)
+            .context("invalid app_secret_key in the remote signer file")?;
+        let signer = PublicKey::from_hex(&file.signer_pubkey)
+            .context("invalid signer_pubkey in the remote signer file")?;
+        let user = file.user_public_key()?;
+        for relay in &file.relays {
+            RelayUrl::parse(relay)
+                .with_context(|| format!("invalid relay {relay} in the remote signer file"))?;
+        }
+        Ok(Self {
+            channel: Channel::new(app_keys, signer, file.relays.clone(), timeout),
+            user,
+            last_failure: Mutex::new(None),
+        })
+    }
+
     pub fn last_failure(&self) -> Option<SignFailure> {
         self.last_failure.lock().expect("sign failure lock").clone()
     }
@@ -286,6 +319,7 @@ impl RemoteSigner {
         let unsigned = builder.finalize_unsigned(self.user);
         let expected_id = unsigned.compute_id();
         let event = self
+            .channel
             .request(NostrConnectRequest::SignEvent(unsigned))
             .await?
             .to_sign_event()
@@ -295,7 +329,7 @@ impl RemoteSigner {
     }
 
     pub async fn shutdown(&self) {
-        self.client.shutdown().await;
+        self.channel.shutdown().await;
     }
 }
 

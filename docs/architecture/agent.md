@@ -74,6 +74,7 @@ Follow Set が決まった tick で行う。Follow Set の更新はこれより�
 1. 作者が今の Follow Set にいなければ warn を出して終わる。同じサイトで同じ CID が以前 4・5・9 で拒否されていれば（下記）、debug を出して終わる。
 2. 事前判定: `size` タグ（無い、または `u64` としてパースできなければ不明）で `policy::decide` する。skip なら終わる。
 3. NIP-05 検証（`[policy].nip05` が `off` 以外）。`require` で `Verified` でなければ終わる。
+   その後、取得の試行の間引き（下記）に当たれば debug を出して終わる。当たらなければ、ここで試行を記録する。
 4. 取得: `dag/export` の CAR を読み捨てながらバイト数を数え、`policy::fetch_limit`（`max_update_size`・`max_per_site`・`max_per_account` の最小値）を超えたら打ち切る。`[agent].fetch_idle_timeout` か `[agent].fetch_timeout` を超えたら失敗。いずれも state と MFS は変えない。
 5. ディレクトリ確認: `files/stat /ipfs/<cid>` の `Type` を見る。`directory` でなければ `reason = "not_a_directory"` で warn を出して終わる（MFS にはまだ何も置いていないので消すものは無く、取得したブロックは Kubo の GC に任せる）。`files/stat` 自体が失敗したら取得の失敗と同じ扱いで終わる（次の poll で取り直す）。
 6. 版のパスを「保存中」としてメモリに登録する（8〜10 が終わるまで。sweep はこのパスとその親ディレクトリを消さない）。state のロックを取り、作者が Follow Set から外れていれば終わる。
@@ -84,7 +85,16 @@ Follow Set が決まった tick で行う。Follow Set の更新はこれより�
 
 パスの削除に失敗しても state はそのままにし、sweep に任せる。
 
-取得した内容で拒否した版（4 の上限超過、5 の `not_a_directory`、9 の `policy::decide` の skip）は、サイトごとに最後に拒否した CID をメモリに覚え（`agent::store::Rejected`。アカウントごとに最新 50 件まで（`REJECTED_PER_ACCOUNT`）で、超えたらそのアカウントの最も古い記録を捨てる）、同じ CID のイベントは 1 で終える。上限まで取得し直すのを poll ごとに繰り返さないためである。サイトが別の CID を出せば通常どおり処理し、保存に成功したらそのサイトの記録を消す。取得の失敗やブロックの欠けなど一時的な失敗は覚えず、次の poll で取り直す。記録は `state.json` に書かないので、agent を再起動すると消える（容量が空いたあとなどに取り直させたいときは再起動する）。
+取得した内容で拒否した版（4 の上限超過、5 の `not_a_directory`、9 の `policy::decide` の skip）は、その CID をサイトごとにメモリに覚え（`agent::store::Attempts`。1 サイトに複数の CID を覚える。アカウントごとに合計 50 件まで（`REJECTED_PER_ACCOUNT`）で、超えたらそのアカウントの最も古い記録を捨てる）、同じ CID のイベントは 1 で終える。上限まで取得し直すのを poll ごとに繰り返さないためである（2 つの大きな CID を交互に出されても、どちらも覚えている）。保存に成功したらそのサイトの記録を消す。取得の失敗やブロックの欠けなど一時的な失敗は拒否としては覚えない。
+
+取得の試行の間引き（`Attempts::try_attempt`）: `policy::decide` の `min_update_interval` は保存済みの版の `stored_at` でしか効かないので、まだ保存していないサイトと、拒否した CID を覚えているサイトについては、取得を始めた時刻もメモリに覚えて間引く。
+
+- 同じサイトは、前の試行から `min_update_interval` の間は取得しない（`fetch_attempt_interval`）。取得の失敗で終わった場合も同じで、次の試行は間隔が空いてからになる。
+- 同じアカウントで、直近 `min_update_interval` の間に試行したほかのサイトが `max_sites_per_account` 件（最大 50 件）あれば取得しない（`fetch_attempts_per_account`）。`d` を変えて新しいサイトを次々に出されても、取得の回数はアカウントごとにこの数で頭打ちになる。
+- 保存済みで拒否の記録が無いサイトには効かない（`min_update_interval` は `policy::decide` が見る）。`min_update_interval` が 0 なら効かない。
+- 試行を記録するときに、そのアカウントの間隔を過ぎた記録（拒否の記録が無いもの）は消す。
+
+これらの記録は `state.json` に書かないので、agent を再起動すると消える（容量が空いたあとなどに取り直させたいときは再起動する）。
 
 ## sweep
 

@@ -14,14 +14,56 @@ use super::{
 use crate::signer::Signer;
 
 pub fn bounded_client(max_event_bytes: u32) -> Client {
+    Client::builder()
+        .relay_limits(relay_limits(max_event_bytes))
+        .build()
+}
+
+fn relay_limits(max_event_bytes: u32) -> RelayLimits {
     let mut limits = RelayLimits::default();
     limits.messages.max_size = Some(budget::MAX_RELAY_MESSAGE_BYTES.max(max_event_bytes));
     limits.events.max_size = Some(max_event_bytes);
     limits.events.max_num_tags = Some(budget::MAX_EVENT_TAGS);
-    Client::builder().relay_limits(limits).build()
+    limits
 }
 
+// Site and report kinds are configurable, so they take the default ceiling and only follow sets get more room.
+fn relay_client_limits() -> RelayLimits {
+    let mut limits = relay_limits(budget::MAX_EVENT_BYTES);
+    limits.messages.max_size =
+        Some(budget::MAX_RELAY_MESSAGE_BYTES.max(budget::MAX_FOLLOW_SET_EVENT_BYTES));
+    limits.events = limits.events.set_max_size_per_kind(
+        Kind::Custom(FOLLOW_SET_KIND),
+        Some(budget::MAX_FOLLOW_SET_EVENT_BYTES),
+    );
+    limits
+}
+
+const FOLLOW_SET_KIND: u16 = 30000;
 const FETCH_TIMEOUT: Duration = Duration::from_secs(30);
+const FETCH_DEADLINE: Duration = Duration::from_secs(120);
+
+#[derive(Debug, Clone, Copy)]
+struct FetchCap {
+    events: usize,
+    bytes: usize,
+}
+
+impl FetchCap {
+    const TOTAL: Self = Self {
+        events: budget::MAX_FETCH_TOTAL_EVENTS,
+        bytes: budget::MAX_FETCH_TOTAL_BYTES,
+    };
+
+    const PER_REQ: Self = Self {
+        events: budget::MAX_RELAY_FETCH_LIMIT,
+        bytes: budget::MAX_FETCH_TOTAL_BYTES / budget::FETCH_CONCURRENCY,
+    };
+}
+
+fn event_bytes(event: &Event) -> usize {
+    event.as_json().len()
+}
 
 fn capped_limit(count: usize, per: usize) -> usize {
     count.saturating_mul(per).min(budget::MAX_RELAY_FETCH_LIMIT)
@@ -35,7 +77,9 @@ pub struct RelayClient {
 
 impl RelayClient {
     pub async fn connect(signer: Signer, relays: &[String]) -> Result<Self> {
-        let client = bounded_client(budget::MAX_EVENT_BYTES);
+        let client = Client::builder()
+            .relay_limits(relay_client_limits())
+            .build();
         for url in relays {
             client
                 .add_relay(url.as_str())
@@ -68,30 +112,25 @@ impl RelayClient {
     }
 
     // fetch_events drops everything once its buffer overflows, so over-cap results are truncated here instead.
-    async fn fetch(&self, filter: Filter, context: &'static str) -> Result<Vec<Event>> {
+    async fn fetch(&self, filters: Vec<Filter>, context: &'static str) -> Result<Vec<Event>> {
         let stream = self
             .client
-            .stream_events(filter)
+            .stream_events(filters)
             .timeout(FETCH_TIMEOUT)
             .await
             .context(context)?;
-        Ok(collect_newest(stream, budget::MAX_RELAY_FETCH_LIMIT).await)
+        Ok(collect_newest(stream, FetchCap::PER_REQ).await)
     }
 
-    pub async fn fetch_follow_set(&self, mirror_set: &str) -> Result<Option<Event>> {
-        let filter = Filter::new()
-            .kind(Kind::Custom(30000))
-            .author(self.public_key())
-            .identifier(mirror_set)
-            // 2x: a relay may hand back a stale duplicate of a replaceable event.
-            .limit(capped_limit(1, 2));
-        let events = self.fetch(filter, "fetching follow set").await?;
-        let now = Timestamp::now().as_secs();
-        Ok(events
-            .into_iter()
-            .filter(|e| is_follow_set_of(e, &self.public_key(), mirror_set))
-            .filter(|e| plausible_at(e.created_at.as_secs(), now))
-            .reduce(|a, b| if is_newer_replaceable(&b, &a) { b } else { a }))
+    async fn fetch_one(&self, filter: Filter, context: &'static str) -> Result<Vec<Event>> {
+        self.fetch(vec![filter], context).await
+    }
+
+    async fn fetch_all(&self, reqs: Vec<Vec<Filter>>, context: &'static str) -> Result<Vec<Event>> {
+        let batches = futures_util::stream::iter(reqs)
+            .map(|filters| self.fetch(filters, context))
+            .buffer_unordered(budget::FETCH_CONCURRENCY);
+        gather(batches, FetchCap::TOTAL, FETCH_DEADLINE, context).await
     }
 
     async fn fetch_by_authors(
@@ -100,11 +139,41 @@ impl RelayClient {
         context: &'static str,
         filter_for: impl Fn(&[PublicKey]) -> Filter,
     ) -> Result<Vec<Event>> {
-        let mut out = Vec::new();
-        for batch in authors.chunks(budget::AUTHORS_PER_FILTER) {
-            out.extend(self.fetch(filter_for(batch), context).await?);
-        }
-        Ok(out)
+        let reqs = authors
+            .chunks(budget::AUTHORS_PER_FILTER)
+            .map(|batch| vec![filter_for(batch)])
+            .collect();
+        self.fetch_all(reqs, context).await
+    }
+
+    // A limit shared by the whole batch would let one author's events crowd out the others.
+    async fn fetch_per_author(
+        &self,
+        authors: &[PublicKey],
+        context: &'static str,
+        filter_for: impl Fn(PublicKey) -> Filter,
+    ) -> Result<Vec<Event>> {
+        let reqs = authors
+            .chunks(budget::AUTHORS_PER_SPLIT_REQ)
+            .map(|batch| batch.iter().map(|a| filter_for(*a)).collect())
+            .collect();
+        self.fetch_all(reqs, context).await
+    }
+
+    pub async fn fetch_follow_set(&self, mirror_set: &str) -> Result<Option<Event>> {
+        let filter = Filter::new()
+            .kind(Kind::Custom(FOLLOW_SET_KIND))
+            .author(self.public_key())
+            .identifier(mirror_set)
+            // 2x: a relay may hand back a stale duplicate of a replaceable event.
+            .limit(capped_limit(1, 2));
+        let events = self.fetch_one(filter, "fetching follow set").await?;
+        let now = Timestamp::now().as_secs();
+        Ok(events
+            .into_iter()
+            .filter(|e| is_follow_set_of(e, &self.public_key(), mirror_set))
+            .filter(|e| plausible_at(e.created_at.as_secs(), now))
+            .reduce(|a, b| if is_newer_replaceable(&b, &a) { b } else { a }))
     }
 
     pub async fn fetch_site_events(
@@ -114,14 +183,11 @@ impl RelayClient {
     ) -> Result<Vec<Event>> {
         let kind = Kind::Custom(site_event_kind);
         let events = self
-            .fetch_by_authors(authors, "fetching site events", |batch| {
+            .fetch_per_author(authors, "fetching site events", |author| {
                 Filter::new()
                     .kind(kind)
-                    .authors(batch.iter().copied())
-                    .limit(capped_limit(
-                        batch.len(),
-                        budget::MAX_SITES_PER_AUTHOR_LISTED,
-                    ))
+                    .author(author)
+                    .limit(budget::MAX_SITES_PER_AUTHOR_LISTED)
             })
             .await?;
         let requested: HashSet<PublicKey> = authors.iter().copied().collect();
@@ -163,7 +229,7 @@ impl RelayClient {
             .identifier(d)
             .limit(capped_limit(1, 2));
         let events = self
-            .fetch(filter, "fetching your latest site event")
+            .fetch_one(filter, "fetching your latest site event")
             .await?;
         let parsed: Vec<SiteEvent> = events
             .iter()
@@ -185,14 +251,18 @@ impl RelayClient {
             return Ok(Vec::new());
         }
         let kind = Kind::Custom(report_kind);
-        let mut events = Vec::new();
-        for batch in sites.chunks(budget::COORDINATES_PER_FILTER) {
-            let filter = Filter::new()
-                .kind(kind)
-                .coordinates(batch)
-                .limit(capped_limit(batch.len(), budget::MAX_REPORTS_PER_SITE));
-            events.extend(self.fetch(filter, "fetching replica reports").await?);
-        }
+        let reqs = sites
+            .chunks(budget::COORDINATES_PER_FILTER)
+            .map(|batch| {
+                vec![
+                    Filter::new()
+                        .kind(kind)
+                        .coordinates(batch)
+                        .limit(capped_limit(batch.len(), budget::MAX_REPORTS_PER_SITE)),
+                ]
+            })
+            .collect();
+        let events = self.fetch_all(reqs, "fetching replica reports").await?;
         Ok(reports_for_sites(events, kind, sites))
     }
 
@@ -206,26 +276,28 @@ impl RelayClient {
             return Ok(Vec::new());
         }
         let kind = Kind::Custom(report_kind);
-        let mut events = Vec::new();
-        for coordinates in sites.chunks(budget::COORDINATES_PER_FILTER) {
-            events.extend(
-                self.fetch_by_authors(
-                    reporters,
-                    "fetching replica reports by trusted reporters",
-                    |batch| {
-                        Filter::new()
-                            .kind(kind)
-                            .authors(batch.iter().copied())
-                            .coordinates(coordinates)
-                            .limit(capped_limit(
-                                batch.len().saturating_mul(coordinates.len()),
-                                2,
-                            ))
-                    },
-                )
-                .await?,
-            );
-        }
+        let reqs = sites
+            .chunks(budget::COORDINATES_PER_FILTER)
+            .flat_map(|coordinates| {
+                reporters
+                    .chunks(budget::AUTHORS_PER_FILTER)
+                    .map(move |batch| {
+                        vec![
+                            Filter::new()
+                                .kind(kind)
+                                .authors(batch.iter().copied())
+                                .coordinates(coordinates)
+                                .limit(capped_limit(
+                                    batch.len().saturating_mul(coordinates.len()),
+                                    2,
+                                )),
+                        ]
+                    })
+            })
+            .collect();
+        let events = self
+            .fetch_all(reqs, "fetching replica reports by trusted reporters")
+            .await?;
         let requested: HashSet<PublicKey> = reporters.iter().copied().collect();
         Ok(reports_for_sites(events, kind, sites)
             .into_iter()
@@ -241,7 +313,7 @@ impl RelayClient {
         let events = self
             .fetch_by_authors(authors, "fetching follow sets", |batch| {
                 Filter::new()
-                    .kind(Kind::Custom(30000))
+                    .kind(Kind::Custom(FOLLOW_SET_KIND))
                     .authors(batch.iter().copied())
                     .identifier(mirror_set)
                     .limit(capped_limit(batch.len(), 2))
@@ -268,7 +340,7 @@ impl RelayClient {
                 "fetching follow sets that reference accounts",
                 |batch| {
                     Filter::new()
-                        .kind(Kind::Custom(30000))
+                        .kind(Kind::Custom(FOLLOW_SET_KIND))
                         .identifier(mirror_set)
                         .pubkeys(batch.iter().copied())
                         .limit(capped_limit(batch.len(), 100))
@@ -352,7 +424,7 @@ impl ReportRelay for RelayClient {
             .kind(Kind::Custom(report_kind))
             .author(RelayClient::public_key(self))
             .limit(capped_limit(budget::MAX_SITES_PER_AUTHOR_LISTED, 2));
-        self.fetch(filter, "fetching own replica reports").await
+        self.fetch_one(filter, "fetching own replica reports").await
     }
 
     async fn fetch_reports_about(
@@ -364,18 +436,15 @@ impl ReportRelay for RelayClient {
     ) -> Result<Vec<Event>> {
         let kind = Kind::Custom(report_kind);
         let events = self
-            .fetch_by_authors(
+            .fetch_per_author(
                 reporters,
                 "fetching replica reports about own sites",
-                |batch| {
+                |reporter| {
                     let filter = Filter::new()
                         .kind(kind)
-                        .authors(batch.iter().copied())
+                        .author(reporter)
                         .pubkey(author)
-                        .limit(capped_limit(
-                            batch.len(),
-                            budget::MAX_SITES_PER_AUTHOR_LISTED * 2,
-                        ));
+                        .limit(budget::MAX_SITES_PER_AUTHOR_LISTED * 2);
                     match since {
                         Some(since) => filter.since(Timestamp::from_secs(since)),
                         None => filter,
@@ -471,23 +540,70 @@ pub fn print_relay_send_result_lines(results: &[RelaySendResult]) {
     }
 }
 
+// nostr-sdk skips the signature check for an id it has verified before, so the id must still match the content.
 async fn collect_newest<E: Display>(
     mut stream: impl Stream<Item = (RelayUrl, Result<Event, E>)> + Unpin,
-    cap: usize,
+    cap: FetchCap,
 ) -> Vec<Event> {
     let mut newest: BTreeSet<Event> = BTreeSet::new();
+    let mut bytes = 0usize;
     while let Some((url, item)) = stream.next().await {
         match item {
+            Ok(event) if !event.verify_id() => {
+                tracing::debug!(relay = %url, "skipping an event whose id does not match it");
+            }
             Ok(event) => {
-                newest.insert(event);
-                if newest.len() > cap {
-                    newest.pop_last();
+                let size = event_bytes(&event);
+                if newest.insert(event) {
+                    bytes += size;
+                }
+                while newest.len() > cap.events || bytes > cap.bytes {
+                    let Some(oldest) = newest.pop_last() else {
+                        break;
+                    };
+                    bytes -= event_bytes(&oldest);
                 }
             }
             Err(e) => tracing::debug!(relay = %url, error = %e, "skipping a streamed event"),
         }
     }
     newest.into_iter().collect()
+}
+
+async fn gather(
+    batches: impl Stream<Item = Result<Vec<Event>>>,
+    cap: FetchCap,
+    deadline: Duration,
+    context: &'static str,
+) -> Result<Vec<Event>> {
+    let mut out = Vec::new();
+    let mut bytes = 0usize;
+    let collect = async {
+        let mut batches = std::pin::pin!(batches);
+        while let Some(batch) = batches.next().await {
+            for event in batch? {
+                let size = event_bytes(&event);
+                if out.len() >= cap.events || bytes.saturating_add(size) > cap.bytes {
+                    tracing::warn!(
+                        context,
+                        "relay answers exceed the fetch budget; keeping what fits"
+                    );
+                    return Ok(());
+                }
+                bytes += size;
+                out.push(event);
+            }
+        }
+        Ok::<(), anyhow::Error>(())
+    };
+    match tokio::time::timeout(deadline, collect).await {
+        Ok(result) => result?,
+        Err(_) => tracing::warn!(
+            context,
+            "relays did not finish within the fetch deadline; keeping what arrived"
+        ),
+    }
+    Ok(out)
 }
 
 fn reports_for_sites(events: Vec<Event>, kind: Kind, sites: &[Coordinate]) -> Vec<Event> {
@@ -632,12 +748,107 @@ mod tests {
             .map(|e| (url.clone(), Ok(e)))
             .chain([(url.clone(), Err("bad event".to_string()))])
             .collect();
-        let kept: Vec<u64> = collect_newest(futures_util::stream::iter(items), 3)
+        let cap = FetchCap {
+            events: 3,
+            bytes: usize::MAX,
+        };
+        let kept: Vec<u64> = collect_newest(futures_util::stream::iter(items), cap)
             .await
             .into_iter()
             .map(|e| e.created_at.as_secs())
             .collect();
         assert_eq!(kept, vec![5, 4, 3]);
+
+        let two = event_bytes(&events[4]) + event_bytes(&events[3]);
+        let items = events
+            .iter()
+            .cloned()
+            .map(|e| (url.clone(), Ok::<_, String>(e)));
+        let cap = FetchCap {
+            events: 100,
+            bytes: two,
+        };
+        let kept: Vec<u64> = collect_newest(futures_util::stream::iter(items), cap)
+            .await
+            .into_iter()
+            .map(|e| e.created_at.as_secs())
+            .collect();
+        assert_eq!(kept, vec![5, 4]);
+
+        let mut tampered = events[0].clone();
+        tampered.content = "changed".to_string();
+        let items = [(url.clone(), Ok::<_, String>(tampered))];
+        assert!(
+            collect_newest(futures_util::stream::iter(items), FetchCap::PER_REQ)
+                .await
+                .is_empty()
+        );
+    }
+
+    #[tokio::test]
+    async fn gather_stops_at_the_total_budget_and_keeps_what_arrived_by_the_deadline() {
+        let k = keys();
+        let batch: Vec<Event> = (1..=3)
+            .map(|at| make_site_event(&k, 35980, &format!("s{at}.example"), CID_A, at))
+            .collect();
+        let batches = futures_util::stream::iter([Ok(batch.clone()), Ok(batch.clone())]);
+        let cap = FetchCap {
+            events: 4,
+            bytes: usize::MAX,
+        };
+        let out = gather(batches, cap, Duration::from_secs(5), "test")
+            .await
+            .unwrap();
+        assert_eq!(out.len(), 4);
+
+        let slow =
+            futures_util::stream::iter([Ok(batch.clone())]).chain(futures_util::stream::pending());
+        let out = gather(slow, FetchCap::TOTAL, Duration::from_millis(100), "test")
+            .await
+            .unwrap();
+        assert_eq!(out.len(), 3);
+
+        let failing =
+            futures_util::stream::iter([Ok(batch), Err(anyhow::anyhow!("relay refused"))]);
+        assert!(
+            gather(failing, FetchCap::TOTAL, Duration::from_secs(5), "test")
+                .await
+                .is_err()
+        );
+    }
+
+    #[tokio::test]
+    async fn follow_sets_get_more_room_than_site_events() {
+        let local = LocalRelayBuilder::default()
+            .max_event_size(1024 * 1024)
+            .build();
+        local.run().await.unwrap();
+        let url = local.url().await.to_string();
+        let k = keys();
+        let mut tags = vec![Tag::identifier("swing")];
+        tags.extend(
+            (0..budget::MAX_FOLLOW_SET_ENTRIES).map(|_| Tag::public_key(keys().public_key())),
+        );
+        let full = EventBuilder::new(Kind::Custom(30000), "")
+            .tags(tags)
+            .finalize(&k)
+            .unwrap();
+        assert!(event_bytes(&full) > budget::MAX_EVENT_BYTES as usize);
+        let seeder = Client::default();
+        seeder.add_relay(url.as_str()).await.unwrap();
+        seeder.connect().await;
+        seeder.send_event(&full).await.unwrap();
+        seeder.shutdown().await;
+
+        let client = RelayClient::connect(Signer::Local(keys()), &[url])
+            .await
+            .unwrap();
+        let sets = client
+            .fetch_follow_sets("swing", &[k.public_key()])
+            .await
+            .unwrap();
+        assert_eq!(sets[&k.public_key()].id, full.id);
+        client.shutdown().await;
     }
 
     #[derive(Debug)]
@@ -709,7 +920,7 @@ mod tests {
         let (_local, client) = relay_that_ignores_filters(&all).await;
 
         let unfiltered = client
-            .fetch(
+            .fetch_one(
                 Filter::new()
                     .kind(Kind::Custom(35980))
                     .author(wanted.public_key()),
