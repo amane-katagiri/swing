@@ -25,9 +25,18 @@ pub use site::{
 };
 
 pub const SITE_SUBSCRIPTION_ID: &str = "swing-sites";
+pub const FOLLOW_SET_KIND: u16 = 30000;
 
 // `created_at` is self-declared, so this tolerance is what separates honest clock skew from a forged timestamp.
 pub const MAX_FUTURE_SKEW: u64 = 900;
+
+// str::parse::<u64> also takes a leading '+', which the protocol's decimal integer does not allow.
+pub fn parse_decimal(s: &str) -> Option<u64> {
+    if s.is_empty() || !s.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    s.parse().ok()
+}
 
 pub fn plausible_at(created_at: u64, now: u64) -> bool {
     created_at <= now.saturating_add(MAX_FUTURE_SKEW)
@@ -121,7 +130,7 @@ mod fixtures {
     }
 
     pub(super) fn follow_set(keys: &Keys, d: &str, created_at: u64, marker: &str) -> Event {
-        EventBuilder::new(Kind::Custom(30000), marker)
+        EventBuilder::new(Kind::Custom(super::FOLLOW_SET_KIND), marker)
             .tag(Tag::identifier(d))
             .custom_created_at(Timestamp::from_secs(created_at))
             .finalize(keys)

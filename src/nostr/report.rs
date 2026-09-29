@@ -61,7 +61,7 @@ pub fn parse_replica_report(
         .map(|t| canonical_cid(t.content().context("empty cid tag")?))
         .collect::<Result<BTreeSet<String>>>()?;
     let expiration = tag_value(event, "expiration")
-        .map(|s| s.parse::<u64>().context("invalid expiration tag"))
+        .map(|s| super::parse_decimal(s).context("invalid expiration tag"))
         .transpose()?;
     Ok(ReplicaReport {
         reporter: event.pubkey,
@@ -238,7 +238,15 @@ mod tests {
         let d = format!("{hex}:example.com");
         let a = format!("35980:{hex}:example.com");
 
-        for bad in ["not-a-number", "", "12.5", "-1"] {
+        for bad in [
+            "not-a-number",
+            "",
+            "12.5",
+            "-1",
+            "+1000",
+            " 1000",
+            "１０００",
+        ] {
             let ev = report_with_expiration(&reporter, &d, &a, bad);
             assert!(parse_replica_report(&ev, 35981, 35980).is_err(), "{bad}");
         }

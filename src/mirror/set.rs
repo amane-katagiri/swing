@@ -2,7 +2,8 @@ use std::collections::HashSet;
 
 use nostr_sdk::prelude::*;
 
-pub(super) const FOLLOW_SET_KIND: u16 = 30000;
+use crate::nostr::FOLLOW_SET_KIND;
+
 const DEFAULT_TITLE: &str = "SWING mirror list";
 
 // NIP-01 keeps the later created_at, so an edit must outdate a set signed on a clock that runs ahead.

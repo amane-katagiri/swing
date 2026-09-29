@@ -115,7 +115,11 @@ impl PairingRequest {
     pub fn for_config(nostr: &NostrConfig, relays: Vec<RelayUrl>) -> Self {
         Self {
             relays,
-            perms: requested_perms(&[nostr.replica_event_kind, nostr.site_event_kind, 30000]),
+            perms: requested_perms(&[
+                nostr.replica_event_kind,
+                nostr.site_event_kind,
+                crate::nostr::FOLLOW_SET_KIND,
+            ]),
             probe_kind: nostr.replica_event_kind,
             pairing_timeout: PAIRING_TIMEOUT,
             relay_timeout: RELAY_CONNECT_TIMEOUT,

@@ -84,7 +84,7 @@ Windows の `swing service stop` もこの `stop::run` を使う（失敗した�
 - `add` は結果の `p` タグのうち公開鍵としてパースできたものの数が `MAX_FOLLOW_SET_ENTRIES`（[取得と表示の上限](nostr.md#取得と表示の上限nostrbudget)）を超えるならエラーで終了し、publish しない（ダッシュボード API は 409 を返し、CLI はその `error` の文言 `would grow the follow set to <N> entries, over the 500-entry limit; remove some first` を表示する）。
 - `list` は npub と hex を併記する。`title` タグは `sites` の `title:` 行と同じ無害化（下記）をして `Title:` に表示する。
 - relay の Follow Set と `state.json` の `follow_set` を比べて新しい方を使う（検証条件は [agent の Follow Set の選び方](agent.md#follow-set-の選び方) と同じ）。保存済みの方を使ったときは `(relays returned an older follow set; ...)` か `(follow set not found on relays; ...)` を表示する。state.json は読むだけ。`sites` も同じ。
-- `list` は relay に直接つなぐ（`mirror::collect_mirror_list`）。`add` / `remove` は `POST /api/mirror/add` / `/api/mirror/remove`（body は `{"keys": [...]}`）を叩き、Follow Set の操作は `swing up` 側が保持する relay 接続（`dashboard::AppState`）で行う（[共通](#共通)）。`remove` で Follow Set がそもそも見つからない場合は `(no follow set found); no changes` とだけ表示して終わる。
+- `list` は relay に直接つなぐ（`mirror::collect_mirror_list`）。`add` / `remove` は `POST /api/mirror/add` / `/api/mirror/remove`（body は `{"keys": [...]}`）を叩き、Follow Set の操作は `swing up` 側が保持する relay 接続（`dashboard::AppState`）で行う（[共通](#共通)）。`remove` で Follow Set がそもそも見つからない場合は `(no follow set found); no changes` とだけ表示して終わる。どの relay も答えなかった（[`nostr.md#取得と表示の上限nostrbudget`](nostr.md#取得と表示の上限nostrbudget)）ときは「見つからない」とは扱わず、`list` も `add` / `remove` もエラーで終了する（`add` / `remove` は API の 502 の `error` を表示する）。
 
 ## sites
 

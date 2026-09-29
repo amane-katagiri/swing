@@ -128,7 +128,7 @@ state のロックの中で行う。
 - `<mfs_root>/publish/<自分の pubkey hex>/` の下のディレクトリ名を `mfs::site_from_name` で `d` に戻し（エンコードし直して同じ名前にならないもの、`d` の条件を満たさないものは無視）、その下の名前が整数の項目の CID（`files/ls` の `Hash`。`nostr::canonical_cid` で CIDv1 の dag-pb に正規化し、正しい CID でないものは warn を出して無視する）。同じサイトが `state.sites` にもあれば合わせる。同じ Kubo で `swing publish` した自分のサイトだけが対象で、別の Kubo で publish したサイトは報告しない。
 - `publish/<自分>/` の一覧に失敗したら自分が作者のサイトすべてを、`publish/<自分>/<site>/` の一覧に失敗したらそのサイトを「不明」とし、今回は送らない。
 
-送信済みの記録はメモリにだけ持つ（サイトごとに `cid` の集合と `created_at`）。まだ読めていなければ、同期のたびに relay から自分の報告（`replica_event_kind`、作者が自分）を取得し、`d` ごとの最新を記録に入れる（記録にある方が新しければそのまま）。取得に失敗したら warn を出し、送信は続ける。
+送信済みの記録はメモリにだけ持つ（サイトごとに `cid` の集合と `created_at`）。まだ読めていなければ、同期のたびに relay から自分の報告（`replica_event_kind`、作者が自分）を取得し、`d` ごとの最新を記録に入れる（記録にある方が新しければそのまま）。取得に失敗したら（答えた relay が 1 つも無い場合を含む。[`nostr.md#取得と表示の上限nostrbudget`](nostr.md#取得と表示の上限nostrbudget)）warn を出し、読めたことにはせず次の同期で取り直す。送信は続ける。
 
 送るもの:
 
@@ -147,7 +147,7 @@ state のロックの中で行う。
 ダッシュボードの `/api/activity`（[`dashboard/http-api.md`](dashboard/http-api.md#get-apiactivity)）のために、次の 2 つをメモリ上の `activity::Activity`（ダッシュボードの `AppState` と共有する。値は最大値を取るだけで下がらず、`state.json` には書かない）に記録する。
 
 - publish の時刻: 保存している CID を集めるときに一覧した `publish/<自分>/<site>/` の整数名（CID が正しいもの）の最大値。整数名はサイトイベントの `created_at` なので、同じ Kubo で `swing publish` した分も次の同期で拾う。一覧がすべて成功したら、版が無くても「確かめた」印を付ける（`/api/activity` で `0` になる）。
-- 他の報告者の報告の時刻: CID は誰でも見られるので、自分が選んだ報告者の報告だけを数える。信頼できる報告者は `state.json` の `follow_set`（自分の Follow Set）から `replicas::Chosen::from_own` で作り、`Chosen::trusted_reporters` から自分を除いたもの（[「レプリカ報告の信頼度」](nostr.md#レプリカ報告の信頼度replicastier)の `Chosen`）。poll ごとに relay から `replica_event_kind` で `#p` が自分、作者がその報告者（`AUTHORS_PER_FILTER` 人ずつ）の報告を、前回までに記録した最大値を `since` に付けて取得する（まだ無ければ `since` 無し。`limit` は組の人数 × `MAX_SITES_PER_AUTHOR_LISTED` × 2）。報告者が `replicas::tier_of` で `Chosen`（自分は `Author` なので外れる）、`p` タグに自分がある、`parse_replica_report` でパースでき作者が自分、`ReplicaReport::counts_at(now)` が true（未来ずれの許容・`MAX_REPORT_AGE`・`expiration`）、`created_at` が今以前、`cid` タグのどれかが自分のそのサイトで保存している CID（直前のレプリカ報告の同期で集めたもの。一覧に失敗したサイトは前回の値を使う）と一致する、のすべてを満たすものの `created_at` の最大値を記録する。`cid` 無し（取り下げ）の報告は数えない。`created_at` が今より先の報告は、未来ずれの許容内でも記録せず、`since` 以降なので時刻が追いついた後の poll で取り直して記録する。記録する値は今の時刻を超えないので、先の時刻を入れた報告 1 件で以後の報告が `since` から外れることはない。選ばれていない報告者の報告は数えないので、その `created_at` で記録（と次の `since`）が進むこともない。信頼できる報告者がいなければ取得はせず、成功として扱う。取得に成功したら、数える報告が無くても「確かめた」印を付ける（`/api/activity` で `0` になる）。`since` は記録した最大値が 0 なら付けない。取得に失敗したら warn を出し、値はそのまま。購読は増やさない。
+- 他の報告者の報告の時刻: CID は誰でも見られるので、自分が選んだ報告者の報告だけを数える。信頼できる報告者は `state.json` の `follow_set`（自分の Follow Set）から `replicas::Chosen::from_own` で作り、`Chosen::trusted_reporters` から自分を除いたもの（[「レプリカ報告の信頼度」](nostr.md#レプリカ報告の信頼度replicastier)の `Chosen`）。poll ごとに relay から `replica_event_kind` で `#p` が自分、作者がその報告者の報告を、前回までに記録した最大値を `since` に付けて取得する（まだ無ければ `since` 無し。報告者ごとに別のフィルタを置き `AUTHORS_PER_SPLIT_REQ` 人分ずつ 1 つの REQ にまとめ、`limit` は報告者ごとに `capped_limit(MAX_SITES_PER_AUTHOR_LISTED, 2)`。[`nostr.md`](nostr.md#取得と表示の上限nostrbudget)）。報告者が `replicas::tier_of` で `Chosen`（自分は `Author` なので外れる）、`p` タグに自分がある、`parse_replica_report` でパースでき作者が自分、`ReplicaReport::counts_at(now)` が true（未来ずれの許容・`MAX_REPORT_AGE`・`expiration`）、`created_at` が今以前、`cid` タグのどれかが自分のそのサイトで保存している CID（直前のレプリカ報告の同期で集めたもの。一覧に失敗したサイトは前回の値を使う）と一致する、のすべてを満たすものの `created_at` の最大値を記録する。`cid` 無し（取り下げ）の報告は数えない。`created_at` が今より先の報告は、未来ずれの許容内でも記録せず、`since` 以降なので時刻が追いついた後の poll で取り直して記録する。記録する値は今の時刻を超えないので、先の時刻を入れた報告 1 件で以後の報告が `since` から外れることはない。選ばれていない報告者の報告は数えないので、その `created_at` で記録（と次の `since`）が進むこともない。信頼できる報告者がいなければ取得はせず、成功として扱う。取得に成功したら、数える報告が無くても「確かめた」印を付ける（`/api/activity` で `0` になる）。`since` は記録した最大値が 0 なら付けない。取得に失敗したら warn を出し、値はそのまま。購読は増やさない。
 
 受信側で報告を数える規則（`replicas::collect_reports` / `ReplicaReport::counts_at`）は [「レプリカ報告の信頼度」](nostr.md#レプリカ報告の信頼度replicastier)。受信側は `created_at` から `nostr::MAX_REPORT_AGE`（7 日）を過ぎた報告を数えない（[取得と表示の上限](nostr.md#取得と表示の上限nostrbudget)）ので、`report_ttl` はそれ以下でないと設定の検証でエラーになる（[`../architecture.md`](../architecture.md#設定と環境変数)）。出し直しは `report_ttl / 2` ごとなので、上限の 7 日でも最新の報告は常に 3.5 日以内に出ている。
 
@@ -158,7 +158,7 @@ state のロックの中で行う。
 1. `nostr::plausible_at` が false（`created_at` が未来ずれの許容を超えて先。[`nostr.md`](nostr.md#未来ずれの許容nostrmax_future_skew)）なら skip（`future_created_at`）。
 2. 同じ CID が同サイトに記録済みなら skip（`duplicate_cid`）。
 3. 新しいサイトで、同じ pubkey の記録済みのサイトが `max_sites_per_account` 個以上あれば skip（`max_sites_per_account`）。
-4. `created_at` が同サイトの最新版以下なら skip（`stale`）。
+4. `created_at` が同サイトの最新版以下なら skip（`stale`）。`created_at` が等しいときは `id` によらず先に保存した版を保つ（プロトコルが許すローカルな選択。[`../protocol.md`](../protocol.md) 第 4 節）。
 5. 現在時刻が同サイトの最大の `stored_at` から `min_update_interval` 未満なら skip（`min_update_interval`）。
 6. `size` が `max_update_size` を超えるなら skip（`max_update_size`）。
 7. 同サイト合計が `max_per_site` を超えるなら古い版から evict する。新版単体で超えるなら skip（`max_per_site_exceeded_alone`）。

@@ -140,7 +140,7 @@ Follow Set が無ければ `title: null`、`members: []`。
 
 ## POST /api/mirror/add, POST /api/mirror/remove
 
-リクエスト: `{ "keys": ["npub1…", "hex…", "nprofile1…"] }`。空、100 件超、パース不能のいずれかで 400。`add` の結果の `p` タグ数が `MAX_FOLLOW_SET_ENTRIES`（[取得と表示の上限](../nostr.md#取得と表示の上限nostrbudget)）を超えるときは publish せず 409（`{"error": "would grow the follow set to <N> entries, over the 500-entry limit; remove some first"}`）。`mirror::apply_add` はこのとき `mirror::FollowSetCapExceeded` を返し、`api::mirror_add_error` がそれを downcast して 409 に、それ以外のエラーは `api::upstream` で 502 にする。
+リクエスト: `{ "keys": ["npub1…", "hex…", "nprofile1…"] }`。空、100 件超、パース不能のいずれかで 400。`add` の結果の `p` タグ数が `MAX_FOLLOW_SET_ENTRIES`（[取得と表示の上限](../nostr.md#取得と表示の上限nostrbudget)）を超えるときは publish せず 409（`{"error": "would grow the follow set to <N> entries, over the 500-entry limit; remove some first"}`）。`mirror::apply_add` はこのとき `mirror::FollowSetCapExceeded` を返し、`api::mirror_add_error` がそれを downcast して 409 に、それ以外のエラーは `api::upstream` で 502 にする。relay から Follow Set を取れなかったとき（答えた relay が 1 つも無い。[`../nostr.md#取得と表示の上限nostrbudget`](../nostr.md#取得と表示の上限nostrbudget)）も 502 で、「Follow Set が無い」とはみなさず、publish もしない。
 
 ```json
 { "changed": [ { "pubkey": "…", "npub": "…" } ], "unchanged": [ { "pubkey": "…", "npub": "…" } ], "published": true, "relays": [ { "relay": "wss://…", "ok": true, "error": null } ], "members": [ { "pubkey": "…", "npub": "…" } ], "note": null, "follow_set_found": true }

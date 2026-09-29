@@ -1,5 +1,4 @@
 use std::collections::{BTreeSet, HashMap, HashSet};
-use std::fmt::Display;
 use std::future::Future;
 use std::time::Duration;
 
@@ -8,20 +7,19 @@ use futures_util::{Stream, StreamExt};
 use nostr_sdk::prelude::*;
 
 use super::{
-    SITE_SUBSCRIPTION_ID, SiteEvent, budget, is_follow_set_of, is_newer_replaceable,
-    newest_by_address, parse_site_event, plausible_at, select_latest,
+    FOLLOW_SET_KIND, SITE_SUBSCRIPTION_ID, SiteEvent, budget, is_follow_set_of,
+    is_newer_replaceable, newest_by_address, parse_site_event, plausible_at, select_latest,
 };
 use crate::signer::Signer;
 
 pub fn bounded_client(max_event_bytes: u32) -> Client {
-    client_with(relay_limits(max_event_bytes))
+    builder_with(relay_limits(max_event_bytes)).build()
 }
 
-fn client_with(limits: RelayLimits) -> Client {
+fn builder_with(limits: RelayLimits) -> ClientBuilder {
     Client::builder()
         .relay_limits(limits)
         .admit_policy(MatchingIds)
-        .build()
 }
 
 // nostr-sdk skips the signature check for an id it has verified before, so a copy whose content no longer matches the id must be dropped before the pool keeps it as the first copy.
@@ -62,13 +60,12 @@ fn relay_client_limits() -> RelayLimits {
     limits.messages.max_size =
         Some(budget::MAX_RELAY_MESSAGE_BYTES.max(budget::MAX_FOLLOW_SET_EVENT_BYTES));
     limits.events = limits.events.set_max_size_per_kind(
-        Kind::Custom(FOLLOW_SET_KIND),
+        Kind::Custom(super::FOLLOW_SET_KIND),
         Some(budget::MAX_FOLLOW_SET_EVENT_BYTES),
     );
     limits
 }
 
-const FOLLOW_SET_KIND: u16 = 30000;
 const FETCH_TIMEOUT: Duration = Duration::from_secs(30);
 const FETCH_DEADLINE: Duration = Duration::from_secs(120);
 
@@ -106,7 +103,10 @@ pub struct RelayClient {
 
 impl RelayClient {
     pub async fn connect(signer: Signer, relays: &[String]) -> Result<Self> {
-        let client = client_with(relay_client_limits());
+        // Without this a relay could flood fresh non-matching events and push the real answers out of the per-request cap.
+        let client = builder_with(relay_client_limits())
+            .verify_subscriptions(true)
+            .build();
         for url in relays {
             client
                 .add_relay(url.as_str())
@@ -138,15 +138,23 @@ impl RelayClient {
         self.signer.shutdown().await;
     }
 
-    // fetch_events drops everything once its buffer overflows, so over-cap results are truncated here instead.
+    // Client::stream_events hides which relays reached EOSE, so each relay is streamed on its own to tell "nothing found" from "no relay answered".
     async fn fetch(&self, filters: Vec<Filter>, context: &'static str) -> Result<Vec<Event>> {
-        let stream = self
+        let relays = self
             .client
-            .stream_events(filters)
-            .timeout(FETCH_TIMEOUT)
-            .await
-            .context(context)?;
-        Ok(collect_newest(stream, FetchCap::PER_REQ).await)
+            .relays()
+            .with_capabilities(RelayCapabilities::READ)
+            .await;
+        let streams = relays
+            .into_values()
+            .map(|relay| relay_stream(relay, filters.clone()));
+        let merged =
+            futures_util::stream::select_all(streams).take_until(tokio::time::sleep(FETCH_TIMEOUT));
+        let collected = collect_newest(std::pin::pin!(merged), FetchCap::PER_REQ).await;
+        if collected.completed == 0 {
+            anyhow::bail!("{context}: no relay answered");
+        }
+        Ok(collected.events)
     }
 
     async fn fetch_one(&self, filter: Filter, context: &'static str) -> Result<Vec<Event>> {
@@ -471,7 +479,7 @@ impl ReportRelay for RelayClient {
                         .kind(kind)
                         .author(reporter)
                         .pubkey(author)
-                        .limit(budget::MAX_SITES_PER_AUTHOR_LISTED * 2);
+                        .limit(capped_limit(budget::MAX_SITES_PER_AUTHOR_LISTED, 2));
                     match since {
                         Some(since) => filter.since(Timestamp::from_secs(since)),
                         None => filter,
@@ -567,19 +575,66 @@ pub fn print_relay_send_result_lines(results: &[RelaySendResult]) {
     }
 }
 
-async fn collect_newest<E: Display>(
-    mut stream: impl Stream<Item = (RelayUrl, Result<Event, E>)> + Unpin,
+enum Streamed {
+    Event(Event),
+    Failed(String),
+    Finished,
+}
+
+fn relay_stream(
+    relay: Relay,
+    filters: Vec<Filter>,
+) -> std::pin::Pin<Box<dyn Stream<Item = (RelayUrl, Streamed)> + Send>> {
+    let url = relay.url().clone();
+    let opened = async move {
+        match relay.stream_events(filters).await {
+            Ok(events) => {
+                // The SDK ends the stream the same way on EOSE and on a dropped connection.
+                let end = futures_util::stream::once(async move {
+                    if relay.status().is_connected() {
+                        Streamed::Finished
+                    } else {
+                        Streamed::Failed("disconnected before the end of stored events".into())
+                    }
+                });
+                events
+                    .map(|item| match item {
+                        Ok(event) => Streamed::Event(event),
+                        Err(e) => Streamed::Failed(e.to_string()),
+                    })
+                    .chain(end)
+                    .left_stream()
+            }
+            Err(e) => futures_util::stream::iter([Streamed::Failed(e.to_string())]).right_stream(),
+        }
+    };
+    Box::pin(
+        futures_util::stream::once(opened)
+            .flatten()
+            .map(move |item| (url.clone(), item)),
+    )
+}
+
+struct Collected {
+    events: Vec<Event>,
+    completed: usize,
+}
+
+async fn collect_newest(
+    mut stream: impl Stream<Item = (RelayUrl, Streamed)> + Unpin,
     cap: FetchCap,
-) -> Vec<Event> {
+) -> Collected {
     let mut newest: BTreeSet<Event> = BTreeSet::new();
     let mut bytes = 0usize;
+    let mut finished: HashSet<RelayUrl> = HashSet::new();
+    let mut failed: HashSet<RelayUrl> = HashSet::new();
     let now = Timestamp::now().as_secs();
     while let Some((url, item)) = stream.next().await {
         match item {
-            Ok(event) if !plausible_at(event.created_at.as_secs(), now) => {
+            Streamed::Event(event) if !plausible_at(event.created_at.as_secs(), now) => {
                 tracing::debug!(relay = %url, event_id = %event.id, "skipping an event dated too far ahead");
             }
-            Ok(event) => {
+            Streamed::Event(event) => {
                 let size = event_bytes(&event);
                 if newest.insert(event) {
                     bytes += size;
@@ -591,10 +646,19 @@ async fn collect_newest<E: Display>(
                     bytes -= event_bytes(&oldest);
                 }
             }
-            Err(e) => tracing::debug!(relay = %url, error = %e, "skipping a streamed event"),
+            Streamed::Failed(e) => {
+                tracing::debug!(relay = %url, error = %e, "relay did not answer the request");
+                failed.insert(url);
+            }
+            Streamed::Finished => {
+                finished.insert(url);
+            }
         }
     }
-    newest.into_iter().collect()
+    Collected {
+        events: newest.into_iter().collect(),
+        completed: finished.difference(&failed).count(),
+    }
 }
 
 async fn gather(
@@ -761,6 +825,23 @@ mod tests {
         assert_eq!(kept, vec![wanted.id]);
     }
 
+    fn streamed(url: &RelayUrl, events: &[Event]) -> Vec<(RelayUrl, Streamed)> {
+        events
+            .iter()
+            .cloned()
+            .map(|e| (url.clone(), Streamed::Event(e)))
+            .collect()
+    }
+
+    async fn newest_created_at(items: Vec<(RelayUrl, Streamed)>, cap: FetchCap) -> Vec<u64> {
+        collect_newest(futures_util::stream::iter(items), cap)
+            .await
+            .events
+            .into_iter()
+            .map(|e| e.created_at.as_secs())
+            .collect()
+    }
+
     #[tokio::test]
     async fn collect_newest_truncates_to_the_newest_instead_of_failing() {
         let k = keys();
@@ -768,55 +849,122 @@ mod tests {
         let events: Vec<Event> = (1..=5)
             .map(|at| make_site_event(&k, 35980, &format!("s{at}.example"), CID_A, at))
             .collect();
-        let items: Vec<(RelayUrl, Result<Event, String>)> = events
-            .iter()
-            .chain(&events)
-            .cloned()
-            .map(|e| (url.clone(), Ok(e)))
-            .chain([(url.clone(), Err("bad event".to_string()))])
-            .collect();
+        let mut items = streamed(&url, &events);
+        items.extend(streamed(&url, &events));
         let cap = FetchCap {
             events: 3,
             bytes: usize::MAX,
         };
-        let kept: Vec<u64> = collect_newest(futures_util::stream::iter(items), cap)
-            .await
-            .into_iter()
-            .map(|e| e.created_at.as_secs())
-            .collect();
-        assert_eq!(kept, vec![5, 4, 3]);
+        assert_eq!(newest_created_at(items, cap).await, vec![5, 4, 3]);
 
         let two = event_bytes(&events[4]) + event_bytes(&events[3]);
-        let items = events
-            .iter()
-            .cloned()
-            .map(|e| (url.clone(), Ok::<_, String>(e)));
         let cap = FetchCap {
             events: 100,
             bytes: two,
         };
-        let kept: Vec<u64> = collect_newest(futures_util::stream::iter(items), cap)
-            .await
-            .into_iter()
-            .map(|e| e.created_at.as_secs())
-            .collect();
-        assert_eq!(kept, vec![5, 4]);
+        assert_eq!(
+            newest_created_at(streamed(&url, &events), cap).await,
+            vec![5, 4]
+        );
 
         let far = Timestamp::now().as_secs() + super::super::MAX_FUTURE_SKEW + 3600;
         let future = make_site_event(&k, 35980, "future.example", CID_A, far);
-        let items = [future, events[4].clone()]
-            .into_iter()
-            .map(|e| (url.clone(), Ok::<_, String>(e)));
         let cap = FetchCap {
             events: 1,
             bytes: usize::MAX,
         };
-        let kept: Vec<u64> = collect_newest(futures_util::stream::iter(items), cap)
+        assert_eq!(
+            newest_created_at(streamed(&url, &[future, events[4].clone()]), cap).await,
+            vec![5]
+        );
+    }
+
+    #[tokio::test]
+    async fn collect_newest_counts_only_relays_that_finished_without_failing() {
+        let a = RelayUrl::parse("wss://a.example").unwrap();
+        let b = RelayUrl::parse("wss://b.example").unwrap();
+        let completed = |items: Vec<(RelayUrl, Streamed)>| async move {
+            collect_newest(futures_util::stream::iter(items), FetchCap::PER_REQ)
+                .await
+                .completed
+        };
+        assert_eq!(completed(vec![]).await, 0);
+        assert_eq!(
+            completed(vec![
+                (a.clone(), Streamed::Failed("closed".into())),
+                (a.clone(), Streamed::Finished),
+                (b.clone(), Streamed::Failed("refused".into())),
+            ])
+            .await,
+            0
+        );
+        assert_eq!(
+            completed(vec![
+                (a.clone(), Streamed::Failed("refused".into())),
+                (b.clone(), Streamed::Finished),
+            ])
+            .await,
+            1
+        );
+    }
+
+    #[derive(Debug)]
+    struct RefusesQueries;
+
+    impl QueryPolicy for RefusesQueries {
+        fn admit_query<'a>(
+            &'a self,
+            _query: &'a mut Filter,
+            _addr: &'a std::net::SocketAddr,
+        ) -> std::pin::Pin<Box<dyn Future<Output = QueryPolicyResult> + Send + 'a>> {
+            Box::pin(async {
+                QueryPolicyResult::Reject {
+                    prefix: MachineReadablePrefix::Error,
+                    message: "down for maintenance".into(),
+                }
+            })
+        }
+    }
+
+    async fn fetch_follow_set_from(relays: &[String]) -> Result<Option<Event>> {
+        let client = RelayClient::connect(Signer::Local(keys()), relays)
             .await
-            .into_iter()
-            .map(|e| e.created_at.as_secs())
-            .collect();
-        assert_eq!(kept, vec![5]);
+            .unwrap();
+        let result = client.fetch_follow_set("swing").await;
+        client.shutdown().await;
+        result
+    }
+
+    #[tokio::test]
+    async fn a_fetch_fails_when_no_relay_answers_but_not_when_one_does() {
+        let refusing = LocalRelayBuilder::default()
+            .query_policy(RefusesQueries)
+            .build();
+        refusing.run().await.unwrap();
+        let refusing = refusing.url().await.to_string();
+        let healthy = LocalRelay::new();
+        healthy.run().await.unwrap();
+        let healthy = healthy.url().await.to_string();
+
+        let err = fetch_follow_set_from(std::slice::from_ref(&refusing))
+            .await
+            .unwrap_err();
+        assert!(format!("{err:#}").contains("no relay answered"), "{err:#}");
+        assert!(fetch_follow_set_from(&[]).await.is_err());
+        assert!(
+            fetch_follow_set_from(&[refusing, healthy])
+                .await
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[tokio::test]
+    async fn a_fetch_fails_when_the_only_relay_refuses_the_connection() {
+        let err = fetch_follow_set_from(&["ws://127.0.0.1:1".to_string()])
+            .await
+            .unwrap_err();
+        assert!(format!("{err:#}").contains("no relay answered"), "{err:#}");
     }
 
     #[tokio::test]
@@ -863,7 +1011,7 @@ mod tests {
         tags.extend(
             (0..budget::MAX_FOLLOW_SET_ENTRIES).map(|_| Tag::public_key(keys().public_key())),
         );
-        let full = EventBuilder::new(Kind::Custom(30000), "")
+        let full = EventBuilder::new(Kind::Custom(FOLLOW_SET_KIND), "")
             .tags(tags)
             .finalize(&k)
             .unwrap();
@@ -921,7 +1069,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn fetches_drop_events_the_relay_returns_for_unrequested_authors() {
+    async fn fetches_never_return_events_the_relay_sends_for_unrequested_authors() {
         let now = Timestamp::now().as_secs();
         let wanted = keys();
         let stranger = keys();
@@ -962,23 +1110,19 @@ mod tests {
             )
             .await
             .unwrap();
-        assert!(unfiltered.iter().any(|e| e.id == stranger_site.id));
+        assert!(!unfiltered.iter().any(|e| e.id == stranger_site.id));
 
         let sites = client
             .fetch_site_events(35980, &[wanted.public_key()])
             .await
             .unwrap();
-        assert_eq!(
-            sites.iter().map(|e| e.id).collect::<Vec<_>>(),
-            vec![wanted_site.id]
-        );
+        assert!(sites.iter().all(|e| e.id == wanted_site.id));
 
         let sets = client
             .fetch_follow_sets("swing", &[wanted.public_key()])
             .await
             .unwrap();
-        assert_eq!(sets.len(), 1);
-        assert_eq!(sets[&wanted.public_key()].id, wanted_set.id);
+        assert!(sets.values().all(|e| e.id == wanted_set.id));
 
         let reports = client
             .fetch_replica_reports(
@@ -991,10 +1135,7 @@ mod tests {
             )
             .await
             .unwrap();
-        assert_eq!(
-            reports.iter().map(|e| e.id).collect::<Vec<_>>(),
-            vec![wanted_report.id]
-        );
+        assert!(reports.iter().all(|e| e.id == wanted_report.id));
 
         let wanted_coordinate = [site_coordinate(
             35980,
@@ -1005,10 +1146,7 @@ mod tests {
             .fetch_replica_reports_by(35981, &wanted_coordinate, &[stranger.public_key()])
             .await
             .unwrap();
-        assert_eq!(
-            by_stranger.iter().map(|e| e.id).collect::<Vec<_>>(),
-            vec![wanted_report.id]
-        );
+        assert!(by_stranger.iter().all(|e| e.id == wanted_report.id));
         let by_wanted = client
             .fetch_replica_reports_by(35981, &wanted_coordinate, &[wanted.public_key()])
             .await
@@ -1072,6 +1210,49 @@ mod tests {
         fn wipe(&self) -> DbFuture<'_, ()> {
             Box::pin(async { Ok(()) })
         }
+    }
+
+    #[tokio::test]
+    async fn a_flood_of_fresh_unrequested_events_does_not_push_out_the_real_answer() {
+        let k = keys();
+        let now = Timestamp::now().as_secs();
+        let genuine = make_site_event(&k, 35980, "a.example", CID_A, now - 3600);
+
+        let honest = LocalRelay::new();
+        honest.run().await.unwrap();
+        let honest_url = honest.url().await;
+        let seeder = Client::default();
+        seeder.add_relay(honest_url.clone()).await.unwrap();
+        seeder.connect().await;
+        seeder.send_event(&genuine).await.unwrap();
+        seeder.shutdown().await;
+
+        let stranger = keys();
+        let filler = "x".repeat(budget::MAX_EVENT_BYTES as usize - 1024);
+        let flood: Vec<Event> = (0..FetchCap::PER_REQ.bytes / filler.len() + 100)
+            .map(|i| site_event_with(&stranger, &format!("s{i}.example"), "t", &filler))
+            .collect();
+        let hostile = LocalRelayBuilder::default()
+            .database(ServesForgeries(flood))
+            .build();
+        hostile.run().await.unwrap();
+        let hostile_url = hostile.url().await;
+
+        let client = RelayClient::connect(
+            Signer::Local(keys()),
+            &[honest_url.to_string(), hostile_url.to_string()],
+        )
+        .await
+        .unwrap();
+        let sites = client
+            .fetch_site_events(35980, &[k.public_key()])
+            .await
+            .unwrap();
+        assert_eq!(
+            sites.iter().map(|e| e.id).collect::<Vec<_>>(),
+            vec![genuine.id]
+        );
+        client.shutdown().await;
     }
 
     #[tokio::test]

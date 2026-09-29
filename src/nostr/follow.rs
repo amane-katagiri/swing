@@ -2,10 +2,10 @@ use std::collections::HashSet;
 
 use nostr_sdk::prelude::*;
 
-use super::{budget, is_newer_replaceable, plausible_at};
+use super::{FOLLOW_SET_KIND, budget, is_newer_replaceable, plausible_at};
 
 pub fn is_follow_set_of(event: &Event, author: &PublicKey, mirror_set: &str) -> bool {
-    event.kind == Kind::Custom(30000)
+    event.kind == Kind::Custom(FOLLOW_SET_KIND)
         && event.pubkey == *author
         && event.tags.identifier().as_deref() == Some(mirror_set)
 }
@@ -93,7 +93,7 @@ mod tests {
         let author = keys();
         let target1 = keys().public_key();
         let target2 = keys().public_key();
-        let ev = EventBuilder::new(Kind::Custom(30000), "")
+        let ev = EventBuilder::new(Kind::Custom(FOLLOW_SET_KIND), "")
             .tag(Tag::identifier("site-mirror"))
             .tag(Tag::public_key(target1))
             .tag(Tag::public_key(target2))
@@ -109,7 +109,7 @@ mod tests {
     fn follow_set_pubkeys_capped_dedups_repeated_p_tags() {
         let author = keys();
         let target = keys().public_key();
-        let ev = EventBuilder::new(Kind::Custom(30000), "")
+        let ev = EventBuilder::new(Kind::Custom(FOLLOW_SET_KIND), "")
             .tag(Tag::identifier("site-mirror"))
             .tag(Tag::public_key(target))
             .tag(Tag::public_key(target))
@@ -126,7 +126,7 @@ mod tests {
     fn follow_set_pubkeys_capped_stops_at_the_budget() {
         let author = keys();
         let first = keys().public_key();
-        let mut builder = EventBuilder::new(Kind::Custom(30000), "")
+        let mut builder = EventBuilder::new(Kind::Custom(FOLLOW_SET_KIND), "")
             .tag(Tag::identifier("site-mirror"))
             .tag(Tag::public_key(first));
         let extra: Vec<PublicKey> = (0..budget::MAX_FOLLOW_SET_ENTRIES)

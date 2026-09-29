@@ -908,6 +908,50 @@ mod tests {
         assert!(body["error"].is_string());
     }
 
+    #[derive(Debug)]
+    struct RefusesQueries;
+
+    impl nostr_sdk::prelude::QueryPolicy for RefusesQueries {
+        fn admit_query<'a>(
+            &'a self,
+            _query: &'a mut nostr_sdk::prelude::Filter,
+            _addr: &'a std::net::SocketAddr,
+        ) -> std::pin::Pin<
+            Box<
+                dyn std::future::Future<Output = nostr_sdk::prelude::QueryPolicyResult> + Send + 'a,
+            >,
+        > {
+            Box::pin(async {
+                nostr_sdk::prelude::QueryPolicyResult::Reject {
+                    prefix: nostr_sdk::prelude::MachineReadablePrefix::Error,
+                    message: "down for maintenance".into(),
+                }
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn mirror_add_when_no_relay_answers_is_bad_gateway() {
+        let refusing = nostr_sdk::prelude::LocalRelayBuilder::default()
+            .query_policy(RefusesQueries)
+            .build();
+        refusing.run().await.unwrap();
+        let url = refusing.url().await.to_string();
+        let dir = tempfile::tempdir().unwrap();
+        let (state, _) = ready_state_with_relays(dir.path(), std::slice::from_ref(&url)).await;
+        let extra = Keys::generate().public_key().to_hex();
+        let (status, body) = send_json(
+            router(state),
+            "POST",
+            "/api/mirror/add",
+            Some(serde_json::json!({ "keys": [extra] })),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_GATEWAY);
+        let message = body["error"].as_str().unwrap();
+        assert!(message.contains("no relay answered"), "{message}");
+    }
+
     fn test_state_with_exit(exit: ExitRequest) -> Arc<AppState> {
         let (config, secret_hex) = test_config(true);
         build_state(config, exit, test_keys(&secret_hex), TEST_TOKEN)

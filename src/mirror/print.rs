@@ -1,12 +1,12 @@
 use anyhow::{Context, Result};
 use nostr_sdk::prelude::*;
 
-use super::set::FOLLOW_SET_KIND;
 use super::time::format_unix_timestamp;
 use super::{MirrorListView, MirrorSet, SiteRow, SitesView, npub};
 use crate::config::Config;
 use crate::dashboard::dto;
 use crate::format::sanitize_display_text;
+use crate::nostr::FOLLOW_SET_KIND;
 use crate::{nostr, replicas};
 
 pub(super) fn print_mirror_set(mirror_set_name: &str, set: &MirrorSet) {

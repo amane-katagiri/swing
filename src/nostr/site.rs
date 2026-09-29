@@ -91,7 +91,7 @@ pub fn parse_site_event(event: &Event, expected_kind: u16) -> Result<SiteEvent> 
     let url = tag_value(event, "url")
         .map(|s| s.to_string())
         .filter(|u| valid_http_url(u));
-    let size = tag_value(event, "size").and_then(|s| s.parse::<u64>().ok());
+    let size = tag_value(event, "size").and_then(super::parse_decimal);
     let title = tag_value(event, "title")
         .map(|s| s.to_string())
         .filter(|t| valid_title(t));
@@ -199,6 +199,27 @@ mod tests {
         assert_eq!(ev.content, "Add posts");
         let parsed = parse_site_event(&ev, 35980).unwrap();
         assert_eq!(parsed.message.as_deref(), Some("Add posts"));
+    }
+
+    #[test]
+    fn a_size_tag_must_be_plain_decimal_digits() {
+        let k = keys();
+        for (raw, want) in [
+            ("1234", Some(1234)),
+            ("+1234", None),
+            ("-1", None),
+            (" 1234", None),
+            ("", None),
+            ("1e3", None),
+        ] {
+            let ev = EventBuilder::new(Kind::Custom(35980), "")
+                .tag(Tag::identifier("example.com"))
+                .tag(Tag::custom("cid", [CID_A.to_string()]))
+                .tag(Tag::custom("size", [raw.to_string()]))
+                .finalize(&k)
+                .unwrap();
+            assert_eq!(parse_site_event(&ev, 35980).unwrap().size, want, "{raw}");
+        }
     }
 
     #[test]
