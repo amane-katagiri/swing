@@ -1,0 +1,689 @@
+use std::collections::{HashMap, HashSet};
+use std::future::Future;
+use std::time::Duration;
+
+use anyhow::{Context, Result};
+use nostr_sdk::prelude::*;
+
+use super::{
+    SITE_SUBSCRIPTION_ID, SiteEvent, budget, is_follow_set_of, is_newer_replaceable,
+    newest_by_address, parse_site_event, plausible_at, select_latest,
+};
+use crate::signer::Signer;
+
+pub fn bounded_client(max_event_bytes: u32) -> Client {
+    let mut limits = RelayLimits::default();
+    limits.messages.max_size = Some(budget::MAX_RELAY_MESSAGE_BYTES.max(max_event_bytes));
+    limits.events.max_size = Some(max_event_bytes);
+    limits.events.max_num_tags = Some(budget::MAX_EVENT_TAGS);
+    Client::builder().relay_limits(limits).build()
+}
+
+// 2x: a relay may hand back a stale duplicate of a replaceable event.
+fn capped_limit(count: usize, per: usize) -> usize {
+    count.saturating_mul(per).min(budget::MAX_RELAY_FETCH_LIMIT)
+}
+
+pub struct RelayClient {
+    pub client: Client,
+    pub signer: Signer,
+    relays: Vec<String>,
+}
+
+impl RelayClient {
+    pub async fn connect(signer: Signer, relays: &[String]) -> Result<Self> {
+        let client = bounded_client(budget::MAX_EVENT_BYTES);
+        for url in relays {
+            client
+                .add_relay(url.as_str())
+                .await
+                .with_context(|| format!("adding relay {url}"))?;
+        }
+        client.connect().await;
+        Ok(Self {
+            client,
+            signer,
+            relays: relays.to_vec(),
+        })
+    }
+
+    pub fn relays(&self) -> &[String] {
+        &self.relays
+    }
+
+    pub fn public_key(&self) -> PublicKey {
+        self.signer.public_key()
+    }
+
+    pub async fn sign(&self, builder: EventBuilder) -> Result<Event> {
+        self.signer.sign(builder).await
+    }
+
+    pub async fn shutdown(&self) {
+        self.client.shutdown().await;
+        self.signer.shutdown().await;
+    }
+
+    async fn fetch(&self, filter: Filter, context: &'static str) -> Result<Vec<Event>> {
+        Ok(self
+            .client
+            .fetch_events(filter)
+            .timeout(Duration::from_secs(30))
+            .await
+            .context(context)?
+            .into_iter()
+            .collect())
+    }
+
+    pub async fn fetch_follow_set(&self, mirror_set: &str) -> Result<Option<Event>> {
+        let filter = Filter::new()
+            .kind(Kind::Custom(30000))
+            .author(self.public_key())
+            .identifier(mirror_set)
+            .limit(capped_limit(1, 2));
+        let events = self.fetch(filter, "fetching follow set").await?;
+        let now = Timestamp::now().as_secs();
+        // Defense in depth against a relay that ignores the filter.
+        Ok(events
+            .into_iter()
+            .filter(|e| is_follow_set_of(e, &self.public_key(), mirror_set))
+            .filter(|e| plausible_at(e.created_at.as_secs(), now))
+            .reduce(|a, b| if is_newer_replaceable(&b, &a) { b } else { a }))
+    }
+
+    async fn fetch_by_authors(
+        &self,
+        authors: &[PublicKey],
+        context: &'static str,
+        filter_for: impl Fn(&[PublicKey]) -> Filter,
+    ) -> Result<Vec<Event>> {
+        let mut out = Vec::new();
+        for batch in authors.chunks(budget::AUTHORS_PER_FILTER) {
+            out.extend(self.fetch(filter_for(batch), context).await?);
+        }
+        Ok(out)
+    }
+
+    pub async fn fetch_site_events(
+        &self,
+        site_event_kind: u16,
+        authors: &[PublicKey],
+    ) -> Result<Vec<Event>> {
+        let kind = Kind::Custom(site_event_kind);
+        let events = self
+            .fetch_by_authors(authors, "fetching site events", |batch| {
+                Filter::new()
+                    .kind(kind)
+                    .authors(batch.iter().copied())
+                    .limit(capped_limit(
+                        batch.len(),
+                        budget::MAX_SITES_PER_AUTHOR_LISTED,
+                    ))
+            })
+            .await?;
+        let requested: HashSet<PublicKey> = authors.iter().copied().collect();
+        Ok(events
+            .into_iter()
+            .filter(|e| e.kind == kind && requested.contains(&e.pubkey))
+            .collect())
+    }
+
+    pub async fn fetch_own_latest_site(
+        &self,
+        site_event_kind: u16,
+        d: &str,
+    ) -> Result<Option<SiteEvent>> {
+        let kind = Kind::Custom(site_event_kind);
+        let own = self.public_key();
+        let filter = Filter::new()
+            .kind(kind)
+            .author(own)
+            .identifier(d)
+            // 2x: a relay may hand back a stale duplicate of this single replaceable event.
+            .limit(capped_limit(1, 2));
+        let events = self
+            .fetch(filter, "fetching your latest site event")
+            .await?;
+        let parsed: Vec<SiteEvent> = events
+            .iter()
+            .filter(|e| e.pubkey == own)
+            .filter_map(|e| parse_site_event(e, site_event_kind).ok())
+            .filter(|ev| ev.d == d)
+            .collect();
+        Ok(select_latest(&parsed, Timestamp::now().as_secs())
+            .into_values()
+            .next())
+    }
+
+    pub async fn fetch_replica_reports(
+        &self,
+        report_kind: u16,
+        sites: &[Coordinate],
+    ) -> Result<Vec<Event>> {
+        if sites.is_empty() {
+            return Ok(Vec::new());
+        }
+        let kind = Kind::Custom(report_kind);
+        let filter = Filter::new()
+            .kind(kind)
+            .coordinates(sites)
+            .limit(capped_limit(sites.len(), budget::MAX_REPORTS_PER_SITE));
+        let events = self.fetch(filter, "fetching replica reports").await?;
+        Ok(reports_for_sites(events, kind, sites))
+    }
+
+    pub async fn fetch_replica_reports_by(
+        &self,
+        report_kind: u16,
+        sites: &[Coordinate],
+        reporters: &[PublicKey],
+    ) -> Result<Vec<Event>> {
+        if sites.is_empty() {
+            return Ok(Vec::new());
+        }
+        let kind = Kind::Custom(report_kind);
+        let events = self
+            .fetch_by_authors(
+                reporters,
+                "fetching replica reports by trusted reporters",
+                |batch| {
+                    Filter::new()
+                        .kind(kind)
+                        .authors(batch.iter().copied())
+                        .coordinates(sites)
+                        .limit(capped_limit(batch.len().saturating_mul(sites.len()), 2))
+                },
+            )
+            .await?;
+        let requested: HashSet<PublicKey> = reporters.iter().copied().collect();
+        Ok(reports_for_sites(events, kind, sites)
+            .into_iter()
+            .filter(|e| requested.contains(&e.pubkey))
+            .collect())
+    }
+
+    pub async fn fetch_follow_sets(
+        &self,
+        mirror_set: &str,
+        authors: &[PublicKey],
+    ) -> Result<HashMap<PublicKey, Event>> {
+        let events = self
+            .fetch_by_authors(authors, "fetching follow sets", |batch| {
+                Filter::new()
+                    .kind(Kind::Custom(30000))
+                    .authors(batch.iter().copied())
+                    .identifier(mirror_set)
+                    .limit(capped_limit(batch.len(), 2))
+            })
+            .await?;
+        let requested: HashSet<PublicKey> = authors.iter().copied().collect();
+        let sets = events.into_iter().filter(|e| {
+            requested.contains(&e.pubkey) && is_follow_set_of(e, &e.pubkey, mirror_set)
+        });
+        Ok(newest_by_address(sets, Timestamp::now().as_secs())
+            .into_iter()
+            .map(|e| (e.pubkey, e))
+            .collect())
+    }
+
+    pub async fn fetch_follow_set_authors_referencing(
+        &self,
+        mirror_set: &str,
+        targets: &[PublicKey],
+    ) -> Result<HashSet<PublicKey>> {
+        let events = self
+            .fetch_by_authors(
+                targets,
+                "fetching follow sets that reference accounts",
+                |batch| {
+                    Filter::new()
+                        .kind(Kind::Custom(30000))
+                        .identifier(mirror_set)
+                        .pubkeys(batch.iter().copied())
+                        .limit(capped_limit(batch.len(), 100))
+                },
+            )
+            .await?;
+        Ok(events
+            .into_iter()
+            .filter(|e| {
+                is_follow_set_of(e, &e.pubkey, mirror_set)
+                    && e.tags.public_keys().any(|pk| targets.contains(&pk))
+            })
+            .map(|e| e.pubkey)
+            .collect())
+    }
+
+    pub async fn subscribe_site_events(
+        &self,
+        site_event_kind: u16,
+        authors: &[PublicKey],
+    ) -> Result<()> {
+        let id = SubscriptionId::new(SITE_SUBSCRIPTION_ID);
+        if authors.is_empty() {
+            let _ = self.client.unsubscribe(&id).await;
+            return Ok(());
+        }
+        let filter = Filter::new()
+            .kind(Kind::Custom(site_event_kind))
+            .authors(authors.iter().copied());
+        self.client
+            .subscribe(filter)
+            .with_id(id)
+            .await
+            .context("subscribing to site events")?;
+        Ok(())
+    }
+
+    pub fn notifications(
+        &self,
+    ) -> std::pin::Pin<Box<dyn futures_util::Stream<Item = ClientNotification> + Send>> {
+        self.client.notifications()
+    }
+
+    pub async fn publish_to_relays(
+        &self,
+        event: &Event,
+    ) -> Result<Output<EventId, EventSendStatus, String>> {
+        let out = self
+            .client
+            .send_event(event)
+            .to(self.relays.iter().map(|s| s.as_str()))
+            .await
+            .context("sending event to relays")?;
+        Ok(out)
+    }
+}
+
+pub trait ReportRelay {
+    fn public_key(&self) -> PublicKey;
+    fn fetch_own_reports(
+        &self,
+        report_kind: u16,
+    ) -> impl Future<Output = Result<Vec<Event>>> + Send;
+    fn fetch_reports_about(
+        &self,
+        report_kind: u16,
+        author: PublicKey,
+        since: Option<u64>,
+    ) -> impl Future<Output = Result<Vec<Event>>> + Send;
+    fn send_report(&self, report: EventBuilder) -> impl Future<Output = Result<bool>> + Send;
+}
+
+impl ReportRelay for RelayClient {
+    fn public_key(&self) -> PublicKey {
+        RelayClient::public_key(self)
+    }
+
+    async fn fetch_own_reports(&self, report_kind: u16) -> Result<Vec<Event>> {
+        // One addressable report per hosted site, and no author lists more than MAX_SITES_PER_AUTHOR_LISTED.
+        let filter = Filter::new()
+            .kind(Kind::Custom(report_kind))
+            .author(RelayClient::public_key(self))
+            .limit(capped_limit(budget::MAX_SITES_PER_AUTHOR_LISTED, 2));
+        self.fetch(filter, "fetching own replica reports").await
+    }
+
+    async fn fetch_reports_about(
+        &self,
+        report_kind: u16,
+        author: PublicKey,
+        since: Option<u64>,
+    ) -> Result<Vec<Event>> {
+        let mut filter = Filter::new()
+            .kind(Kind::Custom(report_kind))
+            .pubkey(author)
+            .limit(capped_limit(
+                budget::MAX_SITES_PER_AUTHOR_LISTED,
+                budget::MAX_REPORTS_PER_SITE,
+            ));
+        if let Some(since) = since {
+            filter = filter.since(Timestamp::from_secs(since));
+        }
+        self.fetch(filter, "fetching replica reports about own sites")
+            .await
+    }
+
+    async fn send_report(&self, report: EventBuilder) -> Result<bool> {
+        let event = self.sign(report).await.context("signing replica report")?;
+        let output = self.publish_to_relays(&event).await?;
+        Ok(!output.success.is_empty())
+    }
+}
+
+impl<T: ReportRelay + Send + Sync> ReportRelay for std::sync::Arc<T> {
+    fn public_key(&self) -> PublicKey {
+        T::public_key(self)
+    }
+
+    async fn fetch_own_reports(&self, report_kind: u16) -> Result<Vec<Event>> {
+        T::fetch_own_reports(self, report_kind).await
+    }
+
+    async fn fetch_reports_about(
+        &self,
+        report_kind: u16,
+        author: PublicKey,
+        since: Option<u64>,
+    ) -> Result<Vec<Event>> {
+        T::fetch_reports_about(self, report_kind, author, since).await
+    }
+
+    async fn send_report(&self, report: EventBuilder) -> Result<bool> {
+        T::send_report(self, report).await
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RelaySendResult {
+    pub relay: String,
+    pub ok: bool,
+    pub error: Option<String>,
+}
+
+pub fn relay_send_results(
+    relays: &[String],
+    output: &Output<EventId, EventSendStatus, String>,
+) -> Vec<RelaySendResult> {
+    relays
+        .iter()
+        .map(|relay_url| {
+            let parsed = RelayUrl::parse(relay_url).ok();
+            let ok = parsed
+                .as_ref()
+                .is_some_and(|u| output.success.contains_key(u));
+            let error = if ok {
+                None
+            } else {
+                parsed.as_ref().and_then(|u| output.failed.get(u)).cloned()
+            };
+            RelaySendResult {
+                relay: relay_url.clone(),
+                ok,
+                error,
+            }
+        })
+        .collect()
+}
+
+pub fn print_relay_line(relay: &str, ok: bool) {
+    if ok {
+        println!("  \u{2713} {relay}");
+    } else {
+        println!("  \u{2717} {relay}");
+    }
+}
+
+pub fn print_relay_send_result_lines(results: &[RelaySendResult]) {
+    for result in results {
+        print_relay_line(&result.relay, result.ok);
+    }
+}
+
+fn reports_for_sites(events: Vec<Event>, kind: Kind, sites: &[Coordinate]) -> Vec<Event> {
+    let requested: HashSet<String> = sites.iter().map(|c| c.to_string()).collect();
+    events
+        .into_iter()
+        .filter(|e| {
+            e.kind == kind
+                && e.tags
+                    .iter()
+                    .any(|t| t.kind() == "a" && t.content().is_some_and(|a| requested.contains(a)))
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::super::fixtures::{follow_set, make_site_event, report, site_event_with};
+    use super::*;
+    use crate::nostr::site_coordinate;
+    use crate::test_support::{CID_A, CID_B, keys};
+
+    #[test]
+    fn relay_send_results_reports_success_and_failure_per_relay() {
+        let id = EventBuilder::new(Kind::TextNote, "")
+            .finalize(&keys())
+            .unwrap()
+            .id;
+        let mut output: Output<EventId, EventSendStatus, String> = Output::new(id);
+        let ok_url = RelayUrl::parse("wss://ok.example").unwrap();
+        let failed_url = RelayUrl::parse("wss://failed.example").unwrap();
+        output.success.insert(ok_url, EventSendStatus::Sent);
+        output
+            .failed
+            .insert(failed_url, "connection refused".to_string());
+
+        let relays = vec![
+            "wss://ok.example".to_string(),
+            "wss://failed.example".to_string(),
+            "wss://unknown.example".to_string(),
+        ];
+        let results = relay_send_results(&relays, &output);
+
+        assert_eq!(
+            results,
+            vec![
+                RelaySendResult {
+                    relay: "wss://ok.example".to_string(),
+                    ok: true,
+                    error: None,
+                },
+                RelaySendResult {
+                    relay: "wss://failed.example".to_string(),
+                    ok: false,
+                    error: Some("connection refused".to_string()),
+                },
+                RelaySendResult {
+                    relay: "wss://unknown.example".to_string(),
+                    ok: false,
+                    error: None,
+                },
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn the_relay_client_drops_events_over_the_size_or_tag_limits() {
+        let local = LocalRelayBuilder::default()
+            .max_event_size(1024 * 1024)
+            .build();
+        local.run().await.unwrap();
+        let url = local.url().await.to_string();
+        let k = keys();
+        let now = Timestamp::now().as_secs();
+        let small = make_site_event(&k, 35980, "small.example", CID_A, now);
+        let big = site_event_with(
+            &k,
+            "big.example",
+            "t",
+            &"a".repeat(budget::MAX_EVENT_BYTES as usize),
+        );
+        let tagged = EventBuilder::new(Kind::Custom(35980), "")
+            .tag(Tag::identifier("tagged.example"))
+            .tag(Tag::custom("cid", [CID_A.to_string()]))
+            .tags((0..budget::MAX_EVENT_TAGS).map(|i| Tag::custom("x", [i.to_string()])))
+            .finalize(&k)
+            .unwrap();
+        let seeder = Client::default();
+        seeder.add_relay(url.as_str()).await.unwrap();
+        seeder.connect().await;
+        for event in [&small, &big, &tagged] {
+            seeder.send_event(event).await.unwrap();
+        }
+        let stored = seeder
+            .fetch_events(Filter::new().kind(Kind::Custom(35980)))
+            .timeout(Duration::from_secs(10))
+            .await
+            .unwrap();
+        assert_eq!(stored.len(), 3);
+        seeder.shutdown().await;
+
+        let client = RelayClient::connect(Signer::Local(keys()), &[url])
+            .await
+            .unwrap();
+        let ids: Vec<EventId> = client
+            .fetch_site_events(35980, &[k.public_key()])
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|e| e.id)
+            .collect();
+        assert_eq!(ids, vec![small.id]);
+        client.shutdown().await;
+    }
+
+    #[test]
+    fn reports_for_sites_keeps_only_the_requested_coordinates() {
+        let author = keys().public_key();
+        let reporter = keys();
+        let wanted = report(&reporter, &author, "wanted.example", &[CID_A], 1);
+        let other = report(&reporter, &author, "other.example", &[CID_A], 1);
+        let sites = [site_coordinate(35980, &author, "wanted.example")];
+        let kept: Vec<EventId> =
+            reports_for_sites(vec![wanted.clone(), other], Kind::Custom(35981), &sites)
+                .into_iter()
+                .map(|e| e.id)
+                .collect();
+        assert_eq!(kept, vec![wanted.id]);
+    }
+
+    #[derive(Debug)]
+    struct IgnoresFilter;
+
+    impl QueryPolicy for IgnoresFilter {
+        fn admit_query<'a>(
+            &'a self,
+            query: &'a mut Filter,
+            _addr: &'a std::net::SocketAddr,
+        ) -> std::pin::Pin<Box<dyn Future<Output = QueryPolicyResult> + Send + 'a>> {
+            Box::pin(async move {
+                *query = Filter::new();
+                QueryPolicyResult::Accept
+            })
+        }
+    }
+
+    async fn relay_that_ignores_filters(events: &[Event]) -> (LocalRelay, RelayClient) {
+        let local = LocalRelayBuilder::default()
+            .query_policy(IgnoresFilter)
+            .build();
+        local.run().await.unwrap();
+        let url = local.url().await.to_string();
+        let seeder = Client::default();
+        seeder.add_relay(url.as_str()).await.unwrap();
+        seeder.connect().await;
+        for event in events {
+            seeder.send_event(event).await.unwrap();
+        }
+        seeder.shutdown().await;
+        let client = RelayClient::connect(Signer::Local(keys()), &[url])
+            .await
+            .unwrap();
+        (local, client)
+    }
+
+    #[tokio::test]
+    async fn fetches_drop_events_the_relay_returns_for_unrequested_authors() {
+        let now = Timestamp::now().as_secs();
+        let wanted = keys();
+        let stranger = keys();
+        let wanted_site = make_site_event(&wanted, 35980, "wanted.example", CID_A, now);
+        let stranger_site = make_site_event(&stranger, 35980, "stranger.example", CID_B, now);
+        let wanted_set = follow_set(&wanted, "swing", now, "wanted");
+        let stranger_set = follow_set(&stranger, "swing", now, "stranger");
+        let wanted_report = report(
+            &stranger,
+            &wanted.public_key(),
+            "wanted.example",
+            &[CID_A],
+            now,
+        );
+        let stranger_report = report(
+            &wanted,
+            &stranger.public_key(),
+            "stranger.example",
+            &[CID_B],
+            now,
+        );
+        let all = [
+            wanted_site.clone(),
+            stranger_site.clone(),
+            wanted_set.clone(),
+            stranger_set.clone(),
+            wanted_report.clone(),
+            stranger_report.clone(),
+        ];
+        let (_local, client) = relay_that_ignores_filters(&all).await;
+
+        let unfiltered = client
+            .fetch(
+                Filter::new()
+                    .kind(Kind::Custom(35980))
+                    .author(wanted.public_key()),
+                "probe",
+            )
+            .await
+            .unwrap();
+        assert!(unfiltered.iter().any(|e| e.id == stranger_site.id));
+
+        let sites = client
+            .fetch_site_events(35980, &[wanted.public_key()])
+            .await
+            .unwrap();
+        assert_eq!(
+            sites.iter().map(|e| e.id).collect::<Vec<_>>(),
+            vec![wanted_site.id]
+        );
+
+        let sets = client
+            .fetch_follow_sets("swing", &[wanted.public_key()])
+            .await
+            .unwrap();
+        assert_eq!(sets.len(), 1);
+        assert_eq!(sets[&wanted.public_key()].id, wanted_set.id);
+
+        let reports = client
+            .fetch_replica_reports(
+                35981,
+                &[site_coordinate(
+                    35980,
+                    &wanted.public_key(),
+                    "wanted.example",
+                )],
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            reports.iter().map(|e| e.id).collect::<Vec<_>>(),
+            vec![wanted_report.id]
+        );
+
+        let wanted_coordinate = [site_coordinate(
+            35980,
+            &wanted.public_key(),
+            "wanted.example",
+        )];
+        let by_stranger = client
+            .fetch_replica_reports_by(35981, &wanted_coordinate, &[stranger.public_key()])
+            .await
+            .unwrap();
+        assert_eq!(
+            by_stranger.iter().map(|e| e.id).collect::<Vec<_>>(),
+            vec![wanted_report.id]
+        );
+        let by_wanted = client
+            .fetch_replica_reports_by(35981, &wanted_coordinate, &[wanted.public_key()])
+            .await
+            .unwrap();
+        assert!(by_wanted.is_empty());
+
+        let referencing = client
+            .fetch_follow_set_authors_referencing("swing", &[wanted.public_key()])
+            .await
+            .unwrap();
+        assert!(referencing.is_empty());
+
+        client.shutdown().await;
+    }
+}

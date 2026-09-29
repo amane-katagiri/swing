@@ -1,4 +1,4 @@
-# Nostr イベントの検証と上限（nostr.rs）
+# Nostr イベントの検証と上限（nostr/）
 
 [`../architecture.md`](../architecture.md) の一部。形式と MUST/SHOULD は [`../protocol.md`](../protocol.md)、kind と `d` の予約は [`../extensions.md`](../extensions.md)。
 
@@ -31,7 +31,7 @@
 
 ## 未来ずれの許容（`nostr::MAX_FUTURE_SKEW`）
 
-`created_at` の未来ずれ許容は `nostr::MAX_FUTURE_SKEW`（900 秒）。`nostr::plausible_at(created_at, now)` がこれを超えるかどうかを判定する（`nostr.rs` にあり、`policy.rs` はここから読む）。保存の可否（`policy::decide`）だけでなく、「現在の版」やその時点で有効な Follow Set をどれとして選ぶかにも同じ基準を使う（`select_latest`・`choose_follow_set`・`newest_by_address`・`fetch_follow_set(s)` など。Follow Set の選び方は [`agent.md`](agent.md#follow-set-の選び方)）。
+`created_at` の未来ずれ許容は `nostr::MAX_FUTURE_SKEW`（900 秒）。`nostr::plausible_at(created_at, now)` がこれを超えるかどうかを判定する（`nostr/mod.rs` にあり、`policy.rs` はここから読む）。保存の可否（`policy::decide`）だけでなく、「現在の版」やその時点で有効な Follow Set をどれとして選ぶかにも同じ基準を使う（`select_latest`・`choose_follow_set`・`newest_by_address`・`fetch_follow_set(s)` など。Follow Set の選び方は [`agent.md`](agent.md#follow-set-の選び方)）。
 
 許容内の版どうしの新しさは次のように比べる。
 

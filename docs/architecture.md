@@ -7,9 +7,9 @@
 | このファイル | 構成、CLI の一覧、設定、テストと各ファイルへの索引 |
 | [`architecture/cli.md`](architecture/cli.md) | 各サブコマンドの動作と出力 |
 | [`architecture/agent.md`](architecture/agent.md) | mirror-agent の動作、ポリシー判定、レプリカ報告の送信、`state.json` |
-| [`architecture/signer.md`](architecture/signer.md) | 署名（`signer.rs`）: 秘密鍵か NIP-46 の署名アプリか、`remote-signer.json`、QR コードでのペアリング |
+| [`architecture/signer.md`](architecture/signer.md) | 署名（`signer/`）: 秘密鍵か NIP-46 の署名アプリか、`remote-signer.json`、QR コードでのペアリング |
 | [`architecture/nip05.md`](architecture/nip05.md) | NIP-05 検証（agent と publish で共通） |
-| [`architecture/nostr.md`](architecture/nostr.md) | Nostr イベントの検証（`nostr.rs`）、取得と表示の上限（`nostr::budget`）、レプリカ報告の信頼度 |
+| [`architecture/nostr.md`](architecture/nostr.md) | Nostr イベントの検証（`nostr/`）、取得と表示の上限（`nostr::budget`）、レプリカ報告の信頼度 |
 | [`architecture/kubo.md`](architecture/kubo.md) | MFS の使い方、Kubo RPC、Kubo プロセスの管理、Kubo のバージョン |
 | [`architecture/up.md`](architecture/up.md) | `swing up`（supervisor）: セットアップモード、終了要求・シグナル、多重起動の防止 |
 | [`architecture/stats.md`](architecture/stats.md) | リソース使用量の記録（`stats.rs`）: `swing up` が測る CPU・メモリ・IPFS の通信量、間隔と保持期間、OS ごとの取り方 |
@@ -49,7 +49,7 @@ swing/
     activity.rs      agent とダッシュボードが共有する最新の publish・レプリカ報告の時刻（`/api/activity` 用。メモリだけに持つ）
     main.rs          CLI エントリ (clap)
     config/          設定読み込み、サイズ・時間パーサ（mod.rs: 型・パーサ・`Config::load`、build.rs: セクションごとの解決関数に分けた `build_config`）
-    nostr.rs         relay 接続 / follow set 取得 / site event 購読・発行・パース / レプリカ報告の組み立て・パース
+    nostr/           Nostr イベントまわり（mod.rs: 未来ずれの許容・上限 `budget`・replaceable の新旧比較、client.rs: relay 接続・取得・購読・発行と送信結果、site.rs: site event の検証・組み立て・パース・最新版の選択、follow.rs: follow set の選択と p タグの取り出し、report.rs: レプリカ報告の組み立て・パース）
     ipfs.rs          Kubo RPC クライアント
     mfs.rs           MFS 上のパスの組み立て
     key.rs           key generate
@@ -60,11 +60,11 @@ swing/
     health.rs        版と MFS の突き合わせ（agent と status で共通）、status サブコマンド
     publish.rs       publish サブコマンド
     publish/checks.rs publish 前後のサイトの確認（ドットファイル・サイズ・同じ内容。純粋関数）
-    mirror.rs        mirror list/add/remove, sites サブコマンド
+    mirror/          mirror list/add/remove, sites サブコマンド（mod.rs: 値を集める関数と CLI の入口、set.rs: Follow Set の編集 `MirrorSet`、print.rs: CLI の表示、time.rs: UTC 日時の表示）
     replicas.rs      レプリカ報告の集計、replicas サブコマンド
-    webring.rs       Follow Set のたどり方とグラフの組み立て・出力、webring サブコマンド
+    webring/         Follow Set のたどり方とグラフの組み立て、webring サブコマンド（mod.rs）、テキスト・DOT・Mermaid の出力（render.rs）
     nip05.rs         NIP-05 検証
-    signer.rs        署名（Signer: 秘密鍵か NIP-46 の署名アプリ）、remote-signer.json、QR コードでのペアリング。詳細は architecture/signer.md
+    signer/          署名（mod.rs: Signer（秘密鍵か NIP-46 の署名アプリ）・RemoteSigner・remote-signer.json、pair.rs: QR コードでのペアリング）。詳細は architecture/signer.md
     pair.rs          `swing signer pair`（ターミナルに QR コードを出して署名アプリとペアリングする）。詳細は architecture/cli.md
     up.rs            `swing up` supervisor（Kubo の起動・監視、agent の起動・再起動、バックオフ）。詳細は architecture/up.md
     stats.rs         リソース使用量の記録（`swing up` の中で 60 秒ごとに測ってメモリに 24 時間分持つ）と stats サブコマンド。stats/process.rs が OS ごとにプロセスの CPU 時間とメモリを読む。詳細は architecture/stats.md
@@ -110,7 +110,7 @@ swing/
   docs/                役割は AGENTS.md を参照
 ```
 
-`mirror.rs`・`health.rs`・`replicas.rs`・`webring.rs` は、relay/Kubo とやり取りして値を返す関数（`collect_mirror_list`・`collect_sites`・`collect_status`・`replicas::collect`・`webring::collect`）と、表示する関数とに分かれている。ダッシュボードの API ハンドラは同じ関数を呼び、DTO に変換する。CLI は `sites`・`replicas`・`webring`・`mirror list` ではこれらを直接呼び、`status`・`stats`・`mirror add`/`remove` ではダッシュボード API 経由で `swing up` 側に呼ばせる。`publish.rs` は段階ごとの関数（`resolve_modes`・`check_nip05`・`LocalChecks::run`・`add_and_measure`・`check_unchanged`・`sign_and_send`・`prune_old_versions_collect`）を CLI とダッシュボードで共有する。
+`mirror/`・`health.rs`・`replicas.rs`・`webring/` は、relay/Kubo とやり取りして値を返す関数（`collect_mirror_list`・`collect_sites`・`collect_status`・`replicas::collect`・`webring::collect`）と、表示する関数とに分かれている。ダッシュボードの API ハンドラは同じ関数を呼び、DTO に変換する。CLI は `sites`・`replicas`・`webring`・`mirror list` ではこれらを直接呼び、`status`・`stats`・`mirror add`/`remove` ではダッシュボード API 経由で `swing up` 側に呼ばせる。`publish.rs` は段階ごとの関数（`resolve_modes`・`check_nip05`・`LocalChecks::run`・`add_and_measure`・`check_unchanged`・`sign_and_send`・`prune_old_versions_collect`）を CLI とダッシュボードで共有する。
 
 サブコマンドごとに relay/Kubo へ直接つなぐか、動いている `swing up` のダッシュボード API を経由するかは [`architecture/cli.md#共通`](architecture/cli.md#共通) を参照。
 

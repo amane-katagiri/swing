@@ -1,4 +1,4 @@
-# 署名（signer.rs）
+# 署名（signer/）
 
 SWING が出すイベント（サイトイベント・Follow Set・レプリカ報告）の署名は、すべて `signer::Signer` を通す。秘密鍵を設定に置く方法と、NIP-46 の署名アプリ（remote signer）に署名をリクエストする方法の 2 通りがある。イベントの形式はどちらでも同じで、[`../protocol.md`](../protocol.md) は署名の方法に依存しない。
 
@@ -11,7 +11,7 @@ SWING が出すイベント（サイトイベント・Follow Set・レプリカ�
 
 - `Signer::load(config)` が読み込み規則を持つ。秘密鍵だけあれば `Local`、`remote-signer.json` だけあれば `Remote`、どちらも無ければ `None`（`swing up` はセットアップモード。[`up.md#セットアップモード鍵未設定`](up.md#セットアップモード鍵未設定)）、両方あればエラー（どちらかを消すよう促す）。`Signer::require` は `None` をエラーにする。
 - `public_key()` は署名せずに自分の公開鍵を返す。`Remote` はペアリング時に署名アプリから受け取った公開鍵をファイルに持っていて、それを使う（`get_public_key` を送らない）。
-- `RelayClient`（`nostr.rs`）は `Signer` を持ち、`RelayClient::sign(builder)` で署名する。publish（`publish::sign_and_send`）・Follow Set の更新（`mirror::publish_if_changed`）・レプリカ報告（`ReportRelay::send_report`）の 3 か所がこれを呼ぶ。
+- `RelayClient`（`nostr/client.rs`）は `Signer` を持ち、`RelayClient::sign(builder)` で署名する。publish（`publish::sign_and_send`）・Follow Set の更新（`mirror::publish_if_changed`）・レプリカ報告（`ReportRelay::send_report`）の 3 か所がこれを呼ぶ。
 - `up::run` は呼ばれるたびに（プロセス内再起動を含む）`Signer::load` を 1 回呼び、`dashboard::AppState.signer` に置く。agent（`agent::lifecycle::run_until`）は再起動のたびにそれを使い回し、`RelayClient::connect` に渡す。agent の終了時は relay の `Client` だけを閉じ、署名アプリとの接続は `up::run` の最後に `Signer::shutdown` で閉じる。
 - CLI（`sites`・`replicas`・`webring`・`mirror list`・`publish`）はコマンドごとに `Signer::require` し、`RelayClient::shutdown` で relay と署名アプリの両方の接続を閉じる。`replicas`・`webring`・`publish` は取得や送信がエラーでも閉じてから終わるが、`sites`・`mirror list` は取得がエラーなら閉じずにそのまま終わる。`swing up` と同じアプリ鍵を使うので、署名アプリ側の許可はそのまま効く。
 
@@ -43,7 +43,7 @@ SWING が出すイベント（サイトイベント・Follow Set・レプリカ�
 
 ## ペアリング（`Pairing`）
 
-QR コードを使う `nostrconnect://`（クライアント起点）の接続だけを実装している。
+QR コードを使う `nostrconnect://`（クライアント起点）の接続だけを実装している（`signer/pair.rs`。型と関数は `signer::` から再公開している）。
 
 1. `Pairing::start(PairingRequest)` がアプリ鍵と 16 バイトの secret を作り、`nostrconnect_uri` で URI を組み立てて、ペアリングのタスクを spawn する。URI のクエリは `relay`（複数可）・`secret`・`perms`・`name=SWING`・`metadata={"name":"SWING"}`。
 2. `PairingRequest::for_config` が `[nostr]` の kind から perms・probe の kind と、`PAIRING_TIMEOUT`・`RELAY_CONNECT_TIMEOUT`・`PROBE_TIMEOUT` を組み立てる（ダッシュボードと `swing signer pair` で共通）。relay は `parse_pairing_relays` で確かめる（空白を除いて 1〜`MAX_PAIRING_RELAYS`（5）個、`ws`/`wss` の URL）。`perms` は `requested_perms(kinds)` が作り、`get_public_key` と、SWING が署名する 3 種類（`[nostr].replica_event_kind`・`[nostr].site_event_kind`・`30000`）の `sign_event:<kind>` を並べる。perms はリクエストでしかなく、自動で許可するかどうかは署名アプリが決める。
