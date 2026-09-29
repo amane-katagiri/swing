@@ -13,6 +13,41 @@ use crate::state::{self, SiteKey, State, Verification, VersionRecord};
 use super::{Agent, now_secs};
 
 const NIP05_ERROR_CACHE_TTL: u64 = 900;
+const REJECTED_PER_ACCOUNT: usize = 50;
+
+#[derive(Default)]
+pub(super) struct Rejected {
+    cids: std::collections::BTreeMap<SiteKey, (String, u64)>,
+    next: u64,
+}
+
+impl Rejected {
+    fn contains(&self, key: &str, cid: &str) -> bool {
+        self.cids.get(key).is_some_and(|(c, _)| c == cid)
+    }
+
+    fn remove(&mut self, key: &str) {
+        self.cids.remove(key);
+    }
+
+    fn insert(&mut self, key: SiteKey, cid: String) {
+        self.next += 1;
+        let account = state::split_site_key(&key).map(|(pk, _)| pk.to_string());
+        self.cids.insert(key, (cid, self.next));
+        let Some(account) = account else {
+            return;
+        };
+        let entries: Vec<(&SiteKey, u64)> = state::account_entries(&self.cids, &account)
+            .map(|(k, (_, seq))| (k, *seq))
+            .collect();
+        if entries.len() > REJECTED_PER_ACCOUNT
+            && let Some(oldest) = entries.into_iter().min_by_key(|(_, seq)| *seq)
+        {
+            let oldest = oldest.0.clone();
+            self.cids.remove(&oldest);
+        }
+    }
+}
 
 struct Storing<'a> {
     paths: &'a std::sync::Mutex<std::collections::HashSet<String>>,
@@ -230,7 +265,7 @@ impl<C: KuboStore, N: Nip05Verify, R: ReportRelay> Agent<C, N, R> {
             );
             return false;
         }
-        if self.rejected.lock().unwrap().get(key) == Some(&ev.cid) {
+        if self.rejected.lock().unwrap().contains(key, &ev.cid) {
             debug!(cid = %ev.cid, site = %ev.d, "skip: this cid was already rejected after fetch");
             return false;
         }
@@ -361,6 +396,28 @@ mod tests {
     use std::collections::HashSet;
 
     use crate::nip05::VerificationResult;
+
+    #[test]
+    fn rejected_cids_keep_only_the_newest_per_account() {
+        let mut rejected = Rejected::default();
+        let other = state::site_key("bb", "x.example");
+        rejected.insert(other.clone(), "keep".into());
+        for i in 0..=REJECTED_PER_ACCOUNT {
+            rejected.insert(
+                state::site_key("aa", &format!("{i}.example")),
+                format!("c{i}"),
+            );
+        }
+        assert!(!rejected.contains(&state::site_key("aa", "0.example"), "c0"));
+        assert!(rejected.contains(&state::site_key("aa", "1.example"), "c1"));
+        let last = REJECTED_PER_ACCOUNT;
+        assert!(rejected.contains(
+            &state::site_key("aa", &format!("{last}.example")),
+            &format!("c{last}")
+        ));
+        assert!(rejected.contains(&other, "keep"));
+        assert_eq!(rejected.cids.len(), REJECTED_PER_ACCOUNT + 1);
+    }
 
     #[tokio::test]
     async fn stores_a_new_site_under_its_versioned_path() {

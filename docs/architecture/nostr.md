@@ -6,7 +6,7 @@
 
 この実装の判定:
 
-- `d`: 空、253 バイト超、制御文字か見えない書式文字（U+00AD、U+200B–U+200F、U+2028–U+202E、U+2066–U+2069、U+FEFF。`nostr::is_unsafe_char`）を含む場合はイベント全体を拒否する。
+- `d`: 空、253 バイト超、制御文字（C0・DEL・C1）か見えない書式文字（U+00AD、U+061C、U+180E、U+200B–U+200F、U+2028–U+202E、U+2060–U+2069、U+FEFF、U+FFF9–U+FFFB、U+E0000–U+E007F。`nostr::is_unsafe_char`。ダッシュボードの `web/util.js` の `UNSAFE_UNICODE_RE` と同じ範囲）を含む場合はイベント全体を拒否する。
 - `cid`: 規則・正規化・以後の扱いは次の 3 点。
   - 規則: `cid` クレートでパースできない、またはコーデックが dag-pb（`0x70`）でなければイベント全体を拒否する（理由は [`../protocol.md`](../protocol.md)）。これはパース時の構文チェックで、取得した root が UnixFS のディレクトリであることは別に確かめる（[`agent.md` の「保存の順序」5](agent.md#保存の順序)）。
   - 正規化: 通った値を `nostr::canonical_cid` で CIDv1・base32 に変換する。レプリカ報告の `cid` タグ（下記）と、`swing publish` が Kubo から受け取った CID（`publish::add_and_measure`）も同じ関数を通す。
@@ -23,11 +23,11 @@
   - `fetch_replica_reports_by`: `fetch_replica_reports` と同じ条件に加え、作者が要求した報告者に含まれること。
   - `fetch_follow_set_authors_referencing`: 作者を指定しない取得なので、`p` タグのどれかが要求した相手に含まれること。
   - `fetch_own_reports`（agent のレプリカ報告の同期）: 呼び出し側（`agent::replicas`）が作者が自分であることを確かめ、kind は `parse_replica_report` が確かめる。
-  - `fetch_reports_about`（agent が他の報告者からの報告の時刻を記録する）: 呼び出し側（`agent::replicas`）が `p` タグに自分があること・報告者が自分でないことを確かめ、kind と作者は `parse_replica_report` の結果で確かめる。
+  - `fetch_reports_about`（agent が他の報告者からの報告の時刻を記録する）: kind が `[nostr].replica_event_kind` で、作者が要求した報告者に含まれ、`p` タグに要求した相手があること。呼び出し側（`agent::replicas`）はさらに報告者が `Chosen` であること（自分は除く）を確かめ、作者は `parse_replica_report` の結果で確かめる。
   - 購読（`subscribe_site_events`）で届くサイトイベントは、agent の `submit` が Follow Set の対象かを確かめて捨てる（[`agent.md` の「並行処理」](agent.md#並行処理)）。
 - レプリカ報告: `d` を最初の `:` で分け、作者が小文字 hex の公開鍵でない、サイトの `d` が上の `d` の条件を満たさない、`a` の値が `<site_event_kind>:<作者>:<サイトの d>` と一致しない、`cid` タグのどれかが上の `cid` の判定を満たさない、`expiration` タグがあるのに `u64` としてパースできない、`content` が `MAX_CONTENT_BYTES` を超える、のいずれかなら報告全体を拒否する。`cid` タグは 0 個でもよい（取り下げ）。`expiration` が無ければ `None` として読み、期限切れかどうかの判定は使う側（`ReplicaReport::counts_at`）が行う。
 - 署名は nostr-sdk が受信時に検証する。
-- 大きさ: `RelayClient` の nostr-sdk クライアントは `nostr::bounded_client` で作り、relay から受け取るメッセージを 128 KiB（`MAX_RELAY_MESSAGE_BYTES`）、イベントを 64 KiB（`MAX_EVENT_BYTES`）・タグ 600 個（`MAX_EVENT_TAGS`）までに制限する。超えたものは nostr-sdk が受信時に捨てる。nostr-sdk の既定（メッセージ 5 MB・イベントは無制限・タグ 2000 個）のままだと、取得 1 回で最大 20,000 件を溜めるのでメモリを使い切られ得る。signer アプリとの通信（[`signer.md`](signer.md)）も同じ関数で作り、NIP-44 の暗号文が入るようにイベントの上限だけ 128 KiB にする。
+- 大きさ: `RelayClient` の nostr-sdk クライアントは `nostr::bounded_client` で作り、relay から受け取るメッセージを 128 KiB（`MAX_RELAY_MESSAGE_BYTES`）、イベントを 64 KiB（`MAX_EVENT_BYTES`）・タグ 600 個（`MAX_EVENT_TAGS`）までに制限する。超えたものは nostr-sdk が受信時に捨てる。nostr-sdk の既定（メッセージ 5 MB・イベントは無制限・タグ 2000 個）のままだと、取得 1 回で最大 10,000 件を溜めるのでメモリを使い切られ得る。signer アプリとの通信（[`signer.md`](signer.md)）も同じ関数で作り、NIP-44 の暗号文が入るようにイベントの上限だけ 128 KiB にする。
 
 ## 未来ずれの許容（`nostr::MAX_FUTURE_SKEW`）
 
@@ -36,11 +36,13 @@
 許容内の版どうしの新しさは次のように比べる。
 
 - Follow Set は NIP-01 の置き換え可能イベントの規則（`created_at` が大きい方、同じなら `id` が小さい方）。
-- サイトごとの最新のサイトイベント（`select_latest`）も同じ規則。`SiteEvent::id` にイベントの `id` を持つ。
+- サイトごとの最新のサイトイベント（`select_latest`）も同じ規則。`SiteEvent::id` にイベントの `id` を持つ。比べ方は `nostr/mod.rs` の 1 か所（`is_newer_replaceable` と `select_latest` が共有）にある。
+
+サイトイベントの「取得 → パース → サイトごとの最新を選ぶ」は `RelayClient::fetch_latest_sites(site_event_kind, authors)` にまとめてあり、agent の過去分の取り込み・`mirror::collect_sites`・`replicas::collect`・`webring::collect` が使う。パースに失敗したイベントは debug ログを出して捨てる。
 
 ## 取得と表示の上限（`nostr::budget`）
 
-サイトイベント・レプリカ報告（既定の kind 35980・35981。`[nostr].site_event_kind`・`replica_event_kind` で変えられる）と Follow Set（kind 30000）は誰でも捨て鍵で出せるので、relay から読む経路は `nostr::budget` の定数で件数を打ち切る。どの定数がどの経路に効くかは下の表のとおりで、表示用の経路（`swing sites` / `replicas` / `webring`、ダッシュボードの `/api/sites` / `/api/replicas` / `/api/webring`）だけでなく agent の取り込みと `/api/publish/sites` にも一部が効く。relay からの取得（`fetch_events`）は 30 秒でタイムアウトする。
+サイトイベント・レプリカ報告（既定の kind 35980・35981。`[nostr].site_event_kind`・`replica_event_kind` で変えられる）と Follow Set（kind 30000）は誰でも捨て鍵で出せるので、relay から読む経路は `nostr::budget` の定数で件数を打ち切る。どの定数がどの経路に効くかは下の表のとおりで、表示用の経路（`swing sites` / `replicas` / `webring`、ダッシュボードの `/api/sites` / `/api/replicas` / `/api/webring`）だけでなく agent の取り込みと `/api/publish/sites` にも一部が効く。relay からの取得（`RelayClient::fetch`）は nostr-sdk の `stream_events` で受け、30 秒でタイムアウトする。nostr-sdk の `fetch_events` は溜めた件数が上限（既定 10,000）を超えると全体をエラーにして捨てるので使わない。代わりに受け取りながら重複を除き、`MAX_RELAY_FETCH_LIMIT` 件を超えたら `created_at` の古いものから捨てて、新しい方の `MAX_RELAY_FETCH_LIMIT` 件だけを返す（relay 全体の合計に対する上限）。
 
 | 定数 | 値 | 適用箇所 |
 |---|---|---|
@@ -49,15 +51,16 @@
 | `MAX_REPORTS_PER_SITE` | 200 | `replicas::collect_reports`。数える報告を [「レプリカ報告の信頼度」](#レプリカ報告の信頼度replicastier) の順に並べ替えて、サイトごとに先頭 200 件を残す。`SiteReplicas.reports` は残した件数、`SiteReplicas.dropped` は切り捨てた件数（`swing replicas`・`/api/replicas`・ダッシュボードはここから「…and N more」を出す） |
 | `MAX_CRAWL_NODES` | 1000 | `webring::crawl`。`Crawl.depths` がこれを超えないように新規ノードの追加を止め、弾いた件数を `Crawl.over_budget`（テキスト出力・`/api/webring` の `over_budget`）に積む。追加しなかったノードは次のレベルの取得にも現れない |
 | `MAX_REFERENCING_LISTED` | 50 | `webring::crawl`。`#p` で見つかる「起点を名指ししているだけの相手」（`Crawl.referencing`）の一覧を先頭 50 件までに切り詰める。超えた件数は `Crawl.referencing_dropped` に積む。たどり方は [`cli.md#webring`](cli.md#webring) |
-| `MAX_RELAY_FETCH_LIMIT` | 20,000 | `nostr::capped_limit` の上限値。個々の `limit()` 計算がどれだけ大きくなっても、relay 1 台への 1 回の REQ に付ける `limit` はこれを超えない |
+| `MAX_RELAY_FETCH_LIMIT` | 10,000 | `nostr::capped_limit` の上限値。個々の `limit()` 計算がどれだけ大きくなっても、relay 1 台への 1 回の REQ に付ける `limit` はこれを超えない。1 回の取得で全 relay から受け取って残す件数の上限も同じ値（上記） |
+| `COORDINATES_PER_FILTER` | 250 | `fetch_replica_reports`・`fetch_replica_reports_by` が 1 つのフィルタの `#a` に入れる座標の数。超える分は組に分けて順に REQ を出す |
 
 表の外に、数える報告の古さの上限 `nostr::MAX_REPORT_AGE`（7 日。`budget` モジュールではなく `nostr` 直下）がある。`ReplicaReport::counts_at` が使い、`created_at` からこれを超えて古い報告は `expiration` に関わらず数えない。自分が出す報告の有効期間 `[agent].report_ttl` の上限でもある（[`../architecture.md`](../architecture.md#設定と環境変数)の検証）。
 
 relay への `Filter::limit` は `nostr::capped_limit(count, per)`（= `min(count * per, MAX_RELAY_FETCH_LIMIT)`）で、取得先の件数（作者数・サイト数など）に経路ごとの倍率を掛けて決める。
 
-作者（または `#p` の相手）を並べる取得（`fetch_site_events`・`fetch_follow_sets`・`fetch_follow_set_authors_referencing`・`fetch_replica_reports_by`）は、`AUTHORS_PER_FILTER`（50）人ずつに分けて順に REQ を出す（`RelayClient::fetch_by_authors`）。`limit` もその組の人数から決まるので、1 人が大量のイベントを出しても押し出せるのは同じ組の相手だけになる。
+作者（または `#p` の相手）を並べる取得（`fetch_site_events`・`fetch_follow_sets`・`fetch_follow_set_authors_referencing`・`fetch_replica_reports_by`・`fetch_reports_about`）は、`AUTHORS_PER_FILTER`（50）人ずつに分けて順に REQ を出す（`RelayClient::fetch_by_authors`）。`limit` もその組の人数から決まるので、1 人が大量のイベントを出しても押し出せるのは同じ組の相手だけになる。
 
-`limit` は relay ごとに付くので、合計の取得件数は relay 数倍になり得る。`fetch_replica_reports` は複数サイトの座標を 1 つのフィルタにまとめるため、1 サイトの報告が多いと同じ問い合わせの他のサイトの報告が押し出されることがある（ダッシュボードは `key`/`root` を 1 リクエストあたり 100 件までに絞る）。
+`limit` は relay ごとに付くので、合計の取得件数は relay 数倍になり得る。`fetch_replica_reports` は複数サイトの座標（`COORDINATES_PER_FILTER` 件まで）を 1 つのフィルタにまとめるため、1 サイトの報告が多いと同じ組の他のサイトの報告が押し出されることがある（ダッシュボードは `key`/`root` を 1 リクエストあたり 100 件までに絞る）。
 
 ## レプリカ報告の信頼度（`replicas::Tier`）
 
@@ -66,7 +69,7 @@ relay への `Filter::limit` は `nostr::capped_limit(count, per)`（= `min(coun
 - `replicas::Chosen`: 作者ごとの Follow Set とオペレータ自身の Follow Set をまとめて持つ。作者ごとの Follow Set は、どちらの作り方でも 1 回の `fetch_follow_sets(mirror_set, authors)` でまとめて取る。
   - `replicas::fetch_chosen`（`replicas::collect`。`swing replicas` / `/api/replicas`）: オペレータの Follow Set を relay から取得する。`authors` は呼び出し元が渡したもの（ダッシュボード API では最大 100 件（`MAX_KEYS`）、CLI の `swing replicas` には上限なし）。
   - `replicas::fetch_chosen_with_own`（`mirror::collect_sites`）: 取得済みの Follow Set の対象（`targets`。`MAX_FOLLOW_SET_ENTRIES` 件まで）をそのまま作者とオペレータの集合に使い、オペレータの Follow Set は取り直さない。
-- 集計（`replicas::fetch_for_sites` が取得し `replicas::collect_reports` が数える）: サイトイベントの座標（`<[nostr].site_event_kind>:<作者>:<d>`）を `#a` に入れて報告を取得する。これとは別に、信頼できる報告者（`Chosen::trusted_reporters`: サイトの作者、オペレータの Follow Set、その作者たちの Follow Set の順に重複を除き、`MAX_TRUSTED_REPORTERS`（1000）人まで）を `authors` に入れた取得（`fetch_replica_reports_by`）も行い、両方を合わせる。`#a` だけの取得は `limit` があるので、捨て鍵の報告が大量にあると信頼できる報告者の報告が relay の返す範囲から押し出され得るためである。合わせたものから報告者・`d` ごとに最新の 1 件だけを残す（`newest_by_address`。未来ずれの許容を超えるものは先に捨てる）。パースに失敗したもの（[検証](#検証)）と `cid` タグが無いものは数えない。残りは `ReplicaReport::counts_at(now)` が true のもの（`created_at` が未来ずれの許容以内、`now - created_at` が `MAX_REPORT_AGE` 以内、`expiration` が無いか `now` より先）だけを数える。
+- 集計（`replicas::fetch_for_sites` が取得し `replicas::collect_reports` が数える）: サイトイベントの座標（`<[nostr].site_event_kind>:<作者>:<d>`）を `#a` に入れて報告を取得する。これとは別に、信頼できる報告者（`Chosen::trusted_reporters`: サイトの作者、オペレータの Follow Set、その作者たちの Follow Set の順に重複を除き、`MAX_TRUSTED_REPORTERS`（1000）人まで）を `authors` に入れた取得（`fetch_replica_reports_by`）も並行して行い、両方を合わせる。片方の取得が失敗しても warn を出してもう片方の結果だけで数え、両方失敗したときだけエラーにする。`#a` だけの取得は `limit` があるので、捨て鍵の報告が大量にあると信頼できる報告者の報告が relay の返す範囲から押し出され得るためである。合わせたものから報告者・`d` ごとに最新の 1 件だけを残す（`newest_by_address`。未来ずれの許容を超えるものは先に捨てる）。パースに失敗したもの（[検証](#検証)）と `cid` タグが無いものは数えない。残りは `ReplicaReport::counts_at(now)` が true のもの（`created_at` が未来ずれの許容以内、`now - created_at` が `MAX_REPORT_AGE` 以内、`expiration` が無いか `now` より先）だけを数える。
 - `collect_reports` は、`MAX_REPORTS_PER_SITE` で切り詰める前に、サイトごとの報告を `(tier, created_at 降順, reporter の hex)` の順に並べ替える。tier が高い（`Author` → `Chosen` → `Other`）報告者ほど、`created_at` が古くても切り詰めで残る。
 - 表示用の報告者一覧（`replicas::replicas_of`。`swing replicas` と `/api/replicas` の `reporters`）は `(tier, 最新版を持つものが先, reporter の hex)` の順。
 - カウント（`replicas::count_replicas`）: 現在の版の CID を持つ報告のうち、tier が `Author`・`Chosen` のものが `SiteReplicas.replicas`（CLI・DTO では単に `replicas`）、tier が `Other` のものが `SiteReplicas.unverified`。表示は `replicas::format_replica_counts`（`"3"` / `"3 (+12 unverified)"`。`unverified` が 0 なら括弧を出さない）。

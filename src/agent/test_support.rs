@@ -56,6 +56,7 @@ pub(super) struct FakeRelayState {
     pub(super) fail_sign: bool,
     pub(super) send_attempts: usize,
     pub(super) about_since: Vec<Option<u64>>,
+    pub(super) about_reporters: Vec<Vec<PublicKey>>,
 }
 
 pub(super) struct FakeRelay {
@@ -89,10 +90,12 @@ impl ReportRelay for FakeRelay {
         &self,
         _report_kind: u16,
         author: PublicKey,
+        reporters: &[PublicKey],
         since: Option<u64>,
     ) -> anyhow::Result<Vec<Event>> {
         let mut s = self.s.lock().unwrap();
         s.about_since.push(since);
+        s.about_reporters.push(reporters.to_vec());
         if s.fail_fetch {
             anyhow::bail!("simulated fetch failure");
         }
@@ -285,6 +288,15 @@ impl Fixture {
             .collect();
         out.sort();
         out
+    }
+
+    pub(super) async fn choose_reporters(&self, reporters: &[PublicKey]) {
+        let event = EventBuilder::new(Kind::Custom(30000), "")
+            .tag(Tag::identifier(&self.agent.config.nostr.mirror_set))
+            .tags(reporters.iter().map(|pk| Tag::public_key(*pk)))
+            .finalize(&self.agent.reporter.keys)
+            .unwrap();
+        self.agent.state.lock().await.follow_set = Some(event);
     }
 
     pub(super) fn own_key(&self, d: &str) -> SiteKey {

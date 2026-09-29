@@ -78,14 +78,15 @@ Windows の `swing service stop` もこの `stop::run` を使う（失敗した�
 - `add` / `remove` は `p` 以外のタグの値と `content`（NIP-51 の暗号化 private 部分）を保持して再署名する。タグは `d` → その他 → `p` の順に並べ直す。
 - Follow Set が無い状態の `add` は `["title", "SWING mirror list"]` 付きで新規作成する。
 - 追加済みの `add`、未登録の `remove` は no-op と報告し、変更が無ければ publish しない。
+- 再署名する Follow Set の `created_at` は現在時刻と「元の Follow Set の `created_at` + 1」の大きい方（`mirror::set::next_created_at`）。元が未来ずれの許容内で先の時刻でも、NIP-01 の比較で新しい方になる。
 - `add` は結果の `p` タグのうち公開鍵としてパースできたものの数が `MAX_FOLLOW_SET_ENTRIES`（[取得と表示の上限](nostr.md#取得と表示の上限nostrbudget)）を超えるならエラーで終了し、publish しない（ダッシュボード API は 409 を返し、CLI はその `error` の文言 `would grow the follow set to <N> entries, over the 500-entry limit; remove some first` を表示する）。
-- `list` は npub と hex を併記する。
+- `list` は npub と hex を併記する。`title` タグは `sites` の `title:` 行と同じ無害化（下記）をして `Title:` に表示する。
 - relay の Follow Set と `state.json` の `follow_set` を比べて新しい方を使う（検証条件は [agent の Follow Set の選び方](agent.md#follow-set-の選び方) と同じ）。保存済みの方を使ったときは `(relays returned an older follow set; ...)` か `(follow set not found on relays; ...)` を表示する。state.json は読むだけ。`sites` も同じ。
 - `list` は relay に直接つなぐ（`mirror::collect_mirror_list`）。`add` / `remove` は `POST /api/mirror/add` / `/api/mirror/remove`（body は `{"keys": [...]}`）を叩き、Follow Set の操作は `swing up` 側が保持する relay 接続（`dashboard::AppState`）で行う（[共通](#共通)）。`remove` で Follow Set がそもそも見つからない場合は `(no follow set found); no changes` とだけ表示して終わる。
 
 ## sites
 
-- Follow Set の対象者ごとに、サイトごとの最新のサイトイベントを 1 行（`d`、`cid`、`url`、`size`、`created_at`、NIP-05 検証結果、`replicas`、`[stored]` / `[not stored]`）表示する。`title` タグが有効なら次の行に `    title: ` として、`content` が空でなければ続けて `    message: ` として、それぞれ制御文字を空白に置き換え、前後の空白を削り、200 文字を超える分を `…` に置き換えて表示する。検証結果と保存状況は `state.json` から読む。`replicas` は [replicas](#replicas) と同じ集計の最新版のレプリカ数で、`replicas::format_replica_counts` により `3` または `3 (+12 unverified)`（未検証の報告者がいるとき）の形になる（[「レプリカ報告の信頼度」](nostr.md#レプリカ報告の信頼度replicastier)）。信頼度の判定には Follow Set の対象全員分をまとめて 1 回だけ取得する。レプリカ報告の取得に失敗したら `(fetching replica reports failed: ...)` を表示して `-` にする。
+- Follow Set の対象者ごとに、サイトごとの最新のサイトイベントを 1 行（`d`、`cid`、`url`、`size`、`created_at`、NIP-05 検証結果、`replicas`、`[stored]` / `[not stored]`）表示する。`title` タグが有効なら次の行に `    title: ` として、`content` が空でなければ続けて `    message: ` として、それぞれ制御文字を空白に置き換え、見えない書式文字（[`nostr::is_unsafe_char`](nostr.md#検証)）を取り除き、前後の空白を削り、200 文字を超える分を `…` に置き換えて表示する（`mirror::print::sanitize_display_text`）。検証結果と保存状況は `state.json` から読む。`replicas` は [replicas](#replicas) と同じ集計の最新版のレプリカ数で、`replicas::format_replica_counts` により `3` または `3 (+12 unverified)`（未検証の報告者がいるとき）の形になる（[「レプリカ報告の信頼度」](nostr.md#レプリカ報告の信頼度replicastier)）。信頼度の判定には Follow Set の対象全員分をまとめて 1 回だけ取得する。レプリカ報告の取得に失敗したら `(fetching replica reports failed: ...)` を表示して `-` にする。
   - `size` 列: 保存済みの版の実測値（`/api/sites` の `stored_size` と同じ値。[`dashboard/http-api.md#get-apisites`](dashboard/http-api.md#get-apisites)）があれば数値で、無ければイベントの自己申告の `size` タグを括弧書き（例 `(12345)`）で、どちらも無ければ `-` を出す。
 - 続けて、state に版があるのに Follow Set にいない pubkey を `Unfollowed but still stored` 見出しの下に `[unfollowed]` 付きで、サイトごとに state の最新版を 1 行（`url` は `-`）表示する。Follow Set が見つからなくても表示する。見出しには `remove_on_unfollow` と Follow Set が見つかったかどうかに応じて、次の poll で消えるか・残すか・Follow Set が見つかるまで消さないかを添える（いつ消えるかは [agent の unfollow](agent.md#unfollow)）。
 - 表示件数は [取得と表示の上限](nostr.md#取得と表示の上限nostrbudget)（`MAX_FOLLOW_SET_ENTRIES`・`MAX_SITES_PER_AUTHOR_LISTED`）で打ち切る。

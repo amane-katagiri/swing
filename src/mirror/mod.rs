@@ -123,13 +123,18 @@ async fn publish_if_changed(
     relay: &RelayClient,
     config: &Config,
     set: &MirrorSet,
+    previous: Option<&Event>,
     changed: &[PublicKey],
 ) -> Result<(bool, Vec<nostr::RelaySendResult>)> {
     if changed.is_empty() {
         return Ok((false, Vec::new()));
     }
+    let created_at = set::next_created_at(Timestamp::now().as_secs(), previous);
     let event = relay
-        .sign(set.build_event_builder(&config.nostr.mirror_set))
+        .sign(
+            set.build_event_builder(&config.nostr.mirror_set)
+                .custom_created_at(Timestamp::from_secs(created_at)),
+        )
         .await
         .context("signing mirror set event")?;
     let output = relay.publish_to_relays(&event).await?;
@@ -205,7 +210,8 @@ async fn apply_change(
     if op == MirrorOp::Add {
         ensure_within_follow_set_cap(set.pubkeys().len())?;
     }
-    let (published, relay_results) = publish_if_changed(relay, config, &set, &changed).await?;
+    let (published, relay_results) =
+        publish_if_changed(relay, config, &set, existing.as_ref(), &changed).await?;
     Ok(MirrorChange {
         note,
         follow_set_found,
@@ -323,7 +329,9 @@ pub async fn collect_sites(relay: &RelayClient, config: &Config) -> Result<Sites
     let (follow_event, follow_note) = current_follow_set(relay, config).await?;
     let follow_set_found = follow_event.is_some();
     let targets = follow_targets(follow_event.as_ref());
-    let latest = fetch_latest_sites(relay, config, &targets).await?;
+    let latest = relay
+        .fetch_latest_sites(config.nostr.site_event_kind, &targets)
+        .await?;
     let latest_sites =
         nostr::cap_sites_per_author(latest.values(), nostr::budget::MAX_SITES_PER_AUTHOR_LISTED);
     let own_chosen: HashSet<PublicKey> = targets.iter().copied().collect();
@@ -356,24 +364,6 @@ fn follow_targets(follow_event: Option<&Event>) -> Vec<PublicKey> {
         );
     }
     targets
-}
-
-async fn fetch_latest_sites(
-    relay: &RelayClient,
-    config: &Config,
-    targets: &[PublicKey],
-) -> Result<HashMap<(String, String), nostr::SiteEvent>> {
-    if targets.is_empty() {
-        return Ok(HashMap::new());
-    }
-    let raw_events = relay
-        .fetch_site_events(config.nostr.site_event_kind, targets)
-        .await?;
-    let parsed: Vec<nostr::SiteEvent> = raw_events
-        .iter()
-        .filter_map(|e| nostr::parse_site_event(e, config.nostr.site_event_kind).ok())
-        .collect();
-    Ok(nostr::select_latest(&parsed, Timestamp::now().as_secs()))
 }
 
 fn followed_accounts(

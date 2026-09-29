@@ -7,7 +7,7 @@ mod test_support;
 
 pub use lifecycle::run_until;
 
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, HashSet};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, RwLock};
 
@@ -63,7 +63,7 @@ struct Agent<C, N, R> {
     queue: Mutex<BTreeMap<SiteKey, Queued>>,
     permits: Semaphore,
     storing: Mutex<HashSet<String>>,
-    rejected: Mutex<HashMap<SiteKey, String>>,
+    rejected: Mutex<store::Rejected>,
 }
 
 impl<C: KuboStore, N: Nip05Verify, R: ReportRelay> Agent<C, N, R> {
@@ -93,7 +93,7 @@ impl<C: KuboStore, N: Nip05Verify, R: ReportRelay> Agent<C, N, R> {
             queue: Mutex::new(BTreeMap::new()),
             permits,
             storing: Mutex::new(HashSet::new()),
-            rejected: Mutex::new(HashMap::new()),
+            rejected: Mutex::default(),
         }
     }
 

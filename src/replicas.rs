@@ -2,6 +2,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 use anyhow::Result;
 use nostr_sdk::prelude::*;
+use tracing::warn;
 
 use crate::config::Config;
 use crate::mirror;
@@ -35,6 +36,13 @@ pub struct Chosen {
 }
 
 impl Chosen {
+    pub fn from_own(own: HashSet<PublicKey>) -> Self {
+        Self {
+            author: HashMap::new(),
+            own,
+        }
+    }
+
     fn contains(&self, author: &PublicKey, reporter: &PublicKey) -> bool {
         self.author
             .get(author)
@@ -42,7 +50,7 @@ impl Chosen {
             || self.own.contains(reporter)
     }
 
-    fn trusted_reporters(&self, authors: &BTreeSet<PublicKey>) -> Vec<PublicKey> {
+    pub fn trusted_reporters(&self, authors: &BTreeSet<PublicKey>) -> Vec<PublicKey> {
         let own: BTreeSet<PublicKey> = self.own.iter().copied().collect();
         let chosen: BTreeSet<PublicKey> = authors
             .iter()
@@ -218,13 +226,13 @@ pub async fn fetch_for_sites(
         .map(|ev| nostr::site_coordinate(config.nostr.site_event_kind, &ev.pubkey, &ev.d))
         .collect();
     let kind = config.nostr.replica_event_kind;
-    let mut events = relay.fetch_replica_reports(kind, &coordinates).await?;
     let authors: BTreeSet<PublicKey> = sites.iter().map(|ev| ev.pubkey).collect();
-    events.extend(
-        relay
-            .fetch_replica_reports_by(kind, &coordinates, &chosen.trusted_reporters(&authors))
-            .await?,
+    let trusted_reporters = chosen.trusted_reporters(&authors);
+    let (anyone, trusted) = tokio::join!(
+        relay.fetch_replica_reports(kind, &coordinates),
+        relay.fetch_replica_reports_by(kind, &coordinates, &trusted_reporters),
     );
+    let events = merge_report_fetches(anyone, trusted)?;
     Ok(collect_reports(
         events,
         config.nostr.replica_event_kind,
@@ -232,6 +240,33 @@ pub async fn fetch_for_sites(
         Timestamp::now().as_secs(),
         chosen,
     ))
+}
+
+fn merge_report_fetches(
+    anyone: Result<Vec<Event>>,
+    trusted: Result<Vec<Event>>,
+) -> Result<Vec<Event>> {
+    match (anyone, trusted) {
+        (Ok(mut anyone), Ok(trusted)) => {
+            anyone.extend(trusted);
+            Ok(anyone)
+        }
+        (Ok(events), Err(e)) => {
+            warn!(
+                error = format!("{e:#}"),
+                "fetching replica reports by trusted reporters failed; counting the rest"
+            );
+            Ok(events)
+        }
+        (Err(e), Ok(events)) => {
+            warn!(
+                error = format!("{e:#}"),
+                "fetching replica reports from anyone failed; counting trusted reporters only"
+            );
+            Ok(events)
+        }
+        (Err(e), Err(_)) => Err(e),
+    }
 }
 
 fn tier_mark(tier: Tier) -> &'static str {
@@ -271,14 +306,9 @@ pub async fn collect(
     config: &Config,
     authors: &[PublicKey],
 ) -> Result<Vec<AuthorReplicas>> {
-    let raw_events = relay
-        .fetch_site_events(config.nostr.site_event_kind, authors)
+    let latest = relay
+        .fetch_latest_sites(config.nostr.site_event_kind, authors)
         .await?;
-    let parsed: Vec<SiteEvent> = raw_events
-        .iter()
-        .filter_map(|e| nostr::parse_site_event(e, config.nostr.site_event_kind).ok())
-        .collect();
-    let latest = nostr::select_latest(&parsed, Timestamp::now().as_secs());
     let sites =
         nostr::cap_sites_per_author(latest.values(), nostr::budget::MAX_SITES_PER_AUTHOR_LISTED);
 
@@ -385,6 +415,40 @@ mod tests {
     use std::collections::BTreeSet;
 
     use super::*;
+
+    #[test]
+    fn a_failed_report_fetch_keeps_the_other_ones_results() {
+        let author = Keys::generate().public_key();
+        let a = report(&Keys::generate(), &author, "a.example", &[CID_A], 1, 10);
+        let b = report(&Keys::generate(), &author, "b.example", &[CID_A], 1, 10);
+        let ids = |r: Result<Vec<Event>>| -> Vec<EventId> {
+            r.unwrap().into_iter().map(|e| e.id).collect()
+        };
+        assert_eq!(
+            ids(merge_report_fetches(
+                Ok(vec![a.clone()]),
+                Ok(vec![b.clone()])
+            )),
+            vec![a.id, b.id]
+        );
+        assert_eq!(
+            ids(merge_report_fetches(
+                Err(anyhow::anyhow!("too many")),
+                Ok(vec![b.clone()])
+            )),
+            vec![b.id]
+        );
+        assert_eq!(
+            ids(merge_report_fetches(
+                Ok(vec![a.clone()]),
+                Err(anyhow::anyhow!("down"))
+            )),
+            vec![a.id]
+        );
+        assert!(
+            merge_report_fetches(Err(anyhow::anyhow!("x")), Err(anyhow::anyhow!("y"))).is_err()
+        );
+    }
     use crate::test_support::{CID_A, CID_B, replica_report_event as report};
 
     #[test]

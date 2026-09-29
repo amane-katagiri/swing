@@ -84,7 +84,7 @@ Follow Set が決まった tick で行う。Follow Set の更新はこれより�
 
 パスの削除に失敗しても state はそのままにし、sweep に任せる。
 
-取得した内容で拒否した版（4 の上限超過、5 の `not_a_directory`、9 の `policy::decide` の skip）は、サイトごとに最後に拒否した CID をメモリに覚え、同じ CID のイベントは 1 で終える。上限まで取得し直すのを poll ごとに繰り返さないためである。サイトが別の CID を出せば通常どおり処理し、保存に成功したらそのサイトの記録を消す。取得の失敗やブロックの欠けなど一時的な失敗は覚えず、次の poll で取り直す。記録は `state.json` に書かないので、agent を再起動すると消える（容量が空いたあとなどに取り直させたいときは再起動する）。
+取得した内容で拒否した版（4 の上限超過、5 の `not_a_directory`、9 の `policy::decide` の skip）は、サイトごとに最後に拒否した CID をメモリに覚え（`agent::store::Rejected`。アカウントごとに最新 50 件まで（`REJECTED_PER_ACCOUNT`）で、超えたらそのアカウントの最も古い記録を捨てる）、同じ CID のイベントは 1 で終える。上限まで取得し直すのを poll ごとに繰り返さないためである。サイトが別の CID を出せば通常どおり処理し、保存に成功したらそのサイトの記録を消す。取得の失敗やブロックの欠けなど一時的な失敗は覚えず、次の poll で取り直す。記録は `state.json` に書かないので、agent を再起動すると消える（容量が空いたあとなどに取り直させたいときは再起動する）。
 
 ## sweep
 
@@ -138,7 +138,7 @@ state のロックの中で行う。
 ダッシュボードの `/api/activity`（[`dashboard/http-api.md`](dashboard/http-api.md#get-apiactivity)）のために、次の 2 つをメモリ上の `activity::Activity`（ダッシュボードの `AppState` と共有する。値は最大値を取るだけで下がらず、`state.json` には書かない）に記録する。
 
 - publish の時刻: 保存している CID を集めるときに一覧した `publish/<自分>/<site>/` の整数名（CID が空でないもの）の最大値。整数名はサイトイベントの `created_at` なので、同じ Kubo で `swing publish` した分も次の同期で拾う。一覧がすべて成功したら、版が無くても「確かめた」印を付ける（`/api/activity` で `0` になる）。
-- 他の報告者の報告の時刻: poll ごとに relay から `replica_event_kind` で `#p` が自分の報告を、前回までに記録した最大値を `since` に付けて取得する（まだ無ければ `since` 無し。`limit` は `capped_limit(MAX_SITES_PER_AUTHOR_LISTED, MAX_REPORTS_PER_SITE)`）。報告者が自分でない、`p` タグに自分がある、`parse_replica_report` でパースでき作者が自分、`ReplicaReport::counts_at(now)` が true（未来ずれの許容・`MAX_REPORT_AGE`・`expiration`）、`created_at` が今以前、`cid` タグのどれかが自分のそのサイトで保存している CID（直前のレプリカ報告の同期で集めたもの。一覧に失敗したサイトは前回の値を使う）と一致する、のすべてを満たすものの `created_at` の最大値を記録する。`cid` 無し（取り下げ）の報告は数えない。`created_at` が今より先の報告は、未来ずれの許容内でも記録せず、`since` 以降なので時刻が追いついた後の poll で取り直して記録する。記録する値は今の時刻を超えないので、先の時刻を入れた報告 1 件で以後の報告が `since` から外れることはない。取得に成功したら、数える報告が無くても「確かめた」印を付ける（`/api/activity` で `0` になる）。`since` は記録した最大値が 0 なら付けない。取得に失敗したら warn を出し、値はそのまま。購読は増やさない。
+- 他の報告者の報告の時刻: CID は誰でも見られるので、自分が選んだ報告者の報告だけを数える。信頼できる報告者は `state.json` の `follow_set`（自分の Follow Set）から `replicas::Chosen::from_own` で作り、`Chosen::trusted_reporters` から自分を除いたもの（[「レプリカ報告の信頼度」](nostr.md#レプリカ報告の信頼度replicastier)の `Chosen`）。poll ごとに relay から `replica_event_kind` で `#p` が自分、作者がその報告者（`AUTHORS_PER_FILTER` 人ずつ）の報告を、前回までに記録した最大値を `since` に付けて取得する（まだ無ければ `since` 無し。`limit` は組の人数 × `MAX_SITES_PER_AUTHOR_LISTED` × 2）。報告者が `replicas::tier_of` で `Chosen`（自分は `Author` なので外れる）、`p` タグに自分がある、`parse_replica_report` でパースでき作者が自分、`ReplicaReport::counts_at(now)` が true（未来ずれの許容・`MAX_REPORT_AGE`・`expiration`）、`created_at` が今以前、`cid` タグのどれかが自分のそのサイトで保存している CID（直前のレプリカ報告の同期で集めたもの。一覧に失敗したサイトは前回の値を使う）と一致する、のすべてを満たすものの `created_at` の最大値を記録する。`cid` 無し（取り下げ）の報告は数えない。`created_at` が今より先の報告は、未来ずれの許容内でも記録せず、`since` 以降なので時刻が追いついた後の poll で取り直して記録する。記録する値は今の時刻を超えないので、先の時刻を入れた報告 1 件で以後の報告が `since` から外れることはない。選ばれていない報告者の報告は数えないので、その `created_at` で記録（と次の `since`）が進むこともない。信頼できる報告者がいなければ取得はせず、成功として扱う。取得に成功したら、数える報告が無くても「確かめた」印を付ける（`/api/activity` で `0` になる）。`since` は記録した最大値が 0 なら付けない。取得に失敗したら warn を出し、値はそのまま。購読は増やさない。
 
 受信側で報告を数える規則（`replicas::collect_reports` / `ReplicaReport::counts_at`）は [「レプリカ報告の信頼度」](nostr.md#レプリカ報告の信頼度replicastier)。受信側は `created_at` から `nostr::MAX_REPORT_AGE`（7 日）を過ぎた報告を数えない（[取得と表示の上限](nostr.md#取得と表示の上限nostrbudget)）ので、`report_ttl` はそれ以下でないと設定の検証でエラーになる（[`../architecture.md`](../architecture.md#設定と環境変数)）。出し直しは `report_ttl / 2` ごとなので、上限の 7 日でも最新の報告は常に 3.5 日以内に出ている。
 

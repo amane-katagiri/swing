@@ -258,13 +258,9 @@ pub async fn collect(
     let crawled = crawl(&source, roots, depth).await?;
     let graph = build_graph(&crawled);
     let accounts: Vec<PublicKey> = graph.nodes.keys().copied().collect();
-    let parsed: Vec<SiteEvent> = relay
-        .fetch_site_events(config.nostr.site_event_kind, &accounts)
-        .await?
-        .iter()
-        .filter_map(|e| nostr::parse_site_event(e, config.nostr.site_event_kind).ok())
-        .collect();
-    let latest_map = nostr::select_latest(&parsed, Timestamp::now().as_secs());
+    let latest_map = relay
+        .fetch_latest_sites(config.nostr.site_event_kind, &accounts)
+        .await?;
     let latest: Vec<SiteEvent> = nostr::cap_sites_per_author(
         latest_map.values(),
         nostr::budget::MAX_SITES_PER_AUTHOR_LISTED,

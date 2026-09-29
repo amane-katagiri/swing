@@ -7,6 +7,7 @@ use crate::ipfs::KuboStore;
 use crate::mfs;
 use crate::nip05::Nip05Verify;
 use crate::nostr::{self, ReportRelay};
+use crate::replicas::{self, Chosen, Tier};
 use crate::state::{self, SiteKey};
 
 use super::{Agent, now_secs};
@@ -195,9 +196,15 @@ impl<C: KuboStore, N: Nip05Verify, R: ReportRelay> Agent<C, N, R> {
             .activity
             .latest_replica_report_at()
             .filter(|&at| at > 0);
+        let chosen = self.chosen_reporters().await;
+        let reporters: Vec<PublicKey> = chosen
+            .trusted_reporters(&BTreeSet::from([self.own]))
+            .into_iter()
+            .filter(|pk| *pk != self.own)
+            .collect();
         let events = match self
             .reporter
-            .fetch_reports_about(kind, self.own, since)
+            .fetch_reports_about(kind, self.own, &reporters, since)
             .await
         {
             Ok(events) => events,
@@ -212,7 +219,9 @@ impl<C: KuboStore, N: Nip05Verify, R: ReportRelay> Agent<C, N, R> {
         self.activity.mark_replica_reports_checked();
         let now = now_secs();
         for event in events {
-            if event.pubkey == self.own || !event.tags.public_keys().any(|pk| pk == self.own) {
+            if replicas::tier_of(&self.own, &event.pubkey, &chosen) != Tier::Chosen
+                || !event.tags.public_keys().any(|pk| pk == self.own)
+            {
                 continue;
             }
             let Ok(report) =
@@ -232,6 +241,18 @@ impl<C: KuboStore, N: Nip05Verify, R: ReportRelay> Agent<C, N, R> {
                 self.activity.record_replica_report(report.created_at);
             }
         }
+    }
+
+    // Our CIDs are public, so only reporters the operator chose may move the replica report time.
+    async fn chosen_reporters(&self) -> Chosen {
+        let state = self.state.lock().await;
+        let own = state
+            .follow_set
+            .as_ref()
+            .filter(|ev| nostr::is_follow_set_of(ev, &self.own, &self.config.nostr.mirror_set))
+            .map(|ev| nostr::extract_follow_set_pubkeys(ev).into_iter().collect())
+            .unwrap_or_default();
+        Chosen::from_own(own)
     }
 
     pub(super) async fn sync_reports(&self) {
@@ -582,10 +603,13 @@ mod tests {
         publish_own(&fx, &[D]).await;
         let now = now_secs();
         let other = Keys::generate();
+        let future = Keys::generate();
+        fx.choose_reporters(&[other.public_key(), future.public_key()])
+            .await;
         fx.relay().stored = vec![
             report_about_own_cid(&fx, &other, D, CID_B, now - 10),
             report_about_own(&fx, &other, "unpublished.example", now - 10),
-            report_about_own(&fx, &Keys::generate(), D, now + 600),
+            report_about_own(&fx, &future, D, now + 600),
         ];
 
         fx.agent.record_replica_reports().await;
@@ -604,7 +628,14 @@ mod tests {
         publish_own(&fx, &[D, "b.example"]).await;
         let now = now_secs();
         let other = Keys::generate();
+        let second = Keys::generate();
         let own_keys = fx.agent.reporter.keys.clone();
+        fx.choose_reporters(&[
+            other.public_key(),
+            second.public_key(),
+            own_keys.public_key(),
+        ])
+        .await;
         let about_someone_else = nostr::build_replica_report_builder(
             35981,
             35980,
@@ -629,12 +660,9 @@ mod tests {
         fx.relay()
             .stored
             .push(report_about_own(&fx, &other, D, now - 100));
-        fx.relay().stored.push(report_about_own(
-            &fx,
-            &Keys::generate(),
-            "b.example",
-            now - 50,
-        ));
+        fx.relay()
+            .stored
+            .push(report_about_own(&fx, &second, "b.example", now - 50));
         fx.agent.record_replica_reports().await;
         assert_eq!(fx.agent.activity.latest_replica_report_at(), Some(now - 50));
 
@@ -647,11 +675,34 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn only_chosen_reporters_move_the_replica_report_time() {
+        let fx = Fixture::new(default_policy(), FakeKubo::default());
+        publish_own(&fx, &[D]).await;
+        let now = now_secs();
+        let chosen = Keys::generate();
+        let stranger = Keys::generate();
+        fx.choose_reporters(&[chosen.public_key(), fx.agent.own])
+            .await;
+        fx.relay().stored = vec![report_about_own(&fx, &stranger, D, now - 5)];
+
+        fx.agent.record_replica_reports().await;
+        assert_eq!(fx.agent.activity.latest_replica_report_at(), Some(0));
+        assert_eq!(fx.relay().about_reporters, vec![vec![chosen.public_key()]]);
+
+        fx.relay()
+            .stored
+            .push(report_about_own(&fx, &chosen, D, now - 20));
+        fx.agent.record_replica_reports().await;
+        assert_eq!(fx.agent.activity.latest_replica_report_at(), Some(now - 20));
+    }
+
+    #[tokio::test]
     async fn a_failed_fetch_keeps_the_replica_report_time() {
         let fx = Fixture::new(default_policy(), FakeKubo::default());
         publish_own(&fx, &[D]).await;
         let now = now_secs();
         let other = Keys::generate();
+        fx.choose_reporters(&[other.public_key()]).await;
         fx.relay().fail_fetch = true;
         fx.agent.record_replica_reports().await;
         assert_eq!(fx.agent.activity.latest_replica_report_at(), None);

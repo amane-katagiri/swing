@@ -40,8 +40,9 @@ pub mod budget {
     pub const MAX_REPORTS_PER_SITE: usize = 200;
     pub const MAX_CRAWL_NODES: usize = 1000;
     pub const MAX_REFERENCING_LISTED: usize = 50;
-    pub const MAX_RELAY_FETCH_LIMIT: usize = 20_000;
+    pub const MAX_RELAY_FETCH_LIMIT: usize = 10_000;
     pub const AUTHORS_PER_FILTER: usize = 50;
+    pub const COORDINATES_PER_FILTER: usize = 250;
     pub const MAX_TRUSTED_REPORTERS: usize = 1000;
     pub const MAX_RELAY_MESSAGE_BYTES: u32 = 128 * 1024;
     pub const MAX_EVENT_BYTES: u32 = 64 * 1024;
@@ -50,8 +51,15 @@ pub mod budget {
 }
 
 // NIP-01: for replaceable events the later created_at wins, ties broken by the lowest id.
+fn replaceable_is_newer(a: (u64, EventId), b: (u64, EventId)) -> bool {
+    (a.0, std::cmp::Reverse(a.1)) > (b.0, std::cmp::Reverse(b.1))
+}
+
 pub fn is_newer_replaceable(a: &Event, b: &Event) -> bool {
-    (a.created_at, std::cmp::Reverse(a.id)) > (b.created_at, std::cmp::Reverse(b.id))
+    replaceable_is_newer(
+        (a.created_at.as_secs(), a.id),
+        (b.created_at.as_secs(), b.id),
+    )
 }
 
 fn tag_value<'a>(event: &'a Event, kind: &str) -> Option<&'a str> {

@@ -11,7 +11,10 @@ use crate::{nostr, replicas};
 pub(super) fn print_mirror_set(mirror_set_name: &str, set: &MirrorSet) {
     println!("Mirror set: {mirror_set_name} (kind {FOLLOW_SET_KIND})");
     if let Some(title) = set.title() {
-        println!("Title: {title}");
+        println!(
+            "Title: {}",
+            sanitize_display_text(title, MAX_MESSAGE_DISPLAY_CHARS)
+        );
     }
     let pubkeys = set.pubkeys();
     println!("{} pubkey(s):", pubkeys.len());
@@ -100,12 +103,13 @@ pub(super) fn format_site_line(row: &SiteRow, status: &str) -> String {
 pub(super) const MAX_MESSAGE_DISPLAY_CHARS: usize = 200;
 
 pub(super) fn sanitize_display_text(text: &str, max_chars: usize) -> String {
-    let mut shown: String = text
+    let cleaned: Vec<char> = text
         .chars()
+        .filter(|c| c.is_control() || !nostr::is_unsafe_char(*c))
         .map(|c| if c.is_control() { ' ' } else { c })
-        .take(max_chars)
         .collect();
-    if text.chars().count() > max_chars {
+    let mut shown: String = cleaned.iter().take(max_chars).collect();
+    if cleaned.len() > max_chars {
         shown.push('\u{2026}');
     }
     shown.trim().to_string()
@@ -195,6 +199,10 @@ mod tests {
         assert_eq!(
             format_message_line("Add posts\n\u{1b}[31mred"),
             "    message: Add posts  [31mred"
+        );
+        assert_eq!(
+            format_title_line("My\u{202E}etiS\u{200B}\u{E0041}"),
+            "    title: MyetiS"
         );
         let long = "あ".repeat(MAX_MESSAGE_DISPLAY_CHARS + 1);
         let line = format_message_line(&long);

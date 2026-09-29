@@ -3,7 +3,7 @@ use std::collections::{BTreeMap, HashMap};
 use anyhow::{Context, Result};
 use nostr_sdk::prelude::*;
 
-use super::{budget, plausible_at, tag_value};
+use super::{budget, plausible_at, replaceable_is_newer, tag_value};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SiteEvent {
@@ -40,10 +40,14 @@ pub fn is_unsafe_char(c: char) -> bool {
         || matches!(
             c,
             '\u{00AD}'
+                | '\u{061C}'
+                | '\u{180E}'
                 | '\u{200B}'..='\u{200F}'
                 | '\u{2028}'..='\u{202E}'
-                | '\u{2066}'..='\u{2069}'
+                | '\u{2060}'..='\u{2069}'
                 | '\u{FEFF}'
+                | '\u{FFF9}'..='\u{FFFB}'
+                | '\u{E0000}'..='\u{E007F}'
         )
 }
 
@@ -114,8 +118,10 @@ pub fn select_latest(events: &[SiteEvent], now: u64) -> HashMap<(String, String)
         let key = (ev.pubkey.to_hex(), ev.d.clone());
         match latest.get(&key) {
             Some(existing)
-                if (existing.created_at, std::cmp::Reverse(existing.id))
-                    >= (ev.created_at, std::cmp::Reverse(ev.id)) => {}
+                if !replaceable_is_newer(
+                    (ev.created_at, ev.id),
+                    (existing.created_at, existing.id),
+                ) => {}
             _ => {
                 latest.insert(key, ev.clone());
             }
@@ -638,8 +644,26 @@ mod tests {
     fn rejects_d_tags_and_drops_titles_with_invisible_formatting_characters() {
         let k = keys();
         for c in [
-            '\u{00AD}', '\u{200B}', '\u{200F}', '\u{2028}', '\u{2029}', '\u{202A}', '\u{202E}',
-            '\u{2066}', '\u{2069}', '\u{FEFF}',
+            '\u{00AD}',
+            '\u{200B}',
+            '\u{200F}',
+            '\u{2028}',
+            '\u{2029}',
+            '\u{202A}',
+            '\u{202E}',
+            '\u{2066}',
+            '\u{2069}',
+            '\u{FEFF}',
+            '\u{061C}',
+            '\u{180E}',
+            '\u{2060}',
+            '\u{2064}',
+            '\u{FFF9}',
+            '\u{FFFB}',
+            '\u{E0001}',
+            '\u{E007F}',
+            '\u{0085}',
+            '\u{009B}',
         ] {
             let d = format!("exa{c}mple.com");
             assert!(parse_site_event(&site_event_with(&k, &d, "ok", ""), 35980).is_err());

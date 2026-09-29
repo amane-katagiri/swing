@@ -5,6 +5,11 @@ use nostr_sdk::prelude::*;
 pub(super) const FOLLOW_SET_KIND: u16 = 30000;
 const DEFAULT_TITLE: &str = "SWING mirror list";
 
+// NIP-01 keeps the later created_at, so an edit must outdate a set signed on a clock that runs ahead.
+pub(super) fn next_created_at(now: u64, previous: Option<&Event>) -> u64 {
+    previous.map_or(now, |ev| now.max(ev.created_at.as_secs().saturating_add(1)))
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MirrorSet {
     other_tags: Vec<Tag>,
@@ -196,6 +201,19 @@ mod tests {
         assert_eq!(pubkeys.len(), 2);
         assert!(pubkeys.contains(&p1));
         assert!(pubkeys.contains(&p2));
+    }
+
+    #[test]
+    fn next_created_at_outdates_a_future_dated_previous_set() {
+        let author = keys();
+        let mut previous = make_follow_set(&author, "swing", None, "", &[]);
+        assert_eq!(next_created_at(100, None), 100);
+        previous.created_at = Timestamp::from_secs(50);
+        assert_eq!(next_created_at(100, Some(&previous)), 100);
+        previous.created_at = Timestamp::from_secs(100);
+        assert_eq!(next_created_at(100, Some(&previous)), 101);
+        previous.created_at = Timestamp::from_secs(700);
+        assert_eq!(next_created_at(100, Some(&previous)), 701);
     }
 
     #[test]

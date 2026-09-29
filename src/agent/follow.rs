@@ -120,28 +120,17 @@ async fn resubscribe_and_backfill<C, N, R>(
     }
 
     match relay
-        .fetch_site_events(config.nostr.site_event_kind, &target_list)
+        .fetch_latest_sites(config.nostr.site_event_kind, &target_list)
         .await
     {
-        Ok(events) => {
-            let parsed: Vec<SiteEvent> = events
-                .iter()
-                .filter_map(
-                    |e| match nostr::parse_site_event(e, config.nostr.site_event_kind) {
-                        Ok(se) => Some(se),
-                        Err(err) => {
-                            warn!(error = %err, "skipping invalid historical site event");
-                            None
-                        }
-                    },
-                )
-                .collect();
-            let latest = nostr::select_latest(&parsed, now_secs())
-                .into_values()
-                .collect();
+        Ok(latest) => {
             let selected = {
                 let state = agent.state.lock().await;
-                limit_sites_per_account(latest, &state, config.policy.max_sites_per_account)
+                limit_sites_per_account(
+                    latest.into_values().collect(),
+                    &state,
+                    config.policy.max_sites_per_account,
+                )
             };
             for ev in selected {
                 agent.submit(ev, tasks);
