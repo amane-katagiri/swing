@@ -325,10 +325,13 @@ pub fn remove_pid_file(state_dir: &Path) -> Result<()> {
 
 // comm can itself contain spaces and ')', so the field list is only unambiguous after the last ')'.
 #[cfg(any(test, target_os = "linux"))]
+pub(crate) fn proc_stat_fields(text: &str) -> Option<std::str::SplitWhitespace<'_>> {
+    Some(text.get(text.rfind(')')? + 1..)?.split_whitespace())
+}
+
+#[cfg(any(test, target_os = "linux"))]
 fn parse_proc_stat_starttime(stat: &str) -> Option<String> {
-    let rparen = stat.rfind(')')?;
-    let rest = stat.get(rparen + 1..)?;
-    rest.split_whitespace().nth(19).map(|s| s.to_string())
+    proc_stat_fields(stat)?.nth(19).map(|s| s.to_string())
 }
 
 #[cfg(target_os = "linux")]
@@ -492,16 +495,6 @@ pub async fn recover_orphan(state_dir: &Path, repo: &Path) -> Result<()> {
         }
     };
 
-    if attempt_graceful_shutdown(record.api_port, record.pid).await {
-        tracing::info!(
-            pid = record.pid,
-            repo = %repo.display(),
-            "orphaned Kubo shut down gracefully via its API"
-        );
-        remove_pid_file(state_dir)?;
-        return Ok(());
-    }
-
     let Some(current_started_at) = process_start_marker(record.pid) else {
         tracing::info!(
             pid = record.pid,
@@ -516,6 +509,16 @@ pub async fn recover_orphan(state_dir: &Path, repo: &Path) -> Result<()> {
             pid = record.pid,
             repo = %repo.display(),
             "pid in kubo.pid no longer belongs to the recorded Kubo (start time differs); leaving it alone"
+        );
+        remove_pid_file(state_dir)?;
+        return Ok(());
+    }
+
+    if attempt_graceful_shutdown(record.api_port, record.pid).await {
+        tracing::info!(
+            pid = record.pid,
+            repo = %repo.display(),
+            "orphaned Kubo shut down gracefully via its API"
         );
         remove_pid_file(state_dir)?;
         return Ok(());
@@ -700,7 +703,7 @@ impl Daemon {
                 let ret = unsafe { libc::kill(pid as libc::pid_t, libc::SIGTERM) };
                 if ret != 0 {
                     let err = std::io::Error::last_os_error();
-                    if err.kind() != std::io::ErrorKind::NotFound {
+                    if err.raw_os_error() != Some(libc::ESRCH) {
                         tracing::warn!("failed to send SIGTERM to Kubo (pid {pid}): {err}");
                     }
                 }
@@ -995,9 +998,11 @@ mod tests {
         let pid = child.id();
         let real_started_at =
             process_start_marker(pid).expect("spawned process should have a start time");
+        let api = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        api.set_nonblocking(true).unwrap();
         let record = PidRecord {
             pid,
-            api_port: pick_free_port().unwrap(),
+            api_port: api.local_addr().unwrap().port(),
             started_at: format!("{real_started_at}-not-the-real-one"),
         };
         std::fs::write(
@@ -1012,6 +1017,11 @@ mod tests {
         assert!(
             process_alive(pid),
             "a start-time mismatch must not kill the process"
+        );
+        assert_eq!(
+            api.accept().unwrap_err().kind(),
+            std::io::ErrorKind::WouldBlock,
+            "a start-time mismatch must not send a shutdown to the recorded API port"
         );
 
         let _ = child.kill();
@@ -1080,9 +1090,6 @@ mod tests {
         daemon.stop(Duration::from_secs(10)).await.unwrap();
     }
 
-    /// Starts a real Kubo daemon, writes its pid file with the daemon's real api_port, then
-    /// forgets the `Daemon` handle and reaps it manually to simulate an orphan left by a killed
-    /// `swing up`. Returns the state dir, the daemon's real API URL, and its pid.
     #[cfg(unix)]
     async fn spawn_orphan(bin: &Path, dir: &Path) -> (PathBuf, String, u32) {
         let repo = dir.join("kubo-repo");

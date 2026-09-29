@@ -16,10 +16,7 @@ pub fn usage(pid: u32) -> Option<ProcessUsage> {
 
 #[cfg(any(target_os = "linux", test))]
 fn parse_proc_stat(text: &str, ticks_per_sec: u64, page_size: u64) -> Option<ProcessUsage> {
-    let fields: Vec<&str> = text
-        .get(text.rfind(')')? + 1..)?
-        .split_whitespace()
-        .collect();
+    let fields: Vec<&str> = crate::kubo::proc_stat_fields(text)?.collect();
     let utime: u64 = fields.get(11)?.parse().ok()?;
     let stime: u64 = fields.get(12)?.parse().ok()?;
     let rss_pages: u64 = fields.get(21)?.parse().ok()?;

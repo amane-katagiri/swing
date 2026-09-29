@@ -222,7 +222,6 @@ pub async fn sign_and_send(
     Ok(nostr::relay_send_results(relay.relays(), &output))
 }
 
-/// Site `d`/`url`/`title` validation shared by the CLI and the dashboard API, which report it differently.
 #[derive(Debug)]
 pub enum SiteFieldError {
     InvalidD(anyhow::Error),
@@ -240,7 +239,6 @@ pub fn validate_site_fields(d: &str, url: Option<&str>) -> Result<(), SiteFieldE
     Ok(())
 }
 
-/// An empty or whitespace-only title is treated as absent, not invalid.
 pub fn normalize_title(title: Option<&str>) -> Result<Option<&str>, SiteFieldError> {
     let Some(title) = title else {
         return Ok(None);
@@ -278,7 +276,6 @@ pub struct Modes {
     pub check_unchanged: CheckMode,
 }
 
-/// Errs with the name of the offending override, which callers label as a flag or a form part.
 pub fn resolve_modes(
     overrides: &ModeOverrides,
     defaults: &config::PublishConfig,

@@ -193,7 +193,6 @@ impl UnchangedOutcome {
         }
     }
 
-    /// A failed or empty relay lookup never stops the publish, even under `require`.
     pub fn decide(mode: CheckMode, previous: Result<Option<SiteEvent>>, new_cid: &str) -> Self {
         if mode == CheckMode::Off {
             return Self::off();
@@ -325,18 +324,22 @@ mod tests {
         use std::os::unix::fs::symlink;
 
         let dir = tempfile::tempdir().unwrap();
-        let target = tempfile::tempdir().unwrap();
-        std::fs::write(target.path().join(".env"), b"SECRET=1").unwrap();
-        std::fs::write(target.path().join("page.html"), b"hello").unwrap();
-        symlink(target.path(), dir.path().join("linked")).unwrap();
+        let target = dir.path().join("target");
+        std::fs::create_dir(&target).unwrap();
+        std::fs::write(target.join(".env"), b"SECRET=1").unwrap();
+        std::fs::write(target.join("page.html"), b"hello").unwrap();
+        symlink("target", dir.path().join("linked")).unwrap();
         let checks = LocalChecks::evaluate(
             &entries(dir.path()),
             CheckMode::Warn,
             CheckMode::Warn,
             &allow(),
         );
-        assert_eq!(checks.dotfiles.as_deref().unwrap(), ["linked/.env"]);
-        assert_eq!(checks.bytes, Some(13));
+        assert_eq!(
+            checks.dotfiles.as_deref().unwrap(),
+            ["linked/.env", "target/.env"]
+        );
+        assert_eq!(checks.bytes, Some(26));
         assert!(checks.abort_message().is_none());
     }
 

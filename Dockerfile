@@ -5,7 +5,7 @@ COPY assets ./assets
 COPY src ./src
 COPY tray ./tray
 COPY web ./web
-RUN cargo build --release
+RUN cargo build --release --locked
 
 FROM debian:trixie-slim
 RUN groupadd --system --gid 1000 swing \

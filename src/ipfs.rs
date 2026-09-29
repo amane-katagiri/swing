@@ -117,6 +117,7 @@ enum Entry {
 fn walk(
     current: &Path,
     rel_prefix: &str,
+    root: &Path,
     out: &mut Vec<Entry>,
     dir_ancestors: &mut HashSet<PathBuf>,
 ) -> Result<()> {
@@ -134,17 +135,24 @@ fn walk(
         } else {
             format!("{rel_prefix}/{name}")
         };
+        let canon = std::fs::canonicalize(&path)
+            .with_context(|| format!("resolving path {}", path.display()))?;
+        if !canon.starts_with(root) {
+            bail!(
+                "{} is a symlink to {}, outside the site directory; copy what it points to into the site instead",
+                path.display(),
+                canon.display()
+            );
+        }
         // metadata() follows symlinks (unlike DirEntry::file_type()), so linked files/dirs aren't skipped.
         let metadata = std::fs::metadata(&path)
             .with_context(|| format!("reading metadata for {}", path.display()))?;
         if metadata.is_dir() {
-            let canon = std::fs::canonicalize(&path)
-                .with_context(|| format!("resolving path {}", path.display()))?;
             if !dir_ancestors.insert(canon.clone()) {
                 bail!("symlink loop detected at {}", path.display());
             }
             out.push(Entry::Dir(rel.clone()));
-            walk(&path, &rel, out, dir_ancestors)?;
+            walk(&path, &rel, root, out, dir_ancestors)?;
             dir_ancestors.remove(&canon);
         } else if metadata.is_file() {
             out.push(Entry::File(rel, path, metadata.len()));
@@ -157,9 +165,15 @@ fn walk_root(dir: &Path, root_name: &str) -> Result<Vec<Entry>> {
     let canon_root =
         std::fs::canonicalize(dir).with_context(|| format!("resolving path {}", dir.display()))?;
     let mut dir_ancestors = HashSet::new();
-    dir_ancestors.insert(canon_root);
+    dir_ancestors.insert(canon_root.clone());
     let mut entries = Vec::new();
-    walk(dir, root_name, &mut entries, &mut dir_ancestors)?;
+    walk(
+        dir,
+        root_name,
+        &canon_root,
+        &mut entries,
+        &mut dir_ancestors,
+    )?;
     Ok(entries)
 }
 
@@ -222,6 +236,20 @@ struct FilesLsEntry {
 }
 
 const MFS_MISSING: &str = "file does not exist";
+const MAX_RESPONSE_BYTES: usize = 16 << 20;
+
+async fn read_body(resp: reqwest::Response, what: &str) -> Result<String> {
+    let mut body = Vec::new();
+    let mut stream = resp.bytes_stream();
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.with_context(|| format!("reading {what} response"))?;
+        if body.len() + chunk.len() > MAX_RESPONSE_BYTES {
+            bail!("{what} response is larger than {MAX_RESPONSE_BYTES} bytes");
+        }
+        body.extend_from_slice(&chunk);
+    }
+    Ok(String::from_utf8_lossy(&body).into_owned())
+}
 
 fn query_path(path: &str) -> String {
     percent_encode_relative_path(path)
@@ -248,10 +276,7 @@ impl IpfsClient {
             .await
             .with_context(|| format!("POST /api/v0/{endpoint}"))?;
         let status = resp.status();
-        let text = resp
-            .text()
-            .await
-            .with_context(|| format!("reading {endpoint} response"))?;
+        let text = read_body(resp, endpoint).await?;
         if !status.is_success() {
             bail!("{endpoint} failed: {status}: {}", text.trim());
         }
@@ -308,7 +333,7 @@ impl IpfsClient {
             .await
             .context("POST /api/v0/add")?;
         let status = resp.status();
-        let text = resp.text().await.context("reading add response body")?;
+        let text = read_body(resp, "add").await?;
         if !status.is_success() {
             bail!("ipfs add failed: {status}: {}", text.trim());
         }
@@ -334,7 +359,7 @@ impl IpfsClient {
                 .context("POST /api/v0/dag/export")?;
             let status = resp.status();
             if !status.is_success() {
-                let text = resp.text().await.unwrap_or_default();
+                let text = read_body(resp, "dag/export").await.unwrap_or_default();
                 bail!("dag/export failed: {status}: {}", text.trim());
             }
             let mut stream = resp.bytes_stream();
@@ -374,7 +399,7 @@ impl IpfsClient {
             .await
             .context("POST /api/v0/dag/stat")?;
         let status = resp.status();
-        let text = resp.text().await.context("reading dag/stat response")?;
+        let text = read_body(resp, "dag/stat").await?;
         if !status.is_success() {
             bail!("dag/stat failed: {status}: {}", text.trim());
         }
@@ -546,12 +571,12 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn walk_follows_symlinked_files_and_dirs() {
+    fn walk_follows_symlinked_files_and_dirs_inside_the_site() {
         use std::os::unix::fs::symlink;
 
         let dir = tempfile::tempdir().unwrap();
-        let target_dir = tempfile::tempdir().unwrap();
-        std::fs::write(target_dir.path().join("real.txt"), b"real").unwrap();
+        std::fs::create_dir(dir.path().join("real_dir")).unwrap();
+        std::fs::write(dir.path().join("real_dir/real.txt"), b"real").unwrap();
         std::fs::write(dir.path().join("real_file.txt"), b"hi").unwrap();
 
         symlink(
@@ -559,13 +584,85 @@ mod tests {
             dir.path().join("link_file.txt"),
         )
         .unwrap();
-        symlink(target_dir.path(), dir.path().join("link_dir")).unwrap();
+        symlink("real_dir", dir.path().join("link_dir")).unwrap();
 
         let entries = walk_root(dir.path(), "").unwrap();
         let names = entry_names(&entries);
         assert!(names.contains(&"file:link_file.txt".to_string()));
         assert!(names.contains(&"dir:link_dir".to_string()));
         assert!(names.contains(&"file:link_dir/real.txt".to_string()));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn walk_refuses_symlinks_leaving_the_site() {
+        use std::os::unix::fs::symlink;
+
+        let outside = tempfile::tempdir().unwrap();
+        std::fs::write(outside.path().join("id_ed25519"), b"secret").unwrap();
+
+        let dir = tempfile::tempdir().unwrap();
+        symlink(
+            outside.path().join("id_ed25519"),
+            dir.path().join("key.txt"),
+        )
+        .unwrap();
+        let err = walk_root(dir.path(), "").unwrap_err();
+        assert!(
+            err.to_string().contains("outside the site directory"),
+            "{err}"
+        );
+
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir(dir.path().join("sub")).unwrap();
+        symlink(outside.path(), dir.path().join("sub/linked")).unwrap();
+        let err = walk_root(dir.path(), "").unwrap_err();
+        assert!(
+            err.to_string().contains("outside the site directory"),
+            "{err}"
+        );
+
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir(dir.path().join("sub")).unwrap();
+        symlink("../escape", dir.path().join("sub/up")).unwrap();
+        std::fs::create_dir(dir.path().join("escape")).unwrap();
+        let err = walk_root(&dir.path().join("sub"), "").unwrap_err();
+        assert!(
+            err.to_string().contains("outside the site directory"),
+            "{err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn read_body_refuses_responses_over_the_cap() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let (mut sock, _) = listener.accept().await.unwrap();
+            let mut buf = [0u8; 4096];
+            let _ = sock.read(&mut buf).await;
+            let len = MAX_RESPONSE_BYTES + 1;
+            let head = format!("HTTP/1.1 200 OK\r\ncontent-length: {len}\r\n\r\n");
+            sock.write_all(head.as_bytes()).await.unwrap();
+            let chunk = vec![b'x'; 1 << 16];
+            let mut sent = 0;
+            while sent < len {
+                let n = chunk.len().min(len - sent);
+                if sock.write_all(&chunk[..n]).await.is_err() {
+                    break;
+                }
+                sent += n;
+            }
+        });
+        let client = IpfsClient::new(format!("http://{addr}"));
+        let err = client
+            .call("stats/bw", "", Duration::from_secs(10))
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("larger than"), "{err}");
+        server.abort();
     }
 
     #[cfg(unix)]

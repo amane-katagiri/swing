@@ -546,35 +546,6 @@ fn nip05_status(state: &State, key: &str) -> Option<String> {
     state.verifications.get(key).map(|v| v.status.clone())
 }
 
-#[allow(clippy::too_many_arguments)]
-fn build_site_row(
-    d: String,
-    cid: String,
-    url: Option<String>,
-    size: Option<u64>,
-    stored_version: Option<&VersionRecord>,
-    created_at: u64,
-    title: Option<String>,
-    message: Option<String>,
-    nip05: Option<String>,
-    replicas: Option<replicas::ReplicaCounts>,
-) -> SiteRow {
-    SiteRow {
-        d,
-        cid,
-        url,
-        size,
-        stored_size: stored_version.map(|v| v.size),
-        stored_at: stored_version.map(|v| v.stored_at),
-        created_at,
-        title,
-        message,
-        nip05,
-        replicas,
-        stored: stored_version.is_some(),
-    }
-}
-
 pub async fn collect_sites(relay: &RelayClient, config: &Config) -> Result<SitesView> {
     let (follow_event, follow_note) = current_follow_set(relay, config).await?;
     let follow_set_found = follow_event.is_some();
@@ -636,19 +607,20 @@ pub async fn collect_sites(relay: &RelayClient, config: &Config) -> Result<Sites
                     .sites
                     .get(&key)
                     .and_then(|versions| versions.iter().find(|v| v.cid == ev.cid));
-                let replicas = replica_counts(&replica_data, ev);
-                build_site_row(
-                    ev.d.clone(),
-                    ev.cid.clone(),
-                    ev.url.clone(),
-                    ev.size,
-                    stored_version,
-                    ev.created_at,
-                    ev.title.clone(),
-                    ev.message.clone(),
-                    nip05_status(&state, &key),
-                    replicas,
-                )
+                SiteRow {
+                    d: ev.d.clone(),
+                    cid: ev.cid.clone(),
+                    url: ev.url.clone(),
+                    size: ev.size,
+                    stored_size: stored_version.map(|v| v.size),
+                    stored_at: stored_version.map(|v| v.stored_at),
+                    created_at: ev.created_at,
+                    title: ev.title.clone(),
+                    message: ev.message.clone(),
+                    nip05: nip05_status(&state, &key),
+                    replicas: replica_counts(&replica_data, ev),
+                    stored: stored_version.is_some(),
+                }
             })
             .collect();
         accounts.push(AccountSites { pubkey, sites });
@@ -663,19 +635,20 @@ pub async fn collect_sites(relay: &RelayClient, config: &Config) -> Result<Sites
             .into_iter()
             .map(|(d, version)| {
                 let key = state::site_key(&pubkey_hex, &d);
-                let nip05 = nip05_status(&state, &key);
-                build_site_row(
+                SiteRow {
+                    nip05: nip05_status(&state, &key),
                     d,
-                    version.cid.clone(),
-                    None,
-                    Some(version.size),
-                    Some(&version),
-                    version.created_at,
-                    None,
-                    None,
-                    nip05,
-                    None,
-                )
+                    cid: version.cid,
+                    url: None,
+                    size: Some(version.size),
+                    stored_size: Some(version.size),
+                    stored_at: Some(version.stored_at),
+                    created_at: version.created_at,
+                    title: None,
+                    message: None,
+                    replicas: None,
+                    stored: true,
+                }
             })
             .collect();
         unfollowed.push(AccountSites { pubkey, sites });

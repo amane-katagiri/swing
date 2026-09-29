@@ -97,6 +97,21 @@ fn spawn_agent(
     ))
 }
 
+async fn stop_agent(
+    token: &CancellationToken,
+    handle: &mut tokio::task::JoinHandle<Result<()>>,
+    during: &str,
+) {
+    token.cancel();
+    if tokio::time::timeout(AGENT_STOP_TIMEOUT, &mut *handle)
+        .await
+        .is_err()
+    {
+        warn!(timeout = ?AGENT_STOP_TIMEOUT, "agent did not stop in time {during}");
+        handle.abort();
+    }
+}
+
 enum StartOutcome {
     Ready(Box<kubo::Daemon>, String),
     Retry,
@@ -449,11 +464,7 @@ async fn run_managed(
                         Err(e) => error!(error = %e, "waiting for the kubo daemon failed"),
                     }
                     dashboard.stats.set_kubo(None);
-                    agent_token.cancel();
-                    if tokio::time::timeout(AGENT_STOP_TIMEOUT, &mut agent_handle).await.is_err() {
-                        warn!(timeout = ?AGENT_STOP_TIMEOUT, "agent did not stop in time after kubo exited");
-                        agent_handle.abort();
-                    }
+                    stop_agent(&agent_token, &mut agent_handle, "after kubo exited").await;
                     if let Err(e) = kubo::remove_pid_file(&config.agent.state_dir) {
                         warn!(error = %e, "failed to remove kubo.pid");
                     }
@@ -486,11 +497,7 @@ async fn run_managed(
                     );
                 }
                 _ = token.cancelled() => {
-                    agent_token.cancel();
-                    if tokio::time::timeout(AGENT_STOP_TIMEOUT, &mut agent_handle).await.is_err() {
-                        warn!(timeout = ?AGENT_STOP_TIMEOUT, "agent did not stop in time during shutdown");
-                        agent_handle.abort();
-                    }
+                    stop_agent(&agent_token, &mut agent_handle, "during shutdown").await;
                     stop_daemon(daemon, &config, DAEMON_STOP_GRACE).await;
                     return Ok(());
                 }

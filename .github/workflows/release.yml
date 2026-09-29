@@ -151,6 +151,12 @@ jobs:
             tags="$image:$version"
             case "$version" in *-*) ;; *) tags="$tags,$image:latest" ;; esac
           else
+            case "$GITHUB_REF_NAME" in
+              latest | [0-9]*)
+                echo "branch $GITHUB_REF_NAME would overwrite a release image tag" >&2
+                exit 1
+                ;;
+            esac
             tags="$image:$GITHUB_REF_NAME"
           fi
           echo "tags=$tags" >> "$GITHUB_OUTPUT"

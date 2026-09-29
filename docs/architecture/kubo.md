@@ -97,8 +97,9 @@ Kubo は `Host` と `X-Forwarded-Host` をそのまま信じるので、Kubo の
 `kubo::recover_orphan` は `run_managed` の冒頭（バイナリの検出・バージョン確認の後、デーモンループの前）に 1 回呼ぶ。`swing.lock` を持っている間なので、記録にある Kubo が生きていればそれは前回の swing の孤児である。
 
 - `kubo.pid` が無ければ何もしない。読めなければ warn を出してファイルを消すだけで、何も kill しない。
-- まず記録の `api_port` に API でのシャットダウンを送り（タイムアウト 3 秒、`ORPHAN_SHUTDOWN_RPC_TIMEOUT`）、応答があればその `pid` の終了を最大 30 秒（`ORPHAN_SHUTDOWN_GRACE`）待つ。終われば完了。
-- API で終わらなければ、その `pid` の今の開始時刻を取り直し、記録と一致するときだけ強制終了する（unix は SIGTERM → 最大 30 秒（`ORPHAN_SIGTERM_GRACE`）→ SIGKILL → 最大 10 秒（`ORPHAN_KILL_WAIT`）、Windows は `taskkill /T /F` → 最大 10 秒（`ORPHAN_KILL_WAIT`））。プロセスがもう無い、または開始時刻が一致しない（PID の再利用）なら kill せずにファイルを消す。
+- まずその `pid` の今の開始時刻を取り直し、記録と比べる。プロセスがもう無い、または開始時刻が一致しない（PID の再利用）なら、API にも何も送らず kill もせずにファイルを消す。
+- 一致したら記録の `api_port` に API でのシャットダウンを送り（タイムアウト 3 秒、`ORPHAN_SHUTDOWN_RPC_TIMEOUT`）、応答があればその `pid` の終了を最大 30 秒（`ORPHAN_SHUTDOWN_GRACE`）待つ。終われば完了。
+- API で終わらなければ強制終了する（unix は SIGTERM → 最大 30 秒（`ORPHAN_SIGTERM_GRACE`）→ SIGKILL → 最大 10 秒（`ORPHAN_KILL_WAIT`）、Windows は `taskkill /T /F` → 最大 10 秒（`ORPHAN_KILL_WAIT`））。
 - 強制終了しても終わらなければエラーを返し、`swing up` は Kubo を起動せずに終了する。
 - `swing up` が Kubo を止めるとき（`up.rs` の `stop_daemon`）は、`Daemon::stop` が成功したときだけ `kubo.pid` を消す。失敗したら（Kubo が残っているかもしれないので）warn を出してファイルを残し、次の起動の `recover_orphan` に任せる。Kubo が自分で exit したとき（[`up.md#managed`](up.md#managed)）は消す。
 - `run_managed` は回収中にトークンが cancel されたら（シグナルなど）回収を途中でやめて終わる。`kubo.pid` は残り、次の起動でもう一度回収する。
@@ -125,7 +126,7 @@ MFS から消したコンテンツや打ち切った取得のブロックは、K
 
 ## RPC
 
-すべて `POST /api/v0/...`。CID とパスはクエリに入れる前にパーセントエンコードする（パスは要素ごと。`<site>` のエンコードと合わせて二重になる）。非 2xx はボディ付きのエラーにする。
+すべて `POST /api/v0/...`。CID とパスはクエリに入れる前にパーセントエンコードする（パスは要素ごと。`<site>` のエンコードと合わせて二重になる）。非 2xx はボディ付きのエラーにする。`dag/export` 以外の応答のボディ（エラーのボディを含む）は 16 MiB（`ipfs::MAX_RESPONSE_BYTES`）までしか読まず、超えたらエラーにする。`dag/export` の成功時のボディは読み捨てながら `max_bytes` で打ち切る。
 
 | 操作 | リクエスト | タイムアウト |
 |---|---|---|
@@ -150,7 +151,7 @@ MFS から消したコンテンツや打ち切った取得のブロックは、K
 
 - 各ファイルは `name="file"` パート。`filename` はルートディレクトリ名を先頭に付けた相対パス（例: `public/css/style.css`、URL エンコード）。
 - ファイルは `application/octet-stream` でストリーミング送信、ディレクトリは空ボディの `application/x-directory`。
-- シンボリックリンクは辿る。循環はエラー。
+- シンボリックリンクは辿る。ただし、リンク先を `canonicalize` した実パスが、`canonicalize` したルートディレクトリの下に無ければエラーにして何も追加しない（`DIR` の外のファイルを公開しないため）。循環もエラー。
 - 最後の JSON 行の `Hash` がルート CID（`ipfs add -Qr --cid-version=1` と同じ）。
 - `to-files` のパスにルートディレクトリそのものが置かれる。add の前に親ディレクトリを作り、同じパスの既存の項目を `files/rm` で消す。
 

@@ -59,7 +59,7 @@ Windows の `swing service stop` もこの `stop::run` を使う（失敗した�
 処理順:
 
 1. `--nip05` が `off` でなければ、`d` と自分の pubkey で NIP-05 を検証し、`NIP-05` 見出しの下に結果を表示する（`✓ verified` / `! mismatch: ...` / `- not applicable (d is not a domain)` / `! error: ...`）。`require` で `Verified` 以外（`NotApplicable` を含む）なら add せず終了する。
-2. `--check-dotfiles` と `--check-size` のどちらかが `off` でなければ、`DIR` を add と同じ辿り方（`ipfs::list_site`。シンボリックリンクを辿り、ドットファイルも含める）で一覧し、`Checks` 見出しの下に 1 行ずつ結果を表示する（`publish::LocalChecks`。`off` の項目は `- dotfiles: off` のように出す）。
+2. `--check-dotfiles` と `--check-size` のどちらかが `off` でなければ、`DIR` を add と同じ辿り方（`ipfs::list_site`。シンボリックリンクを辿り、ドットファイルも含める。リンク先が `DIR` の外ならこの時点でエラー）で一覧し、`Checks` 見出しの下に 1 行ずつ結果を表示する（`publish::LocalChecks`。`off` の項目は `- dotfiles: off` のように出す）。
    - ドットファイル: 各パスをサイトのルートから順にセグメントごとに見て、`[publish].dotfiles_allow` の名前と一致するセグメントがあればそのパスは見逃し、先に名前が `.` で始まるセグメントがあればそこまでを 1 件とする（ディレクトリは 1 回だけ数え、その下は見ない）。無ければ `✓ dotfiles: none`、あれば `! dotfiles: N found (not in [publish].dotfiles_allow)` の後に先頭 `LISTED_DOTFILES`（10）件のパスを字下げして並べ、残りは `… and N more` にまとめる。
    - サイズ: ファイルの大きさの合計（`metadata().len()` の和。ブロックの共有やディレクトリのノードは数えない）が `SIZE_GUIDELINE`（512 MiB、固定）を超えたら（ちょうどは超えない扱い）`! size: <合計> is over the 512 MiB guideline; each mirror decides by its own limits (max_update_size, default 2 GiB)`、超えなければ `✓ size: <合計> (guideline 512 MiB)`。
    - `require` の項目が引っかかったら、項目ごとの理由（ドットファイルは消す・名前を `[publish].dotfiles_allow` に足す・`--check-dotfiles` か `[publish].check_dotfiles` を `warn`/`off` にする、の案内、サイズは `--check-size` か `[publish].check_size` の案内）を `; ` でつないだメッセージで、add せずにエラー終了する。
