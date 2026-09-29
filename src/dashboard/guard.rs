@@ -51,9 +51,7 @@ pub fn authorized(headers: &HeaderMap, host_header: &str, token: &str) -> bool {
 
 pub fn host_allowed(host_header: &str, allowed_hosts: &[String]) -> bool {
     let host = extract_host(host_header);
-    host == "localhost"
-        || host == "127.0.0.1"
-        || host == "::1"
+    crate::host::is_loopback_name(&host)
         || allowed_hosts.iter().any(|h| h.eq_ignore_ascii_case(&host))
 }
 

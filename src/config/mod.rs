@@ -384,17 +384,23 @@ fn load_file(cli_path: Option<&Path>) -> Result<(ConfigFile, PathBuf, bool)> {
     Ok((file, path, true))
 }
 
-// toml's own Display quotes the offending source line, which can be the secret key.
 fn parse_config_file(text: &str) -> Result<ConfigFile> {
-    toml::from_str(text).map_err(|e| {
-        let Some(span) = e.span() else {
-            return anyhow::anyhow!("{}", e.message());
-        };
-        let before = text.get(..span.start).unwrap_or(text);
-        let line = before.matches('\n').count() + 1;
-        let column = before.rsplit('\n').next().map_or(0, |l| l.chars().count()) + 1;
-        anyhow::anyhow!("line {line}, column {column}: {}", e.message())
-    })
+    toml::from_str(text).map_err(|e| toml_error(text, e.span(), e.message()))
+}
+
+// toml's own Display quotes the offending source line, which can be the secret key.
+pub(crate) fn toml_error(
+    text: &str,
+    span: Option<std::ops::Range<usize>>,
+    message: &str,
+) -> anyhow::Error {
+    let Some(span) = span else {
+        return anyhow::anyhow!("{message}");
+    };
+    let before = text.get(..span.start).unwrap_or(text);
+    let line = before.matches('\n').count() + 1;
+    let column = before.rsplit('\n').next().map_or(0, |l| l.chars().count()) + 1;
+    anyhow::anyhow!("line {line}, column {column}: {message}")
 }
 
 pub(crate) fn env_var(name: &str) -> Option<String> {

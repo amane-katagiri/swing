@@ -125,6 +125,7 @@ fn load_document(path: &Path) -> Result<DocumentMut, EditError> {
         }
     };
     text.parse::<DocumentMut>()
+        .map_err(|e| crate::config::toml_error(&text, e.span(), e.message()))
         .context("parsing existing config file")
         .map_err(EditError::Invalid)
 }
@@ -224,6 +225,19 @@ mod tests {
         )
         .unwrap();
         Config::load(Some(&path)).unwrap()
+    }
+
+    #[test]
+    fn a_broken_config_file_is_reported_without_its_source_line() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("swing.toml");
+        std::fs::write(&path, "[nostr]\nsecret_key = \"nsec1verysecret\n").unwrap();
+        let Err(EditError::Invalid(e)) = load_document(&path) else {
+            panic!("expected an invalid-config error");
+        };
+        let shown = format!("{e:#}");
+        assert!(shown.contains("line 2"), "{shown}");
+        assert!(!shown.contains("verysecret"), "{shown}");
     }
 
     fn config_at(
