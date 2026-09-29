@@ -38,7 +38,7 @@ swing-tray [--config <path>]
 
 - 停止中やエラーのときは、確認せずにすぐ閉じる（閉じても止まるものが無いため）。
 - 動作中なら「SWING を停止してからトレイを閉じますか？」と聞き、「いいえ」ならトレイだけを閉じることを添える。ボタンの文字は下記「[確認のダイアログ](#確認のダイアログ)」。
-  - **はい**: `stop::run(&config, false, 90 秒)`（`swing stop` と同じ。`POST /api/shutdown` を送り、API に接続できなくなるまで待つ）を呼び、止まったらトレイを閉じる。止められなかったら、エラーを表示してトレイは残す。
+  - **はい**: `stop::run(&config, false, 90 秒)`（`swing stop` と同じ。`POST /api/shutdown` を送り、トークンを送らない `POST /api/identity` で API に接続できなくなるまで待つ）を呼び、止まったらトレイを閉じる。止められなかったら、エラーを表示してトレイは残す。
   - **いいえ**: トレイだけを閉じる。`swing up` は動き続ける。
   - **キャンセル**: 何もしない。
 
@@ -57,7 +57,7 @@ swing-tray [--config <path>]
 
 ## 状態の表示
 
-別スレッドの tokio ランタイム（`worker::run`）が `GET /api/overview` を叩き（5 秒で返らなければエラー扱い）、結果をイベントループへ送る。間隔はふだん 5 秒で、操作をしてから（自動起動を含む）90 秒間は 1 秒にする。
+別スレッドの tokio ランタイム（`worker::run`）が `GET /api/overview` を叩き（5 秒で返らなければエラー扱い）、結果をイベントループへ送る。`ApiClient` は 1 つを使い回し、毎回設定とトークンファイルを読み直して `listen` かトークンが変わったときだけ作り直す（`ApiClient::matches`）。トークン付きの呼び出しのたびに相手を確かめ直す（[`dashboard.md#認証srcauthrs-srcdashboardsessionrs`](dashboard.md#認証srcauthrs-srcdashboardsessionrs)）。間隔はふだん 5 秒で、操作をしてから（自動起動を含む）90 秒間は 1 秒にする。
 
 | 状態 | 条件 | 表示 | アイコン |
 |---|---|---|---|

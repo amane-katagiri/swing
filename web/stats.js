@@ -1,5 +1,5 @@
 import { t } from './i18n.js';
-import { apiFetch, el, formatBytes, formatTime, setStatus, clearStatus, describeError, createLoadGuard } from './util.js';
+import { apiFetch, el, formatBytes, formatTime, setStatus, clearStatus, describeError, createLoadGuard, dashboardAnswers, backoffDelay } from './util.js';
 
 const HOUR = 3600;
 const DAY = 86400;
@@ -16,6 +16,8 @@ let intervalSecs = 60;
 let kuboManaged = true;
 let loaded = false;
 let timer = null;
+let failures = 0;
+let unreachable = false;
 
 const percent = (v) => `${v.toFixed(1)}%`;
 const bytes = (v) => formatBytes(Math.round(v));
@@ -81,16 +83,25 @@ function scheduleNext() {
   timer = setTimeout(() => {
     timer = null;
     if (!statsEls.view.hidden) loadStats();
-  }, intervalSecs * 1000);
+  }, backoffDelay(intervalSecs * 1000, failures));
 }
 
 export async function loadStats() {
   const gen = statsLoadGuard.start();
   if (!loaded) setStatus(statsEls.status, 'loading', t('statsLoading'));
   const last = samples[samples.length - 1];
+  if (unreachable && !(await dashboardAnswers())) {
+    if (!statsLoadGuard.isCurrent(gen)) return;
+    failures += 1;
+    setStatus(statsEls.status, 'error', t('unreachable'));
+    scheduleNext();
+    return;
+  }
   try {
     const data = await apiFetch(`/api/stats?since=${last ? last.at : 0}`);
     if (!statsLoadGuard.isCurrent(gen)) return;
+    failures = 0;
+    unreachable = false;
     intervalSecs = data.interval || intervalSecs;
     kuboManaged = data.kubo_managed;
     const newest = data.samples[data.samples.length - 1];
@@ -100,6 +111,8 @@ export async function loadStats() {
     renderStats();
   } catch (err) {
     if (!statsLoadGuard.isCurrent(gen)) return;
+    failures += 1;
+    unreachable = err.status === 0;
     setStatus(statsEls.status, 'error', describeError(err));
   }
   scheduleNext();

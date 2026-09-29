@@ -8,6 +8,7 @@ const loginEls = {
 
 let submitting = false;
 let statusKey = null;
+let linkedCode = false;
 
 function showStatus(kind, key) {
   statusKey = key;
@@ -17,6 +18,7 @@ function showStatus(kind, key) {
 async function handleSubmit(ev) {
   ev.preventDefault();
   if (submitting) return;
+  linkedCode = false;
   const form = loginEls.form;
   const code = String(form.elements.code.value || '').trim();
   if (!code) {
@@ -47,21 +49,30 @@ async function handleSubmit(ev) {
 export const LoginView = {
   init() {
     loginEls.form.addEventListener('submit', handleSubmit);
+    loginEls.form.elements.code.addEventListener('input', () => {
+      linkedCode = false;
+    });
     const linked = location.hash.match(/^#\/?login\/code\/([0-9a-fA-F]+)$/);
     if (linked) {
       history.replaceState(null, '', '#/login');
       loginEls.form.elements.code.value = linked[1];
-      loginEls.form.requestSubmit();
+      linkedCode = true;
     }
   },
   onShow() {
     if (location.hash.replace(/^#\/?/, '') === 'login/invalid') {
       showStatus('error', 'loginInvalid');
+    } else if (linkedCode) {
+      showStatus('ok', 'loginLinkReady');
     } else if (!submitting) {
       statusKey = null;
       clearStatus(loginEls.status);
     }
-    loginEls.form.elements.code.focus();
+    if (linkedCode) {
+      loginEls.form.querySelector('button[type="submit"]').focus();
+    } else {
+      loginEls.form.elements.code.focus();
+    }
   },
   render() {
     if (statusKey) setStatus(loginEls.status, loginEls.status.dataset.kind, t(statusKey));

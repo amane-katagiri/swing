@@ -13,7 +13,7 @@ use crate::settings;
 use crate::signer::{self, Pairing, PairingRequest, PairingState, Signer};
 
 use super::AppState;
-use super::api::{ApiError, AppJson, internal, settings_error};
+use super::api::{ApiError, AppJson, blocking, internal, settings_error};
 use super::dto;
 
 #[derive(Debug, Deserialize)]
@@ -78,20 +78,29 @@ pub async fn setup(
             "setup is already done; swing is restarting".to_string(),
         ));
     }
+    let config = Arc::clone(&state.config);
+    let items = req.items;
     let pubkey = if req.remote_signer {
         let paired = ready_pairing(&state)?;
-        settings::setup(&state.config, None, &req.items).map_err(settings_error)?;
-        paired
-            .file
-            .save(&state.config.agent.state_dir)
-            .map_err(|e| internal("saving the signer app connection failed", e))?;
+        let user = blocking(move || {
+            settings::setup(&config, None, &items).map_err(settings_error)?;
+            paired
+                .file
+                .save(&config.agent.state_dir)
+                .map_err(|e| internal("saving the signer app connection failed", e))?;
+            Ok(paired.user)
+        })
+        .await?;
         *state.pairing.lock().expect("pairing lock") = None;
-        paired.user
+        user
     } else {
         let keys = settings::setup_keys(req.secret_key.as_deref())
             .map_err(|e| ApiError::BadRequest(format!("{e:#}")))?;
-        settings::setup(&state.config, Some(&keys), &req.items).map_err(settings_error)?;
-        keys.public_key()
+        blocking(move || {
+            settings::setup(&config, Some(&keys), &items).map_err(settings_error)?;
+            Ok(keys.public_key())
+        })
+        .await?
     };
     writes.setup_done = true;
     drop(writes);
@@ -117,10 +126,14 @@ pub async fn reconnect_signer(State(state): State<Arc<AppState>>) -> Result<Resp
         )));
     }
     let writes = state.config_writes.lock().await;
-    paired
-        .file
-        .save(&state.config.agent.state_dir)
-        .map_err(|e| internal("saving the signer app connection failed", e))?;
+    let state_dir = state.config.agent.state_dir.clone();
+    blocking(move || {
+        paired
+            .file
+            .save(&state_dir)
+            .map_err(|e| internal("saving the signer app connection failed", e))
+    })
+    .await?;
     drop(writes);
     *state.pairing.lock().expect("pairing lock") = None;
     state.restart_required.store(true, Ordering::SeqCst);

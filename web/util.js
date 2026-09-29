@@ -63,6 +63,45 @@ export async function pollUntil(predicate) {
   return false;
 }
 
+function randomNonce() {
+  const bytes = crypto.getRandomValues(new Uint8Array(32));
+  return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+// Whoever holds the port while swing is down would receive the session cookie, so probes go out without it.
+export async function fetchInstance() {
+  const res = await fetch('/api/identity', {
+    method: 'POST',
+    credentials: 'omit',
+    headers: { 'X-Swing-Dashboard': '1', 'Content-Type': 'application/json' },
+    body: JSON.stringify({ nonce: randomNonce() }),
+  });
+  if (!res.ok) return null;
+  const body = parseApiBody(await res.text());
+  return body && typeof body.instance === 'string' ? body.instance : null;
+}
+
+export async function dashboardAnswers() {
+  try {
+    return (await fetchInstance()) != null;
+  } catch {
+    return false;
+  }
+}
+
+const MAX_BACKOFF_MS = 10 * 60 * 1000;
+
+export function backoffDelay(intervalMs, failures) {
+  return Math.max(intervalMs, Math.min(intervalMs * 2 ** Math.min(failures, 10), MAX_BACKOFF_MS));
+}
+
+export function waitForNewInstance(previous) {
+  return pollUntil(async () => {
+    const instance = await fetchInstance();
+    return instance != null && instance !== previous;
+  });
+}
+
 export function setStatus(container, kind, message) {
   container.dataset.kind = kind;
   container.textContent = message || '';

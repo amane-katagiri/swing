@@ -280,6 +280,7 @@ const MESSAGES = {
     loginCodePlaceholder: 'Login code',
     loginSubmit: 'Log in',
     loginCodeHint: 'If no browser can be opened there (inside a container, for example), add --no-browser and enter the printed code here. A code works once and expires after 5 minutes.',
+    loginLinkReady: 'The code from the login link is filled in. Press Log in to finish.',
     loginSubmitting: 'Logging in…',
     loginInvalid: 'The login code is invalid or has expired. Run swing dashboard open again.',
 
@@ -634,6 +635,7 @@ const MESSAGES = {
     loginCodePlaceholder: 'ログインコード',
     loginSubmit: 'ログイン',
     loginCodeHint: 'そのマシンでブラウザを開けない場合（コンテナの中など）は --no-browser を付けて実行し、表示されたコードをここに入力してください。コードは 1 回だけ使えて、5 分で期限が切れます。',
+    loginLinkReady: 'ログインリンクのコードを入力しました。「ログイン」を押すとログインが完了します。',
     loginSubmitting: 'ログイン中…',
     loginInvalid: 'ログインコードが無効か、期限が切れています。swing dashboard open をもう一度実行してください。',
 

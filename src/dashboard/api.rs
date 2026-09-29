@@ -561,6 +561,14 @@ pub(super) fn internal(context: &str, e: impl std::fmt::Display) -> ApiError {
     ApiError::Internal(format!("{context}: {e:#}"))
 }
 
+pub(super) async fn blocking<T: Send + 'static>(
+    f: impl FnOnce() -> Result<T, ApiError> + Send + 'static,
+) -> Result<T, ApiError> {
+    tokio::task::spawn_blocking(f)
+        .await
+        .map_err(|e| internal("a background task failed", e))?
+}
+
 pub(super) fn settings_error(e: settings::EditError) -> ApiError {
     match e {
         settings::EditError::Invalid(e) => ApiError::BadRequest(format!("{e:#}")),
@@ -573,7 +581,9 @@ pub async fn update_config(
     AppJson(req): AppJson<UpdateConfigRequest>,
 ) -> Result<Json<dto::ConfigDto>, ApiError> {
     let _writes = state.config_writes.lock().await;
-    let updated = settings::update(&state.config, &req.items).map_err(settings_error)?;
+    let config = Arc::clone(&state.config);
+    let updated =
+        blocking(move || settings::update(&config, &req.items).map_err(settings_error)).await?;
     state.restart_required.store(true, Ordering::SeqCst);
     let dto = dto::config_dto(&updated, true);
     state.set_display_config(updated).await;

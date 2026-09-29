@@ -10,7 +10,7 @@
 |---|---|
 | `storage.js` | `localStorage` の薄いラッパー。他のどのモジュールにも依存しない |
 | `i18n.js` | 多言語辞書と `t()`。`storage.js` にだけ依存する |
-| `util.js` | 画面間で共有するキャッシュ・DOM/fetch ユーティリティ・表示スタイル切替・非同期ロードのガード（`createLoadGuard`）・`sleep()`・`pollUntil(predicate)`（1 秒間隔・最大 120 回の汎用ポーリング）・他人のイベント由来テキストの表示前サニタイズ（`stripUnsafeUnicode` / `sanitizeDisplayText` / `sanitizeMessage`、サイトの表示名 `siteTitle`）。`storage.js`・`i18n.js` に依存する |
+| `util.js` | 画面間で共有するキャッシュ・DOM/fetch ユーティリティ・表示スタイル切替・非同期ロードのガード（`createLoadGuard`）・`sleep()`・`pollUntil(predicate)`（1 秒間隔・最大 120 回の汎用ポーリング）・cookie を付けない再起動・復帰の確認（`fetchInstance`・`dashboardAnswers`・`waitForNewInstance`）と失敗時の間隔（`backoffDelay`。下記「止まっている間の呼び出し」）・他人のイベント由来テキストの表示前サニタイズ（`stripUnsafeUnicode` / `sanitizeDisplayText` / `sanitizeMessage`、サイトの表示名 `siteTitle`）。`storage.js`・`i18n.js` に依存する |
 | `ui.js` | 複数画面で共有する UI 部品（コピーボタン、バッジ、relay 結果表示、サイト名の行 `buildSiteNameRow` など）。`util.js`・`i18n.js` に依存する |
 | `graph.js` | webring 用の自前 force-directed layout。`util.js` の `clamp`・`sanitizeDisplayText` だけに依存する |
 | `pairing.js` | 署名アプリ（NIP-46）とのペアリングの部品（`createPairing`）。QR の表示・状態のポーリング・状態表示を受け持ち、Setup 画面と Publish 画面の「署名アプリとつなぎ直す」の両方が使う。`util.js`・`i18n.js` に依存する |
@@ -40,6 +40,14 @@ Desktop 画面専用のモジュール（`desktop*.js`）とその CSS は [`des
 未ログイン（`apiFetch` か publish のアップロードが `/api/login` 以外で 401 を受けた）のときは `util.js::apiResponseError` が `swing:unauthorized` イベントを投げ、`app.js` が以後 `currentRoute()` を（セットアップモードでも）常に `'login'` にしてサイドナビをすべて隠す。ログイン済みのときに `#/login` を開いても既定の画面に落とす。
 
 各画面のロードは世代カウンタ（`createLoadGuard`）でガードし、切り替えが速くても古いレスポンスで上書きしない。
+
+### 止まっている間の呼び出し
+
+`swing up` が止まっている間にポートを取った別のプログラムへセッション cookie を送る機会を減らすため（残る弱点は [`../dashboard.md#既知の弱点`](../dashboard.md#既知の弱点)）、止まっていそうな間は cookie を付けない確認だけを送る。
+
+- `util.js::fetchInstance` は [`POST /api/identity`](http-api.md#post-apiidentity) を `credentials: 'omit'` で呼び（nonce は `crypto.getRandomValues` の 32 バイト）、応答の `instance` を返す（2xx 以外や `instance` が無ければ `null`）。`proof` はブラウザでは確かめられないので見ない。`dashboardAnswers()` はこれが `instance` を返したかどうか（例外も `false`）。
+- 再起動を待つとき（Publish 画面のつなぎ直し・Setup 画面の送信後）は `waitForNewInstance(previous)`（`pollUntil` で `fetchInstance` を呼び、`previous` と違う `instance` が返るまで）か、同じ判定を通ってから認証付きの呼び出しをする。
+- 定期的な呼び出し（Desktop のおしらせの `/api/activity`、Settings のリソース使用量の `/api/stats`）は、接続できなかった（`apiFetch` の `status === 0`）後は、次の回から `dashboardAnswers()` が `true` になるまで認証付きの呼び出しをしない。失敗が続く間は間隔を `backoffDelay(interval, 失敗回数)`（間隔 × 2^失敗回数。10 分か元の間隔の大きいほうで頭打ち）に延ばし、成功したら元に戻す。
 
 ### 画面の一覧
 
@@ -71,7 +79,7 @@ NIP-05 の検証結果はバッジで `OK`（`verified`）/ `NG`（`mismatch`）
 ## Publish 画面
 
 - 自分の情報（`.swing-identity`）: npub・hex・ミラーセット・relays に加えて署名の方式（設定ファイルの秘密鍵／署名アプリ）を `overview.signer` から出す（`publish.js::renderSigner`）。`last_failure` があれば警告を出す。署名アプリのときは画面表示のたびと publish 完了時に `GET /api/overview` を読み直してこの行を更新する。
-- 署名アプリのときは「つなぎ直す」ボタンから relay 欄と QR（`pairing.js`）とキャンセルボタンを出す。ペアリングが `ready` になると「つなぎ直して再起動」ボタン（`#pub-signer-save`）が有効になり、押すと [`POST /api/signer/reconnect`](http-api.md#post-apisignerreconnect) を呼び、`pollUntil` で `GET /api/overview` を読んで `instance` が変わったらページを読み直す。
+- 署名アプリのときは「つなぎ直す」ボタンから relay 欄と QR（`pairing.js`）とキャンセルボタンを出す。ペアリングが `ready` になると「つなぎ直して再起動」ボタン（`#pub-signer-save`）が有効になり、押すと [`POST /api/signer/reconnect`](http-api.md#post-apisignerreconnect) を呼び、`waitForNewInstance` で cookie を付けない `POST /api/identity` の `instance` が押す前の `cache.overview.instance` から変わるのを待ってページを読み直す（上記「止まっている間の呼び出し」）。
 - publish のアップロード後、署名アプリのときは処理中の表示を `processingOnAgentSigner`（承認を求められたら承認して、という案内）にする。
 - publish フォームの NIP-05 の下に、同じ形のセレクトを「ドットファイルの確認」（`check_dotfiles`）・「サイズの確認」（`check_size`）・「同じ内容の確認」（`check_unchanged`）の順に並べる。どれも先頭の選択肢は `modeDefault`（値は空。パートを送らず設定の既定値に任せる）で、残りは `modeOff`（検証しない）・`modeWarn`（見つかった問題の報告のみ行う）・`modeRequire`（問題が見つかったら中止する）の文言にモード名を添えて出す（NIP-05 も同じ）。空でなければ同名のパートで送る（`publish.js::MODE_FIELDS`）。
 - publish が成功したら進捗バーを隠し、`#publish-status` に結果（relay N つのうち M つが受け付けたか。全部受け付ければ `ok`、一部だけなら `warn`）を出す。結果のパネルにはサイト・URL・タイトル・NIP-05・サイトの確認（ドットファイル・サイズ・同じ内容。`publish.js::addCheckRows`）・署名（署名アプリのときだけ）・CID・サイズ・作成日時・MFS パス・ファイル数・消した古い版・relay ごとの結果・ゲートウェイのリンクを並べる。ドットファイルは見つかった件数と `paths`（残りは「ほか N 件」）を、`warn` で公開したときは「公開はしています」を添えて出す。
@@ -125,7 +133,7 @@ NIP-05 の検証結果はバッジで `OK`（`verified`）/ `NG`（`mismatch`）
 - 表（`.swing-table`）は `swing` の CPU・メモリ、Kubo の CPU・メモリ、IPFS の受信・送信の 6 行で、列は「現在」（最新のサンプル）・「1 時間平均」・「1 時間最大」・「24 時間最大」（最新のサンプルから数えた期間）。値が無ければ `–`。バイト数は `formatBytes`、通信量はそれに `/s` を付ける。
 - パネルの説明は 1 分ごとの記録を最大 24 時間さかのぼって見られることと、IPFS の通信量が何を数えたものかだけにする。
 - 表の下に最終記録の時刻、最新のサンプルに通信量があれば Kubo 起動からの累計、`kubo_managed` が `false` なら Kubo が SWING の管理外で CPU・メモリを取得できない旨を出す。サンプルが 1 つも無ければ表の代わりに「まだ記録がありません」を出す。
-- 読み込みの失敗は `#stats-status` に出し、次の呼び出しは続ける。
+- 読み込みの失敗は `#stats-status` に出し、次の呼び出しは続ける。接続できなかった後の確認と間隔の延ばし方は上記「止まっている間の呼び出し」。
 
 ### プロセス操作
 
@@ -142,14 +150,14 @@ NIP-05 の検証結果はバッジで `OK`（`verified`）/ `NG`（`mismatch`）
 - 署名アプリを選ぶと `#setup-signer-field` を出し、「QRコードを表示」ボタンからペアリングを始める（下記「共通の UI 部品」のペアリング）。状態は `#setup-signer-status` に出す。ペアリングが `ready` でなければ送信せず `setupSignerNotReady` を出す。
 - relays（複数行テキストエリア）と保存上限 3 つ（`max_total_storage` / `max_per_site` / `max_per_account`）を `GET /api/config` の `raw` で事前入力する。各フィールドの下に対応する `item.description[lang]` を `swing-hint` として添える（`setup.js::renderFieldDescriptions`）。
 - これら 4 項目のうち `GET /api/config` 上で `editable: false`（＝ env 由来。[`../docker.md`](../docker.md)）のものは disabled にして現在値を表示し、`configLockedByEnv` を添える。送信する `items` にもそのキーは含めない（含めるとサーバ側が env 由来として 400 で拒否するため）。
-- 送信すると `POST /api/setup`（[`http-api.md#post-apisetup`](http-api.md#post-apisetup)）を叩く。`remote_signer` は署名アプリを選んだときだけ `true`。成功したら `npub` と、秘密鍵なら保存先、署名アプリなら接続情報を `remote-signer.json` に保存したことの案内を表示し、`pollUntil` で `GET /api/overview` を読んで `setup: false` になったら `#/settings` へ移る。
+- 送信すると `POST /api/setup`（[`http-api.md#post-apisetup`](http-api.md#post-apisetup)）を叩く。`remote_signer` は署名アプリを選んだときだけ `true`。成功したら `npub` と、秘密鍵なら保存先、署名アプリなら接続情報を `remote-signer.json` に保存したことの案内を表示し、`pollUntil` で、cookie を付けない `fetchInstance` の `instance` が送信前の `cache.overview.instance` から変わってから `GET /api/overview` を読み、`setup: false` になったら `#/settings` へ移る。
 - 失敗したらフォームを再度有効にする（env 由来で disabled にしていたフィールドはそのまま disabled に戻す）。
 
 ## Login 画面（`login.js`）
 
 - `swing dashboard open` の案内（コマンドを `<code>` で表示）と、ログインコードの入力欄（`swing-inline-form`）・その下の注記（`--no-browser` で表示されたコードを貼る、1 回限り・5 分）を出す。
 - 送信すると [`POST /api/login`](http-api.md#post-apilogin) を呼び、成功したら `location.replace('/')` でページごと読み込み直す（cookie が付いた状態で `init()` からやり直す）。401 なら「コードが無効か期限切れ」を、それ以外は `describeError` を `#login-status` に出す。
-- ログインリンク（`GET /login?code=`）は `/#/login/code/<code>` にリダイレクトしてくる。`LoginView.init` はこの形のハッシュを見つけると、`history.replaceState` でハッシュを `#/login` に戻してからコードを入力欄に入れてフォームを送信する（上と同じ `POST /api/login`）。
+- ログインリンク（`GET /login?code=`）は `/#/login/code/<code>` にリダイレクトしてくる。`LoginView.init` はこの形のハッシュを見つけると、`history.replaceState` でハッシュを `#/login` に戻してからコードを入力欄に入れるだけで、送信はしない（JavaScript を実行するリンクのプレビューにコードを使われないため）。Login 画面を表示したときは `#login-status` に「リンクのコードを入れたので「ログイン」を押す」旨（`loginLinkReady`、`ok`）を出し、入力欄ではなく送信ボタンにフォーカスする。押すと上と同じ `POST /api/login`。
 - `GET /login?code=` が hex でないコードで `/#/login/invalid` にリダイレクトしてきた場合は、表示時に同じ「無効か期限切れ」を出す。
 - 状態行の文言は i18n のキーで覚えておき、`swing:langchange` で差し替える（`LoginView.render`）。
 

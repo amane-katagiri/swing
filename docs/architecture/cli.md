@@ -28,9 +28,9 @@ swing stop [--config <path>] [--restart] [--timeout <secs>, 既定 60（service:
 
 実装（`src/stop.rs`）はダッシュボード API だけを使う。
 
-1. `--restart` のときだけ、先に `GET /api/overview` で今の `instance` を読んでおく（接続できなければ `not running` で正常終了）。
+1. `ApiClient::identity`（[`POST /api/identity`](dashboard/http-api.md#post-apiidentity)。トークンは送らず、相手の `proof` を確かめて `instance` を読む）で今の `instance` を読んでおく。接続できなければ `not running` で正常終了し、相手がトークンを知っていることを確かめられなければエラー終了する。
 2. `POST /api/shutdown`（`--restart` なら `/api/restart`）を叩く。API に接続できなければ（`swing up` 自体が動いていない）`not running` を出して正常終了する。
-3. 呼び出しが通れば `GET /api/overview` を 500ms 間隔でポーリングする。`--restart` なしなら、接続できなくなった時点（プロセスが終了した時点）で `stopped` を出して正常終了する。`--restart` なら、応答の `instance` が 1. で読んだ値と変わった時点（同じプロセスの中で `up::run` がやり直された時点）で `restarted` を出して正常終了する。
+3. 呼び出しが通れば `ApiClient::identity` を 500ms 間隔でポーリングする（トークンを送らないので、止まった後にポートを取った相手にも渡らない）。`--restart` なしなら、接続できなくなった時点（プロセスが終了した時点）で `stopped` を出して正常終了する。`--restart` なら、確かめられた応答の `instance` が 1. で読んだ値と変わった時点（同じプロセスの中で `up::run` がやり直された時点）で `restarted` を出して正常終了する。確かめられない応答は、どちらでも待ち続ける理由として扱う（`--timeout` でエラー終了する）。
 
 Windows の `swing service stop` もこの `stop::run` を使う（失敗したときの扱いは [`service.md`](service.md#windowsタスクスケジューラ)）。
 

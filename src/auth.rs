@@ -44,8 +44,6 @@ pub fn write_new_token(state_dir: &Path) -> Result<String> {
     Ok(token)
 }
 
-/// Creates `path` (and any missing parents) like `create_dir_all`, but directories this call
-/// actually creates are `0o700` on unix. A directory that already exists is left untouched.
 pub(crate) fn create_private_dir_all(path: &Path) -> Result<()> {
     #[cfg(unix)]
     {
@@ -62,10 +60,7 @@ pub(crate) fn create_private_dir_all(path: &Path) -> Result<()> {
     }
 }
 
-pub(crate) fn write_private_file(path: &Path, contents: &str) -> Result<()> {
-    let mut tmp = path.as_os_str().to_owned();
-    tmp.push(format!(".{}.tmp", random_hex(8)));
-    let tmp = PathBuf::from(tmp);
+pub(crate) fn private_file_options() -> std::fs::OpenOptions {
     let mut options = std::fs::OpenOptions::new();
     options.write(true).create_new(true);
     #[cfg(unix)]
@@ -73,7 +68,14 @@ pub(crate) fn write_private_file(path: &Path, contents: &str) -> Result<()> {
         use std::os::unix::fs::OpenOptionsExt;
         options.mode(0o600);
     }
-    let mut file = options
+    options
+}
+
+pub(crate) fn write_private_file(path: &Path, contents: &str) -> Result<()> {
+    let mut tmp = path.as_os_str().to_owned();
+    tmp.push(format!(".{}.tmp", random_hex(8)));
+    let tmp = PathBuf::from(tmp);
+    let mut file = private_file_options()
         .open(&tmp)
         .with_context(|| format!("creating {}", tmp.display()))?;
     let written = file

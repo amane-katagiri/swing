@@ -5,7 +5,7 @@ use anyhow::{Result, anyhow};
 use serde_json::Value;
 use swing::api_client::{ApiClient, ApiClientError};
 use swing::config::Config;
-use swing::{login, service, stop};
+use swing::{auth, login, service, stop};
 use tokio::sync::mpsc::UnboundedReceiver;
 use tokio::time::Instant;
 
@@ -39,6 +39,7 @@ pub enum Update {
 
 struct Poller {
     installed: Option<(Option<bool>, Instant)>,
+    client: Option<ApiClient>,
 }
 
 impl Poller {
@@ -54,7 +55,7 @@ impl Poller {
                 };
             }
         };
-        let status = match ApiClient::for_config(&config) {
+        let status = match self.client(&config) {
             Err(e) => Status::Error(format!("{e:#}")),
             Ok(client) => {
                 match tokio::time::timeout(OVERVIEW_TIMEOUT, client.get::<Value>("/api/overview"))
@@ -72,6 +73,19 @@ impl Poller {
             ui: config.dashboard.ui,
             service_installed,
         }
+    }
+
+    fn client(&mut self, config: &Config) -> Result<&ApiClient> {
+        let token = auth::read_token(&config.agent.state_dir)?;
+        let listen = config.dashboard.listen;
+        if !self
+            .client
+            .as_ref()
+            .is_some_and(|c| c.matches(listen, token.as_deref()))
+        {
+            self.client = Some(ApiClient::new(listen, token));
+        }
+        Ok(self.client.as_ref().expect("client was just set"))
     }
 
     async fn service_installed(&mut self) -> Option<bool> {
@@ -94,7 +108,10 @@ pub async fn run(
     mut actions: UnboundedReceiver<Action>,
     send: impl Fn(Update),
 ) {
-    let mut poller = Poller { installed: None };
+    let mut poller = Poller {
+        installed: None,
+        client: None,
+    };
     let mut next_poll = Instant::now();
     let mut fast_until = Instant::now();
     let mut first_poll = true;

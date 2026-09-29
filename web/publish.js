@@ -14,7 +14,7 @@ import {
   setBusy,
   setFormDisabled,
   createLoadGuard,
-  pollUntil,
+  waitForNewInstance,
   sanitizeDisplayText,
   parseApiBody,
   apiResponseError,
@@ -261,10 +261,7 @@ function closeReconnect() {
 }
 
 async function waitForRestart(previousInstance) {
-  const restarted = await pollUntil(async () => {
-    const overview = await apiFetch('/api/overview');
-    return overview.instance !== previousInstance;
-  });
+  const restarted = await waitForNewInstance(previousInstance);
   if (restarted) location.reload();
   else setStatus(publishEls.reconnectStatus, 'error', t('setupTimedOut'));
 }

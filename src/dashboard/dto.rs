@@ -70,6 +70,7 @@ pub struct IdentityRequestDto {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct IdentityDto {
     pub proof: String,
+    pub instance: String,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

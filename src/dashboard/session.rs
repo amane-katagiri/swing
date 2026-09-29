@@ -99,6 +99,7 @@ pub async fn identity(
     }
     Ok(Json(dto::IdentityDto {
         proof: auth::identity_proof(&state.token(), &req.nonce),
+        instance: state.instance.clone(),
     }))
 }
 
@@ -258,6 +259,7 @@ mod tests {
             &nonce,
             json["proof"].as_str().unwrap()
         ));
+        assert_eq!(json["instance"], state.instance.as_str());
 
         let resp = call_anonymous(
             router(state),

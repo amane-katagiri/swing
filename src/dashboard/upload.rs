@@ -116,11 +116,9 @@ async fn create_private_dir_all(path: &Path) -> std::io::Result<()> {
 }
 
 async fn create_private_file(path: &Path) -> std::io::Result<tokio::fs::File> {
-    let mut options = tokio::fs::OpenOptions::new();
-    options.write(true).create_new(true);
-    #[cfg(unix)]
-    options.mode(0o600);
-    options.open(path).await
+    tokio::fs::OpenOptions::from(crate::auth::private_file_options())
+        .open(path)
+        .await
 }
 
 // status() gives 500 when the request body stream itself fails (e.g. the client drops mid-upload); that is not a server fault.

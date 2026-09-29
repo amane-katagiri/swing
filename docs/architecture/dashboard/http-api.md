@@ -200,7 +200,7 @@ Follow Set が無ければ `title: null`、`members: []`。
 
 判定の順は、パートの受信とパスの検証（400・413）→ `site`/`url`/`title` とモードの 4 つの検証（400）→ 多重実行（409）→ セットアップモード（503 `agent is not configured`）→ NIP-05（422）→ ドットファイル・サイズ（422）→ agent の準備（503 `agent is not ready`）。同時に実行できる publish は 1 本だけ（`AppState.publish_lock`）で、本体を最後まで受け取ってから判定するので、実行中にもう 1 本来ても 409 はアップロードの後になる。
 
-処理: (1) `<state_dir>/upload/` 配下に一時ディレクトリを作り、各 `file` パートをストリーミングで書き込む。展開先ディレクトリとその中の各ディレクトリは unix では `0o700`、書き込むファイルは `0o600` で作成する（umask 任せにしない。Windows では no-op）。(2) `api::run_publish`（NIP-05 検証 → ドットファイル・サイズの確認 → Kubo に add して MFS に置く → 同じ内容かの確認 → サイトイベントを署名して送信 → 古い版を `[publish].keep_versions` 個まで残して削除、処理順と各確認の判定は CLI の `swing publish`（[`../cli.md#publish`](../cli.md#publish)）と同じ）を、展開先ディレクトリをサイトのディレクトリとして呼ぶ。ドットファイル・サイズは展開先ディレクトリを CLI と同じ `ipfs::list_site` で一覧して確かめるので、受け取った `file` パートのパスと大きさそのものを見ることになる（ブラウザが空のディレクトリを送らない分だけ、手元のフォルダとは違いうる）。relay には agent の接続（`AppState` の relay）を使う。削除に失敗した版は `prune_error` に理由が入るだけでレスポンス全体は成功扱い。(3) 成功でも失敗でも、ハンドラの途中でのリクエスト打ち切り（[`../dashboard.md` のタイムアウト](../dashboard.md#タイムアウトsrcdashboardmodrs)の 30 分超過、またはクライアントの切断）を含めて、展開先ディレクトリは `upload::UploadDirGuard` の `Drop` により必ず削除される。取りこぼした分は `<state_dir>/upload/` ごと `up::run` の起動時（プロセス内再起動を含む。[`../up.md`](../up.md)）に掃除される。(4) ボディが `[dashboard].max_upload` を超えたら 413（ストリーミング中に超えた場合も打ち切る）。multipart の受信エラーは `upload::multipart_error_to_api` が axum の `MultipartError::status()` で振り分け、`413 Payload Too Large` なら 413、それ以外は 400 にする。`status()` が 500 を返すもの（ボディの読み取り自体の失敗。クライアントの切断など）も 400 にする。
+処理: (1) `<state_dir>/upload/` 配下に一時ディレクトリを作り、各 `file` パートをストリーミングで書き込む。展開先ディレクトリとその中の各ディレクトリは unix では `0o700`、書き込むファイルは `0o600` で作成する（umask 任せにしない。Windows では no-op。ファイルを開くオプションは `auth::write_private_file` と共有する `auth::private_file_options`）。(2) `api::run_publish`（NIP-05 検証 → ドットファイル・サイズの確認 → Kubo に add して MFS に置く → 同じ内容かの確認 → サイトイベントを署名して送信 → 古い版を `[publish].keep_versions` 個まで残して削除、処理順と各確認の判定は CLI の `swing publish`（[`../cli.md#publish`](../cli.md#publish)）と同じ）を、展開先ディレクトリをサイトのディレクトリとして呼ぶ。ドットファイル・サイズは展開先ディレクトリを CLI と同じ `ipfs::list_site` で一覧して確かめるので、受け取った `file` パートのパスと大きさそのものを見ることになる（ブラウザが空のディレクトリを送らない分だけ、手元のフォルダとは違いうる）。relay には agent の接続（`AppState` の relay）を使う。削除に失敗した版は `prune_error` に理由が入るだけでレスポンス全体は成功扱い。(3) 成功でも失敗でも、ハンドラの途中でのリクエスト打ち切り（[`../dashboard.md` のタイムアウト](../dashboard.md#タイムアウトsrcdashboardmodrs)の 30 分超過、またはクライアントの切断）を含めて、展開先ディレクトリは `upload::UploadDirGuard` の `Drop` により必ず削除される。取りこぼした分は `<state_dir>/upload/` ごと `up::run` の起動時（プロセス内再起動を含む。[`../up.md`](../up.md)）に掃除される。(4) ボディが `[dashboard].max_upload` を超えたら 413（ストリーミング中に超えた場合も打ち切る）。multipart の受信エラーは `upload::multipart_error_to_api` が axum の `MultipartError::status()` で振り分け、`413 Payload Too Large` なら 413、それ以外は 400 にする。`status()` が 500 を返すもの（ボディの読み取り自体の失敗。クライアントの切断など）も 400 にする。
 
 ```json
 { "published": true, "site": "example.com", "url": "…", "title": "…", "message": "note", "nip05": { "status": "verified", "detail": null },
@@ -363,10 +363,10 @@ Follow Set が無ければ `title: null`、`members: []`。
 
 ## POST /api/identity
 
-CLI と `swing-tray`（`ApiClient`）が、トークンを送る前に相手がこの `swing up` であることを確かめるための API（手順は [`../dashboard.md#認証srcauthrs-srcdashboardsessionrs`](../dashboard.md#認証srcauthrs-srcdashboardsessionrs)）。認証なしで受け付ける。ボディは `{"nonce": "<64 文字の hex>"}`（32 バイトの乱数）。長さか文字が違えば 400。返すのは HMAC-SHA256（鍵はトークン、メッセージは `swing-identity:` と小文字にした nonce）の hex:
+CLI と `swing-tray`（`ApiClient`）が、トークンを送る前に相手がこの `swing up` であることを確かめるための API。停止・再起動を待つ CLI と Web UI は、ここで返る `instance` を見る（手順は [`../dashboard.md#認証srcauthrs-srcdashboardsessionrs`](../dashboard.md#認証srcauthrs-srcdashboardsessionrs)）。認証なしで受け付ける。ボディは `{"nonce": "<64 文字の hex>"}`（32 バイトの乱数）。長さか文字が違えば 400。返すのは HMAC-SHA256（鍵はトークン、メッセージは `swing-identity:` と小文字にした nonce）の hex と、[`GET /api/overview`](#get-apioverview) と同じ `instance`:
 
 ```json
-{ "proof": "5f0c…（64 文字）" }
+{ "proof": "5f0c…（64 文字）", "instance": "3f9a0c1d2b4e5f60" }
 ```
 
 ## POST /api/login

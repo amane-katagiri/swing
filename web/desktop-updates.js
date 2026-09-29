@@ -1,5 +1,5 @@
 import { storage } from './storage.js';
-import { apiFetch, cache, isHttpUrl } from './util.js';
+import { apiFetch, cache, isHttpUrl, dashboardAnswers, backoffDelay } from './util.js';
 import { kindWanted, readNotifySettings } from './notify-settings.js';
 
 const SEEN_KEY = 'swing:desktop:seen';
@@ -73,8 +73,10 @@ function collectPublished(data, since) {
     .sort((a, b) => a.at - b.at);
 }
 
+const TRUSTED_TIERS = new Set(['author', 'chosen']);
+
 function latestReporters(site, author) {
-  return (site.reporters || []).filter((r) => r.latest && r.pubkey !== author);
+  return (site.reporters || []).filter((r) => r.latest && r.pubkey !== author && TRUSTED_TIERS.has(r.tier));
 }
 
 function readReporterBook() {
@@ -136,6 +138,8 @@ export function createUpdateWatcher({ currentSites, reloadSites, isActive }) {
   let started = false;
   let inFlight = false;
   let failing = false;
+  let failures = 0;
+  let unreachable = false;
 
   function emit(event) {
     for (const fn of listeners) {
@@ -262,15 +266,23 @@ export function createUpdateWatcher({ currentSites, reloadSites, isActive }) {
     inFlight = true;
     settings = readNotifySettings();
     try {
+      if (unreachable && !(await dashboardAnswers())) {
+        failures += 1;
+        return;
+      }
       const activity = await apiFetch('/api/activity');
+      unreachable = false;
       await checkStored(activity.latest_stored_at);
       await checkPublished(activity.latest_published_at);
       await checkReplicas(activity.latest_replica_report_at);
+      failures = 0;
       if (failing) {
         failing = false;
         emit({ kind: 'recovered' });
       }
     } catch (err) {
+      failures += 1;
+      unreachable = err.status === 0;
       if (!failing) {
         failing = true;
         emit({ kind: 'fetch-error', error: err });
@@ -293,7 +305,7 @@ export function createUpdateWatcher({ currentSites, reloadSites, isActive }) {
     timer = setTimeout(async () => {
       await check();
       schedule();
-    }, intervalMs);
+    }, backoffDelay(intervalMs, failures));
   }
 
   function onPublished(body) {

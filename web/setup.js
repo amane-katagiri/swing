@@ -1,5 +1,5 @@
 import { t, currentLang } from './i18n.js';
-import { cache, el, apiFetch, setStatus, clearStatus, describeError, setBusy, setFormDisabled, createLoadGuard, pollUntil } from './util.js';
+import { cache, el, apiFetch, setStatus, clearStatus, describeError, setBusy, setFormDisabled, createLoadGuard, pollUntil, fetchInstance } from './util.js';
 import { loadOverview } from './publish.js';
 import { createPairing } from './pairing.js';
 
@@ -130,8 +130,11 @@ function renderSuccess(result) {
 async function pollUntilReady() {
   if (polling) return;
   polling = true;
+  const previous = cache.overview ? cache.overview.instance : null;
   try {
     const ready = await pollUntil(async () => {
+      const instance = await fetchInstance();
+      if (instance == null || instance === previous) return false;
       const overview = await apiFetch('/api/overview');
       cache.overview = overview;
       return !overview.setup;

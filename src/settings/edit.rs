@@ -129,11 +129,19 @@ fn load_document(path: &Path) -> Result<DocumentMut, EditError> {
         .map_err(EditError::Invalid)
 }
 
+// Renaming over a symlink would replace the link itself, so write to the file it points at.
 fn write_atomic(path: &Path, contents: &str) -> Result<()> {
-    if let Some(dir) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
+    let target = match std::fs::canonicalize(path) {
+        Ok(real) => real,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => path.to_path_buf(),
+        Err(e) => {
+            return Err(anyhow::Error::new(e).context(format!("resolving {}", path.display())));
+        }
+    };
+    if let Some(dir) = target.parent().filter(|p| !p.as_os_str().is_empty()) {
         crate::auth::create_private_dir_all(dir)?;
     }
-    crate::auth::write_private_file(path, contents)
+    crate::auth::write_private_file(&target, contents)
 }
 
 fn validate_and_write(path: &Path, rendered: &str) -> Result<Config, EditError> {
@@ -290,6 +298,38 @@ mod tests {
         let text = std::fs::read_to_string(&path).unwrap();
         assert!(text.contains("# a comment"));
         assert!(text.contains("mirror_set = \"keep-me\""));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn symlinked_config_is_written_through_to_its_target() {
+        let dir = tempfile::tempdir().unwrap();
+        let real = dir.path().join("real.toml");
+        std::fs::write(
+            &real,
+            "[nostr]\nsecret_key = \"k\"\nrelays = [\"wss://r\"]\n",
+        )
+        .unwrap();
+        let link = dir.path().join("swing.toml");
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+        let cfg = Config::load(Some(&link)).unwrap();
+        let mut items = BTreeMap::new();
+        items.insert(
+            "nostr.mirror_set".to_string(),
+            InputValue::Str("newset".to_string()),
+        );
+        update(&cfg, &items).unwrap();
+        assert!(
+            std::fs::symlink_metadata(&link)
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
+        assert!(
+            std::fs::read_to_string(&real)
+                .unwrap()
+                .contains("mirror_set = \"newset\"")
+        );
     }
 
     #[test]

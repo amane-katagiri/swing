@@ -1,6 +1,5 @@
 use std::fmt;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use reqwest::{Client, RequestBuilder, StatusCode};
@@ -62,7 +61,6 @@ pub struct ApiClient {
     client: Client,
     addr: SocketAddr,
     token: Option<String>,
-    verified: AtomicBool,
 }
 
 impl ApiClient {
@@ -75,7 +73,6 @@ impl ApiClient {
                 .expect("building the dashboard API client"),
             addr: loopback_addr(listen),
             token,
-            verified: AtomicBool::new(false),
         }
     }
 
@@ -84,11 +81,12 @@ impl ApiClient {
         Ok(Self::new(config.dashboard.listen, token))
     }
 
-    // Anything can listen on the dashboard port while swing is down, so the server proves it holds the token before we send it.
-    async fn verify_server(&self, token: &str) -> Result<(), ApiClientError> {
-        if self.verified.load(Ordering::Acquire) {
-            return Ok(());
-        }
+    pub fn matches(&self, listen: SocketAddr, token: Option<&str>) -> bool {
+        self.addr == loopback_addr(listen) && self.token.as_deref() == token
+    }
+
+    // Anything can listen on the dashboard port while swing is down, so every token-bearing request is preceded by a fresh proof.
+    pub async fn identity(&self) -> Result<String, ApiClientError> {
         let nonce = auth::new_identity_nonce();
         let result = self
             .client
@@ -100,21 +98,22 @@ impl ApiClient {
             .send()
             .await;
         let resp = self.check_status(result).await?;
-        let proven = resp
+        let body = resp
             .json::<IdentityDto>()
             .await
-            .is_ok_and(|body| auth::verify_identity_proof(token, &nonce, &body.proof));
-        if !proven {
-            return Err(ApiClientError::NotSwing(self.addr));
+            .map_err(|_| ApiClientError::NotSwing(self.addr))?;
+        match &self.token {
+            Some(token) if !auth::verify_identity_proof(token, &nonce, &body.proof) => {
+                Err(ApiClientError::NotSwing(self.addr))
+            }
+            _ => Ok(body.instance),
         }
-        self.verified.store(true, Ordering::Release);
-        Ok(())
     }
 
     async fn send(&self, builder: RequestBuilder) -> Result<reqwest::Response, ApiClientError> {
         let builder = match &self.token {
             Some(token) => {
-                self.verify_server(token).await?;
+                self.identity().await?;
                 builder.bearer_auth(token)
             }
             None => builder,
@@ -136,10 +135,7 @@ impl ApiClient {
     ) -> Result<reqwest::Response, ApiClientError> {
         let resp = match result {
             Ok(resp) => resp,
-            Err(e) if e.is_connect() => {
-                self.verified.store(false, Ordering::Release);
-                return Err(ApiClientError::Unreachable(self.addr));
-            }
+            Err(e) if e.is_connect() => return Err(ApiClientError::Unreachable(self.addr)),
             Err(e) => {
                 return Err(ApiClientError::Other(
                     anyhow::Error::new(e)
@@ -282,6 +278,7 @@ mod tests {
         axum::routing::post(move |Json(req): Json<IdentityRequestDto>| async move {
             Json(IdentityDto {
                 proof: auth::identity_proof(token, &req.nonce),
+                instance: "inst".to_string(),
             })
         })
     }
@@ -331,6 +328,69 @@ mod tests {
         let squatter = spawn(axum::Router::new().route("/auth", get(ready))).await;
         let client = ApiClient::new(squatter, Some("tok".to_string()));
         assert!(client.get::<Pong>("/auth").await.is_err());
+    }
+
+    #[tokio::test]
+    async fn every_token_bearing_request_is_preceded_by_a_fresh_proof() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        let swapped = std::sync::Arc::new(AtomicBool::new(false));
+        let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+        let (answer, record) = (
+            std::sync::Arc::clone(&swapped),
+            std::sync::Arc::clone(&seen),
+        );
+        let router = axum::Router::new()
+            .route(
+                "/auth",
+                get(move |h| {
+                    let record = std::sync::Arc::clone(&record);
+                    async move {
+                        let value = echo_authorization(h).await;
+                        record.lock().unwrap().push(value.clone());
+                        Json(value)
+                    }
+                }),
+            )
+            .route(
+                "/api/identity",
+                axum::routing::post(move |Json(req): Json<IdentityRequestDto>| {
+                    let answer = std::sync::Arc::clone(&answer);
+                    async move {
+                        let token = if answer.load(Ordering::SeqCst) {
+                            "other"
+                        } else {
+                            "tok"
+                        };
+                        Json(IdentityDto {
+                            proof: auth::identity_proof(token, &req.nonce),
+                            instance: "inst".to_string(),
+                        })
+                    }
+                }),
+            );
+        let addr = spawn(router).await;
+
+        let client = ApiClient::new(addr, Some("tok".to_string()));
+        assert_eq!(client.get::<String>("/auth").await.unwrap(), "Bearer tok");
+        assert_eq!(client.identity().await.unwrap(), "inst");
+        swapped.store(true, Ordering::SeqCst);
+        let err = client.get::<String>("/auth").await.unwrap_err();
+        assert!(matches!(err, ApiClientError::NotSwing(_)));
+        assert!(matches!(
+            client.identity().await,
+            Err(ApiClientError::NotSwing(_))
+        ));
+        assert_eq!(seen.lock().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn matches_compares_the_normalized_address_and_token() {
+        let listen = SocketAddr::from(([0, 0, 0, 0], 8082));
+        let client = ApiClient::new(listen, Some("tok".to_string()));
+        assert!(client.matches(SocketAddr::from(([127, 0, 0, 1], 8082)), Some("tok")));
+        assert!(!client.matches(listen, Some("new")));
+        assert!(!client.matches(listen, None));
+        assert!(!client.matches(SocketAddr::from(([127, 0, 0, 1], 8083)), Some("tok")));
     }
 
     #[tokio::test]
