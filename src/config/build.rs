@@ -680,7 +680,7 @@ fn resolve_dashboard(
         get_env,
         settings::env_of("dashboard.gateway"),
         file.gateway,
-        |s| Ok(s.to_string()),
+        parse_dashboard_gateway,
         "invalid SWING_DASHBOARD_GATEWAY",
         "invalid [dashboard].gateway",
         "http://localhost:8080".to_string(),
@@ -940,6 +940,23 @@ fn resolve_gateway(
     })
 }
 
+// Peer HTML served by the gateway must never be same-site with the dashboard (cookies ignore ports).
+fn check_gateway_hosts_apart_from_dashboard(
+    gateway_hosts: &[String],
+    allowed_hosts: &[String],
+) -> Result<()> {
+    for host in gateway_hosts {
+        if ["localhost", "127.0.0.1"].contains(&host.as_str())
+            || allowed_hosts.iter().any(|h| h.eq_ignore_ascii_case(host))
+        {
+            bail!(
+                "[gateway].hosts entry {host} is also a dashboard host; serve the dashboard and the gateway under different host names"
+            );
+        }
+    }
+    Ok(())
+}
+
 pub(super) fn build_config(
     file: ConfigFile,
     base: Option<&Path>,
@@ -969,6 +986,7 @@ pub(super) fn build_config(
         kubo.managed,
         kubo.gateway_listen,
     )?;
+    check_gateway_hosts_apart_from_dashboard(&gateway.hosts, &dashboard.allowed_hosts)?;
 
     Ok(Config {
         nostr,
@@ -1784,6 +1802,51 @@ mod tests {
             Listen::Addr(([127, 0, 0, 1], 8081).into())
         );
         assert_eq!(cfg.gateway.hosts, vec!["example.com".to_string()]);
+    }
+
+    #[test]
+    fn gateway_hosts_must_not_overlap_dashboard_hosts() {
+        let err = build_config(minimal_file(), None, |k| match k {
+            "SWING_GATEWAY_HOSTS" => Some("example.com,dash.example".into()),
+            "SWING_DASHBOARD_ALLOWED_HOSTS" => Some("Dash.Example".into()),
+            _ => None,
+        })
+        .unwrap_err();
+        assert!(err.to_string().contains("dash.example"), "{err}");
+        assert_env_rejects("SWING_GATEWAY_HOSTS", "localhost", "also a dashboard host");
+        assert_env_rejects("SWING_GATEWAY_HOSTS", "127.0.0.1", "also a dashboard host");
+        assert!(
+            build_config(minimal_file(), None, |k| match k {
+                "SWING_GATEWAY_HOSTS" => Some("example.com".into()),
+                "SWING_DASHBOARD_ALLOWED_HOSTS" => Some("dash.example".into()),
+                _ => None,
+            })
+            .is_ok()
+        );
+    }
+
+    #[test]
+    fn dashboard_gateway_must_be_an_http_origin() {
+        assert_env_rejects(
+            "SWING_DASHBOARD_GATEWAY",
+            "javascript:alert(1)",
+            "invalid SWING_DASHBOARD_GATEWAY",
+        );
+        assert_env_rejects(
+            "SWING_DASHBOARD_GATEWAY",
+            "http://gw.example/sub",
+            "invalid SWING_DASHBOARD_GATEWAY",
+        );
+        let cfg = build_config(minimal_file(), None, |k| {
+            (k == "SWING_DASHBOARD_GATEWAY").then(|| "https://gw.example/".to_string())
+        })
+        .unwrap();
+        assert_eq!(cfg.dashboard.gateway.as_deref(), Some("https://gw.example"));
+        let cfg = build_config(minimal_file(), None, |k| {
+            (k == "SWING_DASHBOARD_GATEWAY").then(String::new)
+        })
+        .unwrap();
+        assert_eq!(cfg.dashboard.gateway, None);
     }
 
     #[test]

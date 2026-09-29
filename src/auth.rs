@@ -64,9 +64,8 @@ pub(crate) fn create_private_dir_all(path: &Path) -> Result<()> {
 
 pub(crate) fn write_private_file(path: &Path, contents: &str) -> Result<()> {
     let mut tmp = path.as_os_str().to_owned();
-    tmp.push(".tmp");
+    tmp.push(format!(".{}.tmp", random_hex(8)));
     let tmp = PathBuf::from(tmp);
-    let _ = std::fs::remove_file(&tmp);
     let mut options = std::fs::OpenOptions::new();
     options.write(true).create_new(true);
     #[cfg(unix)]
@@ -77,12 +76,18 @@ pub(crate) fn write_private_file(path: &Path, contents: &str) -> Result<()> {
     let mut file = options
         .open(&tmp)
         .with_context(|| format!("creating {}", tmp.display()))?;
-    file.write_all(contents.as_bytes())
-        .with_context(|| format!("writing {}", tmp.display()))?;
-    file.sync_all()
-        .with_context(|| format!("writing {}", tmp.display()))?;
+    let written = file
+        .write_all(contents.as_bytes())
+        .and_then(|()| file.sync_all())
+        .with_context(|| format!("writing {}", tmp.display()));
     drop(file);
-    std::fs::rename(&tmp, path).with_context(|| format!("replacing {}", path.display()))
+    let result = written.and_then(|()| {
+        std::fs::rename(&tmp, path).with_context(|| format!("replacing {}", path.display()))
+    });
+    if result.is_err() {
+        let _ = std::fs::remove_file(&tmp);
+    }
+    result
 }
 
 pub(crate) fn random_hex(len: usize) -> String {
@@ -125,6 +130,9 @@ pub fn verify_session_at(token: &str, purpose: &str, value: &str, now: u64) -> b
     let Some((issued, tag_hex)) = value.split_once('.') else {
         return false;
     };
+    if issued.is_empty() || !issued.bytes().all(|b| b.is_ascii_digit()) {
+        return false;
+    }
     let Ok(issued_at) = issued.parse::<u64>() else {
         return false;
     };
@@ -160,6 +168,32 @@ pub fn token_matches(expected: &str, presented: &str) -> bool {
     let mac = session_mac(expected, "bearer", 0);
     let presented_tag = session_mac(presented, "bearer", 0).finalize().into_bytes();
     mac.verify_slice(&presented_tag).is_ok()
+}
+
+pub const IDENTITY_NONCE_BYTES: usize = 32;
+
+pub fn new_identity_nonce() -> String {
+    random_hex(IDENTITY_NONCE_BYTES)
+}
+
+pub fn is_identity_nonce(nonce: &str) -> bool {
+    nonce.len() == IDENTITY_NONCE_BYTES * 2 && nonce.bytes().all(|b| b.is_ascii_hexdigit())
+}
+
+fn identity_mac(token: &str, nonce: &str) -> Hmac<Sha256> {
+    let mut mac =
+        Hmac::<Sha256>::new_from_slice(token.as_bytes()).expect("HMAC accepts any key length");
+    mac.update(b"swing-identity:");
+    mac.update(nonce.to_ascii_lowercase().as_bytes());
+    mac
+}
+
+pub fn identity_proof(token: &str, nonce: &str) -> String {
+    hex(&identity_mac(token, nonce).finalize().into_bytes())
+}
+
+pub fn verify_identity_proof(token: &str, nonce: &str, proof: &str) -> bool {
+    parse_hex(proof).is_some_and(|tag| identity_mac(token, nonce).verify_slice(&tag).is_ok())
 }
 
 #[derive(Default)]
@@ -257,6 +291,51 @@ mod tests {
             "1000000.zz",
             1_000_000
         ));
+    }
+
+    #[test]
+    fn session_issued_at_must_be_plain_digits() {
+        let v = sign_session("tok", DASHBOARD_SESSION, 1_000_000);
+        let plus = format!("+{v}");
+        assert!(!verify_session_at(
+            "tok",
+            DASHBOARD_SESSION,
+            &plus,
+            1_000_000
+        ));
+    }
+
+    #[test]
+    fn identity_proof_is_bound_to_token_and_nonce() {
+        let nonce = new_identity_nonce();
+        assert!(is_identity_nonce(&nonce));
+        let proof = identity_proof("tok", &nonce);
+        assert!(verify_identity_proof("tok", &nonce, &proof));
+        assert!(!verify_identity_proof("other", &nonce, &proof));
+        assert!(!verify_identity_proof("tok", &new_identity_nonce(), &proof));
+        assert!(!verify_identity_proof("tok", &nonce, "zz"));
+        assert!(!is_identity_nonce("abc"));
+        assert!(!is_identity_nonce(&"g".repeat(IDENTITY_NONCE_BYTES * 2)));
+    }
+
+    #[test]
+    fn concurrent_private_writes_do_not_collide() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("file");
+        std::thread::scope(|scope| {
+            for i in 0..8 {
+                let path = &path;
+                scope.spawn(move || write_private_file(path, &format!("{i}\n")).unwrap());
+            }
+        });
+        let written = std::fs::read_to_string(&path).unwrap();
+        assert!(written.trim().parse::<u32>().unwrap() < 8);
+        let leftovers: Vec<_> = std::fs::read_dir(dir.path())
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .filter(|e| e.file_name() != "file")
+            .collect();
+        assert!(leftovers.is_empty());
     }
 
     #[test]

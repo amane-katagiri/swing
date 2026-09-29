@@ -7,6 +7,7 @@ pub mod dashboard;
 pub mod format;
 pub mod gateway;
 pub mod health;
+pub mod host;
 pub mod ipfs;
 pub mod key;
 pub mod kubo;

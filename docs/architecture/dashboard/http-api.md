@@ -25,8 +25,8 @@
 
 ### 認証とガード
 
-- `POST /api/login` 以外の `/api/*` は認証が要る。`Authorization: Bearer <token>` かセッション cookie が無い・合わなければ 401 `{"error": "missing or invalid dashboard token or session"}`（仕組みは [`../dashboard.md#認証srcauthrs-srcdashboardsessionrs`](../dashboard.md#認証srcauthrs-srcdashboardsessionrs)）。
-- GET 以外のエンドポイント（`POST /api/login` と `POST /api/publish/upload` を含む）は、`X-Swing-Dashboard: 1` ヘッダと Origin の検証を通す（[`../dashboard.md#ガードsrcdashboardguardrs`](../dashboard.md#ガードsrcdashboardguardrs)）。
+- `POST /api/login`・`POST /api/identity` 以外の `/api/*` は認証が要る。`Authorization: Bearer <token>` かセッション cookie が無い・合わなければ 401 `{"error": "missing or invalid dashboard token or session"}`（仕組みは [`../dashboard.md#認証srcauthrs-srcdashboardsessionrs`](../dashboard.md#認証srcauthrs-srcdashboardsessionrs)）。
+- GET 以外のエンドポイント（`POST /api/login`・`POST /api/identity`・`POST /api/publish/upload` を含む）は、`X-Swing-Dashboard: 1` ヘッダと Origin の検証を通す（[`../dashboard.md#ガードsrcdashboardguardrs`](../dashboard.md#ガードsrcdashboardguardrs)）。
 
 ### agent の準備状態とセットアップモード
 
@@ -35,7 +35,7 @@ API は `swing up` の寿命で動き続ける（[`../up.md`](../up.md)）。
 | エンドポイント | 使えないとき |
 |---|---|
 | relay・Kubo を使うもの（`/api/sites`・`/api/status`・`/api/mirror`・`/api/mirror/add`・`/api/mirror/remove`・`/api/webring`・`/api/replicas`・`/api/publish/sites`・`/api/publish/upload`） | agent が起動時の突き合わせ（保存量に比例して時間がかかる）を終えて `AppState::set_ready` を呼ぶまでと、agent が落ちて `set_not_ready` を呼んでから次に `set_ready` するまで（[`../agent.md#全体の流れ`](../agent.md#全体の流れ)）は 503 `{"error": "agent is not ready"}`。セットアップモード（[`../up.md#セットアップモード鍵未設定`](../up.md#セットアップモード鍵未設定)）の間は常に 503 `{"error": "agent is not configured"}` |
-| `/api/overview`・`/api/activity`・`/api/stats`・`/api/config`・`/api/shutdown`・`/api/restart`・`/api/login`・`/api/login-code`・`/api/token/rotate` | 無い（常に応答する） |
+| `/api/overview`・`/api/activity`・`/api/stats`・`/api/config`・`/api/shutdown`・`/api/restart`・`/api/login`・`/api/identity`・`/api/login-code`・`/api/token/rotate` | 無い（常に応答する） |
 | `/api/setup` | セットアップモードでなければ 409。セットアップが一度成功してから再起動するまでも 409 |
 | `/api/setup/signer` | セットアップモードでも署名アプリを使っている間でもなければ 409 |
 | `/api/signer/reconnect` | 署名アプリを使っていなければ 409 |
@@ -184,14 +184,16 @@ Follow Set が無ければ `title: null`、`members: []`。
 
 `multipart/form-data`。
 
-パート: `site`（必須）・`url`・`title`・`message`・`nip05`・`check_dotfiles`・`check_size`・`check_unchanged`（省略可。モードの 4 つは `off`/`warn`/`require` で、省略時は `[publish]` の同名の設定。不正な値は 400 `invalid <パート名>: ...`）。`site`/`url`/`title` は CLI と同じ規則で検証し違反は 400。`title` が空白のみなら未指定として扱う。`file`（1 個以上）: 各パートの `filename` がサイトルートからの相対パス（`/` 区切り。ブラウザは `webkitRelativePath` の先頭フォルダ名を取り除いて送る）。
+パート: `site`（必須）・`url`・`title`・`message`・`nip05`・`check_dotfiles`・`check_size`・`check_unchanged`（省略可。モードの 4 つは `off`/`warn`/`require` で、省略時は `[publish]` の同名の設定。不正な値は 400 `invalid <パート名>: ...`）。これらのテキストのパートは 1 つあたり `MAX_TEXT_FIELD_BYTES`（64 KiB）までで、超えるか UTF-8 でなければ 400。知らない名前のパートは中身をためずに読み捨てる。`site`/`url`/`title` は CLI と同じ規則で検証し違反は 400。`title` が空白のみなら未指定として扱う。`file`（1 個以上）: 各パートの `filename` がサイトルートからの相対パス（`/` 区切り。ブラウザは `webkitRelativePath` の先頭フォルダ名を取り除いて送る）。
 
 サーバの検証（`upload::validate_relative_path` など。パートを受け取りながら順に検証し、違反は 400）:
 
-- パスは非空、`/` で始まらない、`\` や制御文字を含まない
+- パスは非空、`/` で始まらない、`\`・`:`・制御文字を含まない（`:` は Windows のドライブ指定 `C:foo` と NTFS の代替データストリーム `index.html:stream` を防ぐ）
 - 長さ `MAX_PATH_LEN`（4096 バイト）以下、セグメント数 `MAX_PATH_SEGMENTS`（32）以下、各セグメントは非空かつ `.`/`..` でない
 - 各セグメントは `.` や半角スペースで終わらない、Windows の予約デバイス名（`CON`・`PRN`・`AUX`・`NUL`・`COM1`〜`9`・`LPT1`〜`9`、大小文字無視、拡張子付き `nul.txt` も含む）でない（プラットフォームを問わず拒否。他 OS での展開時の破損防止）
-- 同じパスの重複、`file` 0 個、`site` 無し、はいずれも 400
+- 同じパスの重複（大文字小文字を区別しない。`Index.html` と `index.HTML` も重複）、`file` 0 個、`site` 無し、はいずれも 400
+- 同じパスをファイルとディレクトリの両方に使う組み合わせ（`a` と `a/b`）は、後から来たほうを書こうとした時点で 400
+- 展開先には、つないだパスが展開先ディレクトリの下にあること（`Path::starts_with`）を確かめてから、既存のファイルを上書きしない `create_new` で書く
 - `file` パートの総数は `MAX_UPLOAD_FILES`（10,000）まで
 
 上限はすべて固定の定数（`src/dashboard/upload.rs`）。違反や上限超過が見つかるまでに受け取ったファイルは展開先に書かれるが、400 を返す前に展開先ディレクトリを丸ごと削除する（下記 (3)）。
@@ -359,9 +361,17 @@ Follow Set が無ければ `title: null`、`members: []`。
 { "code": "cc2455ac565b74586b0628e1d7bda4c3", "expires_in": 300 }
 ```
 
+## POST /api/identity
+
+CLI と `swing-tray`（`ApiClient`）が、トークンを送る前に相手がこの `swing up` であることを確かめるための API（手順は [`../dashboard.md#認証srcauthrs-srcdashboardsessionrs`](../dashboard.md#認証srcauthrs-srcdashboardsessionrs)）。認証なしで受け付ける。ボディは `{"nonce": "<64 文字の hex>"}`（32 バイトの乱数）。長さか文字が違えば 400。返すのは HMAC-SHA256（鍵はトークン、メッセージは `swing-identity:` と小文字にした nonce）の hex:
+
+```json
+{ "proof": "5f0c…（64 文字）" }
+```
+
 ## POST /api/login
 
-認証なしで受け付ける唯一の API。ボディは `{"code": "<ログインコード>"}`（前後の空白は無視、大文字小文字は区別しない）。コードが有効なら消費して `200 {"ok": true}` とセッション cookie（`Set-Cookie`。属性は [`../dashboard.md#認証srcauthrs-srcdashboardsessionrs`](../dashboard.md#認証srcauthrs-srcdashboardsessionrs)）を返す。無効・期限切れ・使用済みなら 401 `{"error": "invalid or expired login code"}`。
+認証なしで受け付ける API（ほかは `POST /api/identity` だけ）。ボディは `{"code": "<ログインコード>"}`（前後の空白は無視、大文字小文字は区別しない）。コードが有効なら消費して `200 {"ok": true}` とセッション cookie（`Set-Cookie`。属性は [`../dashboard.md#認証srcauthrs-srcdashboardsessionrs`](../dashboard.md#認証srcauthrs-srcdashboardsessionrs)）を返す。無効・期限切れ・使用済みなら 401 `{"error": "invalid or expired login code"}`。
 
 ## POST /api/token/rotate
 

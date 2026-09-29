@@ -47,6 +47,12 @@ async function handleSubmit(ev) {
 export const LoginView = {
   init() {
     loginEls.form.addEventListener('submit', handleSubmit);
+    const linked = location.hash.match(/^#\/?login\/code\/([0-9a-fA-F]+)$/);
+    if (linked) {
+      history.replaceState(null, '', '#/login');
+      loginEls.form.elements.code.value = linked[1];
+      loginEls.form.requestSubmit();
+    }
   },
   onShow() {
     if (location.hash.replace(/^#\/?/, '') === 'login/invalid') {

@@ -149,7 +149,8 @@ NIP-05 の検証結果はバッジで `OK`（`verified`）/ `NG`（`mismatch`）
 
 - `swing dashboard open` の案内（コマンドを `<code>` で表示）と、ログインコードの入力欄（`swing-inline-form`）・その下の注記（`--no-browser` で表示されたコードを貼る、1 回限り・5 分）を出す。
 - 送信すると [`POST /api/login`](http-api.md#post-apilogin) を呼び、成功したら `location.replace('/')` でページごと読み込み直す（cookie が付いた状態で `init()` からやり直す）。401 なら「コードが無効か期限切れ」を、それ以外は `describeError` を `#login-status` に出す。
-- `GET /login?code=` が無効なコードで `/#/login/invalid` にリダイレクトしてきた場合は、表示時に同じ「無効か期限切れ」を出す。
+- ログインリンク（`GET /login?code=`）は `/#/login/code/<code>` にリダイレクトしてくる。`LoginView.init` はこの形のハッシュを見つけると、`history.replaceState` でハッシュを `#/login` に戻してからコードを入力欄に入れてフォームを送信する（上と同じ `POST /api/login`）。
+- `GET /login?code=` が hex でないコードで `/#/login/invalid` にリダイレクトしてきた場合は、表示時に同じ「無効か期限切れ」を出す。
 - 状態行の文言は i18n のキーで覚えておき、`swing:langchange` で差し替える（`LoginView.render`）。
 
 ## 共通の UI 部品

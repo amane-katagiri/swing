@@ -8,34 +8,11 @@ use std::sync::Arc;
 
 use super::AppState;
 use crate::auth;
+use crate::host::{extract_host, split_host_port};
 
 const DASHBOARD_MARKER_HEADER: &str = "x-swing-dashboard";
 const SESSION_COOKIE_PREFIX: &str = "swing_session";
-const UNAUTHENTICATED_API_PATHS: &[&str] = &["/api/login"];
-
-fn is_port(s: &str) -> bool {
-    !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit())
-}
-
-fn split_host_port(host_header: &str) -> (&str, Option<&str>) {
-    let host_header = host_header.trim();
-    if let Some(rest) = host_header.strip_prefix('[') {
-        return match rest.split_once(']') {
-            Some((host, "")) => (host, None),
-            // Anything after `]` that isn't `:<digits>` makes the header malformed; fall back to
-            // the raw header so it can't coincidentally match a real host like `::1`.
-            Some((host, after)) => match after.strip_prefix(':').filter(|p| is_port(p)) {
-                Some(port) => (host, Some(port)),
-                None => (host_header, None),
-            },
-            None => (host_header, None),
-        };
-    }
-    match host_header.rsplit_once(':') {
-        Some((host, port)) if is_port(port) => (host, Some(port)),
-        _ => (host_header, None),
-    }
-}
+const UNAUTHENTICATED_API_PATHS: &[&str] = &["/api/login", "/api/identity"];
 
 // Cookies ignore the port, so instances on one host would otherwise overwrite each other's session.
 pub fn session_cookie_name(host_header: &str) -> String {
@@ -69,10 +46,6 @@ pub fn authorized(headers: &HeaderMap, host_header: &str, token: &str) -> bool {
     cookie_values(headers, &name).any(|v| auth::verify_session(token, auth::DASHBOARD_SESSION, v))
 }
 
-pub fn extract_host(host_header: &str) -> String {
-    split_host_port(host_header).0.to_ascii_lowercase()
-}
-
 pub fn host_allowed(host_header: &str, allowed_hosts: &[String]) -> bool {
     let host = extract_host(host_header);
     host == "localhost"
@@ -103,7 +76,7 @@ fn apply_security_headers(headers: &mut HeaderMap, is_api: bool) {
     headers.insert(
         HeaderName::from_static("content-security-policy"),
         HeaderValue::from_static(
-            "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; frame-ancestors 'self'",
+            "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; frame-ancestors 'self'; base-uri 'none'; form-action 'self'; object-src 'none'",
         ),
     );
     headers.insert(
@@ -183,47 +156,13 @@ mod tests {
     use super::*;
 
     #[test]
-    fn extract_host_strips_port_when_present() {
-        assert_eq!(extract_host("127.0.0.1:8082"), "127.0.0.1");
-        assert_eq!(extract_host("127.0.0.1"), "127.0.0.1");
-        assert_eq!(extract_host("Localhost:8082"), "localhost");
-    }
-
-    #[test]
-    fn extract_host_handles_ipv6_brackets() {
-        assert_eq!(extract_host("[::1]:8082"), "::1");
-        assert_eq!(extract_host("[::1]"), "::1");
-    }
-
-    #[test]
-    fn extract_host_handles_edge_cases() {
-        assert_eq!(extract_host("localhost"), "localhost");
-        assert_eq!(extract_host("[::1"), "[::1");
-        assert_eq!(
-            extract_host("evil.com:8082@localhost"),
-            "evil.com:8082@localhost"
-        );
-    }
-
-    #[test]
-    fn extract_host_rejects_junk_after_the_bracketed_host() {
-        assert_ne!(extract_host("[::1]xyz"), "::1");
-        assert_ne!(extract_host("[::1]:8082xyz"), "::1");
-        assert_ne!(extract_host("[::1]:"), "::1");
-        assert_ne!(extract_host("[::1]:abc"), "::1");
-        assert_eq!(extract_host("[::1]:8082"), "::1");
-        assert_eq!(extract_host("[::1]"), "::1");
-    }
-
-    #[test]
     fn host_allowed_rejects_bracketed_host_with_trailing_junk() {
         assert!(!host_allowed("[::1]xyz", &[]));
         assert!(!host_allowed("[::1]:8082xyz", &[]));
     }
 
     #[test]
-    fn extract_host_rejects_non_digit_ports() {
-        assert_ne!(extract_host("localhost:abc"), "localhost");
+    fn host_allowed_rejects_non_digit_ports() {
         assert!(!host_allowed("localhost:abc", &[]));
     }
 

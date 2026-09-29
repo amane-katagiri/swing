@@ -74,12 +74,13 @@ swing/
     auth.rs          ダッシュボードのトークンファイル（dashboard.token）、HMAC 署名のセッション値、使い捨てログインコード。詳細は architecture/dashboard.md
     login.rs         `swing dashboard open`・`swing dashboard rotate-token`。詳細は architecture/cli.md
     gateway.rs       内蔵 gateway（axum）。Host 名での振り分けと Kubo gateway へのプロキシ。詳細は architecture/gateway.md
+    host.rs          Host ヘッダをホスト名とポートに分ける厳密なパーサ（ダッシュボードのガードと内蔵 gateway が共有）
     service.rs       `swing service install/uninstall/start/stop/status`（systemd / launchd / タスクスケジューラ）。詳細は architecture/service.md
     settings/        全設定キーのカタログ（mod.rs）、`swing.example.toml`/`.env.example` の生成（example.rs）、`PUT /api/config`・`POST /api/setup` の書き込み（edit.rs）。詳細は下記「設定と環境変数」と architecture/dashboard.md
     stop.rs          `swing stop`（動いている `swing up` のダッシュボード API 経由。API に到達できなければ「動いていない」として終了する）。詳細は architecture/up.md, architecture/service.md
     shutdown.rs      `cancel_on_signal(grace)`（SIGINT/SIGTERM → CancellationToken、force-exit watchdog、2 回目のシグナルで即時終了）、`RUNTIME_SHUTDOWN_TIMEOUT`、`ExitRequest`/`Exit`（停止・再起動の要求と、`up::run` が返す `Exit::Stop`/`Exit::Restart`）。up/agent 共通
     dashboard/       `swing up` 常駐の Web ダッシュボード兼制御 API（mod.rs, guard.rs, api.rs, session.rs, dto.rs, config_dto.rs, assets.rs, mascots.rs, upload.rs, test_support.rs）。詳細は architecture/dashboard.md
-    api_client.rs    ダッシュボード API を呼ぶ CLI 共通クライアント（`ApiClient`。`<state_dir>/dashboard.token` を Bearer トークンとして送る）。使うサブコマンドは architecture/cli.md の「共通」
+    api_client.rs    ダッシュボード API を呼ぶ CLI 共通クライアント（`ApiClient`。`POST /api/identity` で相手を確かめてから `<state_dir>/dashboard.token` を Bearer トークンとして送る）。使うサブコマンドは architecture/cli.md の「共通」
     test_support.rs  `#[cfg(test)]` のクレート共通フィクスチャ（`FakeKubo`、CID・鍵・イベントのテストヘルパ）
   web/               ダッシュボードのフロント（index.html, style.css, ES modules（setup.js を含む）, 画像・フォントなどの静的アセット一式）。ビルド工程なしで include_str!/include_bytes! によりバイナリへ埋め込む。desktop-page.html / desktop-page.css / desktop-banner.gif（Desktop 画面のリンク集ページ）だけは設定で差し替えられ、mascots/（同梱の Desktop マスコットパック）は `[dashboard].mascots_dir` で指すディレクトリのユーザー定義パックを追加できる。詳細は architecture/dashboard.md
     fonts/           Desktop 画面の同梱フォント PixelMplus12（woff2）とそのライセンス
@@ -188,6 +189,8 @@ compose でのコンテナ内の待ち受けとホスト側の公開アドレス
 - `[kubo].managed = true` のときに `[ipfs].api`（TOML または `SWING_IPFS_API`）が指定されているとエラー（`[ipfs].api conflicts with [kubo].managed = true`）。
 - `[gateway].listen` が `off` 以外で `[gateway].hosts` が空ならエラー。
 - `[gateway].hosts` の各要素は前後の空白を除き、空になった要素は捨てる。残りは `a-z 0-9 . -` のみで構成され、`.` で始まらず・終わらず、`..` を含まないこと（`config::is_valid_gateway_host`。`docker/kubo-init.d/001-swing-config.sh` の `SWING_GATEWAY_HOSTS` 検証と同じ規則）。違反はエラー。
+- `[gateway].hosts` の要素がダッシュボードで開けるホスト名（`[dashboard].allowed_hosts` の要素（大文字小文字を区別しない）と `localhost`・`127.0.0.1`）と重なればエラー（[`architecture/gateway.md`](architecture/gateway.md#設定gateway)）。
+- `[dashboard].gateway` は空文字か、`[dashboard].public_url` と同じ `http(s)://host[:port]` の形（パス・クエリ・`@` 不可、末尾の `/` は取り除く）であること。違反はエラー。
 - `[kubo].provide_strategy` は空文字か空白だけならエラー。値そのものの妥当性は Kubo 起動時の判定に任せる。
 - `[kubo].storage_max` は容量パーサ、`[kubo].gateway_listen` は `SocketAddr`、`[kubo].swarm_port` は 1..=65535（`0` はエラー）としてパースする。
 - `[kubo].binary` の実在確認は `config` では行わない（`kubo::locate_binary` が `swing up` 起動時に行う）。

@@ -63,6 +63,16 @@ pub fn gateway_url(gateway: Option<&str>, cid: &str, stored: bool) -> Option<Str
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+pub struct IdentityRequestDto {
+    pub nonce: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct IdentityDto {
+    pub proof: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
 pub struct LoginCodeDto {
     pub code: String,
     pub expires_in: u64,

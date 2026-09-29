@@ -394,6 +394,8 @@ SWING_GATEWAY_HOSTS=example.com,blog.example.net
 
 コンテナ内では `0.0.0.0:8081` で listen させ、ホストへの公開先は別途 `SWING_GATEWAY_BIND`（既定 `127.0.0.1:8081`）で決めます。
 
+`hosts` にはダッシュボードを開くホスト名（`localhost`・`127.0.0.1` と `SWING_DASHBOARD_ALLOWED_HOSTS`）を入れられません。同じ名前にすると、配信するサイトとダッシュボードの cookie が混ざるためで、設定の読み込みがエラーになります。
+
 各ホストの DNS に `_dnslink.<ホスト名>` の TXT レコード（`dnslink=/ipfs/<cid>`）を置きます。ゲートウェイは Kubo のゲートウェイにそのまま中継するだけで、ローカルにあるデータしか返しません。CID は `swing publish` でこのノードに置いたものにしてください。publish のたびに TXT レコードも更新します。
 
 設定したホスト名以外、および `/ipfs/<cid>` のようなパスでのアクセスには 404 を返します。詳しくは [`docs/architecture/gateway.md`](docs/architecture/gateway.md) を参照してください。

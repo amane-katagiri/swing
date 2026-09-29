@@ -445,14 +445,29 @@ pub fn parse_mfs_root(input: &str) -> Result<String> {
     Ok(trimmed.to_string())
 }
 
-pub fn parse_public_url(input: &str) -> Result<String> {
+fn parse_http_origin(input: &str) -> Option<String> {
     let trimmed = input.trim().trim_end_matches('/');
     let authority = trimmed
         .strip_prefix("http://")
-        .or_else(|| trimmed.strip_prefix("https://"));
-    match authority {
-        Some(a) if !a.is_empty() && !a.contains(['/', '?', '#', ' ']) => Ok(trimmed.to_string()),
-        _ => bail!("dashboard public URL must be http(s)://host[:port] without a path: {input}"),
+        .or_else(|| trimmed.strip_prefix("https://"))?;
+    (!authority.is_empty() && !authority.contains(['/', '?', '#', ' ', '@']))
+        .then(|| trimmed.to_string())
+}
+
+pub fn parse_public_url(input: &str) -> Result<String> {
+    match parse_http_origin(input) {
+        Some(url) => Ok(url),
+        None => bail!("dashboard public URL must be http(s)://host[:port] without a path: {input}"),
+    }
+}
+
+pub fn parse_dashboard_gateway(input: &str) -> Result<String> {
+    if input.trim().is_empty() {
+        return Ok(String::new());
+    }
+    match parse_http_origin(input) {
+        Some(url) => Ok(url),
+        None => bail!("dashboard gateway must be http(s)://host[:port] without a path: {input}"),
     }
 }
 

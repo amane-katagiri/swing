@@ -34,6 +34,9 @@ pub fn validate_relative_path(path: &str) -> Result<(), String> {
     if path.contains('\\') {
         return Err(format!("file path must not contain a backslash: {path}"));
     }
+    if path.contains(':') {
+        return Err(format!("file path must not contain a colon: {path}"));
+    }
     if path.chars().any(|c| c.is_control()) {
         return Err(format!(
             "file path must not contain control characters: {path}"
@@ -101,19 +104,20 @@ pub async fn cleanup_upload_dir(state_dir: &Path) -> Result<()> {
     }
 }
 
-/// Creates `path` (and any missing parents) like `create_dir_all`, but directories this call
-/// actually creates are `0o700` on unix. A directory that already exists is left untouched.
 async fn create_private_dir_all(path: &Path) -> std::io::Result<()> {
-    let mut builder = tokio::fs::DirBuilder::new();
-    builder.recursive(true);
-    #[cfg(unix)]
-    builder.mode(0o700);
-    builder.create(path).await
+    let path = path.to_path_buf();
+    tokio::task::spawn_blocking(move || crate::auth::create_private_dir_all(&path))
+        .await
+        .map_err(std::io::Error::other)?
+        .map_err(|e| match e.downcast::<std::io::Error>() {
+            Ok(io) => io,
+            Err(other) => std::io::Error::other(other),
+        })
 }
 
 async fn create_private_file(path: &Path) -> std::io::Result<tokio::fs::File> {
     let mut options = tokio::fs::OpenOptions::new();
-    options.write(true).create(true).truncate(true);
+    options.write(true).create_new(true);
     #[cfg(unix)]
     options.mode(0o600);
     options.open(path).await
@@ -125,6 +129,37 @@ fn multipart_error_to_api(err: axum::extract::multipart::MultipartError) -> ApiE
         ApiError::PayloadTooLarge(err.to_string())
     } else {
         ApiError::BadRequest(err.to_string())
+    }
+}
+
+pub const MAX_TEXT_FIELD_BYTES: usize = 64 * 1024;
+
+async fn read_text_field(
+    mut field: axum::extract::multipart::Field<'_>,
+) -> Result<String, ApiError> {
+    let name = field.name().unwrap_or("").to_string();
+    let mut buf = Vec::new();
+    while let Some(chunk) = field.chunk().await.map_err(multipart_error_to_api)? {
+        if buf.len() + chunk.len() > MAX_TEXT_FIELD_BYTES {
+            return Err(ApiError::BadRequest(format!(
+                "{name} must be at most {MAX_TEXT_FIELD_BYTES} bytes"
+            )));
+        }
+        buf.extend_from_slice(&chunk);
+    }
+    String::from_utf8(buf).map_err(|_| ApiError::BadRequest(format!("{name} must be UTF-8")))
+}
+
+// Another upload entry already occupies this path as a file or a directory (e.g. `a` and `a/b`).
+fn path_conflict_or_internal(filename: &str, e: std::io::Error) -> ApiError {
+    use std::io::ErrorKind;
+    match e.kind() {
+        ErrorKind::AlreadyExists | ErrorKind::NotADirectory | ErrorKind::IsADirectory => {
+            ApiError::BadRequest(format!(
+                "file path conflicts with another uploaded path: {filename}"
+            ))
+        }
+        _ => internal("storing an uploaded file failed", e),
     }
 }
 
@@ -150,10 +185,16 @@ impl UploadDirGuard {
 
 impl Drop for UploadDirGuard {
     fn drop(&mut self) {
-        if let Some(dest) = self.dest.take()
-            && let Err(e) = std::fs::remove_dir_all(&dest)
-        {
-            tracing::warn!(path = %dest.display(), error = %e, "cleaning up upload directory failed");
+        if let Some(dest) = self.dest.take() {
+            let remove = move || {
+                if let Err(e) = std::fs::remove_dir_all(&dest) {
+                    tracing::warn!(path = %dest.display(), error = %e, "cleaning up upload directory failed");
+                }
+            };
+            match tokio::runtime::Handle::try_current() {
+                Ok(handle) => drop(handle.spawn_blocking(remove)),
+                Err(_) => remove(),
+            }
         }
     }
 }
@@ -179,10 +220,10 @@ async fn receive_upload(multipart: &mut Multipart, dest: &Path) -> Result<Parsed
             Err(e) => return Err(multipart_error_to_api(e)),
         };
         match field.name().unwrap_or("") {
-            "site" => site = Some(field.text().await.map_err(multipart_error_to_api)?),
-            "url" => url = Some(field.text().await.map_err(multipart_error_to_api)?),
-            "title" => title = Some(field.text().await.map_err(multipart_error_to_api)?),
-            "message" => message = Some(field.text().await.map_err(multipart_error_to_api)?),
+            "site" => site = Some(read_text_field(field).await?),
+            "url" => url = Some(read_text_field(field).await?),
+            "title" => title = Some(read_text_field(field).await?),
+            "message" => message = Some(read_text_field(field).await?),
             name @ ("nip05" | "check_dotfiles" | "check_size" | "check_unchanged") => {
                 let slot = match name {
                     "nip05" => &mut modes.nip05,
@@ -190,7 +231,7 @@ async fn receive_upload(multipart: &mut Multipart, dest: &Path) -> Result<Parsed
                     "check_size" => &mut modes.check_size,
                     _ => &mut modes.check_unchanged,
                 };
-                *slot = Some(field.text().await.map_err(multipart_error_to_api)?);
+                *slot = Some(read_text_field(field).await?);
             }
             "file" => {
                 if file_count >= MAX_UPLOAD_FILES {
@@ -204,20 +245,25 @@ async fn receive_upload(multipart: &mut Multipart, dest: &Path) -> Result<Parsed
                     ));
                 };
                 validate_relative_path(&filename).map_err(ApiError::BadRequest)?;
-                if !seen_paths.insert(filename.clone()) {
+                if !seen_paths.insert(filename.to_lowercase()) {
                     return Err(ApiError::BadRequest(format!(
                         "duplicate file path: {filename}"
                     )));
                 }
                 let target = dest.join(&filename);
+                if !target.starts_with(dest) {
+                    return Err(ApiError::BadRequest(format!(
+                        "file path escapes the upload directory: {filename}"
+                    )));
+                }
                 if let Some(parent) = target.parent() {
                     create_private_dir_all(parent)
                         .await
-                        .map_err(|e| internal("creating an upload directory failed", e))?;
+                        .map_err(|e| path_conflict_or_internal(&filename, e))?;
                 }
                 let mut out = create_private_file(&target)
                     .await
-                    .map_err(|e| internal("creating an uploaded file failed", e))?;
+                    .map_err(|e| path_conflict_or_internal(&filename, e))?;
                 let mut field = field;
                 loop {
                     match field.chunk().await {
@@ -232,7 +278,13 @@ async fn receive_upload(multipart: &mut Multipart, dest: &Path) -> Result<Parsed
                 file_count += 1;
             }
             _ => {
-                let _ = field.bytes().await;
+                let mut field = field;
+                while field
+                    .chunk()
+                    .await
+                    .map_err(multipart_error_to_api)?
+                    .is_some()
+                {}
             }
         }
     }
@@ -319,6 +371,13 @@ mod tests {
         assert!(validate_relative_path("a\u{0}b").is_err());
         assert!(validate_relative_path(".").is_err());
         assert!(validate_relative_path("..").is_err());
+    }
+
+    #[test]
+    fn validate_relative_path_rejects_colons() {
+        assert!(validate_relative_path("C:foo/x").is_err());
+        assert!(validate_relative_path("index.html:stream").is_err());
+        assert!(validate_relative_path("dir/a:b").is_err());
     }
 
     #[test]
@@ -667,6 +726,61 @@ mod tests {
         assert_eq!(body["error"], "agent is not ready");
     }
 
+    #[tokio::test]
+    async fn upload_rejects_paths_that_differ_only_in_case() {
+        let (status, body) = upload_with(&[
+            ("site", None, b"example.com"),
+            ("file", Some("Index.html"), b"a"),
+            ("file", Some("index.HTML"), b"b"),
+        ])
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert!(body["error"].as_str().unwrap().contains("duplicate"));
+    }
+
+    #[tokio::test]
+    async fn upload_rejects_a_file_and_a_directory_at_the_same_path() {
+        for (first, second) in [("a", "a/b"), ("a/b", "a")] {
+            let (status, body) = upload_with(&[
+                ("site", None, b"example.com"),
+                ("file", Some(first), b"x"),
+                ("file", Some(second), b"y"),
+            ])
+            .await;
+            assert_eq!(status, StatusCode::BAD_REQUEST, "{first} then {second}");
+            assert!(
+                body["error"].as_str().unwrap().contains("conflicts"),
+                "{body}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn upload_rejects_an_oversized_text_field() {
+        let big = vec![b'a'; MAX_TEXT_FIELD_BYTES + 1];
+        let (status, body) = upload_with(&[
+            ("message", None, &big),
+            ("site", None, b"example.com"),
+            ("file", Some("index.html"), b"x"),
+        ])
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert!(body["error"].as_str().unwrap().contains("message"));
+    }
+
+    #[tokio::test]
+    async fn upload_skips_unknown_fields() {
+        let big = vec![b'a'; MAX_TEXT_FIELD_BYTES * 4];
+        let (status, body) = upload_with(&[
+            ("unknown", None, &big),
+            ("site", None, b""),
+            ("file", Some("index.html"), b"x"),
+        ])
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert!(body["error"].as_str().unwrap().contains("invalid site"));
+    }
+
     #[test]
     fn upload_dir_guard_removes_the_dir_on_drop() {
         let dir = tempfile::tempdir().unwrap();
@@ -744,6 +858,12 @@ mod tests {
         handle.abort();
         let _ = handle.await;
 
+        for _ in 0..200 {
+            if upload_dir_entries(dir.path()).is_empty() {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
         assert!(
             upload_dir_entries(dir.path()).is_empty(),
             "the upload temp dir must be removed once the request is cancelled"

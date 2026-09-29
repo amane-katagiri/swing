@@ -9,7 +9,7 @@
 | キー | 意味 |
 |---|---|
 | `listen` | 待ち受けアドレス。`off`（既定）で無効。型は `Listen`（`off` または `SocketAddr`） |
-| `hosts` | 転送を許可する `Host` の一覧。`listen` が `off` 以外なら空はエラー（[`../architecture.md`](../architecture.md#設定と環境変数)の検証） |
+| `hosts` | 転送を許可する `Host` の一覧。`listen` が `off` 以外なら空はエラー（[`../architecture.md`](../architecture.md#設定と環境変数)の検証）。ダッシュボードで開けるホスト名（`[dashboard].allowed_hosts` と、常に許可される `localhost`・`127.0.0.1`）と同じ名前はエラー。cookie はポートを区別しないので、peer のサイトの HTML がダッシュボードと同じサイトとして扱われないようにする |
 | `upstream` | プロキシ先の Kubo gateway。既定は `managed` なら `http://<[kubo].gateway_listen>`、そうでなければ `http://127.0.0.1:8080` |
 
 `hosts` は `[kubo].managed = true` のとき Kubo 自身の `Gateway.PublicGateways` にも同じ一覧が入る（[`kubo.md#適用する-kubo-設定kuboapply_config`](kubo.md#適用する-kubo-設定kuboapply_config)）。そのため managed では、gateway 側の許可ホストと Kubo 側の DNSLink 配信ホストが同じ集合になる。
@@ -19,17 +19,17 @@
 すべてのメソッド・パスを `fallback` ハンドラ 1 つで受ける。
 
 1. `Host` ヘッダが無ければ空ボディの 404。
-2. `Host` からポートを除いたホスト名（`extract_host`）が `hosts` のいずれとも一致しなければ（大文字小文字は区別しない）空ボディの 404。
+2. `Host` を `host::split_host_port`（ダッシュボードのガードと共有。`[...]` の後ろが `:<数字>` 以外ならヘッダ全体をホスト名として扱う）でホスト名とポートに分け、ホスト名が `hosts` のいずれとも一致しなければ（大文字小文字は区別しない）空ボディの 404。
 3. 一致すれば `upstream` + 元のパス・クエリへ、元のメソッド・ボディのまま（ストリーミング）転送する。
 
 ### 転送するヘッダー・捨てるヘッダー
 
 - hop-by-hop（`connection`、`keep-alive`、`proxy-authenticate`、`proxy-authorization`、`te`、`trailer`、`transfer-encoding`、`upgrade`）は往復とも捨てる。`Connection` ヘッダに列挙された追加のヘッダー名（例 `Connection: X-Foo`）もその都度捨てる。
 - リクエスト側はさらに、クライアントが送ってきた `Forwarded` と `X-Forwarded-*` を丸ごと捨ててから、以下を付け直す:
-  - `Host`: 受け取った `Host` ヘッダの値をそのまま。
+  - `Host`: 一致した `hosts` の要素（設定の綴り）。受け取った `Host` にポートがあれば `:<ポート>` を付ける。クライアントの `Host` の値はそのまま転送しない。
   - `X-Forwarded-For`: 接続元 IP（`ConnectInfo<SocketAddr>` の IP 部分）。
   - `X-Forwarded-Proto`: `http` 固定。
-  - `X-Forwarded-Host`: 受け取った `Host` ヘッダの値。
+  - `X-Forwarded-Host`: `Host` と同じ値。
 - レスポンス側はステータス・ヘッダー（hop-by-hop を除く）・ボディをそのまま返す。
 
 ### エラー

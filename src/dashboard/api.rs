@@ -86,6 +86,10 @@ impl AppState {
     async fn require_ipfs(&self) -> Result<crate::ipfs::IpfsClient, ApiError> {
         self.ipfs().await.ok_or_else(|| not_ready(self))
     }
+
+    fn require_own_pubkey(&self) -> Result<PublicKey, ApiError> {
+        self.own_pubkey.ok_or_else(|| not_ready(self))
+    }
 }
 
 // axum maps deserialize errors to 422, which this API reserves for the publish NIP-05 require failure.
@@ -291,11 +295,7 @@ pub async fn webring(
     }
     let relay = state.require_relay().await?;
     let roots = if root_inputs.is_empty() {
-        vec![
-            state
-                .own_pubkey
-                .expect("own_pubkey is set whenever the relay is ready"),
-        ]
+        vec![state.require_own_pubkey()?]
     } else {
         mirror::parse_pubkey_inputs(&root_inputs)
             .map_err(|e| ApiError::BadRequest(format!("{e:#}")))?
@@ -323,11 +323,7 @@ pub async fn replicas(
     }
     let relay = state.require_relay().await?;
     let authors = if key_inputs.is_empty() {
-        vec![
-            state
-                .own_pubkey
-                .expect("own_pubkey is set whenever the relay is ready"),
-        ]
+        vec![state.require_own_pubkey()?]
     } else {
         mirror::parse_pubkey_inputs(&key_inputs)
             .map_err(|e| ApiError::BadRequest(format!("{e:#}")))?
@@ -406,7 +402,7 @@ pub(super) async fn run_publish(
         ));
     };
 
-    let pubkey_hex = state.own_pubkey.ok_or_else(|| not_ready(state))?.to_hex();
+    let pubkey_hex = state.require_own_pubkey()?.to_hex();
 
     let nip05_dto = match run_publish_nip05(modes.nip05, &fields.site, &pubkey_hex).await {
         Ok(dto) => dto,
@@ -532,9 +528,7 @@ pub async fn publish_sites(
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<dto::PublishSitesDto>, ApiError> {
     let relay = state.require_relay().await?;
-    let own_pubkey = state
-        .own_pubkey
-        .expect("own_pubkey is set whenever the relay is ready");
+    let own_pubkey = state.require_own_pubkey()?;
     let events = relay
         .fetch_site_events(state.config.nostr.site_event_kind, &[own_pubkey])
         .await

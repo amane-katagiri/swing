@@ -76,19 +76,30 @@ pub async fn login(
         .into_response())
 }
 
-pub async fn login_page(
-    State(state): State<Arc<AppState>>,
-    headers: HeaderMap,
-    Query(query): Query<LoginQuery>,
-) -> Response {
+// Redeeming on GET would let link previewers burn the code; the page POSTs it to /api/login instead.
+pub async fn login_page(Query(query): Query<LoginQuery>) -> Redirect {
     match query.code {
-        Some(code) if state.login_codes.redeem(&code) => {
-            let cookie = session_cookie(&state, &headers);
-            ([(header::SET_COOKIE, cookie)], Redirect::to("/")).into_response()
+        Some(code) if !code.is_empty() && code.bytes().all(|b| b.is_ascii_hexdigit()) => {
+            Redirect::to(&format!("/#/login/code/{code}"))
         }
-        Some(_) => Redirect::to("/#/login/invalid").into_response(),
-        None => Redirect::to("/#/login").into_response(),
+        Some(_) => Redirect::to("/#/login/invalid"),
+        None => Redirect::to("/#/login"),
     }
+}
+
+pub async fn identity(
+    State(state): State<Arc<AppState>>,
+    AppJson(req): AppJson<dto::IdentityRequestDto>,
+) -> Result<Json<dto::IdentityDto>, ApiError> {
+    if !auth::is_identity_nonce(&req.nonce) {
+        return Err(ApiError::BadRequest(format!(
+            "nonce must be {} hex characters",
+            auth::IDENTITY_NONCE_BYTES * 2
+        )));
+    }
+    Ok(Json(dto::IdentityDto {
+        proof: auth::identity_proof(&state.token(), &req.nonce),
+    }))
 }
 
 pub async fn login_code(State(state): State<Arc<AppState>>) -> Json<dto::LoginCodeDto> {
@@ -202,7 +213,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn login_link_sets_the_cookie_and_redirects_home() {
+    async fn login_link_hands_the_code_to_the_page_without_redeeming_it() {
         let state = test_state();
         let code = issue_code(&state).await;
         let resp = call_anonymous(
@@ -211,17 +222,49 @@ mod tests {
         )
         .await;
         assert_eq!(resp.status(), StatusCode::SEE_OTHER);
-        assert_eq!(resp.headers().get("location").unwrap(), "/");
-        assert!(
-            set_cookie(&resp)
-                .unwrap()
-                .starts_with("swing_session_8082=")
+        assert_eq!(
+            resp.headers().get("location").unwrap(),
+            &format!("/#/login/code/{code}")
         );
-
-        let resp = call_anonymous(router(state), get(&format!("/login?code={code}"))).await;
-        assert_eq!(resp.status(), StatusCode::SEE_OTHER);
-        assert_eq!(resp.headers().get("location").unwrap(), "/#/login/invalid");
         assert!(set_cookie(&resp).is_none());
+
+        let resp = call_anonymous(
+            router(Arc::clone(&state)),
+            post_json("/api/login", &format!("{{\"code\":\"{code}\"}}")),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::OK);
+
+        let resp = call_anonymous(router(state), get("/login?code=%2F%2Fevil")).await;
+        assert_eq!(resp.headers().get("location").unwrap(), "/#/login/invalid");
+    }
+
+    #[tokio::test]
+    async fn identity_proves_knowledge_of_the_token_without_authentication() {
+        let state = test_state();
+        let nonce = crate::auth::new_identity_nonce();
+        let resp = call_anonymous(
+            router(Arc::clone(&state)),
+            post_json("/api/identity", &format!("{{\"nonce\":\"{nonce}\"}}")),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert!(crate::auth::verify_identity_proof(
+            TEST_TOKEN,
+            &nonce,
+            json["proof"].as_str().unwrap()
+        ));
+
+        let resp = call_anonymous(
+            router(state),
+            post_json("/api/identity", "{\"nonce\":\"abc\"}"),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
     }
 
     #[tokio::test]

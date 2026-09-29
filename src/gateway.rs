@@ -11,6 +11,8 @@ use tokio::net::TcpListener;
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
+use crate::host::split_host_port;
+
 const HOP_BY_HOP: &[&str] = &[
     "connection",
     "keep-alive",
@@ -30,23 +32,6 @@ struct GatewayState {
     upstream: String,
     client: reqwest::Client,
     header_timeout: Duration,
-}
-
-fn split_host_port(host_header: &str) -> &str {
-    if let Some(rest) = host_header.strip_prefix('[') {
-        return match rest.find(']') {
-            Some(end) => &rest[..end],
-            None => host_header,
-        };
-    }
-    match host_header.rsplit_once(':') {
-        Some((host, port)) if !port.is_empty() && port.bytes().all(|b| b.is_ascii_digit()) => host,
-        _ => host_header,
-    }
-}
-
-fn extract_host(host_header: &str) -> String {
-    split_host_port(host_header.trim()).to_ascii_lowercase()
 }
 
 fn connection_header_names(headers: &HeaderMap) -> Vec<String> {
@@ -118,10 +103,17 @@ async fn proxy(
         return StatusCode::NOT_FOUND.into_response();
     };
 
-    let host = extract_host(&host_header);
-    if !state.hosts.iter().any(|h| h.eq_ignore_ascii_case(&host)) {
+    let (host, port) = split_host_port(&host_header);
+    let Some(configured) = state.hosts.iter().find(|h| h.eq_ignore_ascii_case(host)) else {
         return StatusCode::NOT_FOUND.into_response();
-    }
+    };
+    let forwarded_host = match port {
+        Some(port) => format!("{configured}:{port}"),
+        None => configured.clone(),
+    };
+    let Ok(forwarded_host) = HeaderValue::from_str(&forwarded_host) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
 
     let path_and_query = req
         .uri()
@@ -137,7 +129,7 @@ async fn proxy(
     remove_headers_matching(&mut out_headers, |name| {
         name == "forwarded" || name.starts_with("x-forwarded-")
     });
-    out_headers.insert(header::HOST, HeaderValue::from_str(&host_header).unwrap());
+    out_headers.insert(header::HOST, forwarded_host.clone());
     out_headers.insert(
         HeaderName::from_static("x-forwarded-for"),
         HeaderValue::from_str(&peer.ip().to_string()).unwrap(),
@@ -146,10 +138,7 @@ async fn proxy(
         HeaderName::from_static("x-forwarded-proto"),
         HeaderValue::from_static("http"),
     );
-    out_headers.insert(
-        HeaderName::from_static("x-forwarded-host"),
-        HeaderValue::from_str(&host_header).unwrap(),
-    );
+    out_headers.insert(HeaderName::from_static("x-forwarded-host"), forwarded_host);
 
     let body = reqwest::Body::wrap_stream(req.into_body().into_data_stream());
 
@@ -356,6 +345,38 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(resp.status(), reqwest::StatusCode::OK);
+
+        token.cancel();
+        gateway_handle.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn the_configured_host_is_forwarded_instead_of_the_client_header() {
+        let (upstream, _upstream_handle) = start_upstream().await;
+        let (gateway, token, gateway_handle) =
+            start_gateway(vec!["example.com".to_string()], upstream).await;
+
+        let client = reqwest::Client::new();
+        let resp = client
+            .get(format!("{gateway}/"))
+            .header("host", "EXAMPLE.com:8081")
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), reqwest::StatusCode::OK);
+        let body: Value = serde_json::from_slice(&resp.bytes().await.unwrap()).unwrap();
+        assert_eq!(body["host"], "example.com:8081");
+        assert_eq!(body["x_forwarded_host"], "example.com:8081");
+
+        for junk in ["[example.com]junk", "[example.com]:x", "example.com:"] {
+            let resp = client
+                .get(format!("{gateway}/"))
+                .header("host", junk)
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(resp.status(), reqwest::StatusCode::NOT_FOUND, "{junk}");
+        }
 
         token.cancel();
         gateway_handle.await.unwrap();

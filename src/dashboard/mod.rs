@@ -204,6 +204,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/api/shutdown", post(api::shutdown))
         .route("/api/restart", post(api::restart))
         .route("/api/login", post(session::login))
+        .route("/api/identity", post(session::identity))
         .route("/api/login-code", post(session::login_code))
         .route("/api/token/rotate", post(session::rotate_token));
 
