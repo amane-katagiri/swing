@@ -26,7 +26,7 @@ pub fn read_token(state_dir: &Path) -> Result<Option<String>> {
     match std::fs::read_to_string(&path) {
         Ok(s) => {
             #[cfg(unix)]
-            warn_if_readable_by_others(state_dir, &path);
+            warn_if_readable_by_others(&path);
             Ok(Some(s.trim().to_string()).filter(|t| !t.is_empty()))
         }
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
@@ -42,19 +42,12 @@ fn broader_than(path: &Path, allowed: u32) -> Option<u32> {
 }
 
 #[cfg(unix)]
-fn warn_if_readable_by_others(state_dir: &Path, token_file: &Path) {
+fn warn_if_readable_by_others(token_file: &Path) {
     if let Some(mode) = broader_than(token_file, 0o600) {
         tracing::warn!(
             path = %token_file.display(),
             mode = format_args!("{mode:o}"),
             "the dashboard token file is accessible to other users; restrict it to 0600"
-        );
-    }
-    if let Some(mode) = broader_than(state_dir, 0o700) {
-        tracing::warn!(
-            path = %state_dir.display(),
-            mode = format_args!("{mode:o}"),
-            "the state directory holding the dashboard token is accessible to other users; restrict it to 0700"
         );
     }
 }
