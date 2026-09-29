@@ -186,6 +186,7 @@ compose でのコンテナ内の待ち受けとホスト側の公開アドレス
 - `[publish].dotfiles_allow` の各要素は前後の空白を除き、空になった要素は捨てる。残りは `.` で始まり、`/` を含まず、`.`・`..` そのものでないこと（`config::validate_dotfile_name`）。違反はエラー。TOML で空配列にすると何も見逃さない（環境変数は空文字だと未設定扱いなので、`,` だけを渡す）。未設定なら `config::DEFAULT_DOTFILES_ALLOW`。
 - `report_ttl` の半分が `poll_interval` 以下ならエラー。`report_ttl` が `nostr::MAX_REPORT_AGE`（7 日）を超えてもエラー（`report_ttl must be at most 7d`）。
 - `mfs_root` は `/` で始まる絶対パス。`/` そのもの、空の要素、`.`、`..` を含むとエラー。末尾の `/` は取り除く。
+- `[ipfs].api` と `[gateway].upstream` は `http(s)://host[:port]` の形（パス・クエリ・`@` 不可、末尾の `/` は取り除く。`[dashboard].public_url` と同じ規則）であること。違反はエラー。
 - `[kubo].managed = true` のときに `[ipfs].api`（TOML または `SWING_IPFS_API`）が指定されているとエラー（`[ipfs].api conflicts with [kubo].managed = true`。環境変数なら `SWING_IPFS_API conflicts with ...`）。
 - `[gateway].listen` が `off` 以外で `[gateway].hosts` が空ならエラー。
 - `[gateway].hosts` の各要素は前後の空白を除き、空になった要素は捨てる。残りは `a-z 0-9 . -` のみで構成され、`.` で始まらず・終わらず、`..` を含まないこと（`config::is_valid_gateway_host`。`docker/kubo-init.d/001-swing-config.sh` の `SWING_GATEWAY_HOSTS` 検証と同じ規則）。違反はエラー。

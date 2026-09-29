@@ -9,8 +9,8 @@
 | キー | 意味 |
 |---|---|
 | `listen` | 待ち受けアドレス。`off`（既定）で無効。型は `Listen`（`off` または `SocketAddr`） |
-| `hosts` | 転送を許可する `Host` の一覧。`listen` が `off` 以外なら空はエラー（[`../architecture.md`](../architecture.md#設定と環境変数)の検証）。ダッシュボードで開けるホスト名（`[dashboard].allowed_hosts` と、常に許可される `localhost`・`127.0.0.1`）と同じ名前はエラー。cookie はポートを区別しないので、peer のサイトの HTML がダッシュボードと同じサイトとして扱われないようにする |
-| `upstream` | プロキシ先の Kubo gateway。既定は `managed` なら `http://<[kubo].gateway_listen>`、そうでなければ `http://127.0.0.1:8080` |
+| `hosts` | 転送を許可する `Host` の一覧。`listen` が `off` 以外なら空はエラー（[`../architecture.md`](../architecture.md#設定と環境変数)の検証）。ダッシュボードで開けるホスト名（`[dashboard].allowed_hosts` と、常に許可される `localhost`・`127.0.0.1`）と同じ名前はエラー。cookie はポートを区別しないので、内蔵 gateway が配る peer のサイトの HTML がダッシュボードと同じホストに載らないようにする。この検証が見るのは内蔵 gateway の `hosts` だけで、Kubo 自身の gateway（`[kubo].gateway_listen`）はループバックのホストで peer の HTML を返しうる（[`dashboard.md#既知の弱点`](dashboard.md#既知の弱点)） |
+| `upstream` | プロキシ先の Kubo gateway。`http(s)://host[:port]` の形（パス不可、末尾の `/` は取り除く）でなければエラー。既定は `managed` なら `http://<[kubo].gateway_listen>`、そうでなければ `http://127.0.0.1:8080` |
 
 `hosts` は `[kubo].managed = true` のとき Kubo 自身の `Gateway.PublicGateways` にも同じ一覧が入る（[`kubo.md#適用する-kubo-設定kuboapply_config`](kubo.md#適用する-kubo-設定kuboapply_config)）。そのため managed では、gateway 側の許可ホストと Kubo 側の DNSLink 配信ホストが同じ集合になる。
 

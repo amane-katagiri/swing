@@ -20,6 +20,8 @@ pub mod nostr;
 pub mod pair;
 pub mod policy;
 pub mod ports;
+#[cfg(any(test, target_os = "linux"))]
+mod proc;
 pub mod publish;
 pub mod replicas;
 pub mod service;

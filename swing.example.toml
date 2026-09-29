@@ -48,7 +48,7 @@ ui = true                            # SWING_DASHBOARD_UI: false で静的な We
 allowed_hosts = []                   # SWING_DASHBOARD_ALLOWED_HOSTS: Host ヘッダで追加で許可するホスト名（ポート抜き、カンマ区切り）
 #public_url = "http://127.0.0.1:8082"
                                      # SWING_DASHBOARD_PUBLIC_URL: ブラウザからダッシュボードを開く URL（swing dashboard open が出すログインリンクの頭に使う）。未設定なら待ち受けアドレス
-gateway = "http://localhost:8080"    # SWING_DASHBOARD_GATEWAY: 保存済みサイトを開くリンクの IPFS Gateway。空文字にするとリンクを表示しない
+#gateway = "http://localhost:8080"   # SWING_DASHBOARD_GATEWAY: 保存済みサイトを開くリンクの IPFS Gateway。空文字にするとリンクを表示しない。既定: managed なら http://localhost:<[kubo].gateway_listen のポート>、そうでなければ http://localhost:8080
 #custom_css = "/path/to/custom.css"  # SWING_DASHBOARD_CUSTOM_CSS: ダッシュボードに読み込ませる追加 CSS ファイルのパス
 #desktop_page = "/path/to/links.html"
                                      # SWING_DASHBOARD_DESKTOP_PAGE: Desktop 画面のリンク集ページ（HTML）のパス。未設定なら同梱のページ

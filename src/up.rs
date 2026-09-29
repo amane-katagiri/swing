@@ -550,6 +550,13 @@ mod tests {
         assert_ne!(saved.dashboard.listen, d);
         assert_ne!(saved.kubo.gateway_listen, g);
         assert_eq!(saved.kubo.gateway_listen.ip(), g.ip());
+        assert_eq!(
+            saved.dashboard.gateway,
+            Some(format!(
+                "http://localhost:{}",
+                saved.kubo.gateway_listen.port()
+            ))
+        );
     }
 
     #[tokio::test]

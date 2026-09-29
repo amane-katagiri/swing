@@ -8,7 +8,7 @@ pub struct ProcessUsage {
 
 #[cfg(target_os = "linux")]
 pub fn usage(pid: u32) -> Option<ProcessUsage> {
-    let text = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
+    let text = crate::proc::read_stat(pid)?;
     let ticks = u64::try_from(unsafe { libc::sysconf(libc::_SC_CLK_TCK) }).ok()?;
     let page = u64::try_from(unsafe { libc::sysconf(libc::_SC_PAGESIZE) }).ok()?;
     parse_proc_stat(&text, ticks, page)
@@ -16,7 +16,7 @@ pub fn usage(pid: u32) -> Option<ProcessUsage> {
 
 #[cfg(any(target_os = "linux", test))]
 fn parse_proc_stat(text: &str, ticks_per_sec: u64, page_size: u64) -> Option<ProcessUsage> {
-    let fields: Vec<&str> = crate::kubo::proc_stat_fields(text)?.collect();
+    let fields: Vec<&str> = crate::proc::stat_fields(text)?.collect();
     let utime: u64 = fields.get(11)?.parse().ok()?;
     let stime: u64 = fields.get(12)?.parse().ok()?;
     let rss_pages: u64 = fields.get(21)?.parse().ok()?;

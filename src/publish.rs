@@ -14,6 +14,7 @@ mod checks;
 
 pub use checks::{
     LISTED_DOTFILES, LocalChecks, SIZE_GUIDELINE, UnchangedOutcome, UnchangedStatus, find_dotfiles,
+    refuse_protected_paths,
 };
 
 fn versions_to_prune(names: &[String], keep: usize) -> Vec<String> {
@@ -467,6 +468,7 @@ pub async fn run(
     let title = check_arguments(&d, url, title.as_deref(), message)?;
     let modes = resolve_modes(&overrides, &config.publish)
         .map_err(|(name, e)| e.context(format!("invalid --{name}")))?;
+    refuse_protected_paths(dir, &config)?;
 
     print_header(&d, url, title, message);
 
@@ -683,6 +685,33 @@ mod tests {
         };
         let (name, _) = resolve_modes(&bad, &defaults).unwrap_err();
         assert_eq!(name, "check-size");
+    }
+
+    #[tokio::test]
+    async fn run_refuses_a_site_holding_the_state_dir_before_anything_else() {
+        let site = tempfile::tempdir().unwrap();
+        std::fs::write(site.path().join("index.html"), b"hi").unwrap();
+        let mut config = config::build_config_from_str("", |_| None).unwrap();
+        config.agent.state_dir = site.path().join("data");
+        std::fs::create_dir(&config.agent.state_dir).unwrap();
+        let overrides = ModeOverrides {
+            nip05: Some("off".into()),
+            check_dotfiles: Some("off".into()),
+            check_size: Some("off".into()),
+            check_unchanged: Some("off".into()),
+        };
+        let err = run(
+            config,
+            "example.com".into(),
+            None,
+            site.path(),
+            overrides,
+            None,
+            None,
+        )
+        .await
+        .unwrap_err();
+        assert!(err.to_string().contains("[agent].state_dir"), "{err}");
     }
 
     #[test]

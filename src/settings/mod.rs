@@ -527,11 +527,11 @@ pub const SETTINGS: &[Setting] = &[
         field: "gateway",
         env: "SWING_DASHBOARD_GATEWAY",
         kind: Kind::String,
-        example: Example::Value("\"http://localhost:8080\""),
+        example: Example::Derived("\"http://localhost:8080\""),
         editable: true,
         description: Text {
-            en: "IPFS gateway used for links to saved sites; an empty value hides the links.",
-            ja: "保存済みサイトを開くリンクの IPFS Gateway。空文字にするとリンクを表示しない",
+            en: "IPFS gateway used for links to saved sites; an empty value hides the links. Defaults to http://localhost:<port of [kubo].gateway_listen> when managed, otherwise http://localhost:8080.",
+            ja: "保存済みサイトを開くリンクの IPFS Gateway。空文字にするとリンクを表示しない。既定: managed なら http://localhost:<[kubo].gateway_listen のポート>、そうでなければ http://localhost:8080",
         },
     },
     Setting {

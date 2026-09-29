@@ -177,6 +177,13 @@ fn u16_value(v: &str) -> Result<u16> {
     v.parse().context("expected u16")
 }
 
+fn http_origin(input: &str) -> Result<String> {
+    match parse_http_origin(input) {
+        Some(url) => Ok(url),
+        None => bail!("expected http(s)://host[:port] without a path: {input}"),
+    }
+}
+
 fn resolve_nostr<E: Fn(&str) -> Option<String>>(
     r: &mut Resolver<E>,
     file: NostrFile,
@@ -214,7 +221,7 @@ fn resolve_ipfs<E: Fn(&str) -> Option<String>>(
     file: IpfsFile,
     kubo_managed: bool,
 ) -> Result<IpfsConfig> {
-    let api = match r.opt_string("ipfs.api", file.api) {
+    let api = match r.opt("ipfs.api", file.api, http_origin)? {
         Some(_) if kubo_managed => bail!(
             "{} conflicts with {} = true",
             r.name("ipfs.api"),
@@ -425,6 +432,7 @@ fn resolve_dashboard<E: Fn(&str) -> Option<String>>(
     r: &mut Resolver<E>,
     file: DashboardFile,
     base: Option<&Path>,
+    kubo: &KuboConfig,
 ) -> Result<DashboardConfig> {
     let listen = r.parse(
         "dashboard.listen",
@@ -435,11 +443,16 @@ fn resolve_dashboard<E: Fn(&str) -> Option<String>>(
     let ui = r.typed("dashboard.ui", file.ui, parse_bool, true)?;
     let allowed_hosts = r.list("dashboard.allowed_hosts", file.allowed_hosts, false, &[]);
     let public_url = r.opt("dashboard.public_url", file.public_url, parse_public_url)?;
+    let gateway_port = if kubo.managed {
+        kubo.gateway_listen.port()
+    } else {
+        8080
+    };
     let gateway = r.parse(
         "dashboard.gateway",
         file.gateway,
         parse_dashboard_gateway,
-        "http://localhost:8080".to_string(),
+        format!("http://localhost:{gateway_port}"),
     )?;
     let gateway = Some(gateway).filter(|s| !s.is_empty());
 
@@ -550,7 +563,12 @@ fn resolve_gateway<E: Fn(&str) -> Option<String>>(
     } else {
         "http://127.0.0.1:8080".to_string()
     };
-    let upstream = r.string("gateway.upstream", file.upstream, &upstream_default);
+    let upstream = r.parse(
+        "gateway.upstream",
+        file.upstream,
+        http_origin,
+        upstream_default,
+    )?;
 
     Ok(GatewayConfig {
         listen,
@@ -559,7 +577,7 @@ fn resolve_gateway<E: Fn(&str) -> Option<String>>(
     })
 }
 
-// Peer HTML served by the gateway must never be same-site with the dashboard (cookies ignore ports).
+// Only keeps the built-in gateway's hosts off the dashboard's; Kubo's own gateway can still serve peer HTML on a loopback host (see the known weaknesses in docs/architecture/dashboard.md).
 fn check_gateway_hosts_apart_from_dashboard(
     gateway_hosts: &[String],
     allowed_hosts: &[String],
@@ -595,7 +613,7 @@ pub(super) fn build_config(
     )?;
     let ipfs = resolve_ipfs(&mut r, file.ipfs, kubo.managed)?;
     let publish = resolve_publish(&mut r, file.publish)?;
-    let dashboard = resolve_dashboard(&mut r, file.dashboard, base)?;
+    let dashboard = resolve_dashboard(&mut r, file.dashboard, base, &kubo)?;
     let gateway = resolve_gateway(&mut r, file.gateway, kubo.managed, kubo.gateway_listen)?;
     check_gateway_hosts_apart_from_dashboard(&gateway.hosts, &dashboard.allowed_hosts)?;
 

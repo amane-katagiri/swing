@@ -1,9 +1,9 @@
 use std::collections::HashSet;
 use std::path::Path;
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 
-use crate::config::{CheckMode, DEFAULT_MAX_UPDATE_SIZE};
+use crate::config::{CheckMode, Config, DEFAULT_MAX_UPDATE_SIZE};
 use crate::format::{format_bytes, format_bytes_approx};
 use crate::ipfs::{self, SiteEntry};
 use crate::nostr::SiteEvent;
@@ -35,6 +35,39 @@ pub fn find_dotfiles<'a>(
         }
     }
     hits
+}
+
+pub fn refuse_protected_paths(dir: &Path, config: &Config) -> Result<()> {
+    refuse_paths_inside(
+        dir,
+        &[
+            ("the config file", &config.config_path),
+            ("[agent].state_dir", &config.agent.state_dir),
+            ("[kubo].repo", &config.kubo.repo),
+        ],
+    )
+}
+
+fn refuse_paths_inside(dir: &Path, protected: &[(&str, &Path)]) -> Result<()> {
+    let root =
+        std::fs::canonicalize(dir).with_context(|| format!("resolving path {}", dir.display()))?;
+    for (what, path) in protected {
+        let canon = match std::fs::canonicalize(path) {
+            Ok(canon) => canon,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(e) => {
+                return Err(e).with_context(|| format!("resolving path {}", path.display()));
+            }
+        };
+        if canon.starts_with(&root) {
+            bail!(
+                "{} contains {what} ({}), which holds secrets; publish a directory that does not include swing's config or data",
+                dir.display(),
+                canon.display()
+            );
+        }
+    }
+    Ok(())
 }
 
 pub fn total_size(entries: &[SiteEntry]) -> u64 {
@@ -256,6 +289,56 @@ mod tests {
 
     fn entries(dir: &Path) -> Vec<SiteEntry> {
         ipfs::list_site(dir).unwrap()
+    }
+
+    #[test]
+    fn protected_paths_inside_the_site_are_refused() {
+        let site = tempfile::tempdir().unwrap();
+        let config = site.path().join("swing.toml");
+        std::fs::write(&config, b"").unwrap();
+        let state = site.path().join("data");
+        std::fs::create_dir(&state).unwrap();
+
+        let err = refuse_paths_inside(site.path(), &[("the config file", &config)]).unwrap_err();
+        assert!(err.to_string().contains("the config file"), "{err}");
+        let err = refuse_paths_inside(&state, &[("[agent].state_dir", &state)]).unwrap_err();
+        assert!(err.to_string().contains("[agent].state_dir"), "{err}");
+        let err = refuse_paths_inside(site.path(), &[("[agent].state_dir", &state.join("."))])
+            .unwrap_err();
+        assert!(err.to_string().contains("[agent].state_dir"), "{err}");
+    }
+
+    #[test]
+    fn a_site_inside_the_state_dir_and_missing_paths_are_allowed() {
+        let state = tempfile::tempdir().unwrap();
+        let upload = state.path().join("uploads/site");
+        std::fs::create_dir_all(&upload).unwrap();
+        std::fs::write(upload.join("index.html"), b"hi").unwrap();
+        let config = state.path().join("swing.toml");
+        std::fs::write(&config, b"").unwrap();
+        refuse_paths_inside(
+            &upload,
+            &[
+                ("the config file", &config),
+                ("[agent].state_dir", state.path()),
+                ("[kubo].repo", &upload.join("kubo")),
+            ],
+        )
+        .unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_protected_path_reached_through_a_symlink_is_refused() {
+        use std::os::unix::fs::symlink;
+
+        let site = tempfile::tempdir().unwrap();
+        std::fs::create_dir(site.path().join("data")).unwrap();
+        let elsewhere = tempfile::tempdir().unwrap();
+        let link = elsewhere.path().join("data");
+        symlink(site.path().join("data"), &link).unwrap();
+        let err = refuse_paths_inside(site.path(), &[("[agent].state_dir", &link)]).unwrap_err();
+        assert!(err.to_string().contains("[agent].state_dir"), "{err}");
     }
 
     #[test]

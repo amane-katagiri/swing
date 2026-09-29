@@ -144,8 +144,7 @@ fn walk(
                 canon.display()
             );
         }
-        // metadata() follows symlinks (unlike DirEntry::file_type()), so linked files/dirs aren't skipped.
-        let metadata = std::fs::metadata(&path)
+        let metadata = std::fs::metadata(&canon)
             .with_context(|| format!("reading metadata for {}", path.display()))?;
         if metadata.is_dir() {
             if !dir_ancestors.insert(canon.clone()) {
@@ -155,7 +154,7 @@ fn walk(
             walk(&path, &rel, root, out, dir_ancestors)?;
             dir_ancestors.remove(&canon);
         } else if metadata.is_file() {
-            out.push(Entry::File(rel, path, metadata.len()));
+            out.push(Entry::File(rel, canon, metadata.len()));
         }
     }
     Ok(())
@@ -267,11 +266,8 @@ impl IpfsClient {
         format!("{}{}", self.api, path)
     }
 
-    async fn call(&self, endpoint: &str, query: &str, timeout: Duration) -> Result<String> {
-        let resp = self
-            .http
-            .post(self.url(&format!("/api/v0/{endpoint}?{query}")))
-            .timeout(timeout)
+    async fn send(&self, request: reqwest::RequestBuilder, endpoint: &str) -> Result<String> {
+        let resp = request
             .send()
             .await
             .with_context(|| format!("POST /api/v0/{endpoint}"))?;
@@ -281,6 +277,14 @@ impl IpfsClient {
             bail!("{endpoint} failed: {status}: {}", text.trim());
         }
         Ok(text)
+    }
+
+    async fn call(&self, endpoint: &str, query: &str, timeout: Duration) -> Result<String> {
+        let request = self
+            .http
+            .post(self.url(&format!("/api/v0/{endpoint}?{query}")))
+            .timeout(timeout);
+        self.send(request, endpoint).await
     }
 
     pub async fn add_dir(&self, dir: &Path, mfs_path: &str) -> Result<String> {
@@ -324,19 +328,12 @@ impl IpfsClient {
             "/api/v0/add?recursive=true&cid-version=1&pin=false&quieter=true&wrap-with-directory=false&to-files={}",
             query_path(mfs_path)
         ));
-        let resp = self
+        let request = self
             .http
             .post(&url)
             .multipart(form)
-            .timeout(Duration::from_secs(300))
-            .send()
-            .await
-            .context("POST /api/v0/add")?;
-        let status = resp.status();
-        let text = read_body(resp, "add").await?;
-        if !status.is_success() {
-            bail!("ipfs add failed: {status}: {}", text.trim());
-        }
+            .timeout(Duration::from_secs(300));
+        let text = self.send(request, "add").await?;
 
         let last_line = text
             .lines()
@@ -388,21 +385,13 @@ impl IpfsClient {
             .iter()
             .map(|cid| format!("arg={}&", urlencoding_cid(cid)))
             .collect();
-        let url = self.url(&format!(
-            "/api/v0/dag/stat?{args}progress=false&offline=true"
-        ));
-        let resp = self
-            .http
-            .post(&url)
-            .timeout(Duration::from_secs(300))
-            .send()
-            .await
-            .context("POST /api/v0/dag/stat")?;
-        let status = resp.status();
-        let text = read_body(resp, "dag/stat").await?;
-        if !status.is_success() {
-            bail!("dag/stat failed: {status}: {}", text.trim());
-        }
+        let text = self
+            .call(
+                "dag/stat",
+                &format!("{args}progress=false&offline=true"),
+                Duration::from_secs(300),
+            )
+            .await?;
         let parsed: DagStatResponse =
             serde_json::from_str(&text).context("parsing dag/stat response")?;
         Ok(parsed.total_size)
@@ -591,6 +580,30 @@ mod tests {
         assert!(names.contains(&"file:link_file.txt".to_string()));
         assert!(names.contains(&"dir:link_dir".to_string()));
         assert!(names.contains(&"file:link_dir/real.txt".to_string()));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn walk_records_the_resolved_path_it_checked() {
+        use std::os::unix::fs::symlink;
+
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("real.txt"), b"hi").unwrap();
+        symlink("real.txt", dir.path().join("link.txt")).unwrap();
+
+        let entries = walk_root(dir.path(), "").unwrap();
+        let real = std::fs::canonicalize(dir.path().join("real.txt")).unwrap();
+        let opened: Vec<(&str, &Path)> = entries
+            .iter()
+            .filter_map(|e| match e {
+                Entry::File(rel, path, _) => Some((rel.as_str(), path.as_path())),
+                Entry::Dir(_) => None,
+            })
+            .collect();
+        assert_eq!(
+            opened,
+            vec![("link.txt", real.as_path()), ("real.txt", real.as_path())]
+        );
     }
 
     #[cfg(unix)]

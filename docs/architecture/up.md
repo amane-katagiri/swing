@@ -27,7 +27,7 @@
 
 - ダッシュボード: 上の手順で bind し、ずらしたときは warn（`dashboard port is in use; listening on another port`）を出す。`swing dashboard open`・`swing-tray`・`swing stop` は設定ファイルの `listen` を見てつなぐので、セットアップを終える前のこの時点で書く。
 - Kubo の gateway: `[kubo].managed = true` なら、`[kubo].gateway_listen` から同じ手順で空いているアドレスを探す（`ports::free_addr`。bind してすぐ閉じるだけ。セットアップモードでは Kubo を起動しないので、この時点で空いているかを確かめられる）。ずらしたときは warn（`Kubo gateway port is in use; using another port`）を出す。探すこと自体に失敗したら warn を出して書き込まない。
-- ずらしたかどうかに関わらず、両方のアドレスを `settings::pin_addrs` で 1 回で書き込む。書き込みに失敗したら warn を出し、メモリ上の設定のダッシュボードのアドレスだけを bind したものに直して続ける。
+- ずらしたかどうかに関わらず、両方のアドレスを `settings::pin_addrs` で 1 回で書き込む。書き込んだ後は設定を読み直すので、`[dashboard].gateway` が既定値のままなら、そのリンク先のポートもずらした Kubo の gateway のポートになる（[`dashboard.md#設定dashboard`](dashboard.md#設定dashboard)）。書き込みに失敗したら warn を出し、メモリ上の設定のダッシュボードのアドレスだけを bind したものに直して続ける。
 - セットアップモードで起動するたびにやり直すので、前回書き込んだポートが使われていても、セットアップを終えるまではまたずらせる。書き込んでからセットアップを終えるまでの間に Kubo の gateway のポートが使われた場合は、通常モードで Kubo の起動に失敗する（下記）。
 
 セットアップモードでないときは、ダッシュボードの bind に失敗すると `swing up` の起動自体がエラーで終わり、Kubo の gateway が使えなければ Kubo の起動失敗としてバックオフして再起動を繰り返す（上記）。

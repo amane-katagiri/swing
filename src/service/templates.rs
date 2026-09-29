@@ -14,9 +14,14 @@ fn reject_control_chars(what: &str, value: &str) -> Result<()> {
 }
 
 fn text(what: &str, path: &Path) -> Result<String> {
-    let value = path.to_string_lossy().into_owned();
-    reject_control_chars(what, &value)?;
-    Ok(value)
+    let Some(value) = path.to_str() else {
+        bail!(
+            "{what} is not valid UTF-8 and cannot be written into a service definition: {}",
+            path.display()
+        );
+    };
+    reject_control_chars(what, value)?;
+    Ok(value.to_string())
 }
 
 fn escape_systemd_specifiers(value: &str) -> String {
@@ -422,6 +427,18 @@ mod tests {
         assert!(tray_run_command(good, Path::new("C:\\a\u{7f}b")).is_err());
         assert!(schtasks_xml(good, good, good, Path::new("C:\\a\0b"), "u").is_err());
         assert!(schtasks_xml(good, good, good, good, "u\n").is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn templates_reject_non_utf8_paths() {
+        use std::os::unix::ffi::OsStrExt;
+
+        let good = Path::new("/home/u/swing.toml");
+        let bad = Path::new(std::ffi::OsStr::from_bytes(b"/home/u/\xff.toml"));
+        let err = systemd_unit(good, bad, good, &SystemdScope::User).unwrap_err();
+        assert!(err.to_string().contains("not valid UTF-8"), "{err:#}");
+        assert!(launchd_plist(good, good, bad, good).is_err());
     }
 
     #[test]

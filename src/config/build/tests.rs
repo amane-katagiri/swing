@@ -1030,3 +1030,73 @@ fn errors_name_the_source_the_value_came_from() {
         "{err:#}"
     );
 }
+
+#[test]
+fn dashboard_gateway_default_follows_the_managed_kubo_gateway_port() {
+    let cfg = build_config(minimal_file(), None, |k| match k {
+        "SWING_KUBO_GATEWAY_LISTEN" => Some("127.0.0.1:8081".into()),
+        _ => None,
+    })
+    .unwrap();
+    assert_eq!(
+        cfg.dashboard.gateway.as_deref(),
+        Some("http://localhost:8081")
+    );
+
+    let cfg = build_config(minimal_file(), None, |k| match k {
+        "SWING_KUBO_GATEWAY_LISTEN" => Some("127.0.0.1:8081".into()),
+        "SWING_KUBO_MANAGED" => Some("false".into()),
+        _ => None,
+    })
+    .unwrap();
+    assert_eq!(
+        cfg.dashboard.gateway.as_deref(),
+        Some("http://localhost:8080")
+    );
+
+    let cfg = build_config(minimal_file(), None, |k| match k {
+        "SWING_KUBO_GATEWAY_LISTEN" => Some("127.0.0.1:8081".into()),
+        "SWING_DASHBOARD_GATEWAY" => Some("https://gw.example".into()),
+        _ => None,
+    })
+    .unwrap();
+    assert_eq!(cfg.dashboard.gateway.as_deref(), Some("https://gw.example"));
+}
+
+#[test]
+fn ipfs_api_and_gateway_upstream_must_be_http_origins() {
+    for bad in [
+        "127.0.0.1:5001",
+        "ftp://ipfs:5001",
+        "http://ipfs:5001/api",
+        "http://",
+    ] {
+        let err = build_config(minimal_file(), None, |k| match k {
+            "SWING_KUBO_MANAGED" => Some("false".into()),
+            "SWING_IPFS_API" => Some(bad.into()),
+            _ => None,
+        })
+        .unwrap_err();
+        assert!(
+            err.to_string().contains("invalid SWING_IPFS_API"),
+            "{bad}: {err}"
+        );
+        assert_env_rejects(
+            "SWING_GATEWAY_UPSTREAM",
+            bad,
+            "invalid SWING_GATEWAY_UPSTREAM",
+        );
+    }
+    let cfg = build_config(minimal_file(), None, |k| match k {
+        "SWING_KUBO_MANAGED" => Some("false".into()),
+        "SWING_IPFS_API" => Some("https://ipfs.example:5001/".into()),
+        "SWING_GATEWAY_UPSTREAM" => Some("http://[::1]:8080".into()),
+        _ => None,
+    })
+    .unwrap();
+    assert_eq!(
+        cfg.ipfs.api,
+        IpfsApi::Url("https://ipfs.example:5001".into())
+    );
+    assert_eq!(cfg.gateway.upstream, "http://[::1]:8080");
+}

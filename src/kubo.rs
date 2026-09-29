@@ -323,21 +323,16 @@ pub fn remove_pid_file(state_dir: &Path) -> Result<()> {
     }
 }
 
-// comm can itself contain spaces and ')', so the field list is only unambiguous after the last ')'.
-#[cfg(any(test, target_os = "linux"))]
-pub(crate) fn proc_stat_fields(text: &str) -> Option<std::str::SplitWhitespace<'_>> {
-    Some(text.get(text.rfind(')')? + 1..)?.split_whitespace())
-}
-
 #[cfg(any(test, target_os = "linux"))]
 fn parse_proc_stat_starttime(stat: &str) -> Option<String> {
-    proc_stat_fields(stat)?.nth(19).map(|s| s.to_string())
+    crate::proc::stat_fields(stat)?
+        .nth(19)
+        .map(|s| s.to_string())
 }
 
 #[cfg(target_os = "linux")]
 fn process_start_marker(pid: u32) -> Option<String> {
-    let text = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
-    parse_proc_stat_starttime(&text)
+    parse_proc_stat_starttime(&crate::proc::read_stat(pid)?)
 }
 
 #[cfg(target_os = "macos")]
@@ -416,8 +411,6 @@ async fn wait_for_exit(pid: u32, timeout: Duration) -> bool {
     .await
 }
 
-// Only a real Kubo answers this; an unrelated process reusing the port will fail to connect
-// or time out, so a response here is not itself proof of identity but a successful exit is.
 async fn attempt_graceful_shutdown(api_port: u16, pid: u32) -> bool {
     let url = format!("http://127.0.0.1:{api_port}/api/v0/shutdown");
     let responded = reqwest::Client::new()
