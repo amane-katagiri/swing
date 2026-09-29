@@ -51,8 +51,8 @@ fn config_item_dto(
     let source = config
         .source_of(desc.key)
         .unwrap_or(config::Source::Default);
-    let options = if desc.kind == crate::settings::Kind::Nip05 {
-        Some(config::NIP05_MODE_NAMES.to_vec())
+    let options = if desc.kind == crate::settings::Kind::Mode {
+        Some(config::CHECK_MODE_NAMES.to_vec())
     } else {
         None
     };
@@ -167,6 +167,22 @@ fn config_value(
             None,
         ),
         "publish.keep_versions" => (ConfigValue::Num(config.publish.keep_versions as u64), None),
+        "publish.check_dotfiles" => (
+            ConfigValue::Str(config.publish.check_dotfiles.name().to_string()),
+            None,
+        ),
+        "publish.dotfiles_allow" => (
+            ConfigValue::List(config.publish.dotfiles_allow.clone()),
+            None,
+        ),
+        "publish.check_size" => (
+            ConfigValue::Str(config.publish.check_size.name().to_string()),
+            None,
+        ),
+        "publish.check_unchanged" => (
+            ConfigValue::Str(config.publish.check_unchanged.name().to_string()),
+            None,
+        ),
         "dashboard.listen" => (ConfigValue::Str(config.dashboard.listen.to_string()), None),
         "dashboard.ui" => (ConfigValue::Bool(config.dashboard.ui), None),
         "dashboard.allowed_hosts" => (

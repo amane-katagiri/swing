@@ -344,30 +344,33 @@ pub(super) struct PublishFields {
     pub url: Option<String>,
     pub title: Option<String>,
     pub message: Option<String>,
-    pub nip05: Option<String>,
+    pub modes: publish::ModeOverrides,
 }
 
 pub(super) enum PublishOutcome {
-    Success(dto::PublishResultDto),
-    Nip05Failed(Response),
+    Success(Box<dto::PublishResultDto>),
+    CheckFailed(Response),
+}
+
+fn check_failed(error: String, body: serde_json::Value) -> Response {
+    let mut body = body;
+    body["error"] = serde_json::Value::String(error);
+    (StatusCode::UNPROCESSABLE_ENTITY, Json(body)).into_response()
 }
 
 async fn run_publish_nip05(
-    nip05_mode: config::Nip05Mode,
+    nip05_mode: config::CheckMode,
     site: &str,
     pubkey_hex: &str,
 ) -> Result<dto::Nip05ResultDto, Response> {
-    if nip05_mode == config::Nip05Mode::Off {
+    if nip05_mode == config::CheckMode::Off {
         return Ok(dto::nip05_off_dto());
     }
     let verifier = nip05::HttpNip05Verifier::public_only();
     let outcome = publish::check_nip05(&verifier, nip05_mode, site, pubkey_hex).await;
     if let Some(abort) = outcome.abort {
-        let body = serde_json::json!({
-            "error": abort,
-            "nip05": dto::nip05_result_dto(&outcome.result),
-        });
-        return Err((StatusCode::UNPROCESSABLE_ENTITY, Json(body)).into_response());
+        let body = serde_json::json!({ "nip05": dto::nip05_result_dto(&outcome.result) });
+        return Err(check_failed(abort, body));
     }
     Ok(dto::nip05_result_dto(&outcome.result))
 }
@@ -392,9 +395,10 @@ pub(super) async fn run_publish(
                 .to_string(),
         )
     })?;
-    let nip05_mode =
-        publish::resolve_nip05_mode(fields.nip05.as_deref(), state.config.publish.nip05)
-            .map_err(|e| ApiError::BadRequest(format!("{e:#}")))?;
+    let modes =
+        publish::resolve_modes(&fields.modes, &state.config.publish).map_err(|(name, e)| {
+            ApiError::BadRequest(format!("invalid {}: {e:#}", name.replace('-', "_")))
+        })?;
 
     let Ok(_permit) = state.publish_lock.try_lock() else {
         return Err(ApiError::Conflict(
@@ -404,10 +408,26 @@ pub(super) async fn run_publish(
 
     let pubkey_hex = state.own_pubkey.ok_or_else(|| not_ready(state))?.to_hex();
 
-    let nip05_dto = match run_publish_nip05(nip05_mode, &fields.site, &pubkey_hex).await {
+    let nip05_dto = match run_publish_nip05(modes.nip05, &fields.site, &pubkey_hex).await {
         Ok(dto) => dto,
-        Err(resp) => return Ok(PublishOutcome::Nip05Failed(resp)),
+        Err(resp) => return Ok(PublishOutcome::CheckFailed(resp)),
     };
+
+    let local = publish::LocalChecks::run(
+        dir,
+        modes.check_dotfiles,
+        modes.check_size,
+        &state.config.publish.dotfiles_allow,
+    )
+    .await
+    .map_err(|e| internal("listing the uploaded files failed", e))?;
+    if let Some(abort) = local.abort_message() {
+        let body = serde_json::json!({
+            "nip05": nip05_dto,
+            "checks": dto::publish_checks_dto(&local, None),
+        });
+        return Ok(PublishOutcome::CheckFailed(check_failed(abort, body)));
+    }
 
     let ipfs = state.require_ipfs().await?;
     let layout = MfsLayout::new(state.config.ipfs.mfs_root.clone());
@@ -424,6 +444,40 @@ pub(super) async fn run_publish(
     .map_err(upstream)?;
 
     let relay = state.require_relay().await?;
+    let unchanged = publish::check_unchanged(
+        &relay,
+        modes.check_unchanged,
+        state.config.nostr.site_event_kind,
+        &fields.site,
+        &stage.cid,
+    )
+    .await;
+    let gateway_url = dto::gateway_url(state.config.dashboard.gateway.as_deref(), &stage.cid, true);
+    let checks = dto::publish_checks_dto(&local, Some(&unchanged));
+
+    if unchanged.stops_publish() {
+        ipfs.mfs_remove(&stage.path)
+            .await
+            .map_err(|e| upstream(e.context(format!("could not remove {}", stage.path))))?;
+        return Ok(PublishOutcome::Success(Box::new(dto::PublishResultDto {
+            published: false,
+            site: fields.site,
+            url: fields.url,
+            title: title.map(str::to_string),
+            message: fields.message,
+            nip05: nip05_dto,
+            checks,
+            cid: stage.cid,
+            size: stage.size,
+            created_at: None,
+            mfs_path: None,
+            relays: Vec::new(),
+            pruned: Vec::new(),
+            prune_error: None,
+            gateway_url,
+        })));
+    }
+
     let relay_results = publish::sign_and_send(
         &relay,
         &publish::SiteAnnouncement {
@@ -452,18 +506,18 @@ pub(super) async fn run_publish(
         publish::prune_old_versions_collect(&ipfs, &site_path, state.config.publish.keep_versions)
             .await;
 
-    let gateway_url = dto::gateway_url(state.config.dashboard.gateway.as_deref(), &stage.cid, true);
-
-    Ok(PublishOutcome::Success(dto::PublishResultDto {
+    Ok(PublishOutcome::Success(Box::new(dto::PublishResultDto {
+        published: true,
         site: fields.site,
         url: fields.url,
         title: title.map(str::to_string),
         message: fields.message,
         nip05: nip05_dto,
+        checks,
         cid: stage.cid,
         size: stage.size,
-        created_at: created_at.as_secs(),
-        mfs_path: stage.path,
+        created_at: Some(created_at.as_secs()),
+        mfs_path: Some(stage.path),
         relays: relay_results
             .iter()
             .map(dto::RelayResultDto::from)
@@ -471,7 +525,7 @@ pub(super) async fn run_publish(
         pruned: prune.pruned().into_iter().map(str::to_string).collect(),
         prune_error: prune.error_summary(),
         gateway_url,
-    }))
+    })))
 }
 
 pub async fn publish_sites(

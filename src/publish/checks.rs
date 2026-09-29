@@ -1,0 +1,460 @@
+use std::collections::HashSet;
+use std::path::Path;
+
+use anyhow::{Context, Result};
+
+use crate::config::CheckMode;
+use crate::format::{format_bytes, format_bytes_approx};
+use crate::ipfs::{self, SiteEntry};
+use crate::nostr::SiteEvent;
+
+pub const SIZE_GUIDELINE: u64 = 512 << 20;
+pub const LISTED_DOTFILES: usize = 10;
+const DEFAULT_MAX_UPDATE_SIZE: u64 = 2 << 30;
+
+pub fn find_dotfiles<'a>(
+    paths: impl IntoIterator<Item = &'a str>,
+    allow: &[String],
+) -> Vec<String> {
+    let mut hits = Vec::new();
+    let mut seen = HashSet::new();
+    for path in paths {
+        let mut end = 0;
+        for segment in path.split('/') {
+            end += segment.len();
+            if allow.iter().any(|name| name == segment) {
+                break;
+            }
+            if segment.starts_with('.') {
+                let hit = &path[..end];
+                if seen.insert(hit.to_string()) {
+                    hits.push(hit.to_string());
+                }
+                break;
+            }
+            end += 1;
+        }
+    }
+    hits
+}
+
+pub fn total_size(entries: &[SiteEntry]) -> u64 {
+    entries.iter().filter_map(|e| e.size).sum()
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LocalChecks {
+    pub dotfiles_mode: CheckMode,
+    pub dotfiles: Option<Vec<String>>,
+    pub size_mode: CheckMode,
+    pub bytes: Option<u64>,
+}
+
+impl LocalChecks {
+    pub fn evaluate(
+        entries: &[SiteEntry],
+        dotfiles_mode: CheckMode,
+        size_mode: CheckMode,
+        allow: &[String],
+    ) -> Self {
+        let dotfiles = (dotfiles_mode != CheckMode::Off)
+            .then(|| find_dotfiles(entries.iter().map(|e| e.path.as_str()), allow));
+        let bytes = (size_mode != CheckMode::Off).then(|| total_size(entries));
+        Self {
+            dotfiles_mode,
+            dotfiles,
+            size_mode,
+            bytes,
+        }
+    }
+
+    pub async fn run(
+        dir: &Path,
+        dotfiles_mode: CheckMode,
+        size_mode: CheckMode,
+        allow: &[String],
+    ) -> Result<Self> {
+        if dotfiles_mode == CheckMode::Off && size_mode == CheckMode::Off {
+            return Ok(Self::evaluate(&[], dotfiles_mode, size_mode, allow));
+        }
+        let dir = dir.to_path_buf();
+        let entries = tokio::task::spawn_blocking(move || ipfs::list_site(&dir))
+            .await
+            .context("listing task panicked")??;
+        Ok(Self::evaluate(&entries, dotfiles_mode, size_mode, allow))
+    }
+
+    pub fn all_off(&self) -> bool {
+        self.dotfiles_mode == CheckMode::Off && self.size_mode == CheckMode::Off
+    }
+
+    pub fn dotfiles_found(&self) -> bool {
+        self.dotfiles.as_ref().is_some_and(|d| !d.is_empty())
+    }
+
+    pub fn size_over(&self) -> bool {
+        self.bytes.is_some_and(|b| b > SIZE_GUIDELINE)
+    }
+
+    pub fn lines(&self) -> Vec<String> {
+        let mut lines = Vec::new();
+        match &self.dotfiles {
+            None => lines.push("- dotfiles: off".to_string()),
+            Some(found) if found.is_empty() => lines.push("\u{2713} dotfiles: none".to_string()),
+            Some(found) => {
+                lines.push(format!(
+                    "! dotfiles: {} found (not in [publish].dotfiles_allow)",
+                    found.len()
+                ));
+                for path in found.iter().take(LISTED_DOTFILES) {
+                    lines.push(format!("    {path}"));
+                }
+                if found.len() > LISTED_DOTFILES {
+                    lines.push(format!(
+                        "    \u{2026} and {} more",
+                        found.len() - LISTED_DOTFILES
+                    ));
+                }
+            }
+        }
+        match self.bytes {
+            None => lines.push("- size: off".to_string()),
+            Some(bytes) if bytes <= SIZE_GUIDELINE => lines.push(format!(
+                "\u{2713} size: {} (guideline {})",
+                format_bytes_approx(bytes),
+                format_bytes(SIZE_GUIDELINE)
+            )),
+            Some(bytes) => lines.push(format!(
+                "! size: {} is over the {} guideline; each mirror decides by its own limits (max_update_size, default {})",
+                format_bytes_approx(bytes),
+                format_bytes(SIZE_GUIDELINE),
+                format_bytes(DEFAULT_MAX_UPDATE_SIZE)
+            )),
+        }
+        lines
+    }
+
+    pub fn abort_message(&self) -> Option<String> {
+        let mut reasons = Vec::new();
+        if self.dotfiles_mode == CheckMode::Require && self.dotfiles_found() {
+            reasons.push(
+                "dotfiles found: remove them, add their names to [publish].dotfiles_allow, or set --check-dotfiles / [publish].check_dotfiles to warn or off"
+                    .to_string(),
+            );
+        }
+        if self.size_mode == CheckMode::Require && self.size_over() {
+            reasons.push(format!(
+                "the site is larger than {}: make it smaller, or set --check-size / [publish].check_size to warn or off",
+                format_bytes(SIZE_GUIDELINE)
+            ));
+        }
+        (!reasons.is_empty()).then(|| reasons.join("; "))
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UnchangedStatus {
+    Off,
+    Changed,
+    Unchanged,
+    NoPrevious,
+    Unknown,
+}
+
+impl UnchangedStatus {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            UnchangedStatus::Off => "off",
+            UnchangedStatus::Changed => "changed",
+            UnchangedStatus::Unchanged => "unchanged",
+            UnchangedStatus::NoPrevious => "no_previous",
+            UnchangedStatus::Unknown => "unknown",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UnchangedOutcome {
+    pub mode: CheckMode,
+    pub status: UnchangedStatus,
+    pub previous_cid: Option<String>,
+    pub previous_created_at: Option<u64>,
+    pub detail: Option<String>,
+}
+
+impl UnchangedOutcome {
+    pub fn off() -> Self {
+        Self {
+            mode: CheckMode::Off,
+            status: UnchangedStatus::Off,
+            previous_cid: None,
+            previous_created_at: None,
+            detail: None,
+        }
+    }
+
+    /// A failed or empty relay lookup never stops the publish, even under `require`.
+    pub fn decide(mode: CheckMode, previous: Result<Option<SiteEvent>>, new_cid: &str) -> Self {
+        if mode == CheckMode::Off {
+            return Self::off();
+        }
+        let (status, previous_cid, previous_created_at, detail) = match previous {
+            Err(e) => (UnchangedStatus::Unknown, None, None, Some(format!("{e:#}"))),
+            Ok(None) => (UnchangedStatus::NoPrevious, None, None, None),
+            Ok(Some(ev)) => (
+                if ev.cid == new_cid {
+                    UnchangedStatus::Unchanged
+                } else {
+                    UnchangedStatus::Changed
+                },
+                Some(ev.cid),
+                Some(ev.created_at),
+                None,
+            ),
+        };
+        Self {
+            mode,
+            status,
+            previous_cid,
+            previous_created_at,
+            detail,
+        }
+    }
+
+    pub fn stops_publish(&self) -> bool {
+        self.mode == CheckMode::Require && self.status == UnchangedStatus::Unchanged
+    }
+
+    pub fn line(&self) -> String {
+        match self.status {
+            UnchangedStatus::Off => "- unchanged: off".to_string(),
+            UnchangedStatus::Changed => format!(
+                "\u{2713} changed from the latest version on the relays ({})",
+                self.previous_cid.as_deref().unwrap_or_default()
+            ),
+            UnchangedStatus::Unchanged => {
+                "! unchanged: the CID equals your latest version on the relays".to_string()
+            }
+            UnchangedStatus::NoPrevious => "- no previous version on the relays".to_string(),
+            UnchangedStatus::Unknown => format!(
+                "! could not check: {}",
+                self.detail.as_deref().unwrap_or_default()
+            ),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use nostr_sdk::prelude::Keys;
+
+    fn allow() -> Vec<String> {
+        crate::config::DEFAULT_DOTFILES_ALLOW
+            .iter()
+            .map(|s| s.to_string())
+            .collect()
+    }
+
+    fn entries(dir: &Path) -> Vec<SiteEntry> {
+        ipfs::list_site(dir).unwrap()
+    }
+
+    #[test]
+    fn find_dotfiles_skips_allowed_names_and_everything_beneath_them() {
+        let paths = [
+            "index.html",
+            ".well-known",
+            ".well-known/nostr.json",
+            ".well-known/.secret",
+            ".nojekyll",
+            "blog/.gitkeep",
+            ".env",
+        ];
+        assert_eq!(find_dotfiles(paths, &allow()), vec![".env"]);
+    }
+
+    #[test]
+    fn find_dotfiles_reports_a_hit_directory_once_and_not_its_children() {
+        let paths = [
+            ".git",
+            ".git/HEAD",
+            ".git/objects",
+            ".git/objects/ab",
+            "assets",
+            "assets/.DS_Store",
+            "assets/img/.cache/x.png",
+        ];
+        assert_eq!(
+            find_dotfiles(paths, &allow()),
+            vec![".git", "assets/.DS_Store", "assets/img/.cache"]
+        );
+    }
+
+    #[test]
+    fn find_dotfiles_with_an_empty_allow_list_flags_well_known() {
+        assert_eq!(
+            find_dotfiles([".well-known", ".well-known/nostr.json"], &[]),
+            vec![".well-known"]
+        );
+    }
+
+    #[test]
+    fn local_checks_scan_nested_dirs_and_do_not_descend_into_hits() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("index.html"), b"hi").unwrap();
+        std::fs::create_dir_all(dir.path().join(".git/objects")).unwrap();
+        std::fs::write(dir.path().join(".git/objects/aa"), b"x").unwrap();
+        std::fs::create_dir_all(dir.path().join("docs/.well-known")).unwrap();
+        std::fs::write(dir.path().join("docs/.well-known/.hidden"), b"x").unwrap();
+        std::fs::write(dir.path().join("docs/.env"), b"SECRET=1").unwrap();
+        let checks = LocalChecks::evaluate(
+            &entries(dir.path()),
+            CheckMode::Require,
+            CheckMode::Warn,
+            &allow(),
+        );
+        assert_eq!(checks.dotfiles.as_deref().unwrap(), [".git", "docs/.env"]);
+        assert_eq!(checks.bytes, Some(2 + 1 + 1 + 8));
+        assert!(checks.abort_message().unwrap().contains("dotfiles_allow"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn local_checks_follow_symlinked_dirs_like_add_does() {
+        use std::os::unix::fs::symlink;
+
+        let dir = tempfile::tempdir().unwrap();
+        let target = tempfile::tempdir().unwrap();
+        std::fs::write(target.path().join(".env"), b"SECRET=1").unwrap();
+        std::fs::write(target.path().join("page.html"), b"hello").unwrap();
+        symlink(target.path(), dir.path().join("linked")).unwrap();
+        let checks = LocalChecks::evaluate(
+            &entries(dir.path()),
+            CheckMode::Warn,
+            CheckMode::Warn,
+            &allow(),
+        );
+        assert_eq!(checks.dotfiles.as_deref().unwrap(), ["linked/.env"]);
+        assert_eq!(checks.bytes, Some(13));
+        assert!(checks.abort_message().is_none());
+    }
+
+    #[test]
+    fn local_checks_listing_caps_the_paths_shown() {
+        let paths: Vec<String> = (0..12).map(|i| format!(".f{i:02}")).collect();
+        let entries: Vec<SiteEntry> = paths
+            .iter()
+            .map(|p| SiteEntry {
+                path: p.clone(),
+                size: Some(1),
+            })
+            .collect();
+        let checks = LocalChecks::evaluate(&entries, CheckMode::Warn, CheckMode::Off, &[]);
+        let lines = checks.lines();
+        assert_eq!(
+            lines[0],
+            "! dotfiles: 12 found (not in [publish].dotfiles_allow)"
+        );
+        assert_eq!(lines.len(), 1 + LISTED_DOTFILES + 1 + 1);
+        assert_eq!(lines[LISTED_DOTFILES + 1], "    \u{2026} and 2 more");
+        assert_eq!(lines.last().unwrap(), "- size: off");
+    }
+
+    #[test]
+    fn size_check_flags_only_strictly_over_the_guideline() {
+        let at = [SiteEntry {
+            path: "a".into(),
+            size: Some(SIZE_GUIDELINE),
+        }];
+        let over = [
+            SiteEntry {
+                path: "a".into(),
+                size: Some(SIZE_GUIDELINE),
+            },
+            SiteEntry {
+                path: "b".into(),
+                size: Some(1),
+            },
+            SiteEntry {
+                path: "d".into(),
+                size: None,
+            },
+        ];
+        let checks = LocalChecks::evaluate(&at, CheckMode::Off, CheckMode::Require, &[]);
+        assert!(!checks.size_over());
+        assert!(checks.abort_message().is_none());
+        let checks = LocalChecks::evaluate(&over, CheckMode::Off, CheckMode::Require, &[]);
+        assert_eq!(checks.bytes, Some(SIZE_GUIDELINE + 1));
+        assert!(checks.size_over());
+        assert!(checks.abort_message().unwrap().contains("--check-size"));
+        let checks = LocalChecks::evaluate(&over, CheckMode::Off, CheckMode::Warn, &[]);
+        assert!(checks.abort_message().is_none());
+        assert!(checks.lines()[1].contains("guideline"));
+    }
+
+    #[test]
+    fn off_modes_skip_the_checks_entirely() {
+        let entries = [SiteEntry {
+            path: ".env".into(),
+            size: Some(SIZE_GUIDELINE * 2),
+        }];
+        let checks = LocalChecks::evaluate(&entries, CheckMode::Off, CheckMode::Off, &[]);
+        assert!(checks.all_off());
+        assert_eq!(checks.dotfiles, None);
+        assert_eq!(checks.bytes, None);
+        assert!(checks.abort_message().is_none());
+    }
+
+    fn site(cid: &str) -> SiteEvent {
+        SiteEvent {
+            pubkey: Keys::generate().public_key(),
+            d: "example.com".into(),
+            cid: cid.into(),
+            url: None,
+            size: None,
+            title: None,
+            message: None,
+            created_at: 100,
+        }
+    }
+
+    #[test]
+    fn unchanged_stops_only_under_require_with_an_equal_cid() {
+        let same = UnchangedOutcome::decide(CheckMode::Require, Ok(Some(site("bafy1"))), "bafy1");
+        assert_eq!(same.status, UnchangedStatus::Unchanged);
+        assert!(same.stops_publish());
+        assert_eq!(same.previous_created_at, Some(100));
+
+        let warn = UnchangedOutcome::decide(CheckMode::Warn, Ok(Some(site("bafy1"))), "bafy1");
+        assert_eq!(warn.status, UnchangedStatus::Unchanged);
+        assert!(!warn.stops_publish());
+
+        let changed =
+            UnchangedOutcome::decide(CheckMode::Require, Ok(Some(site("bafy0"))), "bafy1");
+        assert_eq!(changed.status, UnchangedStatus::Changed);
+        assert_eq!(changed.previous_cid.as_deref(), Some("bafy0"));
+        assert!(!changed.stops_publish());
+    }
+
+    #[test]
+    fn unchanged_never_stops_when_the_relays_cannot_tell() {
+        let none = UnchangedOutcome::decide(CheckMode::Require, Ok(None), "bafy1");
+        assert_eq!(none.status, UnchangedStatus::NoPrevious);
+        assert!(!none.stops_publish());
+
+        let failed =
+            UnchangedOutcome::decide(CheckMode::Require, Err(anyhow::anyhow!("timeout")), "bafy1");
+        assert_eq!(failed.status, UnchangedStatus::Unknown);
+        assert_eq!(failed.detail.as_deref(), Some("timeout"));
+        assert!(!failed.stops_publish());
+        assert!(failed.line().contains("could not check"));
+    }
+
+    #[test]
+    fn unchanged_off_ignores_the_lookup() {
+        let off = UnchangedOutcome::decide(CheckMode::Off, Ok(Some(site("bafy1"))), "bafy1");
+        assert_eq!(off, UnchangedOutcome::off());
+        assert!(!off.stops_publish());
+    }
+}

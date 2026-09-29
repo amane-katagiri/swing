@@ -3,7 +3,7 @@ use std::sync::Arc;
 use tokio::task::JoinSet;
 use tracing::{debug, error, info, warn};
 
-use crate::config::{Config, Nip05Mode};
+use crate::config::{CheckMode, Config};
 use crate::ipfs::{FetchLimits, Fetched, KuboStore};
 use crate::nip05::{self, Nip05Verify};
 use crate::nostr::{ReportRelay, SiteEvent};
@@ -221,9 +221,9 @@ impl<C: KuboStore, N: Nip05Verify, R: ReportRelay> Agent<C, N, R> {
         }
 
         let nip05_mode = self.config.policy.nip05;
-        if nip05_mode != Nip05Mode::Off {
+        if nip05_mode != CheckMode::Off {
             let verified = self.nip05_verified(&key, ev, &pubkey_hex).await;
-            if nip05_mode == Nip05Mode::Require && !verified {
+            if nip05_mode == CheckMode::Require && !verified {
                 return false;
             }
         }
@@ -593,7 +593,7 @@ mod tests {
 
     #[tokio::test]
     async fn nip05_warn_mode_stores_despite_mismatch_and_records_result() {
-        let fx = Fixture::new(nip05_policy(Nip05Mode::Warn), sized(&[("bafy-new", 20)]));
+        let fx = Fixture::new(nip05_policy(CheckMode::Warn), sized(&[("bafy-new", 20)]));
         fx.agent
             .nip05
             .set(D, &fx.pubkey.to_hex(), VerificationResult::Mismatch);
@@ -606,7 +606,7 @@ mod tests {
 
     #[tokio::test]
     async fn nip05_require_mode_skips_fetch_when_not_verified() {
-        let fx = Fixture::new(nip05_policy(Nip05Mode::Require), FakeKubo::default());
+        let fx = Fixture::new(nip05_policy(CheckMode::Require), FakeKubo::default());
         fx.agent
             .nip05
             .set(D, &fx.pubkey.to_hex(), VerificationResult::NotApplicable);
@@ -620,7 +620,7 @@ mod tests {
 
     #[tokio::test]
     async fn nip05_require_mode_stores_when_verified() {
-        let fx = Fixture::new(nip05_policy(Nip05Mode::Require), FakeKubo::default());
+        let fx = Fixture::new(nip05_policy(CheckMode::Require), FakeKubo::default());
         fx.agent
             .nip05
             .set(D, &fx.pubkey.to_hex(), VerificationResult::Verified);
@@ -633,7 +633,7 @@ mod tests {
 
     #[tokio::test]
     async fn nip05_off_mode_never_calls_verifier() {
-        let fx = Fixture::new(nip05_policy(Nip05Mode::Off), FakeKubo::default());
+        let fx = Fixture::new(nip05_policy(CheckMode::Off), FakeKubo::default());
 
         fx.apply(fx.event(D, "bafy-new", Some(20), 200)).await;
 
@@ -644,7 +644,7 @@ mod tests {
 
     #[tokio::test]
     async fn nip05_result_is_cached_until_ttl_expires() {
-        let fx = Fixture::new(nip05_policy(Nip05Mode::Require), FakeKubo::default());
+        let fx = Fixture::new(nip05_policy(CheckMode::Require), FakeKubo::default());
         fx.agent
             .nip05
             .set(D, &fx.pubkey.to_hex(), VerificationResult::Verified);
@@ -668,7 +668,7 @@ mod tests {
 
     #[tokio::test]
     async fn nip05_errors_are_cached_for_a_shorter_time() {
-        let fx = Fixture::new(nip05_policy(Nip05Mode::Require), FakeKubo::default());
+        let fx = Fixture::new(nip05_policy(CheckMode::Require), FakeKubo::default());
         fx.agent.nip05.set(
             D,
             &fx.pubkey.to_hex(),
@@ -694,7 +694,7 @@ mod tests {
 
     #[tokio::test]
     async fn skipped_events_do_not_trigger_nip05() {
-        let fx = Fixture::new(nip05_policy(Nip05Mode::Require), FakeKubo::default());
+        let fx = Fixture::new(nip05_policy(CheckMode::Require), FakeKubo::default());
         fx.seed(D, "bafy-1", 10, 100).await;
 
         fx.apply(fx.event(D, "bafy-1", None, 100)).await;
@@ -742,7 +742,7 @@ mod tests {
 
     #[tokio::test]
     async fn verifications_of_unstored_sites_are_pruned_per_account() {
-        let mut policy = nip05_policy(Nip05Mode::Require);
+        let mut policy = nip05_policy(CheckMode::Require);
         policy.max_sites_per_account = 2;
         let fx = Fixture::new(policy, FakeKubo::default());
         for d in ["a.example", "b.example", "c.example"] {

@@ -12,7 +12,7 @@ use tokio::sync::Notify;
 use tokio_util::sync::CancellationToken;
 use tower::ServiceExt;
 
-use crate::config::{Config, Nip05Mode};
+use crate::config::{CheckMode, Config};
 use crate::shutdown::ExitRequest;
 use crate::signer::Signer;
 
@@ -38,13 +38,13 @@ pub(crate) fn test_config(ui: bool) -> (Config, String) {
     config.policy.keep_versions = 1;
     config.policy.keep_days = 1;
     config.policy.min_update_interval = 0;
-    config.policy.nip05 = Nip05Mode::Off;
+    config.policy.nip05 = CheckMode::Off;
     config.policy.nip05_cache_ttl = 1;
     config.agent.fetch_timeout = Duration::from_secs(60);
     config.agent.fetch_idle_timeout = Duration::from_secs(10);
     config.agent.concurrency = 1;
     config.agent.report_ttl = Duration::from_secs(3600);
-    config.publish.nip05 = Nip05Mode::Off;
+    config.publish.nip05 = CheckMode::Off;
     config.publish.keep_versions = 1;
     config.kubo.storage_max = 1;
     config.config_path = PathBuf::from("./swing.toml");

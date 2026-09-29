@@ -56,7 +56,7 @@ function buildBoolControl(item) {
   return { input: select, getValue: () => select.value };
 }
 
-function buildNip05Control(item) {
+function buildModeControl(item) {
   const select = el(
     'select',
     { class: 'swing-input' },
@@ -87,7 +87,7 @@ function buildTextControl(item) {
 
 function buildEditableControl(item) {
   if (item.kind === 'bool') return buildBoolControl(item);
-  if (item.kind === 'nip05') return buildNip05Control(item);
+  if (item.kind === 'mode') return buildModeControl(item);
   if (item.kind === 'list') return buildListControl(item);
   return buildTextControl(item);
 }

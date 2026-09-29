@@ -314,6 +314,51 @@ function describeNip05(nip05) {
   }
 }
 
+function describeDotfiles(dotfiles, published) {
+  if (dotfiles.status === 'off') return t('checkOff');
+  if (dotfiles.status === 'ok') return t('dotfilesNone');
+  const more = dotfiles.count > dotfiles.paths.length ? t('dotfilesMore', { n: dotfiles.count - dotfiles.paths.length }) : '';
+  const text = t('dotfilesFound', { count: dotfiles.count, paths: dotfiles.paths.join(', ') }) + more;
+  return published ? text + t('dotfilesPublishedAnyway') : text;
+}
+
+function describeSizeCheck(size) {
+  if (size.status === 'off') return t('checkOff');
+  const params = { size: formatBytes(size.bytes), threshold: formatBytes(size.threshold) };
+  return t(size.status === 'over' ? 'sizeOver' : 'sizeOk', params);
+}
+
+function describeUnchanged(unchanged, published) {
+  switch (unchanged.status) {
+    case 'off':
+      return t('checkOff');
+    case 'changed':
+      return t('unchangedChanged');
+    case 'unchanged':
+      return t(published ? 'unchangedSamePublished' : 'unchangedSame');
+    case 'no_previous':
+      return t('unchangedNoPrevious');
+    case 'unknown':
+      return t('unchangedUnknown', { detail: unchanged.detail || '' });
+    default:
+      return unchanged.status;
+  }
+}
+
+function describeCheckBlock(checks) {
+  const reasons = [];
+  if (checks.dotfiles && checks.dotfiles.mode === 'require' && checks.dotfiles.status === 'found') reasons.push(t('siteCheckDotfilesBlocked'));
+  if (checks.size && checks.size.mode === 'require' && checks.size.status === 'over') reasons.push(t('siteCheckSizeBlocked'));
+  return reasons.join(' ');
+}
+
+function addCheckRows(addRow, checks, published) {
+  if (!checks) return;
+  addRow(t('resultDotfiles'), describeDotfiles(checks.dotfiles, published));
+  addRow(t('resultSizeCheck'), describeSizeCheck(checks.size));
+  if (checks.unchanged) addRow(t('resultUnchanged'), describeUnchanged(checks.unchanged, published));
+}
+
 function usesSignerApp() {
   return !!(cache.overview && cache.overview.signer && cache.overview.signer.remote);
 }
@@ -321,34 +366,42 @@ function usesSignerApp() {
 function renderPublishResult(result, errBody) {
   publishEls.result.hidden = false;
   publishEls.result.replaceChildren();
+  const dl = el('dl', { class: 'swing-result-grid' });
+  const addRow = (k, v) => dl.append(el('dt', {}, k), el('dd', {}, v));
   if (result) {
-    const accepted = result.relays.filter((r) => r.ok).length;
-    const counts = { site: result.site, ok: accepted, total: result.relays.length };
-    if (accepted === result.relays.length) setStatus(publishEls.status, 'ok', t('publishDone', counts));
-    else setStatus(publishEls.status, 'warn', t('publishDonePartial', counts));
+    const published = result.published !== false;
+    if (!published) {
+      setStatus(publishEls.status, 'ok', t('publishUnchanged', { site: result.site }));
+    } else {
+      const accepted = result.relays.filter((r) => r.ok).length;
+      const counts = { site: result.site, ok: accepted, total: result.relays.length };
+      if (accepted === result.relays.length) setStatus(publishEls.status, 'ok', t('publishDone', counts));
+      else setStatus(publishEls.status, 'warn', t('publishDonePartial', counts));
+    }
     publishEls.result.append(el('h2', {}, t('publishResultHeading')));
-    const dl = el('dl', { class: 'swing-result-grid' });
-    const addRow = (k, v) => dl.append(el('dt', {}, k), el('dd', {}, v));
     addRow(t('resultSite'), result.site);
     if (result.url) addRow(t('resultUrl'), result.url);
     if (result.title) addRow(t('resultTitle'), result.title);
     addRow(t('resultNip05'), describeNip05(result.nip05));
-    if (usesSignerApp()) addRow(t('signerLabel'), t('signerRemote'));
+    addCheckRows(addRow, result.checks, published);
+    if (published && usesSignerApp()) addRow(t('signerLabel'), t('signerRemote'));
     addRow(t('resultCid'), result.cid);
     addRow(t('resultSize'), formatBytes(result.size));
-    addRow(t('resultCreated'), formatTime(result.created_at));
-    addRow(t('resultMfsPath'), result.mfs_path);
+    if (result.created_at != null) addRow(t('resultCreated'), formatTime(result.created_at));
+    if (result.mfs_path) addRow(t('resultMfsPath'), result.mfs_path);
     if (result.files != null) addRow(t('resultFiles'), String(result.files));
     if (result.pruned && result.pruned.length) addRow(t('resultPruned'), result.pruned.join(', '));
     if (result.prune_error) addRow(t('resultPruneError'), result.prune_error);
-    const relayCell = el('dd', {});
-    renderRelayResults(relayCell, result.relays);
-    dl.append(el('dt', {}, t('resultRelays')), relayCell);
+    if (published) {
+      const relayCell = el('dd', {});
+      renderRelayResults(relayCell, result.relays);
+      dl.append(el('dt', {}, t('resultRelays')), relayCell);
+    }
     publishEls.result.append(dl);
     if (result.gateway_url) publishEls.result.append(el('p', {}, maybeLink(result.gateway_url, t('openGateway'))));
   } else if (errBody && errBody.nip05) {
-    const dl = el('dl', { class: 'swing-result-grid' });
-    dl.append(el('dt', {}, t('resultNip05')), el('dd', {}, describeNip05(errBody.nip05)));
+    addRow(t('resultNip05'), describeNip05(errBody.nip05));
+    addCheckRows(addRow, errBody.checks, false);
     publishEls.result.append(dl);
   }
 }
@@ -358,6 +411,9 @@ function handlePublishHttpError(status, body) {
   if (status === 413) {
     const maxUpload = cache.overview ? cache.overview.max_upload : null;
     setStatus(publishEls.status, 'error', t('uploadLimitError', { max: maxUpload != null ? formatBytes(maxUpload) : errLike.message }));
+  } else if (status === 422 && body && body.checks) {
+    setStatus(publishEls.status, 'error', t('siteCheckFailed', { detail: describeCheckBlock(body.checks) || describeError(errLike) }));
+    renderPublishResult(null, body);
   } else if (status === 422 && body && body.nip05) {
     setStatus(publishEls.status, 'error', t('nip05CheckFailed', { detail: describeError(errLike) }));
     renderPublishResult(null, body);
@@ -368,20 +424,24 @@ function handlePublishHttpError(status, body) {
   }
 }
 
-function buildUploadFormData({ site, url, title, message, nip05, files }) {
+const MODE_FIELDS = ['nip05', 'check_dotfiles', 'check_size', 'check_unchanged'];
+
+function buildUploadFormData({ site, url, title, message, modes, files }) {
   const fd = new FormData();
   fd.append('site', site);
   if (url) fd.append('url', url);
   if (title) fd.append('title', title);
   if (message) fd.append('message', message);
-  if (nip05) fd.append('nip05', nip05);
+  for (const name of MODE_FIELDS) {
+    if (modes[name]) fd.append(name, modes[name]);
+  }
   for (const file of files) {
     fd.append('file', file, computeRelativePath(file));
   }
   return fd;
 }
 
-function submitUpload({ site, url, title, message, nip05, files }) {
+function submitUpload({ site, url, title, message, modes, files }) {
   const submitBtn = publishEls.form.querySelector('button[type="submit"]');
   return new Promise((resolve) => {
     publishing = true;
@@ -419,8 +479,8 @@ function submitUpload({ site, url, title, message, nip05, files }) {
       if (xhr.status >= 200 && xhr.status < 300) {
         hideProgress();
         renderPublishResult(body, null);
-        document.dispatchEvent(new CustomEvent('swing:published', { detail: body }));
-        saveLastPublish({ site, url, title, message, nip05 });
+        if (body && body.published !== false) document.dispatchEvent(new CustomEvent('swing:published', { detail: body }));
+        saveLastPublish({ site, url, title, message, ...modes });
         publishEls.uploadInput.value = '';
         updateUploadInfo();
         loadMySites(true);
@@ -432,7 +492,7 @@ function submitUpload({ site, url, title, message, nip05, files }) {
       refreshSigner();
       resolve();
     });
-    xhr.send(buildUploadFormData({ site, url, title, message, nip05, files }));
+    xhr.send(buildUploadFormData({ site, url, title, message, modes, files }));
   });
 
   function finishUpload() {
@@ -458,7 +518,9 @@ export const PublishView = {
       if (last.url) form.elements.url.value = last.url;
       if (last.title) form.elements.title.value = last.title;
       if (last.message) form.elements.message.value = last.message;
-      if (last.nip05) form.elements.nip05.value = last.nip05;
+      for (const name of MODE_FIELDS) {
+        if (last[name]) form.elements[name].value = last[name];
+      }
     }
     refreshSubmitState();
 
@@ -471,14 +533,14 @@ export const PublishView = {
       const url = String(fd.get('url') || '').trim();
       const title = String(fd.get('title') || '').trim();
       const message = String(fd.get('message') || '').trim();
-      const nip05 = String(fd.get('nip05') || '');
+      const modes = Object.fromEntries(MODE_FIELDS.map((name) => [name, String(fd.get(name) || '')]));
 
       const files = Array.from(publishEls.uploadInput.files || []);
       if (files.length === 0) {
         setStatus(publishEls.status, 'error', t('chooseFolderToUpload'));
         return;
       }
-      submitUpload({ site, url, title, message, nip05, files });
+      submitUpload({ site, url, title, message, modes, files });
     });
   },
   onShow() {

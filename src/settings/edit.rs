@@ -48,9 +48,9 @@ fn set_item(table: &mut Table, desc: &Setting, value: &InputValue) -> Result<()>
                 .with_context(|| format!("{}: invalid duration", desc.key))?;
             table.insert(desc.field, Item::Value(Value::from(s.trim().to_string())));
         }
-        Kind::Nip05 => {
+        Kind::Mode => {
             let s = value.as_str(desc.key)?;
-            config::parse_nip05_mode(s)?;
+            config::parse_check_mode(s)?;
             table.insert(desc.field, Item::Value(Value::from(s.trim().to_string())));
         }
         Kind::String => {

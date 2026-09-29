@@ -3,12 +3,18 @@ use std::path::Path;
 use anyhow::{Context, Result};
 use nostr_sdk::prelude::*;
 
-use crate::config::{self, Config, Nip05Mode};
+use crate::config::{self, CheckMode, Config};
 use crate::ipfs::IpfsClient;
 use crate::mfs::MfsLayout;
 use crate::nip05::{self, Nip05Verify};
 use crate::nostr::{self, RelayClient, RelaySendResult, build_site_event_builder};
 use crate::signer::Signer;
+
+mod checks;
+
+pub use checks::{
+    LISTED_DOTFILES, LocalChecks, SIZE_GUIDELINE, UnchangedOutcome, UnchangedStatus, find_dotfiles,
+};
 
 fn versions_to_prune(names: &[String], keep: usize) -> Vec<String> {
     let mut versions: Vec<(u64, &String)> = names
@@ -119,12 +125,12 @@ fn format_nip05_line(result: &nip05::VerificationResult) -> String {
 }
 
 fn nip05_abort_message(
-    mode: Nip05Mode,
+    mode: CheckMode,
     result: &nip05::VerificationResult,
     d: &str,
     pubkey_hex: &str,
 ) -> Option<String> {
-    if mode != Nip05Mode::Require || result.is_verified() {
+    if mode != CheckMode::Require || result.is_verified() {
         return None;
     }
     Some(match result {
@@ -146,7 +152,7 @@ pub struct Nip05Outcome {
 
 pub async fn check_nip05<V: Nip05Verify>(
     verifier: &V,
-    mode: Nip05Mode,
+    mode: CheckMode,
     d: &str,
     pubkey_hex: &str,
 ) -> Nip05Outcome {
@@ -249,11 +255,65 @@ pub fn normalize_title(title: Option<&str>) -> Result<Option<&str>, SiteFieldErr
     Ok(Some(trimmed))
 }
 
-pub fn resolve_nip05_mode(nip05_override: Option<&str>, default: Nip05Mode) -> Result<Nip05Mode> {
-    match nip05_override {
-        Some(v) => config::parse_nip05_mode(v),
+pub fn resolve_mode(mode_override: Option<&str>, default: CheckMode) -> Result<CheckMode> {
+    match mode_override {
+        Some(v) => config::parse_check_mode(v),
         None => Ok(default),
     }
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct ModeOverrides {
+    pub nip05: Option<String>,
+    pub check_dotfiles: Option<String>,
+    pub check_size: Option<String>,
+    pub check_unchanged: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Modes {
+    pub nip05: CheckMode,
+    pub check_dotfiles: CheckMode,
+    pub check_size: CheckMode,
+    pub check_unchanged: CheckMode,
+}
+
+/// Errs with the name of the offending override, which callers label as a flag or a form part.
+pub fn resolve_modes(
+    overrides: &ModeOverrides,
+    defaults: &config::PublishConfig,
+) -> Result<Modes, (&'static str, anyhow::Error)> {
+    let one = |name: &'static str, value: &Option<String>, default: CheckMode| {
+        resolve_mode(value.as_deref(), default).map_err(|e| (name, e))
+    };
+    Ok(Modes {
+        nip05: one("nip05", &overrides.nip05, defaults.nip05)?,
+        check_dotfiles: one(
+            "check-dotfiles",
+            &overrides.check_dotfiles,
+            defaults.check_dotfiles,
+        )?,
+        check_size: one("check-size", &overrides.check_size, defaults.check_size)?,
+        check_unchanged: one(
+            "check-unchanged",
+            &overrides.check_unchanged,
+            defaults.check_unchanged,
+        )?,
+    })
+}
+
+pub async fn check_unchanged(
+    relay: &RelayClient,
+    mode: CheckMode,
+    site_event_kind: u16,
+    d: &str,
+    cid: &str,
+) -> UnchangedOutcome {
+    if mode == CheckMode::Off {
+        return UnchangedOutcome::off();
+    }
+    let previous = relay.fetch_own_latest_site(site_event_kind, d).await;
+    UnchangedOutcome::decide(mode, previous, cid)
 }
 
 pub async fn run(
@@ -261,7 +321,7 @@ pub async fn run(
     d: String,
     url: Option<String>,
     dir: &Path,
-    nip05_override: Option<String>,
+    overrides: ModeOverrides,
     title: Option<String>,
     message: Option<String>,
 ) -> Result<()> {
@@ -283,8 +343,8 @@ pub async fn run(
         }
         Err(_) => unreachable!(),
     };
-    let nip05_mode = resolve_nip05_mode(nip05_override.as_deref(), config.publish.nip05)
-        .context("invalid --nip05")?;
+    let modes = resolve_modes(&overrides, &config.publish)
+        .map_err(|(name, e)| e.context(format!("invalid --{name}")))?;
 
     println!("Site: {d}");
     if let Some(url) = &url {
@@ -300,15 +360,33 @@ pub async fn run(
     let signer = Signer::require(&config)?;
     let pubkey_hex = signer.public_key().to_hex();
 
-    if nip05_mode != Nip05Mode::Off {
+    if modes.nip05 != CheckMode::Off {
         let verifier = nip05::HttpNip05Verifier::new();
-        let outcome = check_nip05(&verifier, nip05_mode, &d, &pubkey_hex).await;
+        let outcome = check_nip05(&verifier, modes.nip05, &d, &pubkey_hex).await;
 
         println!();
         println!("NIP-05");
         println!("  {}", outcome.line);
 
         if let Some(msg) = outcome.abort {
+            anyhow::bail!(msg);
+        }
+    }
+
+    let local = LocalChecks::run(
+        dir,
+        modes.check_dotfiles,
+        modes.check_size,
+        &config.publish.dotfiles_allow,
+    )
+    .await?;
+    if !local.all_off() {
+        println!();
+        println!("Checks");
+        for line in local.lines() {
+            println!("  {line}");
+        }
+        if let Some(msg) = local.abort_message() {
             anyhow::bail!(msg);
         }
     }
@@ -324,13 +402,39 @@ pub async fn run(
     println!("  \u{2713} added to {}", stage.path);
     println!("  Size: {} bytes", stage.size);
 
+    let remote_signer = signer.is_remote();
+    let relay = RelayClient::connect(signer, &config.nostr.relays).await?;
+
+    if modes.check_unchanged != CheckMode::Off {
+        let unchanged = check_unchanged(
+            &relay,
+            modes.check_unchanged,
+            config.nostr.site_event_kind,
+            &d,
+            &stage.cid,
+        )
+        .await;
+        println!();
+        println!("Previous version");
+        println!("  {}", unchanged.line());
+        if unchanged.stops_publish() {
+            relay.shutdown().await;
+            ipfs.mfs_remove(&stage.path)
+                .await
+                .with_context(|| format!("could not remove {}", stage.path))?;
+            println!("  \u{2713} removed {}", stage.path);
+            println!();
+            println!("Unchanged; not published.");
+            return Ok(());
+        }
+    }
+
     println!();
     println!("Nostr");
 
-    if signer.is_remote() {
+    if remote_signer {
         println!("  waiting for the signer app to sign the site event...");
     }
-    let relay = RelayClient::connect(signer, &config.nostr.relays).await?;
     let send_result = sign_and_send(
         &relay,
         &SiteAnnouncement {
@@ -432,7 +536,7 @@ mod tests {
             ),
         ] {
             let fake = FakeNip05(result);
-            let outcome = check_nip05(&fake, Nip05Mode::Warn, "example.com", "abc123").await;
+            let outcome = check_nip05(&fake, CheckMode::Warn, "example.com", "abc123").await;
             assert!(outcome.abort.is_none());
         }
     }
@@ -440,7 +544,7 @@ mod tests {
     #[tokio::test]
     async fn require_mode_proceeds_only_when_verified() {
         let fake = FakeNip05(nip05::VerificationResult::Verified);
-        let outcome = check_nip05(&fake, Nip05Mode::Require, "example.com", "abc123").await;
+        let outcome = check_nip05(&fake, CheckMode::Require, "example.com", "abc123").await;
         assert!(outcome.abort.is_none());
         assert!(outcome.line.contains("verified"));
     }
@@ -448,7 +552,7 @@ mod tests {
     #[tokio::test]
     async fn require_mode_aborts_on_mismatch() {
         let fake = FakeNip05(nip05::VerificationResult::Mismatch);
-        let outcome = check_nip05(&fake, Nip05Mode::Require, "example.com", "abc123").await;
+        let outcome = check_nip05(&fake, CheckMode::Require, "example.com", "abc123").await;
         assert!(outcome.abort.is_some());
         assert!(outcome.abort.unwrap().contains("abc123"));
     }
@@ -456,7 +560,7 @@ mod tests {
     #[tokio::test]
     async fn require_mode_aborts_on_not_applicable_with_domain_specific_message() {
         let fake = FakeNip05(nip05::VerificationResult::NotApplicable);
-        let outcome = check_nip05(&fake, Nip05Mode::Require, "not-a-domain", "abc123").await;
+        let outcome = check_nip05(&fake, CheckMode::Require, "not-a-domain", "abc123").await;
         let msg = outcome.abort.unwrap();
         assert!(msg.contains("not-a-domain"));
         assert!(msg.contains("not a valid domain"));
@@ -468,15 +572,44 @@ mod tests {
             "timeout".to_string(),
             nip05::ErrorCategory::Timeout,
         ));
-        let outcome = check_nip05(&fake, Nip05Mode::Require, "example.com", "abc123").await;
+        let outcome = check_nip05(&fake, CheckMode::Require, "example.com", "abc123").await;
         assert!(outcome.abort.is_some());
     }
 
     #[tokio::test]
     async fn off_mode_never_aborts_even_on_mismatch() {
         let fake = FakeNip05(nip05::VerificationResult::Mismatch);
-        let outcome = check_nip05(&fake, Nip05Mode::Off, "example.com", "abc123").await;
+        let outcome = check_nip05(&fake, CheckMode::Off, "example.com", "abc123").await;
         assert!(outcome.abort.is_none());
+    }
+
+    #[test]
+    fn resolve_modes_prefers_overrides_and_names_the_bad_one() {
+        let defaults = config::build_config_from_str("", |_| None).unwrap().publish;
+        let modes = resolve_modes(&ModeOverrides::default(), &defaults).unwrap();
+        assert_eq!(
+            modes,
+            Modes {
+                nip05: CheckMode::Warn,
+                check_dotfiles: CheckMode::Require,
+                check_size: CheckMode::Warn,
+                check_unchanged: CheckMode::Require,
+            }
+        );
+        let overrides = ModeOverrides {
+            check_dotfiles: Some("off".into()),
+            check_unchanged: Some(" WARN ".into()),
+            ..Default::default()
+        };
+        let modes = resolve_modes(&overrides, &defaults).unwrap();
+        assert_eq!(modes.check_dotfiles, CheckMode::Off);
+        assert_eq!(modes.check_unchanged, CheckMode::Warn);
+        let bad = ModeOverrides {
+            check_size: Some("loud".into()),
+            ..Default::default()
+        };
+        let (name, _) = resolve_modes(&bad, &defaults).unwrap_err();
+        assert_eq!(name, "check-size");
     }
 
     #[test]

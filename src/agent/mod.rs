@@ -233,7 +233,7 @@ impl<C: KuboStore, N: Nip05Verify, R: ReportRelay> Agent<C, N, R> {
 mod tests {
     use super::test_support::*;
     use super::*;
-    use crate::config::Nip05Mode;
+    use crate::config::CheckMode;
     use crate::ipfs::IpfsClient;
     use crate::nip05::VerificationResult;
     use crate::nostr::SiteEvent;
@@ -241,7 +241,7 @@ mod tests {
 
     #[tokio::test]
     async fn unfollow_removes_the_account_directory_and_its_verifications() {
-        let fx = Fixture::new(nip05_policy(Nip05Mode::Warn), FakeKubo::default());
+        let fx = Fixture::new(nip05_policy(CheckMode::Warn), FakeKubo::default());
         fx.seed(D, "bafy-a", 1, 100).await;
         fx.seed("b.example", "bafy-b", 1, 100).await;
         fx.agent.nip05.set(

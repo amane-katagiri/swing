@@ -18,7 +18,7 @@
 | 408 | リクエストタイムアウト（空ボディ。[`../dashboard.md#タイムアウトsrcdashboardmodrs`](../dashboard.md#タイムアウトsrcdashboardmodrs)） |
 | 409 | publish の多重実行、セットアップ・ペアリング・つなぎ直しを使えない状態（セットアップが済んで再起動を待っている間の 2 回目の `POST /api/setup` を含む）、`mirror/add` で Follow Set が上限を超える（各エンドポイント） |
 | 413 | ボディが大きすぎる |
-| 422 | publish の NIP-05 `require` 失敗だけ |
+| 422 | publish の NIP-05・ドットファイル・サイズの確認の `require` 失敗だけ |
 | 500 | ファイルの読み書きなど内部の失敗。詳細（パスや OS のエラー）は `error!` でログにだけ出し、本文は常に `{"error": "internal error; see the swing log for details"}`（`api::ApiError::Internal`） |
 | 502 | relay・Kubo・Nostr 発行・署名アプリの失敗 |
 | 503 | agent の未準備・セットアップモード（下記） |
@@ -184,7 +184,7 @@ Follow Set が無ければ `title: null`、`members: []`。
 
 `multipart/form-data`。
 
-パート: `site`（必須）・`url`・`title`・`message`・`nip05`（省略可、`nip05` 省略時は `[publish].nip05`）。`site`/`url`/`title` は CLI と同じ規則で検証し違反は 400。`title` が空白のみなら未指定として扱う。`file`（1 個以上）: 各パートの `filename` がサイトルートからの相対パス（`/` 区切り。ブラウザは `webkitRelativePath` の先頭フォルダ名を取り除いて送る）。
+パート: `site`（必須）・`url`・`title`・`message`・`nip05`・`check_dotfiles`・`check_size`・`check_unchanged`（省略可。モードの 4 つは `off`/`warn`/`require` で、省略時は `[publish]` の同名の設定。不正な値は 400 `invalid <パート名>: ...`）。`site`/`url`/`title` は CLI と同じ規則で検証し違反は 400。`title` が空白のみなら未指定として扱う。`file`（1 個以上）: 各パートの `filename` がサイトルートからの相対パス（`/` 区切り。ブラウザは `webkitRelativePath` の先頭フォルダ名を取り除いて送る）。
 
 サーバの検証（`upload::validate_relative_path` など。パートを受け取りながら順に検証し、違反は 400）:
 
@@ -196,18 +196,28 @@ Follow Set が無ければ `title: null`、`members: []`。
 
 上限はすべて固定の定数（`src/dashboard/upload.rs`）。違反や上限超過が見つかるまでに受け取ったファイルは展開先に書かれるが、400 を返す前に展開先ディレクトリを丸ごと削除する（下記 (3)）。
 
-判定の順は、パートの受信とパスの検証（400・413）→ `site`/`url`/`title`/`nip05` の検証（400）→ 多重実行（409）→ セットアップモード（503 `agent is not configured`）→ NIP-05（422）→ agent の準備（503 `agent is not ready`）。同時に実行できる publish は 1 本だけ（`AppState.publish_lock`）で、本体を最後まで受け取ってから判定するので、実行中にもう 1 本来ても 409 はアップロードの後になる。
+判定の順は、パートの受信とパスの検証（400・413）→ `site`/`url`/`title` とモードの 4 つの検証（400）→ 多重実行（409）→ セットアップモード（503 `agent is not configured`）→ NIP-05（422）→ ドットファイル・サイズ（422）→ agent の準備（503 `agent is not ready`）。同時に実行できる publish は 1 本だけ（`AppState.publish_lock`）で、本体を最後まで受け取ってから判定するので、実行中にもう 1 本来ても 409 はアップロードの後になる。
 
-処理: (1) `<state_dir>/upload/` 配下に一時ディレクトリを作り、各 `file` パートをストリーミングで書き込む。展開先ディレクトリとその中の各ディレクトリは unix では `0o700`、書き込むファイルは `0o600` で作成する（umask 任せにしない。Windows では no-op）。(2) `api::run_publish`（NIP-05 検証 → Kubo に add して MFS に置く → サイトイベントを署名して送信 → 古い版を `[publish].keep_versions` 個まで残して削除、処理順は CLI の `swing publish`（[`../cli.md#publish`](../cli.md#publish)）と同じ）を、展開先ディレクトリをサイトのディレクトリとして呼ぶ。削除に失敗した版は `prune_error` に理由が入るだけでレスポンス全体は成功扱い。(3) 成功でも失敗でも、ハンドラの途中でのリクエスト打ち切り（[`../dashboard.md` のタイムアウト](../dashboard.md#タイムアウトsrcdashboardmodrs)の 30 分超過、またはクライアントの切断）を含めて、展開先ディレクトリは `upload::UploadDirGuard` の `Drop` により必ず削除される。取りこぼした分は `<state_dir>/upload/` ごと `up::run` の起動時（プロセス内再起動を含む。[`../up.md`](../up.md)）に掃除される。(4) ボディが `[dashboard].max_upload` を超えたら 413（ストリーミング中に超えた場合も打ち切る）。multipart の受信エラーは `upload::multipart_error_to_api` が axum の `MultipartError::status()` で振り分け、`413 Payload Too Large` なら 413、それ以外は 400 にする。`status()` が 500 を返すもの（ボディの読み取り自体の失敗。クライアントの切断など）も 400 にする。
+処理: (1) `<state_dir>/upload/` 配下に一時ディレクトリを作り、各 `file` パートをストリーミングで書き込む。展開先ディレクトリとその中の各ディレクトリは unix では `0o700`、書き込むファイルは `0o600` で作成する（umask 任せにしない。Windows では no-op）。(2) `api::run_publish`（NIP-05 検証 → ドットファイル・サイズの確認 → Kubo に add して MFS に置く → 同じ内容かの確認 → サイトイベントを署名して送信 → 古い版を `[publish].keep_versions` 個まで残して削除、処理順と各確認の判定は CLI の `swing publish`（[`../cli.md#publish`](../cli.md#publish)）と同じ）を、展開先ディレクトリをサイトのディレクトリとして呼ぶ。ドットファイル・サイズは展開先ディレクトリを CLI と同じ `ipfs::list_site` で一覧して確かめるので、受け取った `file` パートのパスと大きさそのものを見ることになる（ブラウザが空のディレクトリを送らない分だけ、手元のフォルダとは違いうる）。relay には agent の接続（`AppState` の relay）を使う。削除に失敗した版は `prune_error` に理由が入るだけでレスポンス全体は成功扱い。(3) 成功でも失敗でも、ハンドラの途中でのリクエスト打ち切り（[`../dashboard.md` のタイムアウト](../dashboard.md#タイムアウトsrcdashboardmodrs)の 30 分超過、またはクライアントの切断）を含めて、展開先ディレクトリは `upload::UploadDirGuard` の `Drop` により必ず削除される。取りこぼした分は `<state_dir>/upload/` ごと `up::run` の起動時（プロセス内再起動を含む。[`../up.md`](../up.md)）に掃除される。(4) ボディが `[dashboard].max_upload` を超えたら 413（ストリーミング中に超えた場合も打ち切る）。multipart の受信エラーは `upload::multipart_error_to_api` が axum の `MultipartError::status()` で振り分け、`413 Payload Too Large` なら 413、それ以外は 400 にする。`status()` が 500 を返すもの（ボディの読み取り自体の失敗。クライアントの切断など）も 400 にする。
 
 ```json
-{ "site": "example.com", "url": "…", "title": "…", "message": "note", "nip05": { "status": "verified", "detail": null },
+{ "published": true, "site": "example.com", "url": "…", "title": "…", "message": "note", "nip05": { "status": "verified", "detail": null },
+  "checks": {
+    "dotfiles": { "status": "ok", "mode": "require", "count": 0, "paths": [] },
+    "size": { "status": "ok", "mode": "warn", "bytes": 12000, "threshold": 536870912 },
+    "unchanged": { "status": "changed", "mode": "require", "previous_cid": "bafy…", "previous_created_at": 1780000000, "detail": null } },
   "cid": "bafy…", "size": 12345, "created_at": 1790000000, "mfs_path": "/swing/publish/<hex>/example.com/1790000000",
   "relays": [ { "relay": "wss://…", "ok": true, "error": null } ], "pruned": ["1780000000"], "prune_error": null,
   "gateway_url": "…", "files": 3 }
 ```
 
 - `nip05.status` は `off`/`verified`/`mismatch`/`not_applicable`/`error`。`require` で検証が通らなければ、add する前に 422 を返す: `{ "error": "...", "nip05": { "status": "...", "detail": "..." } }`。
+- `checks`（`dto::publish_checks_dto`）。各項目の `mode` はその回に使ったモード。
+  - `dotfiles`: `status` は `off`（確かめていない。`count` は 0、`paths` は空）/`ok`/`found`。`count` は見つかった件数（ディレクトリは 1 件）、`paths` はその先頭 `LISTED_DOTFILES`（10）件。
+  - `size`: `status` は `off`（`bytes` は `null`）/`ok`/`over`。`bytes` はファイルの大きさの合計、`threshold` は `SIZE_GUIDELINE`（512 MiB）。上の `size`（`dag/stat` の値）とは別物。
+  - `unchanged`: `status` は `off`/`changed`/`unchanged`/`no_previous`（relay に前の版が無い）/`unknown`（relay から取れなかった。理由が `detail`）。`previous_cid`・`previous_created_at` は前の版が見つかったときだけ入る。
+- ドットファイル・サイズの `require` が引っかかったら、add する前に 422 を返す: `{ "error": "...", "nip05": {...}, "checks": { "dotfiles": {...}, "size": {...}, "unchanged": null } }`（`unchanged` はまだ確かめていないので `null`）。NIP-05 の 422 には `checks` が付かない。
+- `unchanged` が `unchanged` で `check_unchanged` が `require` なら、add した版を MFS から消し、署名も送信も古い版の削除もせずに 200 を返す。このとき `published` は `false`、`created_at` と `mfs_path` は `null`、`relays` と `pruned` は空、`prune_error` は `null`。`cid`・`size`・`gateway_url` は通常どおり入る（同じ CID の前の版が残っているので、ゲートウェイのリンクはそのまま開ける）。publish したことにはならないので、[`/api/activity`](#get-apiactivity) の `latest_published_at` は進まない。版を消せなければ 502。
 - どの relay にも受理されなければ 502（Kubo に add した内容と古い版はそのまま残す）。
 - `files` は受け取ったファイル数。他のフィールドは publish の結果そのもの。
 
@@ -243,9 +253,9 @@ Follow Set が無ければ `title: null`、`members: []`。
 - 各 `items[]` は追加で次のフィールドを持つ:
   - `source`: `"env"` / `"file"` / `"default"`（`config::Config::sources`、キーは `"<section>.<フィールド名>"`。`ConfigDto` はこれをそのまま `Source::Env`→`"env"` のように文字列化する）。
   - `editable`: カタログ上そのキーが `editable: true` で、かつ `source` が `"env"` ではないときだけ `true`。
-  - `kind`: カタログの全キーに付く（`source` や `editable` に関わらず）。`"size"` / `"duration"` / `"bool"` / `"integer"` / `"string"` / `"list"` / `"nip05"` / `"path"` / `"socket_addr"` / `"port"` / `"url"` / `"secret"` / `"listen"` のいずれか。編集可能なキー（[`../dashboard.md#設定の読み込みと編集srcsettings`](../dashboard.md#設定の読み込みと編集srcsettings) の表）の種類は前者 7 種だけ。画面の入力欄の出し分けは [`web.md#設定編集`](web.md#設定編集)。
+  - `kind`: カタログの全キーに付く（`source` や `editable` に関わらず）。`"size"` / `"duration"` / `"bool"` / `"integer"` / `"string"` / `"list"` / `"mode"` / `"path"` / `"socket_addr"` / `"port"` / `"url"` / `"secret"` / `"listen"` のいずれか。編集可能なキー（[`../dashboard.md#設定の読み込みと編集srcsettings`](../dashboard.md#設定の読み込みと編集srcsettings) の表）の種類は前者 7 種だけ。画面の入力欄の出し分けは [`web.md#設定編集`](web.md#設定編集)。
   - `raw`: 編集可能なキー（一覧は [`../dashboard.md#設定の読み込みと編集srcsettings`](../dashboard.md#設定の読み込みと編集srcsettings)）だけに付く、現在の値を `PUT /api/config`／`POST /api/setup` の `items` にそのまま送り返せる形にしたもの（`size`/`duration` は `parse_size`/`parse_duration_secs` が受け付ける文字列、`list` は文字列配列、それ以外は文字列）。
-  - `options`: `kind: "nip05"` のときだけ付く。取りうる値の一覧 `["off", "warn", "require"]`（`config::NIP05_MODE_NAMES`）。
+  - `options`: `kind: "mode"`（`policy.nip05`・`publish.nip05`・`publish.check_dotfiles`・`publish.check_size`・`publish.check_unchanged`）のときだけ付く。取りうる値の一覧 `["off", "warn", "require"]`（`config::CHECK_MODE_NAMES`）。
   - `description`: `{ "en": ..., "ja": ... }`。カタログの `Setting.description`（`settings::SETTINGS`）をそのまま返す、1 文の英語・日本語の説明。環境変数名は含まない（`env` フィールドと別出し）。
 
 ## PUT /api/config

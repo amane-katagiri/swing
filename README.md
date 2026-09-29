@@ -285,10 +285,17 @@ URL: https://example.jp/
 NIP-05
   ✓ verified
 
+Checks
+  ✓ dotfiles: none
+  ✓ size: 12.1 KiB (guideline 512 MiB)
+
 IPFS
   CID: bafy...
   ✓ added to /swing/publish/<pubkey>/example.jp/1700000000
   Size: 12345 bytes
+
+Previous version
+  ✓ changed from the latest version on the relays (bafy...)
 
 Nostr
   ✓ wss://relay.damus.io
@@ -303,6 +310,16 @@ Published.
 処理内容は、ディレクトリを Kubo に追加して MFS の `/swing/publish/` の下に置き、その root CID を含むサイトイベント（`kind 35980`）に自分の鍵で署名し、設定した全 relay に publish する、というものです。どれかの relay に受理されたら、同じサイトの古い版を新しい順に `keep_versions`（既定 5）個だけ残して MFS から消します。
 
 NIP-05 は、`d` タグがドメイン名の形をしている場合に、そのドメインの所有者が自分の pubkey を掲載しているかどうかを確認する任意の検証です。確認するには、公開するドメインの `https://{ドメイン}/.well-known/nostr.json` に `{"names": {"_": "<自分の pubkey の hex>"}}` を置きます。検証モードは `--nip05 off|warn|require`（省略時は `.env` の `SWING_PUBLISH_NIP05`、既定 `warn`）で切り替えられ、`warn` は結果を表示するだけで publish を続行し、`require` は検証に成功しない限り publish を中止します。
+
+publish はあわせて、[チェックリスト](docs/site-guide.md)のうち機械的に確かめられる 3 つを確かめます。どれも NIP-05 と同じ `off`（確かめない）・`warn`（表示して続ける）・`require`（引っかかったら止める）で切り替えられ、省略時は `[publish]` の設定（環境変数は `SWING_PUBLISH_` で始まる名前）に従います。
+
+| 確かめること | フラグ | 設定 | 既定 |
+|---|---|---|---|
+| 名前が `.` で始まるファイル・ディレクトリ（`.git`・`.env` など）が入っていないか。`dotfiles_allow`（既定 `.well-known`・`.nojekyll`・`.gitkeep`・`.keep`・`.domains`）に載っている名前は、その下も含めて見逃す | `--check-dotfiles` | `check_dotfiles`・`dotfiles_allow` | `require` |
+| ファイルの合計が 512 MiB を超えていないか（目安。保存するかどうかはミラーする側の設定で決まる） | `--check-size` | `check_size` | `warn` |
+| 追加した CID が relay 上の自分の最新版と同じではないか。`require` なら追加した版を消して、署名も送信もせずに `Unchanged; not published.` で正常終了する（終了コード 0） | `--check-unchanged` | `check_unchanged` | `require` |
+
+ドットファイルとサイズは IPFS に追加する前、同じ内容かどうかは追加した後に確かめます。relay から前の版を取れなかったときは、`require` でも止めずに publish します。ダッシュボードの公開画面でも同じものを確かめて結果を出します。
 
 ### 何人が保存しているかを見る
 

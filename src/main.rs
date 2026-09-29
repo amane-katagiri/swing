@@ -109,6 +109,24 @@ enum Command {
         nip05: Option<String>,
         #[arg(
             long,
+            value_name = "MODE",
+            help = "Dotfile check: off, warn, require (default: config or require)"
+        )]
+        check_dotfiles: Option<String>,
+        #[arg(
+            long,
+            value_name = "MODE",
+            help = "Size check (over 512 MiB): off, warn, require (default: config or warn)"
+        )]
+        check_size: Option<String>,
+        #[arg(
+            long,
+            value_name = "MODE",
+            help = "Same-CID check against your latest version on the relays: off, warn, require (default: config or require; require stops without publishing and exits 0)"
+        )]
+        check_unchanged: Option<String>,
+        #[arg(
+            long,
             help = "Display title of the site (self-claimed, shown to readers)"
         )]
         title: Option<String>,
@@ -439,12 +457,21 @@ async fn run_other(command: Command) -> Result<()> {
             site,
             url,
             nip05,
+            check_dotfiles,
+            check_size,
+            check_unchanged,
             title,
             message,
             dir,
         } => {
             let cfg = config::Config::load(config.as_deref())?;
-            publish::run(cfg, site, url, &dir, nip05, title, message).await
+            let overrides = publish::ModeOverrides {
+                nip05,
+                check_dotfiles,
+                check_size,
+                check_unchanged,
+            };
+            publish::run(cfg, site, url, &dir, overrides, title, message).await
         }
         Command::Mirror { action } => match action {
             MirrorCommand::List { config } => {

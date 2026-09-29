@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use nostr_sdk::prelude::*;
 
-use crate::config::{Config, IpfsApi, Nip05Mode, PolicyConfig};
+use crate::config::{CheckMode, Config, IpfsApi, PolicyConfig};
 use crate::nip05::{Nip05Verify, VerificationResult};
 use crate::nostr::ReportRelay;
 use crate::state::{self, SiteKey, State, VersionRecord};
@@ -130,7 +130,7 @@ pub(super) fn test_config(policy: PolicyConfig) -> Config {
     config.agent.fetch_timeout = Duration::from_secs(60);
     config.agent.fetch_idle_timeout = Duration::from_secs(10);
     config.agent.concurrency = 2;
-    config.publish.nip05 = Nip05Mode::Off;
+    config.publish.nip05 = CheckMode::Off;
     config.dashboard.gateway = None;
     config.kubo.storage_max = 1_000_000;
     config.config_path = std::path::PathBuf::from("./swing.toml");
@@ -150,12 +150,12 @@ pub(super) fn default_policy() -> PolicyConfig {
         keep_days: 365,
         min_update_interval: 0,
         remove_on_unfollow: true,
-        nip05: Nip05Mode::Off,
+        nip05: CheckMode::Off,
         nip05_cache_ttl: 86_400,
     }
 }
 
-pub(super) fn nip05_policy(mode: Nip05Mode) -> PolicyConfig {
+pub(super) fn nip05_policy(mode: CheckMode) -> PolicyConfig {
     PolicyConfig {
         nip05: mode,
         ..default_policy()

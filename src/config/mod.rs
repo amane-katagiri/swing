@@ -51,36 +51,36 @@ pub struct PolicyFile {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Nip05Mode {
+pub enum CheckMode {
     Off,
     Warn,
     Require,
 }
 
-impl Nip05Mode {
-    const ALL: [Nip05Mode; 3] = [Nip05Mode::Off, Nip05Mode::Warn, Nip05Mode::Require];
+impl CheckMode {
+    const ALL: [CheckMode; 3] = [CheckMode::Off, CheckMode::Warn, CheckMode::Require];
 
     pub const fn name(self) -> &'static str {
         match self {
-            Nip05Mode::Off => "off",
-            Nip05Mode::Warn => "warn",
-            Nip05Mode::Require => "require",
+            CheckMode::Off => "off",
+            CheckMode::Warn => "warn",
+            CheckMode::Require => "require",
         }
     }
 }
 
-pub const NIP05_MODE_NAMES: [&str; 3] = [
-    Nip05Mode::Off.name(),
-    Nip05Mode::Warn.name(),
-    Nip05Mode::Require.name(),
+pub const CHECK_MODE_NAMES: [&str; 3] = [
+    CheckMode::Off.name(),
+    CheckMode::Warn.name(),
+    CheckMode::Require.name(),
 ];
 
-pub fn parse_nip05_mode(input: &str) -> Result<Nip05Mode> {
+pub fn parse_check_mode(input: &str) -> Result<CheckMode> {
     let trimmed = input.trim().to_ascii_lowercase();
-    Nip05Mode::ALL
+    CheckMode::ALL
         .into_iter()
         .find(|mode| trimmed == mode.name())
-        .with_context(|| format!("invalid nip05 mode: {trimmed} (expected off, warn, or require)"))
+        .with_context(|| format!("invalid mode: {trimmed} (expected off, warn, or require)"))
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -99,6 +99,10 @@ pub struct AgentFile {
 pub struct PublishFile {
     pub nip05: Option<String>,
     pub keep_versions: Option<usize>,
+    pub check_dotfiles: Option<String>,
+    pub check_size: Option<String>,
+    pub check_unchanged: Option<String>,
+    pub dotfiles_allow: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -239,7 +243,7 @@ pub struct PolicyConfig {
     pub keep_days: u64,
     pub min_update_interval: u64,
     pub remove_on_unfollow: bool,
-    pub nip05: Nip05Mode,
+    pub nip05: CheckMode,
     pub nip05_cache_ttl: u64,
 }
 
@@ -255,8 +259,24 @@ pub struct AgentConfig {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PublishConfig {
-    pub nip05: Nip05Mode,
+    pub nip05: CheckMode,
     pub keep_versions: usize,
+    pub check_dotfiles: CheckMode,
+    pub check_size: CheckMode,
+    pub check_unchanged: CheckMode,
+    pub dotfiles_allow: Vec<String>,
+}
+
+pub const DEFAULT_DOTFILES_ALLOW: [&str; 5] =
+    [".well-known", ".nojekyll", ".gitkeep", ".keep", ".domains"];
+
+pub fn validate_dotfile_name(name: &str) -> Result<()> {
+    if !name.starts_with('.') || name == "." || name == ".." || name.contains('/') {
+        bail!(
+            "invalid dotfile name: {name:?} (expected a single name starting with \".\", such as .nojekyll)"
+        );
+    }
+    Ok(())
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

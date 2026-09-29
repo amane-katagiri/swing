@@ -168,7 +168,7 @@ async fn receive_upload(multipart: &mut Multipart, dest: &Path) -> Result<Parsed
     let mut url: Option<String> = None;
     let mut title: Option<String> = None;
     let mut message: Option<String> = None;
-    let mut nip05: Option<String> = None;
+    let mut modes = crate::publish::ModeOverrides::default();
     let mut seen_paths: HashSet<String> = HashSet::new();
     let mut file_count = 0usize;
 
@@ -183,7 +183,15 @@ async fn receive_upload(multipart: &mut Multipart, dest: &Path) -> Result<Parsed
             "url" => url = Some(field.text().await.map_err(multipart_error_to_api)?),
             "title" => title = Some(field.text().await.map_err(multipart_error_to_api)?),
             "message" => message = Some(field.text().await.map_err(multipart_error_to_api)?),
-            "nip05" => nip05 = Some(field.text().await.map_err(multipart_error_to_api)?),
+            name @ ("nip05" | "check_dotfiles" | "check_size" | "check_unchanged") => {
+                let slot = match name {
+                    "nip05" => &mut modes.nip05,
+                    "check_dotfiles" => &mut modes.check_dotfiles,
+                    "check_size" => &mut modes.check_size,
+                    _ => &mut modes.check_unchanged,
+                };
+                *slot = Some(field.text().await.map_err(multipart_error_to_api)?);
+            }
             "file" => {
                 if file_count >= MAX_UPLOAD_FILES {
                     return Err(ApiError::BadRequest(format!(
@@ -244,7 +252,7 @@ async fn receive_upload(multipart: &mut Multipart, dest: &Path) -> Result<Parsed
             url,
             title,
             message,
-            nip05,
+            modes,
         },
         file_count,
     })
@@ -270,11 +278,11 @@ pub async fn publish_upload(
     let (outcome, file_count) = result?;
     match outcome {
         PublishOutcome::Success(result) => Ok(Json(dto::PublishUploadResultDto {
-            result,
+            result: *result,
             files: file_count,
         })
         .into_response()),
-        PublishOutcome::Nip05Failed(resp) => Ok(resp),
+        PublishOutcome::CheckFailed(resp) => Ok(resp),
     }
 }
 
@@ -588,6 +596,75 @@ mod tests {
         let body = error_body(resp).await;
         assert!(body["error"].as_str().unwrap().contains("invalid title"));
         assert!(upload_dir_entries(dir.path()).is_empty());
+    }
+
+    async fn upload_with(parts: &[(&str, Option<&str>, &[u8])]) -> (StatusCode, serde_json::Value) {
+        let dir = tempfile::tempdir().unwrap();
+        let state = test_state_with(dir.path().to_path_buf(), 2 * (1u64 << 30));
+        let boundary = "SwingTestBoundary";
+        let body = multipart_body(boundary, parts);
+        let resp = call(
+            router(state),
+            multipart_request("/api/publish/upload", boundary, body),
+        )
+        .await;
+        let status = resp.status();
+        let body = error_body(resp).await;
+        assert!(upload_dir_entries(dir.path()).is_empty());
+        (status, body)
+    }
+
+    #[tokio::test]
+    async fn upload_rejects_an_invalid_check_mode_part() {
+        let (status, body) = upload_with(&[
+            ("site", None, b"example.com"),
+            ("check_size", None, b"loud"),
+            ("file", Some("index.html"), b"<html></html>"),
+        ])
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert!(
+            body["error"]
+                .as_str()
+                .unwrap()
+                .contains("invalid check_size")
+        );
+    }
+
+    #[tokio::test]
+    async fn upload_with_dotfiles_under_require_is_422_with_the_check_results() {
+        let (status, body) = upload_with(&[
+            ("site", None, b"example.com"),
+            ("file", Some("index.html"), b"<html></html>"),
+            ("file", Some(".well-known/nostr.json"), b"{}"),
+            ("file", Some(".env"), b"SECRET=1"),
+            ("file", Some(".git/HEAD"), b"ref"),
+            ("file", Some(".git/config"), b"x"),
+        ])
+        .await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+        assert!(body["error"].as_str().unwrap().contains("dotfiles_allow"));
+        let dotfiles = &body["checks"]["dotfiles"];
+        assert_eq!(dotfiles["status"], "found");
+        assert_eq!(dotfiles["mode"], "require");
+        assert_eq!(dotfiles["count"], 2);
+        assert_eq!(dotfiles["paths"], serde_json::json!([".env", ".git"]));
+        assert_eq!(body["checks"]["size"]["status"], "ok");
+        assert_eq!(body["checks"]["size"]["bytes"], 13 + 2 + 8 + 3 + 1);
+        assert!(body["checks"]["unchanged"].is_null());
+        assert_eq!(body["nip05"]["status"], "off");
+    }
+
+    #[tokio::test]
+    async fn upload_with_dotfiles_under_warn_goes_on_to_ipfs() {
+        let (status, body) = upload_with(&[
+            ("site", None, b"example.com"),
+            ("check_dotfiles", None, b"warn"),
+            ("file", Some(".env"), b"SECRET=1"),
+        ])
+        .await;
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(body["error"], "agent is not ready");
     }
 
     #[test]

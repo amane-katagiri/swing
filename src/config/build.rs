@@ -386,10 +386,10 @@ fn resolve_policy(
         get_env,
         settings::env_of("policy.nip05"),
         file.nip05,
-        parse_nip05_mode,
+        parse_check_mode,
         "invalid SWING_NIP05",
         "invalid [policy].nip05",
-        Nip05Mode::Warn,
+        CheckMode::Warn,
     )?;
 
     let nip05_cache_ttl = resolve(
@@ -538,10 +538,10 @@ fn resolve_publish(
         get_env,
         settings::env_of("publish.nip05"),
         file.nip05,
-        parse_nip05_mode,
+        parse_check_mode,
         "invalid SWING_PUBLISH_NIP05",
         "invalid [publish].nip05",
-        Nip05Mode::Warn,
+        CheckMode::Warn,
     )?;
 
     let keep_versions = resolve_typed(
@@ -558,9 +558,59 @@ fn resolve_publish(
         bail!("publish keep_versions must be greater than 0");
     }
 
+    let mut check_mode = |key: &str, file_val: Option<String>, default: CheckMode| {
+        let field = key.trim_start_matches("publish.");
+        let env = settings::env_of(key);
+        resolve(
+            sources,
+            key,
+            get_env,
+            env,
+            file_val,
+            parse_check_mode,
+            &format!("invalid {env}"),
+            &format!("invalid [publish].{field}"),
+            default,
+        )
+    };
+    let check_dotfiles = check_mode(
+        "publish.check_dotfiles",
+        file.check_dotfiles,
+        CheckMode::Require,
+    )?;
+    let check_size = check_mode("publish.check_size", file.check_size, CheckMode::Warn)?;
+    let check_unchanged = check_mode(
+        "publish.check_unchanged",
+        file.check_unchanged,
+        CheckMode::Require,
+    )?;
+
+    let mut dotfiles_allow = resolve_csv_list(
+        sources,
+        "publish.dotfiles_allow",
+        get_env,
+        settings::env_of("publish.dotfiles_allow"),
+        file.dotfiles_allow,
+        true,
+        None,
+    );
+    if sources.get("publish.dotfiles_allow") == Some(&Source::Default) {
+        dotfiles_allow = DEFAULT_DOTFILES_ALLOW
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+    }
+    for name in &dotfiles_allow {
+        validate_dotfile_name(name).context("invalid publish dotfiles_allow")?;
+    }
+
     Ok(PublishConfig {
         nip05,
         keep_versions,
+        check_dotfiles,
+        check_size,
+        check_unchanged,
+        dotfiles_allow,
     })
 }
 
@@ -1157,7 +1207,7 @@ mod tests {
         assert_eq!(cfg.policy.keep_days, 365);
         assert_eq!(cfg.policy.min_update_interval, 3600);
         assert!(cfg.policy.remove_on_unfollow);
-        assert_eq!(cfg.policy.nip05, Nip05Mode::Warn);
+        assert_eq!(cfg.policy.nip05, CheckMode::Warn);
         assert_eq!(cfg.policy.nip05_cache_ttl, 86_400);
         assert_eq!(cfg.agent.poll_interval, Duration::from_secs(300));
         assert_eq!(cfg.agent.fetch_timeout, Duration::from_secs(900));
@@ -1219,7 +1269,7 @@ mod tests {
             _ => None,
         })
         .unwrap();
-        assert_eq!(cfg.policy.nip05, Nip05Mode::Off);
+        assert_eq!(cfg.policy.nip05, CheckMode::Off);
     }
 
     #[test]
@@ -1238,7 +1288,7 @@ mod tests {
             ..Default::default()
         };
         let cfg = build_config(file, None, |_| None).unwrap();
-        assert_eq!(cfg.publish.nip05, Nip05Mode::Warn);
+        assert_eq!(cfg.publish.nip05, CheckMode::Warn);
     }
 
     #[test]
@@ -1260,7 +1310,88 @@ mod tests {
             _ => None,
         })
         .unwrap();
-        assert_eq!(cfg.publish.nip05, Nip05Mode::Off);
+        assert_eq!(cfg.publish.nip05, CheckMode::Off);
+    }
+
+    #[test]
+    fn publish_checks_default_to_require_warn_require_with_the_default_allow_list() {
+        let cfg = build_config(minimal_file(), None, |_| None).unwrap();
+        assert_eq!(cfg.publish.check_dotfiles, CheckMode::Require);
+        assert_eq!(cfg.publish.check_size, CheckMode::Warn);
+        assert_eq!(cfg.publish.check_unchanged, CheckMode::Require);
+        assert_eq!(cfg.publish.dotfiles_allow, DEFAULT_DOTFILES_ALLOW);
+        assert_eq!(
+            cfg.source_of("publish.dotfiles_allow"),
+            Some(Source::Default)
+        );
+    }
+
+    #[test]
+    fn publish_check_env_overrides_file_which_overrides_default() {
+        let mut file = minimal_file();
+        file.publish = PublishFile {
+            check_dotfiles: Some("warn".into()),
+            check_size: Some("require".into()),
+            ..Default::default()
+        };
+        let cfg = build_config(file, None, |k| match k {
+            "SWING_PUBLISH_CHECK_DOTFILES" => Some("off".into()),
+            _ => None,
+        })
+        .unwrap();
+        assert_eq!(cfg.publish.check_dotfiles, CheckMode::Off);
+        assert_eq!(cfg.source_of("publish.check_dotfiles"), Some(Source::Env));
+        assert_eq!(cfg.publish.check_size, CheckMode::Require);
+        assert_eq!(cfg.source_of("publish.check_size"), Some(Source::File));
+        assert_eq!(cfg.publish.check_unchanged, CheckMode::Require);
+        assert_eq!(
+            cfg.source_of("publish.check_unchanged"),
+            Some(Source::Default)
+        );
+    }
+
+    #[test]
+    fn publish_check_modes_reject_garbage() {
+        assert_env_rejects(
+            "SWING_PUBLISH_CHECK_SIZE",
+            "maybe",
+            "invalid SWING_PUBLISH_CHECK_SIZE",
+        );
+        let mut file = minimal_file();
+        file.publish.check_unchanged = Some("sometimes".into());
+        let err = build_config(file, None, |_| None).unwrap_err();
+        assert!(
+            err.to_string().contains("[publish].check_unchanged"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn dotfiles_allow_replaces_the_default_list() {
+        let cfg = build_config(minimal_file(), None, |k| {
+            (k == "SWING_PUBLISH_DOTFILES_ALLOW").then(|| " .htaccess , .nojekyll ".to_string())
+        })
+        .unwrap();
+        assert_eq!(cfg.publish.dotfiles_allow, vec![".htaccess", ".nojekyll"]);
+
+        let mut file = minimal_file();
+        file.publish.dotfiles_allow = Some(Vec::new());
+        let cfg = build_config(file, None, |_| None).unwrap();
+        assert!(cfg.publish.dotfiles_allow.is_empty());
+        assert_eq!(cfg.source_of("publish.dotfiles_allow"), Some(Source::File));
+    }
+
+    #[test]
+    fn dotfiles_allow_rejects_entries_that_are_not_single_dot_names() {
+        for bad in ["nojekyll", ".well-known/nostr.json", ".", ".."] {
+            let mut file = minimal_file();
+            file.publish.dotfiles_allow = Some(vec![bad.to_string()]);
+            let err = build_config(file, None, |_| None).unwrap_err();
+            assert!(
+                format!("{err:#}").contains("invalid dotfile name"),
+                "{bad}: {err:#}"
+            );
+        }
     }
 
     #[test]

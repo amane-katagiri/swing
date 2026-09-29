@@ -177,7 +177,7 @@ mod tests {
             keep_days: 365,
             min_update_interval: 600,
             remove_on_unfollow: true,
-            nip05: crate::config::Nip05Mode::Off,
+            nip05: crate::config::CheckMode::Off,
             nip05_cache_ttl: 0,
         }
     }

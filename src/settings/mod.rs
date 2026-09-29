@@ -18,7 +18,7 @@ pub enum Kind {
     Integer,
     String,
     List,
-    Nip05,
+    Mode,
     Path,
     SocketAddr,
     Port,
@@ -290,7 +290,7 @@ pub const SETTINGS: &[Setting] = &[
         section: "policy",
         field: "nip05",
         env: "SWING_NIP05",
-        kind: Kind::Nip05,
+        kind: Kind::Mode,
         example: Example::Value("\"warn\""),
         editable: true,
         description: Text {
@@ -394,7 +394,7 @@ pub const SETTINGS: &[Setting] = &[
         section: "publish",
         field: "nip05",
         env: "SWING_PUBLISH_NIP05",
-        kind: Kind::Nip05,
+        kind: Kind::Mode,
         example: Example::Value("\"warn\""),
         editable: true,
         description: Text {
@@ -413,6 +413,60 @@ pub const SETTINGS: &[Setting] = &[
         description: Text {
             en: "Number of versions swing publish keeps on its own node.",
             ja: "swing publish が自分のノードに残す版の数",
+        },
+    },
+    Setting {
+        key: "publish.check_dotfiles",
+        section: "publish",
+        field: "check_dotfiles",
+        env: "SWING_PUBLISH_CHECK_DOTFILES",
+        kind: Kind::Mode,
+        example: Example::Value("\"require\""),
+        editable: true,
+        description: Text {
+            en: "What swing publish does when the site contains files or directories whose names start with a dot, other than dotfiles_allow (off / warn / require); the --check-dotfiles CLI flag takes precedence.",
+            ja: "サイトに dotfiles_allow 以外のドットで始まる名前のファイル・ディレクトリがあったときの swing publish の扱い（off / warn / require、--check-dotfiles が優先）",
+        },
+    },
+    Setting {
+        key: "publish.dotfiles_allow",
+        section: "publish",
+        field: "dotfiles_allow",
+        env: "SWING_PUBLISH_DOTFILES_ALLOW",
+        kind: Kind::List,
+        example: Example::Value(
+            "[\".well-known\", \".nojekyll\", \".gitkeep\", \".keep\", \".domains\"]",
+        ),
+        editable: true,
+        description: Text {
+            en: "Dotfile names that check_dotfiles lets through, along with everything beneath them (comma-separated as an env var); setting it replaces the default list.",
+            ja: "check_dotfiles が通すドットで始まる名前（その下も含めて通す、カンマ区切り）。指定すると既定の一覧を置き換える",
+        },
+    },
+    Setting {
+        key: "publish.check_size",
+        section: "publish",
+        field: "check_size",
+        env: "SWING_PUBLISH_CHECK_SIZE",
+        kind: Kind::Mode,
+        example: Example::Value("\"warn\""),
+        editable: true,
+        description: Text {
+            en: "What swing publish does when the files of the site add up to more than 512 MiB (off / warn / require); the --check-size CLI flag takes precedence.",
+            ja: "サイトのファイルの合計が 512 MiB を超えたときの swing publish の扱い（off / warn / require、--check-size が優先）",
+        },
+    },
+    Setting {
+        key: "publish.check_unchanged",
+        section: "publish",
+        field: "check_unchanged",
+        env: "SWING_PUBLISH_CHECK_UNCHANGED",
+        kind: Kind::Mode,
+        example: Example::Value("\"require\""),
+        editable: true,
+        description: Text {
+            en: "What swing publish does when the new CID equals that of your latest site event on the relays (off / warn / require; require stops without publishing); the --check-unchanged CLI flag takes precedence.",
+            ja: "新しい CID が relay 上の自分の最新版と同じだったときの swing publish の扱い（off / warn / require。require は publish せずに終える、--check-unchanged が優先）",
         },
     },
     Setting {
@@ -773,6 +827,12 @@ pub fn raw_value(config: &Config, key: &str) -> Option<RawValue> {
         "publish.nip05" => RawValue::Str(config.publish.nip05.name().to_string()),
         "agent.concurrency" => RawValue::Str(config.agent.concurrency.to_string()),
         "publish.keep_versions" => RawValue::Str(config.publish.keep_versions.to_string()),
+        "publish.check_dotfiles" => RawValue::Str(config.publish.check_dotfiles.name().to_string()),
+        "publish.dotfiles_allow" => RawValue::List(config.publish.dotfiles_allow.clone()),
+        "publish.check_size" => RawValue::Str(config.publish.check_size.name().to_string()),
+        "publish.check_unchanged" => {
+            RawValue::Str(config.publish.check_unchanged.name().to_string())
+        }
         "kubo.storage_max" => RawValue::Str(crate::format::format_bytes(config.kubo.storage_max)),
         "dashboard.gateway" => RawValue::Str(config.dashboard.gateway.clone().unwrap_or_default()),
         _ => return None,
@@ -795,8 +855,8 @@ mod tests {
     }
 
     #[test]
-    fn catalog_has_exactly_20_editable_keys() {
-        assert_eq!(SETTINGS.iter().filter(|s| s.editable).count(), 20);
+    fn catalog_has_exactly_24_editable_keys() {
+        assert_eq!(SETTINGS.iter().filter(|s| s.editable).count(), 24);
     }
 
     // raw_value() hand-enumerates editable keys separately from the catalog; a key added to

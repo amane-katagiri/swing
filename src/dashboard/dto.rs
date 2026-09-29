@@ -612,16 +612,96 @@ pub fn nip05_result_dto(result: &crate::nip05::VerificationResult) -> Nip05Resul
 }
 
 #[derive(Debug, Serialize)]
+pub struct DotfilesCheckDto {
+    pub status: &'static str,
+    pub mode: &'static str,
+    pub count: usize,
+    pub paths: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct SizeCheckDto {
+    pub status: &'static str,
+    pub mode: &'static str,
+    pub bytes: Option<u64>,
+    pub threshold: u64,
+}
+
+#[derive(Debug, Serialize)]
+pub struct UnchangedCheckDto {
+    pub status: &'static str,
+    pub mode: &'static str,
+    pub previous_cid: Option<String>,
+    pub previous_created_at: Option<u64>,
+    pub detail: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct PublishChecksDto {
+    pub dotfiles: DotfilesCheckDto,
+    pub size: SizeCheckDto,
+    pub unchanged: Option<UnchangedCheckDto>,
+}
+
+pub fn publish_checks_dto(
+    local: &crate::publish::LocalChecks,
+    unchanged: Option<&crate::publish::UnchangedOutcome>,
+) -> PublishChecksDto {
+    let dotfiles = match &local.dotfiles {
+        None => DotfilesCheckDto {
+            status: "off",
+            mode: local.dotfiles_mode.name(),
+            count: 0,
+            paths: Vec::new(),
+        },
+        Some(found) => DotfilesCheckDto {
+            status: if found.is_empty() { "ok" } else { "found" },
+            mode: local.dotfiles_mode.name(),
+            count: found.len(),
+            paths: found
+                .iter()
+                .take(crate::publish::LISTED_DOTFILES)
+                .cloned()
+                .collect(),
+        },
+    };
+    let size = SizeCheckDto {
+        status: match local.bytes {
+            None => "off",
+            Some(_) if local.size_over() => "over",
+            Some(_) => "ok",
+        },
+        mode: local.size_mode.name(),
+        bytes: local.bytes,
+        threshold: crate::publish::SIZE_GUIDELINE,
+    };
+    let unchanged = unchanged.map(|u| UnchangedCheckDto {
+        status: u.status.as_str(),
+        mode: u.mode.name(),
+        previous_cid: u.previous_cid.clone(),
+        previous_created_at: u.previous_created_at,
+        detail: u.detail.clone(),
+    });
+    PublishChecksDto {
+        dotfiles,
+        size,
+        unchanged,
+    }
+}
+
+#[derive(Debug, Serialize)]
 pub struct PublishResultDto {
+    pub published: bool,
     pub site: String,
     pub url: Option<String>,
     pub title: Option<String>,
     pub message: Option<String>,
     pub nip05: Nip05ResultDto,
+    pub checks: PublishChecksDto,
     pub cid: String,
     pub size: u64,
-    pub created_at: u64,
-    pub mfs_path: String,
+    pub created_at: Option<u64>,
+    pub mfs_path: Option<String>,
     pub relays: Vec<RelayResultDto>,
     pub pruned: Vec<String>,
     pub prune_error: Option<String>,

@@ -52,17 +52,24 @@ Windows の `swing service stop` もこの `stop::run` を使う（失敗した�
 - `--site` は必須で、そのまま `d` になる。[`d` の条件](nostr.md#検証)を満たさなければ `invalid --site` でエラー終了する。
 - `--url` は任意。指定すると `url` タグになり、[`url` の条件](nostr.md#検証)を満たさなければ `invalid --url: ...` でエラー終了する。省略すると `url` タグを付けない（IPFS だけで公開するサイト）。
 - `--nip05` 省略時は `[publish].nip05`。
+- `--check-dotfiles`・`--check-size`・`--check-unchanged` はサイトの確認のモード（`off`/`warn`/`require`）。省略時はそれぞれ `[publish].check_dotfiles`（既定 `require`）・`check_size`（既定 `warn`）・`check_unchanged`（既定 `require`）。`--nip05` を含めた 4 つのモードは表示や処理の前にまとめて解釈し（`publish::resolve_modes`）、不正な値は `invalid --<フラグ名>` でエラー終了する。
 - `--title` は任意。指定すると `title` タグになる。空文字・空白のみは付けない扱いにする。256 バイトを超える、または制御文字を含む場合は `invalid --title: ...` でエラー終了する。
 - `--message` はサイトイベントの `content` になる。最初に `Site: <d>`、`--url` があれば `URL:`、`--title` があれば `Title:`、`--message` があれば `Message:` を表示する。省略時は空文字。
 
 処理順:
 
 1. `--nip05` が `off` でなければ、`d` と自分の pubkey で NIP-05 を検証し、`NIP-05` 見出しの下に結果を表示する（`✓ verified` / `! mismatch: ...` / `- not applicable (d is not a domain)` / `! error: ...`）。`require` で `Verified` 以外（`NotApplicable` を含む）なら add せず終了する。
-2. 現在時刻を `created_at` に決め、`DIR` を CIDv1・pin なしで add し、`<mfs_root>/publish/<pubkey hex>/<site>/<created_at>` に置く（既存の項目は先に消す）。
-3. `dag/stat`（`offline=true`）の `TotalSize` を `size` タグにする。失敗したら（ブロックが欠けていたら）エラーで終了する。
-4. サイトイベント（`alt` は `SWING site announcement: <d>`）を 2 の `created_at` で作って署名し、全 relay に送る。署名アプリを使っているときは、署名の前に `waiting for the signer app to sign the site event...` を表示し、署名アプリの返事（承認）を最大 90 秒待つ。署名できなければエラーで終了し、古い版は消さない。relay ごとの成否（✓/✗）を表示する。どこにも受理されなければエラーで終了し、古い版は消さない。
-5. `<mfs_root>/publish/<pubkey hex>/<site>/` の中で名前が整数の項目を新しい順に `[publish].keep_versions` 個残して消す（`Old versions (keeping N)` 見出し）。一覧に失敗したら警告を出して続ける。
-6. `Published.` で終わる。
+2. `--check-dotfiles` と `--check-size` のどちらかが `off` でなければ、`DIR` を add と同じ辿り方（`ipfs::list_site`。シンボリックリンクを辿り、ドットファイルも含める）で一覧し、`Checks` 見出しの下に 1 行ずつ結果を表示する（`publish::LocalChecks`。`off` の項目は `- dotfiles: off` のように出す）。
+   - ドットファイル: 各パスをサイトのルートから順にセグメントごとに見て、`[publish].dotfiles_allow` の名前と一致するセグメントがあればそのパスは見逃し、先に名前が `.` で始まるセグメントがあればそこまでを 1 件とする（ディレクトリは 1 回だけ数え、その下は見ない）。無ければ `✓ dotfiles: none`、あれば `! dotfiles: N found (not in [publish].dotfiles_allow)` の後に先頭 `LISTED_DOTFILES`（10）件のパスを字下げして並べ、残りは `… and N more` にまとめる。
+   - サイズ: ファイルの大きさの合計（`metadata().len()` の和。ブロックの共有やディレクトリのノードは数えない）が `SIZE_GUIDELINE`（512 MiB、固定）を超えたら（ちょうどは超えない扱い）`! size: <合計> is over the 512 MiB guideline; each mirror decides by its own limits (max_update_size, default 2 GiB)`、超えなければ `✓ size: <合計> (guideline 512 MiB)`。
+   - `require` の項目が引っかかったら、項目ごとの理由（ドットファイルは消す・名前を `[publish].dotfiles_allow` に足す・`--check-dotfiles` か `[publish].check_dotfiles` を `warn`/`off` にする、の案内、サイズは `--check-size` か `[publish].check_size` の案内）を `; ` でつないだメッセージで、add せずにエラー終了する。
+3. 現在時刻を `created_at` に決め、`DIR` を CIDv1・pin なしで add し、`<mfs_root>/publish/<pubkey hex>/<site>/<created_at>` に置く（既存の項目は先に消す）。
+4. `dag/stat`（`offline=true`）の `TotalSize` を `size` タグにする。失敗したら（ブロックが欠けていたら）エラーで終了する。`IPFS` 見出しの `Size:` はこの値。
+5. relay に接続する（ここで 1 回だけつなぎ、6 と 7 で同じ接続を使う）。
+6. `--check-unchanged` が `off` でなければ、relay から自分の pubkey・この `d` のサイトイベントを取り（`RelayClient::fetch_own_latest_site`。`parse_site_event` を通り `created_at` が未来すぎないものの最新 1 件）、`Previous version` 見出しの下に結果を表示する（`publish::UnchangedOutcome::decide`）。CID が違えば `✓ changed from the latest version on the relays (<前の CID>)`、同じなら `! unchanged: the CID equals your latest version on the relays`、見つからなければ `- no previous version on the relays`、取得に失敗したら `! could not check: <理由>`。同じで `require` なら、3 で置いた版を MFS から消して `✓ removed <パス>` を出し、署名・送信・古い版の削除をせずに `Unchanged; not published.` で終わる（終了コード 0。消せなければエラー終了）。見つからない・取得に失敗したときは `require` でも続ける。
+7. サイトイベント（`alt` は `SWING site announcement: <d>`）を 3 の `created_at` で作って署名し、全 relay に送る。署名アプリを使っているときは、署名の前（`Nostr` 見出しの直後）に `waiting for the signer app to sign the site event...` を表示し、署名アプリの返事（承認）を最大 90 秒待つ。署名できなければエラーで終了し、古い版は消さない。relay ごとの成否（✓/✗）を表示する。どこにも受理されなければエラーで終了し、古い版は消さない。
+8. `<mfs_root>/publish/<pubkey hex>/<site>/` の中で名前が整数の項目を新しい順に `[publish].keep_versions` 個残して消す（`Old versions (keeping N)` 見出し）。一覧に失敗したら警告を出して続ける。
+9. `Published.` で終わる。
 
 ## mirror list / add / remove
 

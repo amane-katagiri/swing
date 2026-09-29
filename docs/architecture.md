@@ -59,6 +59,7 @@ swing/
     agent/           mirror-agent ループ。詳細は architecture/agent.md
     health.rs        版と MFS の突き合わせ（agent と status で共通）、status サブコマンド
     publish.rs       publish サブコマンド
+    publish/checks.rs publish 前後のサイトの確認（ドットファイル・サイズ・同じ内容。純粋関数）
     mirror.rs        mirror list/add/remove, sites サブコマンド
     replicas.rs      レプリカ報告の集計、replicas サブコマンド
     webring.rs       Follow Set のたどり方とグラフの組み立て・出力、webring サブコマンド
@@ -108,7 +109,7 @@ swing/
   docs/                役割は AGENTS.md を参照
 ```
 
-`mirror.rs`・`health.rs`・`replicas.rs`・`webring.rs` は、relay/Kubo とやり取りして値を返す関数（`collect_mirror_list`・`collect_sites`・`collect_status`・`replicas::collect`・`webring::collect`）と、表示する関数とに分かれている。ダッシュボードの API ハンドラは同じ関数を呼び、DTO に変換する。CLI は `sites`・`replicas`・`webring`・`mirror list` ではこれらを直接呼び、`status`・`stats`・`mirror add`/`remove` ではダッシュボード API 経由で `swing up` 側に呼ばせる。`publish.rs` は段階ごとの関数（`check_nip05`・`add_and_measure`・`sign_and_send`・`prune_old_versions_collect`）を CLI とダッシュボードで共有する。
+`mirror.rs`・`health.rs`・`replicas.rs`・`webring.rs` は、relay/Kubo とやり取りして値を返す関数（`collect_mirror_list`・`collect_sites`・`collect_status`・`replicas::collect`・`webring::collect`）と、表示する関数とに分かれている。ダッシュボードの API ハンドラは同じ関数を呼び、DTO に変換する。CLI は `sites`・`replicas`・`webring`・`mirror list` ではこれらを直接呼び、`status`・`stats`・`mirror add`/`remove` ではダッシュボード API 経由で `swing up` 側に呼ばせる。`publish.rs` は段階ごとの関数（`resolve_modes`・`check_nip05`・`LocalChecks::run`・`add_and_measure`・`check_unchanged`・`sign_and_send`・`prune_old_versions_collect`）を CLI とダッシュボードで共有する。
 
 サブコマンドごとに relay/Kubo へ直接つなぐか、動いている `swing up` のダッシュボード API を経由するかは [`architecture/cli.md#共通`](architecture/cli.md#共通) を参照。
 
@@ -124,7 +125,7 @@ swing service stop      [--system]
 swing service status    [--system]
 swing dashboard open         [--config <path>] [--no-browser]
 swing dashboard rotate-token [--config <path>]
-swing publish [--config <path>] --site <d-tag> [--url <URL>] [--nip05 <off|warn|require>] [--title <TEXT>] [-m, --message <TEXT>] <DIR>
+swing publish [--config <path>] --site <d-tag> [--url <URL>] [--nip05 <off|warn|require>] [--check-dotfiles <off|warn|require>] [--check-size <off|warn|require>] [--check-unchanged <off|warn|require>] [--title <TEXT>] [-m, --message <TEXT>] <DIR>
 swing mirror list                      [--config <path>]
 swing mirror add <key>...              [--config <path>]
 swing mirror remove <key>...           [--config <path>]
@@ -181,6 +182,7 @@ compose でのコンテナ内の待ち受けとホスト側の公開アドレス
 検証:
 
 - `poll_interval`、`concurrency`、`max_sites_per_account`、`[publish].keep_versions`、`[agent].fetch_timeout`、`[agent].fetch_idle_timeout`、`[dashboard].max_upload` は 0 だとエラー。
+- `[publish].dotfiles_allow` の各要素は前後の空白を除き、空になった要素は捨てる。残りは `.` で始まり、`/` を含まず、`.`・`..` そのものでないこと（`config::validate_dotfile_name`）。違反はエラー。TOML で空配列にすると何も見逃さない（環境変数は空文字だと未設定扱いなので、`,` だけを渡す）。未設定なら `config::DEFAULT_DOTFILES_ALLOW`。
 - `report_ttl` の半分が `poll_interval` 以下ならエラー。`report_ttl` が `nostr::MAX_REPORT_AGE`（7 日）を超えてもエラー（`report_ttl must be at most 7d`）。
 - `mfs_root` は `/` で始まる絶対パス。`/` そのもの、空の要素、`.`、`..` を含むとエラー。末尾の `/` は取り除く。
 - `[kubo].managed = true` のときに `[ipfs].api`（TOML または `SWING_IPFS_API`）が指定されているとエラー（`[ipfs].api conflicts with [kubo].managed = true`）。

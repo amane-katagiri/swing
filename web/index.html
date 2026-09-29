@@ -664,10 +664,34 @@
         </label>
         <label class="swing-field"><span>NIP-05</span>
           <select name="nip05" class="swing-input">
-            <option value="" data-i18n="nip05Default">Use configured default</option>
-            <option value="off">off</option>
-            <option value="warn">warn</option>
-            <option value="require">require</option>
+            <option value="" data-i18n="modeDefault">Use configured default</option>
+            <option value="off" data-i18n="modeOff">off</option>
+            <option value="warn" data-i18n="modeWarn">warn</option>
+            <option value="require" data-i18n="modeRequire">require</option>
+          </select>
+        </label>
+        <label class="swing-field"><span data-i18n="checkDotfilesLabel">Dotfile check</span>
+          <select name="check_dotfiles" class="swing-input">
+            <option value="" data-i18n="modeDefault">Use configured default</option>
+            <option value="off" data-i18n="modeOff">off</option>
+            <option value="warn" data-i18n="modeWarn">warn</option>
+            <option value="require" data-i18n="modeRequire">require</option>
+          </select>
+        </label>
+        <label class="swing-field"><span data-i18n="checkSizeLabel">Size check</span>
+          <select name="check_size" class="swing-input">
+            <option value="" data-i18n="modeDefault">Use configured default</option>
+            <option value="off" data-i18n="modeOff">off</option>
+            <option value="warn" data-i18n="modeWarn">warn</option>
+            <option value="require" data-i18n="modeRequire">require</option>
+          </select>
+        </label>
+        <label class="swing-field"><span data-i18n="checkUnchangedLabel">Unchanged check</span>
+          <select name="check_unchanged" class="swing-input">
+            <option value="" data-i18n="modeDefault">Use configured default</option>
+            <option value="off" data-i18n="modeOff">off</option>
+            <option value="warn" data-i18n="modeWarn">warn</option>
+            <option value="require" data-i18n="modeRequire">require</option>
           </select>
         </label>
         <button type="submit" class="swing-btn swing-btn-accent" data-i18n="publishBtn" disabled>Publish</button>

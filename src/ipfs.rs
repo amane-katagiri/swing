@@ -111,7 +111,7 @@ fn percent_encode_relative_path(rel: &str) -> String {
 #[derive(Debug)]
 enum Entry {
     Dir(String),
-    File(String, PathBuf),
+    File(String, PathBuf, u64),
 }
 
 fn walk(
@@ -147,7 +147,7 @@ fn walk(
             walk(&path, &rel, out, dir_ancestors)?;
             dir_ancestors.remove(&canon);
         } else if metadata.is_file() {
-            out.push(Entry::File(rel, path));
+            out.push(Entry::File(rel, path, metadata.len()));
         }
     }
     Ok(())
@@ -161,6 +161,28 @@ fn walk_root(dir: &Path, root_name: &str) -> Result<Vec<Entry>> {
     let mut entries = Vec::new();
     walk(dir, root_name, &mut entries, &mut dir_ancestors)?;
     Ok(entries)
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SiteEntry {
+    pub path: String,
+    pub size: Option<u64>,
+}
+
+pub fn list_site(dir: &Path) -> Result<Vec<SiteEntry>> {
+    if !dir.is_dir() {
+        bail!("not a directory: {}", dir.display());
+    }
+    Ok(walk_root(dir, "")?
+        .into_iter()
+        .map(|entry| match entry {
+            Entry::Dir(path) => SiteEntry { path, size: None },
+            Entry::File(path, _, size) => SiteEntry {
+                path,
+                size: Some(size),
+            },
+        })
+        .collect())
 }
 
 #[derive(Debug, Deserialize)]
@@ -259,7 +281,7 @@ impl IpfsClient {
                 Entry::Dir(rel) => Part::bytes(Vec::new())
                     .file_name(percent_encode_relative_path(&rel))
                     .mime_str("application/x-directory")?,
-                Entry::File(rel, path) => {
+                Entry::File(rel, path, _) => {
                     let file = tokio::fs::File::open(&path)
                         .await
                         .with_context(|| format!("opening {}", path.display()))?;
@@ -501,7 +523,7 @@ mod tests {
             .iter()
             .map(|e| match e {
                 Entry::Dir(r) => format!("dir:{r}"),
-                Entry::File(r, _) => format!("file:{r}"),
+                Entry::File(r, _, _) => format!("file:{r}"),
             })
             .collect()
     }

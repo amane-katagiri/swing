@@ -73,7 +73,10 @@ NIP-05 の検証結果はバッジで `OK`（`verified`）/ `NG`（`mismatch`）
 - 自分の情報（`.swing-identity`）: npub・hex・ミラーセット・relays に加えて署名の方式（設定ファイルの秘密鍵／署名アプリ）を `overview.signer` から出す（`publish.js::renderSigner`）。`last_failure` があれば警告を出す。署名アプリのときは画面表示のたびと publish 完了時に `GET /api/overview` を読み直してこの行を更新する。
 - 署名アプリのときは「つなぎ直す」ボタンから relay 欄と QR（`pairing.js`）とキャンセルボタンを出す。ペアリングが `ready` になると「つなぎ直して再起動」ボタン（`#pub-signer-save`）が有効になり、押すと [`POST /api/signer/reconnect`](http-api.md#post-apisignerreconnect) を呼び、`pollUntil` で `GET /api/overview` を読んで `instance` が変わったらページを読み直す。
 - publish のアップロード後、署名アプリのときは処理中の表示を `processingOnAgentSigner`（承認を求められたら承認して、という案内）にする。
-- publish が成功したら進捗バーを隠し、`#publish-status` に結果（relay N つのうち M つが受け付けたか。全部受け付ければ `ok`、一部だけなら `warn`）を出す。結果のパネルにはサイト・URL・タイトル・NIP-05・署名（署名アプリのときだけ）・CID・サイズ・作成日時・MFS パス・ファイル数・消した古い版・relay ごとの結果・ゲートウェイのリンクを並べる。
+- publish フォームの NIP-05 の下に、同じ形のセレクトを「ドットファイルの確認」（`check_dotfiles`）・「サイズの確認」（`check_size`）・「同じ内容の確認」（`check_unchanged`）の順に並べる。どれも先頭の選択肢は `modeDefault`（値は空。パートを送らず設定の既定値に任せる）で、残りは `modeOff`（検証しない）・`modeWarn`（見つかった問題の報告のみ行う）・`modeRequire`（問題が見つかったら中止する）の文言にモード名を添えて出す（NIP-05 も同じ）。空でなければ同名のパートで送る（`publish.js::MODE_FIELDS`）。
+- publish が成功したら進捗バーを隠し、`#publish-status` に結果（relay N つのうち M つが受け付けたか。全部受け付ければ `ok`、一部だけなら `warn`）を出す。結果のパネルにはサイト・URL・タイトル・NIP-05・サイトの確認（ドットファイル・サイズ・同じ内容。`publish.js::addCheckRows`）・署名（署名アプリのときだけ）・CID・サイズ・作成日時・MFS パス・ファイル数・消した古い版・relay ごとの結果・ゲートウェイのリンクを並べる。ドットファイルは見つかった件数と `paths`（残りは「ほか N 件」）を、`warn` で公開したときは「公開はしています」を添えて出す。
+- レスポンスの `published` が `false`（同じ内容で `require` のため公開しなかった）なら、`#publish-status` に `publishUnchanged` を `ok` で出し、結果のパネルから署名・作成日時・MFS パス・relay の行を省く。`swing:published` イベントは出さない（Desktop 画面のおしらせは増えない）。
+- 422 のうち本文に `checks` があるもの（ドットファイル・サイズの `require`）は、`require` で引っかかった項目ごとの文（`siteCheckDotfilesBlocked`・`siteCheckSizeBlocked`。CLI のフラグではなく画面の選択と設定のキーで直し方を案内する）を `siteCheckFailed` に入れて出し（どれにも当たらなければ API のエラー文）、結果のパネルに NIP-05 とドットファイル・サイズの行だけを出す。`checks` の無い 422 はNIP-05 の失敗として扱う。
 - My sites: 一覧は画面を開いたときにキャッシュが無ければ取得し、publish が成功したときと「再読み込み」で取り直す。一覧の「Use」ボタンは `site`・`url`・`title`（`message` を除く）をフォームに入れるだけ。
 - publish フォームは常にフォルダアップロード（`<input type="file" webkitdirectory multiple>`）。ファイル数・合計サイズを表示し、`max_upload` を超えれば送信ボタンを無効化する。送信は `XMLHttpRequest` で、進捗を `.swing-progress`/`.swing-progress-bar`（`data-state`）に反映する。413 は「上限を超えた」という文言に言い換える。
 - 各ファイルの送信名は `webkitRelativePath` から選んだフォルダ名を除いたもの。最後に使ったフォーム内容は `swing:publish:last` に保存する（下記の localStorage 一覧を参照）。
@@ -94,7 +97,7 @@ NIP-05 の検証結果はバッジで `OK`（`verified`）/ `NG`（`mismatch`）
 
 ### 設定編集
 
-[`/api/config`](http-api.md#get-apiconfig) を表示し、書き込み範囲（ホワイトリスト。[`../dashboard.md#設定の読み込みと編集srcsettings`](../dashboard.md#設定の読み込みと編集srcsettings)）に入っていて env 由来でない項目はその場で編集できる。ホワイトリストの項目の目印は `item.raw != null`。`renderConfig` はセクションごとに表（キー・値・env）を描く。`item.editable === true`（ホワイトリストにあり env 由来でない）項目は値のセルが入力欄になる（`kind` で分岐: `bool`/`nip05` はセレクト、`list` はテキストエリア、それ以外はテキスト入力。値の初期値は `item.raw`）。載っていない項目・env 由来の項目はそのままテキスト表示。env 由来で編集できないホワイトリスト項目には `configLockedByEnv` の注記を添える。ホワイトリストの項目には値のセルの下に `item.description[lang]`（無ければ `.en`）を `swing-hint` として添え、`swing:langchange` の再描画でも更新される。
+[`/api/config`](http-api.md#get-apiconfig) を表示し、書き込み範囲（ホワイトリスト。[`../dashboard.md#設定の読み込みと編集srcsettings`](../dashboard.md#設定の読み込みと編集srcsettings)）に入っていて env 由来でない項目はその場で編集できる。ホワイトリストの項目の目印は `item.raw != null`。`renderConfig` はセクションごとに表（キー・値・env）を描く。`item.editable === true`（ホワイトリストにあり env 由来でない）項目は値のセルが入力欄になる（`kind` で分岐: `bool`/`mode` はセレクト、`list` はテキストエリア、それ以外はテキスト入力。値の初期値は `item.raw`）。載っていない項目・env 由来の項目はそのままテキスト表示。env 由来で編集できないホワイトリスト項目には `configLockedByEnv` の注記を添える。ホワイトリストの項目には値のセルの下に `item.description[lang]`（無ければ `.en`）を `swing-hint` として添え、`swing:langchange` の再描画でも更新される。
 
 - セクションごとに 1 つの Save ボタン。押すと、そのセクション内で初期値から変わったフィールドだけを集めて [`PUT /api/config`](http-api.md#put-apiconfig) に送る（変更が無ければ何もしない）。
 - `config.writable === false`（設定ファイルが書けない。[`http-api.md#get-apiconfig`](http-api.md#get-apiconfig)）のときは、`editable` な項目も読み取り専用表示にし、`configNotWritable` の注記を出す（Setup 画面は `writable` を見ない）。
@@ -169,7 +172,7 @@ NIP-05 の検証結果はバッジで `OK`（`verified`）/ `NG`（`mismatch`）
 | `swing:sites:sort` | `updated` / `name` / `pubkey` | Sites の並び順（既定 `updated`） |
 | `swing:sites:stored-only` | `"1"` / `"0"` | Sites の「Stored only」チェックボックスの状態 |
 | `swing:webring:query` | JSON `{root, depth}` | Webring の最後のクエリ（起動時に復元） |
-| `swing:publish:last` | JSON `{site, url, title, message, nip05}` | Publish フォームの最後の入力（起動時にプリフィル） |
+| `swing:publish:last` | JSON `{site, url, title, message, nip05, check_dotfiles, check_size, check_unchanged}` | Publish フォームの最後の入力（起動時にプリフィル） |
 | `swing:nav:collapsed` | `"1"` / `"0"` | サイドナビを畳んでいるか（既定 `0`） |
 | `swing:theme` | `auto` / `light` / `dark` | 表示テーマ |
 | `swing:lang` | `auto` / `en` / `ja` | 表示言語 |
@@ -187,7 +190,7 @@ NIP-05 の検証結果はバッジで `OK`（`verified`）/ `NG`（`mismatch`）
 
 `web/i18n.js` の `MESSAGES = { en: {...}, ja: {...} }` を `t(key, vars)` で参照する。`localStorage["swing:lang"]`（`auto`/`en`/`ja`。`auto` は `navigator.language` が `ja` で始まるかで判定）で切り替え、再読み込みは不要。訳が無いキーは英語にフォールバックする。
 
-訳さないもの: ナビゲーションの「Webring」、webring の ASCII/DOT/Mermaid 出力、API のエラー文字列、npub・hex・CID・パス、環境変数名・設定キー名、`nip05`/`health` のステータス値、NIP-05 モードの `off`/`warn`/`require`。日時表示は `Intl.DateTimeFormat`（`ja-JP`/`en-US`）を使う。
+訳さないもの: ナビゲーションの「Webring」、webring の ASCII/DOT/Mermaid 出力、API のエラー文字列、npub・hex・CID・パス、環境変数名・設定キー名、`nip05`/`health` のステータス値、NIP-05 とサイトの確認のモードの `off`/`warn`/`require`。日時表示は `Intl.DateTimeFormat`（`ja-JP`/`en-US`）を使う。
 
 Desktop 画面は UI 表示言語の設定に関わらず全部固定の日本語（[`desktop.md`「Desktop 画面は丸ごと日本語固定」](desktop.md#desktop-画面は丸ごと日本語固定)）。
 

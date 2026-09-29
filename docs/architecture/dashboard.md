@@ -140,10 +140,11 @@ HTTP サーバー（axum 0.8）で、ダッシュボードのブラウザ向け�
 | `policy.max_sites_per_account` / `keep_versions` / `keep_days` | integer |
 | `policy.min_update_interval` / `nip05_cache_ttl` | duration |
 | `policy.remove_on_unfollow` | bool |
-| `policy.nip05` / `publish.nip05` | nip05（`off`/`warn`/`require`） |
+| `policy.nip05` / `publish.nip05` / `publish.check_dotfiles` / `publish.check_size` / `publish.check_unchanged` | mode（`off`/`warn`/`require`） |
 | `agent.poll_interval` / `report_ttl` | duration |
 | `agent.concurrency` | integer |
 | `publish.keep_versions` | integer |
+| `publish.dotfiles_allow` | list |
 | `kubo.storage_max` | size |
 | `dashboard.gateway` | string |
 

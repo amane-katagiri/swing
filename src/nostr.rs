@@ -122,6 +122,33 @@ impl RelayClient {
             .collect())
     }
 
+    pub async fn fetch_own_latest_site(
+        &self,
+        site_event_kind: u16,
+        d: &str,
+    ) -> Result<Option<SiteEvent>> {
+        let kind = Kind::Custom(site_event_kind);
+        let own = self.public_key();
+        let filter = Filter::new()
+            .kind(kind)
+            .author(own)
+            .identifier(d)
+            // 2x: a relay may hand back a stale duplicate of this single replaceable event.
+            .limit(capped_limit(1, 2));
+        let events = self
+            .fetch(filter, "fetching your latest site event")
+            .await?;
+        let parsed: Vec<SiteEvent> = events
+            .iter()
+            .filter(|e| e.pubkey == own)
+            .filter_map(|e| parse_site_event(e, site_event_kind).ok())
+            .filter(|ev| ev.d == d)
+            .collect();
+        Ok(select_latest(&parsed, Timestamp::now().as_secs())
+            .into_values()
+            .next())
+    }
+
     pub async fn fetch_replica_reports(
         &self,
         report_kind: u16,
