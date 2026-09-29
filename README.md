@@ -255,6 +255,8 @@ Desktop 画面を歩き回るマスコットは、同梱の 3 体（`yureko`・`
 
 自分の静的サイトを SWING に乗せて公開するには、`swing publish` を使います。
 
+IPFS で配りやすいサイトにするための注意（容量・外部リソースへの依存・相対パス・ビルドの再現性・更新の頻度など）は、チェックリストの形で [`docs/site-guide.md`](docs/site-guide.md) にまとめています。publish の前に一度目を通してください。
+
 SWING の publish は、サイト識別子 `d` に自分のドメイン名を使い、そのドメインのルート（`https://<ドメイン>/`）を自分で管理していることを前提にしています。NIP-05 の検証はそのドメインの `/.well-known/nostr.json` を見に行くためです。サイトをサブパス以下で配信している場合や、共有ホスティングでドメインのルートを管理していない場合は、次のいずれかで対応してください。
 
 1. `--site` にドメイン以外の識別子（例: `example-com-myname`）を指定する。この場合 NIP-05 は「対象外」となり、`warn` モードならそのまま publish できます
@@ -512,6 +514,7 @@ Nostr の秘密鍵は、Docker Compose で動かす場合は `.env` に、バイ
 - [`docs/plan.md`](docs/plan.md): 初期実装計画。設計の背景や原則を説明しています
 - [`docs/protocol.md`](docs/protocol.md): 実装非依存のプロトコル定義。他のクライアントやエージェントを実装する方向けです
 - [`docs/architecture.md`](docs/architecture.md): 現在の実装の詳細なリファレンス（詳細は [`docs/architecture/`](docs/architecture/) に分割）。バイナリでの起動・supervisor は [`docs/architecture/up.md`](docs/architecture/up.md)、サービス登録は [`docs/architecture/service.md`](docs/architecture/service.md)、内蔵ゲートウェイは [`docs/architecture/gateway.md`](docs/architecture/gateway.md)
+- [`docs/site-guide.md`](docs/site-guide.md): 自分のサイトを SWING で公開する人向けの、IPFS で配りやすい静的サイトにするためのチェックリスト
 - [`docs/extensions.md`](docs/extensions.md): 新しい kind や `d` タグを追加する際の命名規約と予約表
 - [`docs/todo.md`](docs/todo.md): 残タスクの一覧
 - [`docs/log/`](docs/log/): 実装ログ（何を決め、何を作り、何を検証したかの記録）

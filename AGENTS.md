@@ -12,6 +12,7 @@ SWING（Nostr + IPFS 個人サイト相互ミラー）のリポジトリで作�
 | `docs/protocol.md` | 実装非依存のプロトコル定義。他クライアント実装者向け | 更新: イベント仕様を変えるときは必ずここを先に更新し、architecture は実装側の記述に留める |
 | `docs/architecture.md` と `docs/architecture/` | 現状のリファレンス。`architecture.md` は構成・CLI の一覧・設定・テストと各ファイルへの索引、`architecture/` は CLI・agent・signer・NIP-05・nostr・Kubo・up・gateway・service・tray・Docker・ダッシュボード（`dashboard.md` と `dashboard/`）・release の詳細 | 実装を変えたら同じ変更で必ず更新する。常に「今のコード」を記述する |
 | `docs/mascot-guide.md` | Desktop 画面のマスコットのパックを作る人向けの手引き（コマの用意・描き方・確かめ方） | パック形式や検証規則を変えたら `docs/architecture/dashboard/mascot.md` と同じ変更で更新する。値の正本は architecture 側に置き、ここでは目安と手順だけを書く |
+| `docs/site-guide.md` | `swing publish` でサイトを公開する人向けの、IPFS で配りやすい静的サイトにするためのチェックリスト | publish の処理（追加するファイルの範囲・CID の作り方）やミラー側のポリシー（上限・既定値・判定の順序）を変えたら同じ変更で更新する。値の正本は README の設定一覧と architecture 側に置き、ここでは目安と理由だけを書く |
 | `docs/extensions.md` | 将来のイベント拡張の命名規約と予約表 | 新しい kind や d タグを使う前にここへ追記する |
 | `docs/todo.md` | 残タスク | 着手したら消す、見つけたら足す。完了済みは log へ |
 | `docs/log/YYYY-MM-DD-<slug>.md` | 実装ログ。その回で何を決め、何を作り、何を検証したか。`<slug>` は英語の kebab-case（本文は日本語でよい） | 追記のみ。過去のログは書き換えない。1 回の作業単位で 1 ファイル |
