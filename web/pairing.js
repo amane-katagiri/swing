@@ -1,5 +1,5 @@
 import { t } from './i18n.js';
-import { apiFetch, setStatus, clearStatus, describeError, setBusy, createLoadGuard, ensureBusyStructure, sleep } from './util.js';
+import { apiFetch, setStatus, clearStatus, describeError, setBusy, createLoadGuard, ensureBusyStructure, sleep, sanitizeDisplayText } from './util.js';
 
 const PAIRING_POLL_MS = 1500;
 
@@ -27,9 +27,9 @@ export function createPairing(els, onChange) {
     } else if (status.state === 'ready' && status.probe_signed) {
       setStatus(els.status, 'ok', t(els.readyKey || 'setupSignerReady', { npub: status.npub }));
     } else if (status.state === 'ready') {
-      setStatus(els.status, 'warn', t('setupSignerProbeFailed', { npub: status.npub, detail: status.error || '' }));
+      setStatus(els.status, 'warn', t('setupSignerProbeFailed', { npub: status.npub, detail: sanitizeDisplayText(status.error) }));
     } else {
-      setStatus(els.status, 'error', t('setupSignerFailed', { detail: status.error || '' }));
+      setStatus(els.status, 'error', t('setupSignerFailed', { detail: sanitizeDisplayText(status.error) }));
     }
   }
 

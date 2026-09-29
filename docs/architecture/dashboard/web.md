@@ -10,7 +10,7 @@
 |---|---|
 | `storage.js` | `localStorage` の薄いラッパー。他のどのモジュールにも依存しない |
 | `i18n.js` | 多言語辞書と `t()`。`storage.js` にだけ依存する |
-| `util.js` | 画面間で共有するキャッシュ・DOM/fetch ユーティリティ・表示スタイル切替・非同期ロードのガード（`createLoadGuard`）・`sleep()`・`pollUntil(predicate)`（1 秒間隔・最大 120 回の汎用ポーリング）・他人のイベント由来テキストの表示前サニタイズ（`stripUnsafeUnicode` / `sanitizeDisplayText` / `sanitizeMessage`）。`storage.js`・`i18n.js` に依存する |
+| `util.js` | 画面間で共有するキャッシュ・DOM/fetch ユーティリティ・表示スタイル切替・非同期ロードのガード（`createLoadGuard`）・`sleep()`・`pollUntil(predicate)`（1 秒間隔・最大 120 回の汎用ポーリング）・他人のイベント由来テキストの表示前サニタイズ（`stripUnsafeUnicode` / `sanitizeDisplayText` / `sanitizeMessage`、サイトの表示名 `siteTitle`）。`storage.js`・`i18n.js` に依存する |
 | `ui.js` | 複数画面で共有する UI 部品（コピーボタン、バッジ、relay 結果表示、サイト名の行 `buildSiteNameRow` など）。`util.js`・`i18n.js` に依存する |
 | `graph.js` | webring 用の自前 force-directed layout。`util.js` の `clamp`・`sanitizeDisplayText` だけに依存する |
 | `pairing.js` | 署名アプリ（NIP-46）とのペアリングの部品（`createPairing`）。QR の表示・状態のポーリング・状態表示を受け持ち、Setup 画面と Publish 画面の「署名アプリとつなぎ直す」の両方が使う。`util.js`・`i18n.js` に依存する |
@@ -27,17 +27,17 @@ Desktop 画面専用のモジュール（`desktop*.js`）とその CSS は [`des
 
 ### ルーティング
 
-サイドナビの並び順（上から Desktop・Sites・Webring・Publish・Settings・Setup）と同じ `#/desktop` `#/sites` `#/webring` `#/publish` `#/settings` `#/setup` の 6 画面と、未ログインのときだけ出す Login 画面をハッシュルーティングで切り替える（既定は `sites`。Desktop 画面の「コントロール パネル」→「システム」で `desktop` に変えられる。[`desktop.md`](desktop.md#コントロール-パネル)）。現在の画面のナビのリンクには `aria-current="page"` が付く。書き込みリクエストは `util.js::apiFetch` が `X-Swing-Dashboard: 1` と `Content-Type: application/json` を付ける。publish のアップロード（`XMLHttpRequest` + `FormData`）だけは `apiFetch` を通らず、`X-Swing-Dashboard: 1` だけを自分で付ける。relay 由来の文字列は DOM API だけで挿入し、`innerHTML` は使わない。`url` は `^https?://` にマッチするときだけリンクにする。
+サイドナビの並び順（上から Desktop・Sites・Webring・Publish・Settings・Setup）と同じ `#/desktop` `#/sites` `#/webring` `#/publish` `#/settings` `#/setup` の 6 画面と、未ログインのときだけ出す Login 画面をハッシュルーティングで切り替える（既定は `sites`。Desktop 画面の「コントロール パネル」→「システム」で `desktop` に変えられる。[`desktop.md`](desktop.md#コントロール-パネル)）。現在の画面のナビのリンクには `aria-current="page"` が付く。書き込みリクエストは `util.js::apiFetch` が `X-Swing-Dashboard: 1` と `Content-Type: application/json` を付ける。publish のアップロード（`XMLHttpRequest` + `FormData`）だけは `apiFetch` を通らず、`X-Swing-Dashboard: 1` だけを自分で付ける。応答の解釈は `apiFetch` と同じ `parseApiBody`（JSON でなければ `null`）と `apiResponseError`（2xx 以外をエラーにし、401 なら下記の `swing:unauthorized` を投げる）を使う。サーバーが返すエラー文言（`error`）は `sanitizeDisplayText` を通してから表示する。relay 由来の文字列は DOM API だけで挿入し、`innerHTML` は使わない。`url` は `^https?://` にマッチするときだけリンクにする。
 
 ### 表示前のサニタイズ
 
-他人の Nostr イベント由来のテキスト（サイトの `title`・`d`・`message`、webring のラベル・names など）は、表示直前の 1 箇所（`util.js::sanitizeDisplayText`。内部で `stripUnsafeUnicode` と `stripControlChars` を呼ぶ。`sanitizeMessage` は既定 200 文字で `…` に切り詰め、空なら `null` にするラッパー）だけで、制御文字（空白 1 つに置き換える）・双方向制御文字と isolate・不可視文字・ゼロ幅文字を取り除いてから DOM に入れる（対象の範囲は `stripControlChars`・`stripUnsafeUnicode` が正本）。対象の要素には `dir="auto"` と CSS 側の `unicode-bidi: isolate` を付け、正当な RTL（アラビア語・ヘブライ語タイトルなど）はそのまま表示しつつ周囲の UI の並びには影響しないようにする。webring の DOT/Mermaid/ASCII エクスポートは `stripUnsafeUnicode` だけを通す（制御文字は残す）。オペレーター自身のフォーム入力（Publish フォームへの再入力など）には適用しない。
+他人の Nostr イベント由来のテキスト（サイトの `title`・`d`・`message`、webring のラベル・names など）は、表示直前の 1 箇所（`util.js::sanitizeDisplayText`。内部で `stripUnsafeUnicode` と `stripControlChars` を呼ぶ。`sanitizeMessage` は既定 200 文字で `…` に切り詰め、空なら `null` にするラッパー）だけで、制御文字（C0・DEL・C1 と行区切り・段落区切り U+2028/U+2029。空白 1 つに置き換える）・双方向制御文字と isolate・不可視文字・ゼロ幅文字・ソフトハイフン・行間注釈（U+FFF9–U+FFFB）・タグ文字（U+E0000–U+E007F）を取り除いてから DOM に入れる（対象の範囲は `stripControlChars`・`stripUnsafeUnicode` が正本）。対象の要素には `dir="auto"` と CSS 側の `unicode-bidi: isolate` を付け、正当な RTL（アラビア語・ヘブライ語タイトルなど）はそのまま表示しつつ周囲の UI の並びには影響しないようにする。webring の DOT/Mermaid/ASCII エクスポートは `stripUnsafeUnicode` だけを通す（制御文字は残す）。オペレーター自身のフォーム入力（Publish フォームへの再入力など）には適用しない。relay や署名アプリから来てサーバーがそのまま返すエラー文言（API の `error`・署名アプリのペアリングの `error`・Publish 画面の署名の失敗 `last_failure.message`・Sites 画面の `replicas_error`）も同じく `sanitizeDisplayText` を通す。
 
 ### 起動とログイン状態
 
 `app.js` の `init()` は `loadOverview()`（[`/api/overview`](http-api.md#get-apioverview)）を待ってから `showRoute()` を呼ぶ。`cache.overview.setup` が `true` の間は `currentRoute()` が hash に関わらず `'setup'` を返し（下記の未ログインの判定が優先）、サイドナビも Setup 項目だけを表示する（`false` の間は Setup 項目を隠し、残りの項目を出す）。
 
-未ログイン（`apiFetch` が `/api/login` 以外で 401 を受けた）のときは `util.js::apiFetch` が `swing:unauthorized` イベントを投げ、`app.js` が以後 `currentRoute()` を（セットアップモードでも）常に `'login'` にしてサイドナビをすべて隠す。ログイン済みのときに `#/login` を開いても既定の画面に落とす。
+未ログイン（`apiFetch` か publish のアップロードが `/api/login` 以外で 401 を受けた）のときは `util.js::apiResponseError` が `swing:unauthorized` イベントを投げ、`app.js` が以後 `currentRoute()` を（セットアップモードでも）常に `'login'` にしてサイドナビをすべて隠す。ログイン済みのときに `#/login` を開いても既定の画面に落とす。
 
 各画面のロードは世代カウンタ（`createLoadGuard`）でガードし、切り替えが速くても古いレスポンスで上書きしない。
 
@@ -138,7 +138,7 @@ NIP-05 の検証結果はバッジで `OK`（`verified`）/ `NG`（`mismatch`）
 
 鍵が未設定の間（[`../dashboard.md#セットアップモードと-appstatesetup_mode`](../dashboard.md#セットアップモードと-appstatesetup_mode)）だけ表示できる導入フォーム。`onShow` のたびに `loadOverview()`（キャッシュがあれば取り直さない）で `overview.setup` を見て、`false` なら（既にセットアップ済みなら）`#/sites` に移す。そうでなければ `GET /api/config` を毎回読み直してフォームを埋める。
 
-- 鍵: 「新しい鍵を生成する」（既定）・「既存の鍵を使う」（nsec か hex を 1 行で入力）・「スマホの署名アプリで署名する（NIP-46）」のラジオ。
+- 鍵: 「新しい鍵を生成する」（既定）・「既存の鍵を使う」（nsec か hex を 1 行で入力。`type="password"`・`autocomplete="new-password"` で、送信が成功したら欄を空にする）・「スマホの署名アプリで署名する（NIP-46）」のラジオ。
 - 署名アプリを選ぶと `#setup-signer-field` を出し、「QRコードを表示」ボタンからペアリングを始める（下記「共通の UI 部品」のペアリング）。状態は `#setup-signer-status` に出す。ペアリングが `ready` でなければ送信せず `setupSignerNotReady` を出す。
 - relays（複数行テキストエリア）と保存上限 3 つ（`max_total_storage` / `max_per_site` / `max_per_account`）を `GET /api/config` の `raw` で事前入力する。各フィールドの下に対応する `item.description[lang]` を `swing-hint` として添える（`setup.js::renderFieldDescriptions`）。
 - これら 4 項目のうち `GET /api/config` 上で `editable: false`（＝ env 由来。[`../docker.md`](../docker.md)）のものは disabled にして現在値を表示し、`configLockedByEnv` を添える。送信する `items` にもそのキーは含めない（含めるとサーバ側が env 由来として 400 で拒否するため）。

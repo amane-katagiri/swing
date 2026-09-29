@@ -1,8 +1,8 @@
 import { sanitizeDisplayText } from './util.js';
 
-export const INDEX_URL = '/mascots/index.json';
-export const ANIMATION_NAMES = ['idle', 'walk', 'talk', 'sleep', 'surprise', 'drag', 'fall'];
-export const LINE_KINDS = ['greet', 'site-stored', 'sites-stored-many', 'site-published', 'sites-published-many', 'replica-added', 'replicas-added-many', 'fetch-error', 'recovered', 'idle', 'click'];
+const INDEX_URL = '/mascots/index.json';
+const ANIMATION_NAMES = ['idle', 'walk', 'talk', 'sleep', 'surprise', 'drag', 'fall'];
+const LINE_KINDS = ['greet', 'site-stored', 'sites-stored-many', 'site-published', 'sites-published-many', 'replica-added', 'replicas-added-many', 'fetch-error', 'recovered', 'idle', 'click'];
 
 const OVERLAY_DEFAULTS = {
   blink: { on: ['idle', 'walk', 'talk'], interval: [2500, 6000] },
@@ -21,8 +21,8 @@ const MAX_FRAMES = 256;
 const MAX_SPEED = 1000;
 const MIN_BLINK_MS = 100;
 const MAX_BLINK_MS = 600000;
-export const MAX_SHEET_SIDE = 4096;
-export const MAX_SHEET_PIXELS = 2048 * 2048;
+const MAX_SHEET_SIDE = 4096;
+const MAX_SHEET_PIXELS = 2048 * 2048;
 const OPAQUE_ALPHA = 128;
 
 class PackError extends Error {}
@@ -98,7 +98,7 @@ function normalizeLines(spec) {
   return lines;
 }
 
-export function normalizeManifest(m) {
+function normalizeManifest(m) {
   if (!isObject(m)) fail('manifest must be an object');
   if (m.format !== 1) fail(`unsupported format ${JSON.stringify(m.format)}`);
   if (typeof m.sprite !== 'string' || m.sprite === '') fail('sprite must be a file name');

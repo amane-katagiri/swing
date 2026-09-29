@@ -72,7 +72,6 @@ function wireIconLaunchers() {
   });
 }
 
-/* Page markup is replaceable, so every element here is optional and looked up again whenever the frame document changes. */
 const pageEls = { status: null, list: null, marquee: null, counter: null };
 
 function pageDocument() {

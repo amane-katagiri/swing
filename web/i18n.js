@@ -722,10 +722,8 @@ export function t(key, vars) {
   const dict = MESSAGES[lang] || MESSAGES.en;
   let str = Object.prototype.hasOwnProperty.call(dict, key) ? dict[key] : MESSAGES.en[key];
   if (str == null) return key;
-  if (vars) {
-    for (const [k, v] of Object.entries(vars)) str = str.replace(new RegExp(`\\{${k}\\}`, 'g'), v);
-  }
-  return str;
+  if (!vars) return str;
+  return str.replace(/\{(\w+)\}/g, (match, k) => (Object.hasOwn(vars, k) ? String(vars[k]) : match));
 }
 
 export function applyStaticI18n() {

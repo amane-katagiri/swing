@@ -1,10 +1,10 @@
 import { storage } from './storage.js';
 
-export const NOTIFY_SETTINGS_KEY = 'swing:desktop:notify';
-export const MASCOT_SETTINGS_KEY = 'swing:desktop:mascot';
+const NOTIFY_SETTINGS_KEY = 'swing:desktop:notify';
+const MASCOT_SETTINGS_KEY = 'swing:desktop:mascot';
 export const NOTICE_KINDS = ['stored', 'published', 'replica'];
 export const SHOW_SELF_IN_WEBRING = 'swing:show-self-in-webring';
-export const CHECK_INTERVALS = [60, 300, 900, 1800];
+const CHECK_INTERVALS = [60, 300, 900, 1800];
 const DEFAULT_CHECK_INTERVAL = 60;
 
 export function readMascotSettings() {
@@ -40,7 +40,7 @@ function allKinds(on) {
   return Object.fromEntries(NOTICE_KINDS.map((kind) => [kind, on]));
 }
 
-export function defaultNotifySettings() {
+function defaultNotifySettings() {
   return { mascot: allKinds(true), browser: { enabled: false, ...allKinds(true) } };
 }
 
@@ -69,7 +69,7 @@ export function writeNotifySettings(settings) {
   return storage.trySet(NOTIFY_SETTINGS_KEY, JSON.stringify(settings));
 }
 
-export function notificationSupport() {
+function notificationSupport() {
   if (!window.isSecureContext) return 'insecure';
   if (typeof Notification !== 'function') return 'unsupported';
   return Notification.permission;

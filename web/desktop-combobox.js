@@ -1,8 +1,5 @@
+import { clamp } from './util.js';
 import { toDeskPx } from './desktop-scale.js';
-
-function clamp(v, lo, hi) {
-  return Math.min(hi, Math.max(lo, v));
-}
 
 /* Win95-style listbox popup: a plain `<select>` can't be restyled to match, so this is a hand-rolled combobox. */
 export function createCombobox({ field, list, onChange }) {
@@ -115,6 +112,9 @@ export function createCombobox({ field, list, onChange }) {
     opt.addEventListener('click', () => commit(opt.dataset.value));
     opt.addEventListener('mouseenter', () => highlight(options.indexOf(opt)));
   }
+  /* A titlebar drag doesn't reliably fire a `click` on the field/list, so the outside-click close can miss it. */
+  const titlebar = field.closest('.desk-window')?.querySelector('.desk-titlebar');
+  if (titlebar) titlebar.addEventListener('pointerdown', close);
 
   return {
     setValue(value) {

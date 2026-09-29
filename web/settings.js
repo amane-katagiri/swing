@@ -44,7 +44,6 @@ function appendReadOnlyValue(td, item) {
   } else {
     td.append(document.createTextNode(formatRawConfigValue(item.value)));
   }
-  // raw, not kind, marks the whitelist: kind is now on every catalog entry
   if (item.source === 'env' && item.raw != null) {
     td.append(el('span', { class: 'swing-hint' }, ` — ${t('configLockedByEnv')}`));
   }

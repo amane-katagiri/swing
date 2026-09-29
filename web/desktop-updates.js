@@ -2,10 +2,10 @@ import { storage } from './storage.js';
 import { apiFetch, cache, isHttpUrl } from './util.js';
 import { kindWanted, readNotifySettings } from './notify-settings.js';
 
-export const SEEN_KEY = 'swing:desktop:seen';
-export const SEEN_PUBLISHED_KEY = 'swing:desktop:seen-published';
-export const SEEN_REPLICAS_KEY = 'swing:desktop:seen-replicas';
-export const REPLICA_REPORTERS_KEY = 'swing:desktop:replica-reporters';
+const SEEN_KEY = 'swing:desktop:seen';
+const SEEN_PUBLISHED_KEY = 'swing:desktop:seen-published';
+const SEEN_REPLICAS_KEY = 'swing:desktop:seen-replicas';
+const REPLICA_REPORTERS_KEY = 'swing:desktop:replica-reporters';
 
 const EVENT_KINDS = { stored: 'sites-stored', published: 'published', replica: 'replicas-added' };
 const SEEN_KEYS = { stored: SEEN_KEY, published: SEEN_PUBLISHED_KEY, replica: SEEN_REPLICAS_KEY };
@@ -51,7 +51,7 @@ function siteHref(site) {
   return site.gateway_url || site.url || null;
 }
 
-export function collectNotices(data, since) {
+function collectNotices(data, since) {
   const notices = [];
   for (const { acct, site } of storedSites(data)) {
     const href = siteHref(site);
@@ -66,7 +66,7 @@ function publishedNotice(site) {
   return { kind: 'published', key: `published\u0000${site.d}\u0000${site.created_at}`, at: site.created_at, site, href: siteHref(site) };
 }
 
-export function collectPublished(data, since) {
+function collectPublished(data, since) {
   return (data.sites || [])
     .filter((site) => site.created_at != null && site.created_at > since)
     .map(publishedNotice)
@@ -89,7 +89,7 @@ function readReporterBook() {
 }
 
 /* Each reporter keeps the report cursor at which it first appeared, so that additions announced but never acknowledged come back after a reload. */
-export function diffReporters(data, book, since, latest) {
+function diffReporters(data, book, since, latest) {
   const author = (data.authors || [])[0];
   const next = {};
   const added = [];

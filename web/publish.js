@@ -15,6 +15,9 @@ import {
   setFormDisabled,
   createLoadGuard,
   pollUntil,
+  sanitizeDisplayText,
+  parseApiBody,
+  apiResponseError,
 } from './util.js';
 import { appendLinksAndMessage, renderRelayResults, buildSiteNameRow } from './ui.js';
 import { createPairing } from './pairing.js';
@@ -214,7 +217,7 @@ function renderSigner(signer) {
     setStatus(
       publishEls.signerStatus,
       'warn',
-      `${t('signerLastFailure', { time: formatTime(failure.at), message: failure.message })} ${t('signerLastFailureHint')}`,
+      `${t('signerLastFailure', { time: formatTime(failure.at), message: sanitizeDisplayText(failure.message) })} ${t('signerLastFailureHint')}`,
     );
   } else {
     clearStatus(publishEls.signerStatus);
@@ -290,9 +293,7 @@ async function refreshSigner() {
   if (!usesSignerApp()) return;
   try {
     renderIdentity(await loadOverview(true));
-  } catch {
-    // the next visit shows it
-  }
+  } catch {}
 }
 
 const NIP05_ERROR_KEYS = { unreachable: 'nip05ErrorUnreachable', timeout: 'nip05ErrorTimeout', invalid_response: 'nip05ErrorInvalidResponse' };
@@ -406,21 +407,21 @@ function renderPublishResult(result, errBody) {
   }
 }
 
-function handlePublishHttpError(status, body) {
-  const errLike = { status, body, message: body && typeof body.error === 'string' ? body.error : `HTTP ${status}` };
+function handlePublishHttpError(err) {
+  const { status, body } = err;
   if (status === 413) {
     const maxUpload = cache.overview ? cache.overview.max_upload : null;
-    setStatus(publishEls.status, 'error', t('uploadLimitError', { max: maxUpload != null ? formatBytes(maxUpload) : errLike.message }));
+    setStatus(publishEls.status, 'error', t('uploadLimitError', { max: maxUpload != null ? formatBytes(maxUpload) : err.message }));
   } else if (status === 422 && body && body.checks) {
-    setStatus(publishEls.status, 'error', t('siteCheckFailed', { detail: describeCheckBlock(body.checks) || describeError(errLike) }));
+    setStatus(publishEls.status, 'error', t('siteCheckFailed', { detail: describeCheckBlock(body.checks) || describeError(err) }));
     renderPublishResult(null, body);
   } else if (status === 422 && body && body.nip05) {
-    setStatus(publishEls.status, 'error', t('nip05CheckFailed', { detail: describeError(errLike) }));
+    setStatus(publishEls.status, 'error', t('nip05CheckFailed', { detail: describeError(err) }));
     renderPublishResult(null, body);
   } else if (status === 409) {
     setStatus(publishEls.status, 'error', t('publishBusy'));
   } else {
-    setStatus(publishEls.status, 'error', describeError(errLike));
+    setStatus(publishEls.status, 'error', describeError(err));
   }
 }
 
@@ -468,15 +469,9 @@ function submitUpload({ site, url, title, message, modes, files }) {
       resolve();
     });
     xhr.addEventListener('load', () => {
-      let body = null;
-      if (xhr.responseText) {
-        try {
-          body = JSON.parse(xhr.responseText);
-        } catch {
-          body = null;
-        }
-      }
-      if (xhr.status >= 200 && xhr.status < 300) {
+      const body = parseApiBody(xhr.responseText);
+      const err = apiResponseError('/api/publish/upload', xhr.status, body);
+      if (!err) {
         hideProgress();
         renderPublishResult(body, null);
         if (body && body.published !== false) document.dispatchEvent(new CustomEvent('swing:published', { detail: body }));
@@ -486,7 +481,7 @@ function submitUpload({ site, url, title, message, modes, files }) {
         loadMySites(true);
       } else {
         showProgress('error', 100);
-        handlePublishHttpError(xhr.status, body);
+        handlePublishHttpError(err);
       }
       finishUpload();
       refreshSigner();

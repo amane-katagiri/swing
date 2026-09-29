@@ -1,7 +1,7 @@
 import { storage } from './storage.js';
 import { t, currentLang } from './i18n.js';
 
-export const DEFAULT_STYLES = { sites: 'cards', webring: 'graph' };
+const DEFAULT_STYLES = { sites: 'cards', webring: 'graph' };
 
 export const cache = {
   overview: null,
@@ -58,9 +58,7 @@ export async function pollUntil(predicate) {
     await sleep(POLL_INTERVAL_MS);
     try {
       if (await predicate()) return true;
-    } catch {
-      // not ready yet; keep polling until the attempt budget runs out
-    }
+    } catch {}
   }
   return false;
 }
@@ -113,22 +111,18 @@ export function formatTime(sec) {
   }
 }
 
-export function stripControlChars(str) {
-  return String(str).replace(/[\x00-\x1f\x7f]+/g, ' ').trim();
+function stripControlChars(str) {
+  return String(str).replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]+/g, ' ').trim();
 }
 
-/* Bidi override/isolate controls (U+202A–U+202E, U+2066–U+2069, U+200E/U+200F, U+061C) and
-   zero-width/invisible characters (U+200B–U+200D, U+2060, U+FEFF) let other people's event
-   text visually reorder or hide itself; they carry no legitimate display purpose here. */
-const UNSAFE_UNICODE_RE = /[​-‏‪-‮⁠-⁩؜﻿]/g;
+// Other people's event text could use these to visually reorder or hide itself.
+const UNSAFE_UNICODE_RE =
+  /[\u00ad\u061c\u180e\u200b-\u200f\u202a-\u202e\u2060-\u2069\ufeff\ufff9-\ufffb\u{e0000}-\u{e007f}]/gu;
 
 export function stripUnsafeUnicode(str) {
   return String(str == null ? '' : str).replace(UNSAFE_UNICODE_RE, '');
 }
 
-/* Combines control-char and bidi/invisible stripping for any text sourced from someone else's
-   Nostr event (title, d, message, webring label, …) before it touches the DOM. Never apply this
-   to the operator's own form inputs. */
 export function sanitizeDisplayText(str, max) {
   if (str == null) return '';
   const cleaned = stripUnsafeUnicode(stripControlChars(str));
@@ -140,6 +134,10 @@ export function sanitizeMessage(str, max) {
   if (!str) return null;
   const cleaned = sanitizeDisplayText(str, max || 200);
   return cleaned || null;
+}
+
+export function siteTitle(site, max) {
+  return sanitizeMessage(site.title, max) || sanitizeDisplayText(site.d, max);
 }
 
 export function shortenMiddle(str, head, tail) {
@@ -214,26 +212,31 @@ export async function apiFetch(path, opts) {
     err.status = 0;
     throw err;
   }
-  const text = await res.text();
-  let body = null;
-  if (text) {
-    try {
-      body = JSON.parse(text);
-    } catch {
-      body = null;
-    }
+  const body = parseApiBody(await res.text());
+  const err = apiResponseError(path, res.status, body);
+  if (err) throw err;
+  return body;
+}
+
+export function parseApiBody(text) {
+  if (!text) return null;
+  try {
+    return JSON.parse(text);
+  } catch {
+    return null;
   }
-  if (res.status === 401 && path !== '/api/login') {
+}
+
+export function apiResponseError(path, status, body) {
+  if (status === 401 && path !== '/api/login') {
     document.dispatchEvent(new CustomEvent('swing:unauthorized'));
   }
-  if (!res.ok) {
-    const message = body && typeof body.error === 'string' ? body.error : `HTTP ${res.status}`;
-    const err = new Error(message);
-    err.status = res.status;
-    err.body = body;
-    throw err;
-  }
-  return body;
+  if (status >= 200 && status < 300) return null;
+  const message = body && typeof body.error === 'string' ? sanitizeDisplayText(body.error) : `HTTP ${status}`;
+  const err = new Error(message);
+  err.status = status;
+  err.body = body;
+  return err;
 }
 
 export function getStyle(view) {
@@ -241,7 +244,7 @@ export function getStyle(view) {
   return storage.get(`swing:style:${view}`, DEFAULT_STYLES[view]);
 }
 
-export function setStyle(view, value) {
+function setStyle(view, value) {
   storage.set(`swing:style:${view}`, value);
 }
 

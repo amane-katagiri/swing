@@ -7,7 +7,7 @@ const SURPRISE_MS = 900;
 const GRAVITY = 2400;
 const MAX_STEP_MS = 100;
 
-function between(random, [lo, hi]) {
+export function between([lo, hi], random = Math.random) {
   return lo + random() * (hi - lo);
 }
 
@@ -23,8 +23,8 @@ export function createBehavior(pack, { random = Math.random, now = 0 } = {}) {
     vy: 0,
     facing: pack.facing,
     target: 0,
-    nextDecision: now + between(random, IDLE_WAIT),
-    sleepAt: now + between(random, SLEEP_AFTER),
+    nextDecision: now + between(IDLE_WAIT, random),
+    sleepAt: now + between(SLEEP_AFTER, random),
     wakeAt: 0,
     surpriseUntil: 0,
     talking: false,
@@ -47,26 +47,26 @@ export function createBehavior(pack, { random = Math.random, now = 0 } = {}) {
 
   function toIdle(t) {
     st.mode = 'idle';
-    st.nextDecision = t + between(random, IDLE_WAIT);
+    st.nextDecision = t + between(IDLE_WAIT, random);
   }
 
   function interact(t) {
-    st.sleepAt = t + between(random, SLEEP_AFTER);
+    st.sleepAt = t + between(SLEEP_AFTER, random);
   }
 
   function decide(t) {
     if (t >= st.sleepAt) {
       st.mode = 'sleep';
-      st.wakeAt = t + between(random, SLEEP_LENGTH);
+      st.wakeAt = t + between(SLEEP_LENGTH, random);
       return;
     }
     if (st.reduced || !st.walk || random() >= WALK_CHANCE) {
-      st.nextDecision = t + between(random, IDLE_WAIT);
+      st.nextDecision = t + between(IDLE_WAIT, random);
       return;
     }
     const target = minX() + random() * (maxX() - minX());
     if (Math.abs(target - st.x) < MIN_WALK) {
-      st.nextDecision = t + between(random, IDLE_WAIT);
+      st.nextDecision = t + between(IDLE_WAIT, random);
       return;
     }
     st.target = target;

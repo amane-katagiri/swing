@@ -4,6 +4,12 @@ import { toDeskPx } from './desktop-scale.js';
 
 const FLASH_TOGGLES = 6;
 const FLASH_INTERVAL_MS = 90;
+const STORAGE_ERROR_TEXT = '保存できませんでした。ブラウザの保存容量が足りないようです。';
+
+export function showStorageError(node, show) {
+  node.hidden = !show;
+  node.textContent = show ? STORAGE_ERROR_TEXT : '';
+}
 
 /* `.desk-window.desk-dialog` shares the overlay+screen+position rules the SWING Explorer window already has. */
 export function createDialog({ root, returnFocus, onOpen, onOk, onCancel, onApply, onKey }) {
@@ -56,7 +62,6 @@ export function createDialog({ root, returnFocus, onOpen, onOk, onCancel, onAppl
       flashTimer = null;
     }
     titlebar.classList.remove('is-inactive');
-    /* The overlay click dropped focus to body. */
     if (!root.hidden && !root.contains(document.activeElement)) root.focus();
   }
 

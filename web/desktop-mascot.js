@@ -1,10 +1,10 @@
-import { sanitizeDisplayText, sanitizeMessage } from './util.js';
+import { sanitizeDisplayText, siteTitle } from './util.js';
 import { trackPointer } from './desktop-drag.js';
 import { toDeskPx, frameToViewport } from './desktop-scale.js';
 import { isModalOpen } from './desktop-focus.js';
 import { loadPacks } from './desktop-mascot-pack.js';
 import { createSprite } from './desktop-mascot-sprite.js';
-import { createBehavior } from './desktop-mascot-behavior.js';
+import { between, createBehavior } from './desktop-mascot-behavior.js';
 import { createBalloon } from './desktop-mascot-balloon.js';
 import { isNoticeEvent } from './desktop-updates.js';
 import { readNotifySettings } from './notify-settings.js';
@@ -69,10 +69,6 @@ let dragging = null;
 let blockTouch = false;
 const reducedQuery = window.matchMedia(REDUCED);
 
-function between([lo, hi]) {
-  return lo + Math.random() * (hi - lo);
-}
-
 function pickLine(pack, kind) {
   const list = pack.lines[kind] || DEFAULT_LINES[kind];
   return list[Math.floor(Math.random() * list.length)];
@@ -80,10 +76,6 @@ function pickLine(pack, kind) {
 
 function fill(template, vars) {
   return template.replace(/\{(title|d|count)\}/g, (m, key) => (vars[key] == null ? m : String(vars[key])));
-}
-
-function siteTitle(site) {
-  return sanitizeMessage(site.title, TITLE_MAX) || sanitizeDisplayText(site.d, TITLE_MAX);
 }
 
 function isViewActive() {
@@ -133,12 +125,12 @@ function noticeLine(pack, kind, group) {
   const [one, many] = NOTICE_LINES[kind];
   if (group.length > 1) return fill(pickLine(pack, many), { count: group.length });
   const n = group[0];
-  return fill(pickLine(pack, one), { title: siteTitle(n.site), d: sanitizeDisplayText(n.site.d, TITLE_MAX), count: 1 });
+  return fill(pickLine(pack, one), { title: siteTitle(n.site, TITLE_MAX), d: sanitizeDisplayText(n.site.d, TITLE_MAX), count: 1 });
 }
 
 function showNotices(inst, notices, now) {
   const acknowledge = () => updates.acknowledge(notices);
-  const toLink = (n) => ({ label: siteTitle(n.site), href: n.href, onOpen: acknowledge });
+  const toLink = (n) => ({ label: siteTitle(n.site, TITLE_MAX), href: n.href, onOpen: acknowledge });
   const text = Object.keys(NOTICE_LINES)
     .map((kind) => notices.filter((n) => n.kind === kind))
     .filter((group) => group.length > 0)

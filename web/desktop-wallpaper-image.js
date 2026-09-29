@@ -1,13 +1,15 @@
-export const DOWNSCALE_STEPS = [1920, 1280, 1024, 800, 640, 512, 400, 320, 240];
-export const STORAGE_TARGET_CHARS = 2.5 * 1024 * 1024;
+const DOWNSCALE_STEPS = [1920, 1280, 1024, 800, 640, 512, 400, 320, 240];
+const MAX_SOURCE_SIDE = 16384;
+const MAX_SOURCE_AREA_SIDE = 8192;
+const STORAGE_TARGET_CHARS = 2.5 * 1024 * 1024;
 export const DEFAULT_COLOR = '#008080';
 
-export function quantize5(v) {
+function quantize5(v) {
   const level = Math.round((v / 255) * 31);
   return (level << 3) | (level >> 2);
 }
 
-export function quantize6(v) {
+function quantize6(v) {
   const level = Math.round((v / 255) * 63);
   return (level << 2) | (level >> 4);
 }
@@ -21,7 +23,7 @@ export function quantizeColorHex(hex) {
   return `#${[r, g, b].map((v) => v.toString(16).padStart(2, '0')).join('')}`;
 }
 
-export function decodeImageFile(file) {
+function decodeImageFile(file) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onerror = () => reject(new Error('ファイルを読み込めませんでした'));
@@ -36,7 +38,7 @@ export function decodeImageFile(file) {
 }
 
 /* Not composited with the background color so a later color change still shows through. */
-export function quantizeCanvas(ctx, w, h) {
+function quantizeCanvas(ctx, w, h) {
   const imgData = ctx.getImageData(0, 0, w, h);
   const d = imgData.data;
   for (let i = 0; i < d.length; i += 4) {
@@ -56,7 +58,7 @@ export function quantizeCanvas(ctx, w, h) {
 }
 
 /* One large drawImage() reduction aliases even with imageSmoothingQuality "high". */
-export function drawScaledSmooth(ctx, img, dw, dh) {
+function drawScaledSmooth(ctx, img, dw, dh) {
   let src = img;
   let srcW = img.naturalWidth || img.width;
   let srcH = img.naturalHeight || img.height;
@@ -79,7 +81,7 @@ export function drawScaledSmooth(ctx, img, dw, dh) {
   ctx.drawImage(src, 0, 0, srcW, srcH, 0, 0, dw, dh);
 }
 
-export function renderQuantizedPng(img, maxLong) {
+function renderQuantizedPng(img, maxLong) {
   const natW = img.naturalWidth || img.width;
   const natH = img.naturalHeight || img.height;
   const scale = Math.min(1, maxLong / Math.max(natW, natH));
@@ -96,7 +98,12 @@ export function renderQuantizedPng(img, maxLong) {
 
 export async function processImageFile(file) {
   const img = await decodeImageFile(file);
-  const natMax = Math.max(img.naturalWidth || img.width, img.naturalHeight || img.height);
+  const natW = img.naturalWidth || img.width;
+  const natH = img.naturalHeight || img.height;
+  if (natW > MAX_SOURCE_SIDE || natH > MAX_SOURCE_SIDE || natW * natH > MAX_SOURCE_AREA_SIDE ** 2) {
+    throw new Error(`${natW}×${natH} は大きすぎます。1 辺 ${MAX_SOURCE_SIDE} px・合計 ${MAX_SOURCE_AREA_SIDE}×${MAX_SOURCE_AREA_SIDE} 画素まで`);
+  }
+  const natMax = Math.min(Math.max(natW, natH), DOWNSCALE_STEPS[0]);
   const candidates = [natMax, ...DOWNSCALE_STEPS.filter((s) => s < natMax)];
   let result = null;
   for (const maxLong of candidates) {

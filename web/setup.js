@@ -180,6 +180,7 @@ async function handleSubmit(ev) {
   setStatus(setupEls.formStatus, 'loading', t('setupSubmitting'));
   try {
     const result = await apiFetch('/api/setup', { method: 'POST', body: JSON.stringify(body) });
+    form.elements.secretKey.value = '';
     pairing.stop();
     renderSuccess({ ...result, remoteSigner: body.remote_signer });
     setStatus(setupEls.formStatus, 'loading', t('setupRestarting'));

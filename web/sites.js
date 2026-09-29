@@ -334,7 +334,7 @@ export const SitesView = {
     document.body.dataset.style = getStyle('sites');
 
     if (data.replicas_error) {
-      setStatus(sitesEls.status, 'error', t('replicasUnavailable', { reason: data.replicas_error }));
+      setStatus(sitesEls.status, 'error', t('replicasUnavailable', { reason: sanitizeDisplayText(data.replicas_error) }));
     } else if (data.follow_set && data.follow_set.note) {
       setStatus(sitesEls.status, 'empty', data.follow_set.note);
     } else if (!data.follow_set || !data.follow_set.found) {

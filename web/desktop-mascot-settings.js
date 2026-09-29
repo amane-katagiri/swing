@@ -1,3 +1,4 @@
+import { showStorageError } from './desktop-dialog.js';
 import { el } from './util.js';
 import { DesktopMascots } from './desktop-mascot.js';
 import { readMascotSettings, writeMascotSettings } from './notify-settings.js';
@@ -137,11 +138,6 @@ function setPending(next) {
   notifyChanged();
 }
 
-function showStorageError(show) {
-  els.storageError.hidden = !show;
-  els.storageError.textContent = show ? '保存できませんでした。ブラウザの保存容量が足りないようです。' : '';
-}
-
 export const MascotSettingsPage = {
   id: 'mascot',
   init({ changed }) {
@@ -157,17 +153,17 @@ export const MascotSettingsPage = {
   },
   open() {
     pending = { ...saved };
-    showStorageError(false);
+    showStorageError(els.storageError, false);
     syncForm();
   },
   isDirty,
   save() {
     const { packs, walk, chatter } = pending;
     if (!writeMascotSettings({ packs, walk, chatter })) {
-      showStorageError(true);
+      showStorageError(els.storageError, true);
       return false;
     }
-    showStorageError(false);
+    showStorageError(els.storageError, false);
     saved = { ...pending };
     apply(saved);
     setPending({ ...saved });

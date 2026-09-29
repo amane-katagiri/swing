@@ -610,21 +610,6 @@ body[data-nav="collapsed"] .swing-nav-toggle .swing-nav-icon {
   }
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .swing-nav,
-  .swing-logotype,
-  .swing-nav-label,
-  .swing-nav-footer,
-  .swing-nav-toggle .swing-nav-icon {
-    transition: none;
-  }
-  .is-busy .swing-btn-spinner {
-    animation: none;
-    border-right-color: currentColor;
-    opacity: 0.45;
-  }
-}
-
 .swing-input {
   font: inherit;
   background: var(--swing-surface-raised);
@@ -1362,6 +1347,18 @@ pre.swing-pre {
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .swing-nav,
+  .swing-logotype,
+  .swing-nav-label,
+  .swing-nav-footer,
+  .swing-nav-toggle .swing-nav-icon {
+    transition: none;
+  }
+  .is-busy .swing-btn-spinner {
+    animation: none;
+    border-right-color: currentColor;
+    opacity: 0.45;
+  }
   .swing-progress[data-state="processing"] .swing-progress-bar {
     animation: none;
     width: 100%;

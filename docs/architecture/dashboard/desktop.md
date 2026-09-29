@@ -11,16 +11,16 @@ Desktop 画面専用のモジュール（依存は下から上への一方向。
 | `desktop-focus.js` | ウィンドウ/ダイアログの登録（`registerFrame`）とタイトルバーのアクティブ表示の同期（`scheduleActiveSync`）、開いているモーダルの判定（`isModalOpen`）、Tab の折り返し（`tabAcrossEdge`）、フォーカスを失ったときの戻し先の補助 |
 | `desktop-scale.js` | 表示倍率の整数倍への補正と左上のデバイスピクセルへの位置合わせ（`initDeskScale`）、ビューポート座標から `#view-desktop` 内の座標への換算（`toDeskPx`）、リンク集ページ（iframe）の中の座標からトップの文書のビューポート座標への換算（`frameToViewport`） |
 | `desktop-drag.js` | ウィンドウ/ダイアログのドラッグ・リサイズで共有するポインタ操作と座標のクランプ |
-| `desktop-combobox.js` | Win95 風コンボボックス（`createCombobox`） |
+| `desktop-combobox.js` | Win95 風コンボボックス（`createCombobox`）。囲むウィンドウのタイトルバーを押したときにも一覧を閉じる |
 | `desktop-wallpaper-image.js` | 壁紙の色・画像の量子化とダウンスケール（ファイルの読み込み・canvas への描画を含む） |
-| `desktop-dialog.js` | 任意のモーダルダイアログの共通の殻（`createDialog`。開閉・オーバーレイのクリックでのタイトルバー明滅・ドラッグ・Tab トラップ・フォーカス復帰） |
+| `desktop-dialog.js` | 任意のモーダルダイアログの共通の殻（`createDialog`。開閉・オーバーレイのクリックでのタイトルバー明滅・ドラッグ・Tab トラップ・フォーカス復帰）と、各タブが使う保存失敗の表示（`showStorageError`） |
 | `desktop-window.js` | 「SWING Explorer」ウィンドウの移動・リサイズ・最小化・最大化・ジオメトリ計算（`DesktopWindow`） |
 | `desktop-wallpaper.js` | 「コントロール パネル」の「背景」タブ本体（`WallpaperPage`）。保存キーもここで定義する |
 | `desktop-updates.js` | 更新の確認（`createUpdateWatcher`・`collectNotices`・`collectPublished`・`diffReporters`）。下記「[更新の確認](#更新の確認)」 |
 | `desktop-notify.js` | ブラウザの通知（`createBrowserNotifier`）。下記「[おしらせの出し分け](#おしらせの出し分け)」。設定の読み書きと許可の判定は Settings 画面と共有する `notify-settings.js`（[`web.md#構成`](web.md#構成)） |
 | `desktop-mascot-pack.js` | マスコットのパックの読み込み（`loadPacks`）。`/mascots/index.json` と各パックの `manifest.json` を取得し、検証・正規化してスプライトシートと当たり判定用のマスクを読み込む。以下マスコットの詳細は [`mascot.md`](mascot.md) |
 | `desktop-mascot-sprite.js` | 1 体の描画（`createSprite`）。土台と重ね絵のレイヤー、コマ送り（`createPlayer`）、左右反転、配置、不透明な画素での当たり判定、吹き出しを向ける点 |
-| `desktop-mascot-behavior.js` | 1 体のふるまいの状態機械（`createBehavior`）。DOM に触れず、乱数を差し込める |
+| `desktop-mascot-behavior.js` | 1 体のふるまいの状態機械（`createBehavior`）。DOM に触れず、乱数を差し込める。範囲内の乱数 `between` は `desktop-mascot.js` も使う |
 | `desktop-mascot-balloon.js` | 吹き出し（`createBalloon`）。文字送り・リンク・「とじる」・配置 |
 | `desktop-mascot.js` | マスコット全体の進行（`DesktopMascots`）。表示するパックごとに 1 体を出し、共有の `requestAnimationFrame` ループ・おしらせの振り分け・ポインタ操作と当たり判定の切り替えを持つ。`desktop.js` の `init`/`onShow` から呼ぶ。読み込んだパックの一覧（`packs()`・`whenLoaded()`）と設定の反映（`applySettings`）を「マスコット」タブに出す |
 | `desktop-mascot-settings.js` | 「コントロール パネル」の「マスコット」タブ本体（`MascotSettingsPage`）。保存キー（`swing:desktop:mascot`）とその読み書きは、確認の間隔と共有するので `notify-settings.js` で定義する |
@@ -93,7 +93,7 @@ SWING Explorer ウィンドウ・「コントロール パネル」ダイアロ�
 **背景タブ（`WallpaperPage`）**:
 
 - 背景色（Win95 風パレット＋任意の色＋既定に戻す）と壁紙画像（表示方法: `center`/`tile`/`contain`/`cover`/`stretch`）は独立した項目で、互いに影響しない。
-- 色・画像とも保存前にハイカラー量子化を通す。画像は保存サイズの上限に収まるまで段階的にダウンスケールする。
+- 色・画像とも保存前にハイカラー量子化を通す。画像は長辺を 1920 px 以下に縮め、保存サイズの上限（data URL で 2.5 Mi 文字）に収まるまで 1280・1024・…・240 px と段階的にダウンスケールする。1 辺 16384 px か合計 8192×8192 画素を超える画像は canvas に描かずにエラーにする。
 - **永続化**: `web/storage.js` 経由で `swing:desktop:wallpaper` キー（`desktop-wallpaper.js` で定義）に JSON で保存する（`color`・`image` は独立で、どちらか一方・両方・どちらも無し、いずれも正当な状態）。壊れた/想定外の値はキー単位で既定へ落とす。
 - **画像の形**: `image` は `{dataUrl, width, height, display, filename}`（`dataUrl` は `data:image/` で始まる文字列、`display` は上の 5 つのどれか）。
 - **適用先**: `#desk-wallpaper`（アイコンより下・ウィンドウより下の層）。保存値はページ読み込み時に 1 回 `localStorage` から読み、以後はメモリ上の保存値を Desktop 画面の表示のたびに当て直す（別のタブで保存した値は読み直さない）。保存に失敗したらエラーを出し、保存値は変えない。
@@ -118,6 +118,8 @@ Desktop 画面では `.swing-main` の幅制限と余白を外して画面いっ
 ### リンク集ページ（iframe）
 
 ウィンドウの中身（`#desk-page-frame`）は同一オリジンの `<iframe src="/desktop-page.html">` で開く別ドキュメントで、`index.html` のダッシュボードの CSS は当たらず、ページ側の CSS も外に漏れない。窓側の `desktop-frame.css` だけは `desktop.js` が iframe の `<head>` の先頭に `<link>` で差し込む。ページ専用 CSS は `--desk-*`・`@font-face`・リセットまで自己完結する。ルートと差し替え設定は [`../dashboard.md#静的ファイルの配信srcdashboardassetsrs`](../dashboard.md#静的ファイルの配信srcdashboardassetsrs)。
+
+iframe には `sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox"` を付ける。差し替えたページの `<script>`・イベントハンドラ属性・フォーム送信・親ウィンドウの遷移は動かず、`target="_blank"` のリンクは制限の無い新しいタブで開く。`allow-same-origin` は親の `desktop.js` が `contentDocument` を読み書きするためのもので、ページ側でスクリプトは動かないので同一オリジンの権限を使われることはない。
 
 `desktop.js` はページ側の JS を前提にせず、決まった `id` を見つけたときだけ書き込む（無い `id` は黙って飛ばす）。差し替えるページはこの `id` と、`desktop.js` が差し込む要素のクラス・属性を契約として使える:
 

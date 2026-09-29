@@ -6,7 +6,7 @@ const TAIL_H = 6;
 const TAIL_W = 11;
 const SVG_NS = 'http://www.w3.org/2000/svg';
 
-export const BALLOON_TEXT = {
+const BALLOON_TEXT = {
   close: 'とじる',
   more: (n) => `ほか ${n} 件`,
 };

@@ -1,7 +1,7 @@
 import { el } from './util.js';
 import { opaqueAt } from './desktop-mascot-pack.js';
 
-export function createPlayer(frames, loop) {
+function createPlayer(frames, loop) {
   const cycleMs = frames.reduce((sum, f) => sum + f.ms, 0);
   const cycleDx = frames.reduce((sum, f) => sum + f.dx, 0);
   let i = 0;

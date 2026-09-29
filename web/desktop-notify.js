@@ -1,21 +1,17 @@
 import { t, currentLang } from './i18n.js';
 import { storage } from './storage.js';
-import { isHttpUrl, sanitizeDisplayText, sanitizeMessage } from './util.js';
+import { isHttpUrl, siteTitle } from './util.js';
 import { isNoticeEvent } from './desktop-updates.js';
 import { SHOW_SELF_IN_WEBRING, browserNotifyReady, readNotifySettings } from './notify-settings.js';
 import { startupView } from './desktop-system-settings.js';
 
-export const NOTIFIED_KEY = 'swing:desktop:notified';
+const NOTIFIED_KEY = 'swing:desktop:notified';
 const TITLE_MAX = 60;
 const TEXT_KEYS = {
   stored: ['notifySiteStored', 'notifySitesStored'],
   published: ['notifySitePublished', 'notifySitesPublished'],
   replica: ['notifyReplicaAdded', 'notifyReplicasAdded'],
 };
-
-function siteTitle(site) {
-  return sanitizeMessage(site.title, TITLE_MAX) || sanitizeDisplayText(site.d, TITLE_MAX);
-}
 
 function readNotified() {
   try {
@@ -59,7 +55,7 @@ export function createBrowserNotifier({ updates, mascotsShowing }) {
   function open(notices, byMascot) {
     const newest = notices[notices.length - 1];
     const [one, many] = TEXT_KEYS[newest.kind];
-    const body = notices.length === 1 ? t(one, { title: siteTitle(newest.site) }) : t(many, { count: notices.length });
+    const body = notices.length === 1 ? t(one, { title: siteTitle(newest.site, TITLE_MAX) }) : t(many, { count: notices.length });
     let n;
     try {
       n = new Notification(t('notifyTitle'), { body, tag: `swing:${newest.kind}:${newest.at}`, icon: '/apple-touch-icon.png', lang: currentLang() });

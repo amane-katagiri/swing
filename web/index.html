@@ -203,7 +203,7 @@
           </div>
 
           <div class="desk-page" id="desk-page">
-            <iframe class="desk-page-frame" id="desk-page-frame" src="/desktop-page.html" title="リンク集"></iframe>
+            <iframe class="desk-page-frame" id="desk-page-frame" src="/desktop-page.html" sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox" title="リンク集"></iframe>
           </div>
 
           <div class="desk-statusbar" aria-hidden="true">
@@ -797,7 +797,7 @@
           <span class="swing-hint" id="setup-key-choice-hint"></span>
         </div>
         <label class="swing-field" id="setup-key-field" hidden><span data-i18n="setupKeyInputLabel">Secret key (nsec or hex)</span>
-          <input type="password" name="secretKey" class="swing-input" autocomplete="off">
+          <input type="password" name="secretKey" class="swing-input" autocomplete="new-password">
         </label>
         <div id="setup-signer-field" hidden>
           <p class="swing-hint" data-i18n="setupSignerHowItWorks">SWING talks to the signer app over a relay. Every few days it requests a signature on its own for the replica report (kind 35981) of each stored site. While the signer app is offline, SWING cannot publish, change the mirror list, or refresh replica reports.</p>

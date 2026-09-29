@@ -1,3 +1,4 @@
+import { showStorageError } from './desktop-dialog.js';
 import { storage } from './storage.js';
 import { el } from './util.js';
 import { refocusIfDropped } from './desktop-focus.js';
@@ -36,10 +37,6 @@ let saved = {};
 let pending = {};
 let notifyChanged = () => {};
 let dialogEl = null;
-
-function cloneWallpaper(state) {
-  return JSON.parse(JSON.stringify(state));
-}
 
 function canonicalWallpaper(state) {
   const out = {};
@@ -130,13 +127,6 @@ function updatePreview() {
 
 function isDirty() {
   return JSON.stringify(canonicalWallpaper(pending)) !== JSON.stringify(canonicalWallpaper(saved));
-}
-
-function showStorageError(show) {
-  els.storageError.hidden = !show;
-  if (show) {
-    els.storageError.textContent = '保存できませんでした。ブラウザの保存容量が足りないようです。';
-  }
 }
 
 function showImageError(message) {
@@ -256,7 +246,7 @@ function syncFormFromState() {
   syncColorPanel();
   syncImagePanel();
   showImageError(null);
-  showStorageError(false);
+  showStorageError(els.storageError, false);
   updatePreview();
   notifyChanged();
 }
@@ -267,8 +257,6 @@ function wireEvents() {
   els.browseBtn.addEventListener('click', () => els.fileInput.click());
   els.fileInput.addEventListener('change', onFileChosen);
   els.removeBtn.addEventListener('click', removeImage);
-  /* A titlebar drag doesn't reliably fire a `click` on the field/list, so the combobox's own outside-click close can miss it. */
-  dialogEl.querySelector('.desk-titlebar').addEventListener('pointerdown', () => displayCombo.close());
 }
 
 export const WallpaperPage = {
@@ -277,30 +265,30 @@ export const WallpaperPage = {
     notifyChanged = changed;
     dialogEl = dialog;
     saved = loadSavedWallpaper();
-    pending = cloneWallpaper(saved);
+    pending = structuredClone(saved);
     buildSwatches();
     wireEvents();
     this.boot();
   },
   open() {
-    pending = cloneWallpaper(saved);
+    pending = structuredClone(saved);
     syncFormFromState();
   },
   isDirty,
   save() {
     const canonical = canonicalWallpaper(pending);
     if (!saveWallpaper(canonical)) {
-      showStorageError(true);
+      showStorageError(els.storageError, true);
       return false;
     }
-    showStorageError(false);
+    showStorageError(els.storageError, false);
     saved = canonical;
     applyBackground(els.wallpaper, saved);
-    setPending(cloneWallpaper(canonical));
+    setPending(structuredClone(canonical));
     return true;
   },
   discard() {
-    pending = cloneWallpaper(saved);
+    pending = structuredClone(saved);
   },
   onKey(ev) {
     if (!displayCombo.isOpen()) return false;

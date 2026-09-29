@@ -1,3 +1,4 @@
+import { showStorageError } from './desktop-dialog.js';
 import { createCombobox } from './desktop-combobox.js';
 import { NOTICE_KINDS, blockedReason, checkIntervalMs, readCheckInterval, readNotifySettings, requestBrowserPermission, unavailableReason, writeCheckInterval, writeNotifySettings } from './notify-settings.js';
 
@@ -88,14 +89,9 @@ function onBrowserChange() {
   });
 }
 
-function showStorageError(show) {
-  els.storageError.hidden = !show;
-  els.storageError.textContent = show ? '保存できませんでした。ブラウザの保存容量が足りないようです。' : '';
-}
-
 export const NotifySettingsPage = {
   id: 'notify',
-  init({ changed, dialog, updates: watcher }) {
+  init({ changed, updates: watcher }) {
     notifyChanged = changed;
     updates = watcher;
     saved = loadSaved();
@@ -105,8 +101,6 @@ export const NotifySettingsPage = {
       els.mascot[kind].addEventListener('change', () => setNotify('mascot', { [kind]: els.mascot[kind].checked }));
       els.browserKinds[kind].addEventListener('change', () => setNotify('browser', { [kind]: els.browserKinds[kind].checked }));
     }
-    /* A titlebar drag doesn't reliably fire a `click` on the field/list, so the combobox's own outside-click close can miss it. */
-    dialog.querySelector('.desk-titlebar').addEventListener('pointerdown', () => intervalCombo.close());
     applyInterval(saved.interval);
   },
   open() {
@@ -114,7 +108,7 @@ export const NotifySettingsPage = {
     saved = loadSaved();
     if (saved.interval !== previous.interval) applyInterval(saved.interval);
     pending = structuredClone(saved);
-    showStorageError(false);
+    showStorageError(els.storageError, false);
     showReason(blockedReason(pending.notify.browser.enabled));
     syncForm();
   },
@@ -122,10 +116,10 @@ export const NotifySettingsPage = {
   save() {
     const { interval, notify } = pending;
     if (!writeCheckInterval(interval) || !writeNotifySettings(notify)) {
-      showStorageError(true);
+      showStorageError(els.storageError, true);
       return false;
     }
-    showStorageError(false);
+    showStorageError(els.storageError, false);
     if (interval !== saved.interval) applyInterval(interval);
     saved = structuredClone(pending);
     setPending(structuredClone(saved));
