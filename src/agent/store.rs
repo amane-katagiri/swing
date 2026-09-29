@@ -22,7 +22,7 @@ struct SiteAttempts {
     tried_at: Option<u64>,
 }
 
-// Stored versions only throttle sites that already made it in, so new or rejected sites are throttled here.
+// Stored versions only throttle updates that succeeded, so failed or rejected attempts are throttled here.
 #[derive(Default)]
 pub(super) struct Attempts {
     sites: std::collections::BTreeMap<SiteKey, SiteAttempts>,
@@ -46,9 +46,6 @@ impl Attempts {
     ) -> Result<(), &'static str> {
         let recent = |at: &u64| now.saturating_sub(*at) < window;
         let entry = self.sites.get(key);
-        if stored && entry.is_none_or(|e| e.rejected.is_empty()) {
-            return Ok(());
-        }
         if entry.and_then(|e| e.tried_at.as_ref()).is_some_and(recent) {
             return Err("fetch_attempt_interval");
         }
@@ -56,10 +53,11 @@ impl Attempts {
             return Ok(());
         };
         let account = account.to_string();
+        let updates_stored = stored && entry.is_none_or(|e| e.rejected.is_empty());
         let recent_attempts = state::account_entries(&self.sites, &account)
             .filter(|(k, e)| *k != key && e.tried_at.as_ref().is_some_and(recent))
             .count();
-        if recent_attempts >= per_account.clamp(1, ATTEMPTS_PER_ACCOUNT) {
+        if !updates_stored && recent_attempts >= per_account.clamp(1, ATTEMPTS_PER_ACCOUNT) {
             return Err("fetch_attempts_per_account");
         }
         self.sites.entry(key.clone()).or_default().tried_at = Some(now);
@@ -345,13 +343,6 @@ impl<C: KuboStore, N: Nip05Verify, R: ReportRelay> Agent<C, N, R> {
             return false;
         }
 
-        let nip05_mode = self.config.policy.nip05;
-        if nip05_mode != CheckMode::Off {
-            let verified = self.nip05_verified(key, ev, pubkey_hex).await;
-            if nip05_mode == CheckMode::Require && !verified {
-                return false;
-            }
-        }
         let policy = &self.config.policy;
         if let Err(reason) = self.attempts.lock().unwrap().try_attempt(
             key,
@@ -362,6 +353,12 @@ impl<C: KuboStore, N: Nip05Verify, R: ReportRelay> Agent<C, N, R> {
         ) {
             debug!(site = %ev.d, pubkey = %pubkey_hex, reason, "skip");
             return false;
+        }
+        if policy.nip05 != CheckMode::Off {
+            let verified = self.nip05_verified(key, ev, pubkey_hex).await;
+            if policy.nip05 == CheckMode::Require && !verified {
+                return false;
+            }
         }
         true
     }
@@ -502,7 +499,7 @@ mod tests {
     }
 
     #[test]
-    fn unstored_or_rejected_sites_get_one_attempt_per_interval() {
+    fn every_site_gets_one_attempt_per_interval_until_it_stores() {
         let mut attempts = Attempts::default();
         let a = state::site_key("aa", "a.example");
         assert_eq!(attempts.try_attempt(&a, false, 1000, 600, 10), Ok(()));
@@ -514,9 +511,13 @@ mod tests {
 
         let stored = state::site_key("aa", "stored.example");
         assert_eq!(attempts.try_attempt(&stored, true, 1000, 600, 10), Ok(()));
-        assert_eq!(attempts.try_attempt(&stored, true, 1001, 600, 10), Ok(()));
-        attempts.reject(&stored, "big".into());
+        assert_eq!(
+            attempts.try_attempt(&stored, true, 1001, 600, 10),
+            Err("fetch_attempt_interval")
+        );
+        attempts.clear(&stored);
         assert_eq!(attempts.try_attempt(&stored, true, 1002, 600, 10), Ok(()));
+        attempts.reject(&stored, "big".into());
         assert_eq!(
             attempts.try_attempt(&stored, true, 1003, 600, 10),
             Err("fetch_attempt_interval")
@@ -542,6 +543,8 @@ mod tests {
         );
         let other = state::site_key("bb", "0.example");
         assert_eq!(attempts.try_attempt(&other, false, 1000, 600, 3), Ok(()));
+        let stored = state::site_key("aa", "stored.example");
+        assert_eq!(attempts.try_attempt(&stored, true, 1000, 600, 3), Ok(()));
         assert_eq!(attempts.try_attempt(&fourth, false, 1600, 600, 3), Ok(()));
         assert_eq!(state::account_entries(&attempts.sites, "aa").count(), 1);
     }
@@ -715,6 +718,25 @@ mod tests {
         fx.apply(fx.event(D, "bafy-new", None, 200)).await;
         fx.apply(fx.event(D, "bafy-new", None, 201)).await;
         assert_eq!(fx.kubo().fetched, vec!["bafy-new"]);
+    }
+
+    #[tokio::test]
+    async fn failed_updates_of_a_stored_site_are_throttled_and_skip_nip05() {
+        let mut policy = nip05_policy(CheckMode::Warn);
+        policy.min_update_interval = 3600;
+        policy.nip05_cache_ttl = 0;
+        let fx = Fixture::new(policy, FakeKubo::default());
+        fx.seed(D, "bafy-old", 10, 100).await;
+        fx.agent
+            .nip05
+            .set(D, &fx.pubkey.to_hex(), VerificationResult::Verified);
+        fx.kubo().fail_fetch.insert("bafy-hang".into());
+
+        fx.apply(fx.event(D, "bafy-hang", None, 200)).await;
+        fx.apply(fx.event(D, "bafy-hang", None, 201)).await;
+        assert_eq!(fx.kubo().fetched, vec!["bafy-hang"]);
+        assert_eq!(fx.agent.nip05.calls(), 1);
+        assert_eq!(fx.cids(D).await, vec!["bafy-old"]);
     }
 
     #[tokio::test]

@@ -13,8 +13,8 @@ use std::sync::{Arc, Mutex, RwLock};
 
 use nostr_sdk::prelude::*;
 use tokio::sync::Semaphore;
-use tokio::task::JoinSet;
-use tracing::{info, warn};
+use tokio::task::{AbortHandle, JoinSet};
+use tracing::{debug, info, warn};
 
 use crate::activity::Activity;
 use crate::config::Config;
@@ -44,8 +44,28 @@ async fn poll_once<C, N, R>(
 {
     agent.sweep().await;
     follow::refresh_follow_set(relay, agent, tasks).await;
-    agent.sync_reports().await;
-    agent.record_replica_reports().await;
+    agent.start_report_round(tasks);
+}
+
+impl<C, N, R> Agent<C, N, R>
+where
+    C: KuboStore + Send + Sync + 'static,
+    N: Nip05Verify + Send + Sync + 'static,
+    R: ReportRelay + Send + Sync + 'static,
+{
+    // Signing each report can wait on the signer app, so the round runs beside the event loop and never twice at once.
+    fn start_report_round(self: &Arc<Self>, tasks: &mut JoinSet<()>) {
+        let mut round = self.report_round.lock().unwrap();
+        if round.as_ref().is_some_and(|r| !r.is_finished()) {
+            debug!("the previous replica report round is still running; skipping this one");
+            return;
+        }
+        let agent = Arc::clone(self);
+        *round = Some(tasks.spawn(async move {
+            agent.sync_reports().await;
+            agent.record_replica_reports().await;
+        }));
+    }
 }
 
 struct Agent<C, N, R> {
@@ -64,6 +84,7 @@ struct Agent<C, N, R> {
     permits: Semaphore,
     storing: Mutex<HashSet<String>>,
     attempts: Mutex<store::Attempts>,
+    report_round: Mutex<Option<AbortHandle>>,
 }
 
 impl<C: KuboStore, N: Nip05Verify, R: ReportRelay> Agent<C, N, R> {
@@ -94,6 +115,7 @@ impl<C: KuboStore, N: Nip05Verify, R: ReportRelay> Agent<C, N, R> {
             permits,
             storing: Mutex::new(HashSet::new()),
             attempts: Mutex::default(),
+            report_round: Mutex::new(None),
         }
     }
 
@@ -302,6 +324,24 @@ mod tests {
         drop(state);
         assert_eq!(fx.kubo().paths(), vec![kept_path]);
         assert!(fx.state_path.exists());
+    }
+
+    #[tokio::test]
+    async fn report_rounds_run_as_tasks_one_at_a_time() {
+        let fx = Fixture::new(default_policy(), FakeKubo::default());
+        fx.seed(D, "bafy-a", 1, 100).await;
+        let mut tasks = JoinSet::new();
+        fx.agent.start_report_round(&mut tasks);
+        fx.agent.start_report_round(&mut tasks);
+        assert_eq!(tasks.len(), 1);
+        while let Some(joined) = tasks.join_next().await {
+            joined.unwrap();
+        }
+        assert_eq!(fx.take_reports().len(), 1);
+
+        fx.agent.start_report_round(&mut tasks);
+        assert_eq!(tasks.len(), 1);
+        while tasks.join_next().await.is_some() {}
     }
 
     #[tokio::test]

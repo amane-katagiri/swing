@@ -468,63 +468,33 @@ mod tests {
         let signer_keys = Keys::generate();
         let app = Keys::generate();
 
-        let signer_client = Client::new();
-        signer_client.add_relay(url.clone()).await.unwrap();
-        signer_client
-            .connect()
-            .and_wait(Duration::from_secs(5))
-            .await;
-        signer_client
-            .subscribe(
-                Filter::new()
-                    .kind(Kind::NostrConnect)
-                    .pubkey(signer_keys.public_key())
-                    .limit(0),
-            )
-            .await
-            .unwrap();
-        let mut notifications = signer_client.notifications();
-        let answering = {
-            let (user, signer_keys, signer_client) =
-                (user.clone(), signer_keys.clone(), signer_client.clone());
-            tokio::spawn(async move {
-                while let Some(notification) = notifications.next().await {
-                    let ClientNotification::Event { event, .. } = notification else {
-                        continue;
-                    };
-                    let text =
-                        nip44::decrypt(signer_keys.secret_key(), &event.pubkey, &event.content)
-                            .unwrap();
-                    let message = NostrConnectMessage::from_json(text).unwrap();
-                    let id = message.id().to_string();
-                    let NostrConnectRequest::SignEvent(unsigned) = message.to_request().unwrap()
-                    else {
-                        panic!("only sign_event is expected");
-                    };
-                    let signed = unsigned.finalize(&user).unwrap();
-                    let answer = NostrConnectMessage::response(
-                        id,
-                        NostrConnectResponse::with_result(ResponseResult::SignEvent(Box::new(
-                            signed,
-                        ))),
-                    );
-                    let behind = Timestamp::from_secs(Timestamp::now().as_secs() - 600);
-                    let content = nip44::encrypt(
-                        signer_keys.secret_key(),
-                        &event.pubkey,
-                        answer.as_json(),
-                        nip44::Version::default(),
-                    )
-                    .unwrap();
-                    let reply = EventBuilder::new(Kind::NostrConnect, content)
-                        .tag(Tag::public_key(event.pubkey))
-                        .custom_created_at(behind)
-                        .finalize(&signer_keys)
-                        .unwrap();
-                    signer_client.send_event(&reply).await.unwrap();
-                    return;
-                }
+        let (signer_client, answering) = {
+            let (user, signer) = (user.clone(), signer_keys.clone());
+            answer_as(url.clone(), &signer_keys, move |event, message| {
+                let id = message.id().to_string();
+                let NostrConnectRequest::SignEvent(unsigned) = message.to_request().unwrap() else {
+                    panic!("only sign_event is expected");
+                };
+                let signed = unsigned.finalize(&user).unwrap();
+                let answer = NostrConnectMessage::response(
+                    id,
+                    NostrConnectResponse::with_result(ResponseResult::SignEvent(Box::new(signed))),
+                );
+                let behind = Timestamp::from_secs(Timestamp::now().as_secs() - 600);
+                let content = nip44::encrypt(
+                    signer.secret_key(),
+                    &event.pubkey,
+                    answer.as_json(),
+                    nip44::Version::default(),
+                )
+                .unwrap();
+                EventBuilder::new(Kind::NostrConnect, content)
+                    .tag(Tag::public_key(event.pubkey))
+                    .custom_created_at(behind)
+                    .finalize(&signer)
+                    .unwrap()
             })
+            .await
         };
 
         let file = RemoteSignerFile {
@@ -539,8 +509,47 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(event.pubkey, user.public_key());
-        answering.await.unwrap();
+        answering.abort();
         remote.shutdown().await;
         signer_client.shutdown().await;
+    }
+
+    pub(super) async fn answer_as<F>(
+        url: RelayUrl,
+        keys: &Keys,
+        answer: F,
+    ) -> (Client, tokio::task::JoinHandle<()>)
+    where
+        F: Fn(&Event, NostrConnectMessage) -> Event + Send + 'static,
+    {
+        let client = Client::new();
+        client.add_relay(url).await.unwrap();
+        client.connect().and_wait(Duration::from_secs(5)).await;
+        client
+            .subscribe(
+                Filter::new()
+                    .kind(Kind::NostrConnect)
+                    .pubkey(keys.public_key())
+                    .limit(0),
+            )
+            .await
+            .unwrap();
+        let mut notifications = client.notifications();
+        let answering = {
+            let (keys, client) = (keys.clone(), client.clone());
+            tokio::spawn(async move {
+                while let Some(notification) = notifications.next().await {
+                    let ClientNotification::Event { event, .. } = notification else {
+                        continue;
+                    };
+                    let text =
+                        nip44::decrypt(keys.secret_key(), &event.pubkey, &event.content).unwrap();
+                    let message = NostrConnectMessage::from_json(text).unwrap();
+                    let reply = answer(&event, message);
+                    client.send_event(&reply).await.unwrap();
+                }
+            })
+        };
+        (client, answering)
     }
 }

@@ -6,7 +6,7 @@
 
 | ファイル | 内容 |
 |---|---|
-| `agent/mod.rs` | `Agent` 構造体の定義、`new`、`poll_once`、メンテナンス系（`sweep`・`collect_garbage`・`reconcile`・`remove_unfollowed`）、state 保存の共通ヘルパー（`save`） |
+| `agent/mod.rs` | `Agent` 構造体の定義、`new`、`poll_once`、レプリカ報告の回を別タスクで始める `start_report_round`、メンテナンス系（`sweep`・`collect_garbage`・`reconcile`・`remove_unfollowed`）、state 保存の共通ヘルパー（`save`） |
 | `agent/lifecycle.rs` | `run_until`（プロセスのライフサイクル本体。`CancellationToken`・`swing up` から渡される共有の `Arc<dashboard::AppState>`・`Arc<Notify>` を受け取る。`AppState.activity` を `Agent` に渡して共有する）、内蔵 gateway の bind（`bind_gateway`）とタスクの起動・終了、購読の通知からのサイトイベントの取り出し（`site_event_of`）、ダッシュボードへの準備完了・未準備の通知（`AppState::set_ready`/`set_not_ready`） |
 | `agent/follow.rs` | `refresh_follow_set`（Follow Set の取得・保存・再送は `choose_and_apply_follow_set`、対象の切り替え・サイトイベントの購読・取得は `resubscribe_and_backfill` に分かれた薄い呼び出し元）、`limit_sites_per_account` |
 | `agent/store.rs` | `Agent::submit`/`drain`（キューイングと直列実行）、`apply_site_event`（「保存の順序」の中核。事前判定の `worth_fetching`・取得とディレクトリ判定の `fetch_directory`・MFS への保存と state への記録の `store_fetched` を順に呼ぶ）、NIP-05 検証、`decide`/`version_infos` |
@@ -25,8 +25,7 @@
    2. Follow Set を決める。決まらなければ警告を出して 3 と 4 を飛ばす。
    3. unfollow
    4. 対象 pubkey 群のサイトイベントを購読し直してから過去分を取得し、`nostr::select_latest`（未来ずれの許容は [`nostr.md`](nostr.md#未来ずれの許容nostrmax_future_skew)）でサイトごとの最新版を選び、pubkey ごとに、保存済みのサイトすべてと、それ以外のサイトを `created_at` の新しい順に合計 `max_sites_per_account` 件まで、タスクに投入する。一時的な取得・保存の失敗はここで再試行される。
-   5. レプリカ報告の同期（Follow Set が決まらなくても行う）
-   6. 他の報告者が自分のサイトについて出した報告の時刻を記録する（下記「レプリカ報告」）
+   5. レプリカ報告の同期（Follow Set が決まらなくても行う）と、他の報告者が自分のサイトについて出した報告の時刻の記録（下記「レプリカ報告」）を、この順に別タスクで始める。署名アプリの応答待ちで通知の処理を止めないためで、前の回のタスクがまだ動いていれば今回は始めない。
 5. 購読で届いたサイトイベントをタスクに投入する（投入前に捨てる条件は下記「並行処理」の `submit`）。購読 ID と kind が一致しない通知は debug ログで捨てる。
 6. タスクはサイト単位で「保存の順序」に従って処理する。新版を記録したら、同時実行の枠を返してからレプリカ報告の同期を行う。
 
@@ -73,8 +72,8 @@ Follow Set が決まった tick で行う。Follow Set の更新はこれより�
 
 1. 作者が今の Follow Set にいなければ warn を出して終わる。同じサイトで同じ CID が以前 4・5・9 で拒否されていれば（下記）、debug を出して終わる。
 2. 事前判定: `size` タグ（無い、または `u64` としてパースできなければ不明）で `policy::decide` する。skip なら終わる。
-3. NIP-05 検証（`[policy].nip05` が `off` 以外）。`require` で `Verified` でなければ終わる。
-   その後、取得の試行の間引き（下記）に当たれば debug を出して終わる。当たらなければ、ここで試行を記録する。
+3. 取得の試行の間引き（下記）に当たれば debug を出して終わる。当たらなければ、ここで試行を記録する。
+   続けて NIP-05 検証（`[policy].nip05` が `off` 以外）。`require` で `Verified` でなければ終わる。間引いたイベントでは NIP-05 の問い合わせも state の保存もしない。
 4. 取得: `dag/export` の CAR を読み捨てながらバイト数を数え、`policy::fetch_limit`（`max_update_size`・`max_per_site`・`max_per_account` の最小値）を超えたら打ち切る。`[agent].fetch_idle_timeout` か `[agent].fetch_timeout` を超えたら失敗。いずれも state と MFS は変えない。
 5. ディレクトリ確認: `files/stat /ipfs/<cid>` の `Type` を見る。`directory` でなければ `reason = "not_a_directory"` で warn を出して終わる（MFS にはまだ何も置いていないので消すものは無く、取得したブロックは Kubo の GC に任せる）。`files/stat` 自体が失敗したら取得の失敗と同じ扱いで終わる（次の poll で取り直す）。
 6. 版のパスを「保存中」としてメモリに登録する（8〜10 が終わるまで。sweep はこのパスとその親ディレクトリを消さない）。state のロックを取り、作者が Follow Set から外れていれば終わる。
@@ -87,11 +86,11 @@ Follow Set が決まった tick で行う。Follow Set の更新はこれより�
 
 取得した内容で拒否した版（4 の上限超過、5 の `not_a_directory`、9 の `policy::decide` の skip）は、その CID をサイトごとにメモリに覚え（`agent::store::Attempts`。1 サイトに複数の CID を覚える。アカウントごとに合計 50 件まで（`REJECTED_PER_ACCOUNT`）で、超えたらそのアカウントの最も古い記録を捨てる）、同じ CID のイベントは 1 で終える。上限まで取得し直すのを poll ごとに繰り返さないためである（2 つの大きな CID を交互に出されても、どちらも覚えている）。保存に成功したらそのサイトの記録を消す。取得の失敗やブロックの欠けなど一時的な失敗は拒否としては覚えない。
 
-取得の試行の間引き（`Attempts::try_attempt`）: `policy::decide` の `min_update_interval` は保存済みの版の `stored_at` でしか効かないので、まだ保存していないサイトと、拒否した CID を覚えているサイトについては、取得を始めた時刻もメモリに覚えて間引く。
+取得の試行の間引き（`Attempts::try_attempt`）: `policy::decide` の `min_update_interval` は保存に成功した版の `stored_at` でしか効かないので、取得を始めた時刻をサイトごとにメモリに覚えて間引く。保存に成功したらそのサイトの記録を消す。
 
-- 同じサイトは、前の試行から `min_update_interval` の間は取得しない（`fetch_attempt_interval`）。取得の失敗で終わった場合も同じで、次の試行は間隔が空いてからになる。
-- 同じアカウントで、直近 `min_update_interval` の間に試行したほかのサイトが `max_sites_per_account` 件（最大 50 件）あれば取得しない（`fetch_attempts_per_account`）。`d` を変えて新しいサイトを次々に出されても、取得の回数はアカウントごとにこの数で頭打ちになる。
-- 保存済みで拒否の記録が無いサイトには効かない（`min_update_interval` は `policy::decide` が見る）。`min_update_interval` が 0 なら効かない。
+- 同じサイトは、前の試行から `min_update_interval` の間は取得しない（`fetch_attempt_interval`）。取得の失敗（タイムアウトを含む）や拒否で終わった場合も同じで、保存済みのサイトの更新でも、次の試行は間隔が空いてからになる。取得が終わらない CID を出し続けられても、同時実行の枠（`[agent].concurrency`）を占めるのはサイトごとに間隔に 1 回までになる。
+- 同じアカウントで、直近 `min_update_interval` の間に試行したほかのサイトが `max_sites_per_account` 件（最大 50 件）あれば取得しない（`fetch_attempts_per_account`）。`d` を変えて新しいサイトを次々に出されても、取得の回数はアカウントごとにこの数で頭打ちになる。保存済みで拒否の記録が無いサイトの更新はこの件数では止めない（試行としては数える）。
+- `min_update_interval` が 0 なら効かない。
 - 試行を記録するときに、そのアカウントの間隔を過ぎた記録（拒否の記録が無いもの）は消す。
 
 これらの記録は `state.json` に書かないので、agent を再起動すると消える（容量が空いたあとなどに取り直させたいときは再起動する）。

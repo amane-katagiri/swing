@@ -14,9 +14,38 @@ use super::{
 use crate::signer::Signer;
 
 pub fn bounded_client(max_event_bytes: u32) -> Client {
+    client_with(relay_limits(max_event_bytes))
+}
+
+fn client_with(limits: RelayLimits) -> Client {
     Client::builder()
-        .relay_limits(relay_limits(max_event_bytes))
+        .relay_limits(limits)
+        .admit_policy(MatchingIds)
         .build()
+}
+
+// nostr-sdk skips the signature check for an id it has verified before, so a copy whose content no longer matches the id must be dropped before the pool keeps it as the first copy.
+#[derive(Debug)]
+struct MatchingIds;
+
+impl AdmitPolicy for MatchingIds {
+    fn admit_event<'a>(
+        &'a self,
+        relay_url: &'a RelayUrl,
+        _subscription_id: &'a SubscriptionId,
+        event: &'a Event,
+    ) -> std::pin::Pin<
+        Box<dyn Future<Output = Result<AdmitStatus, nostr_sdk::error::Error>> + Send + 'a>,
+    > {
+        Box::pin(async move {
+            if event.verify_id() {
+                Ok(AdmitStatus::success())
+            } else {
+                tracing::debug!(relay = %relay_url, event_id = %event.id, "dropping an event whose id does not match it");
+                Ok(AdmitStatus::rejected("id does not match the event"))
+            }
+        })
+    }
 }
 
 fn relay_limits(max_event_bytes: u32) -> RelayLimits {
@@ -77,9 +106,7 @@ pub struct RelayClient {
 
 impl RelayClient {
     pub async fn connect(signer: Signer, relays: &[String]) -> Result<Self> {
-        let client = Client::builder()
-            .relay_limits(relay_client_limits())
-            .build();
+        let client = client_with(relay_client_limits());
         for url in relays {
             client
                 .add_relay(url.as_str())
@@ -540,17 +567,17 @@ pub fn print_relay_send_result_lines(results: &[RelaySendResult]) {
     }
 }
 
-// nostr-sdk skips the signature check for an id it has verified before, so the id must still match the content.
 async fn collect_newest<E: Display>(
     mut stream: impl Stream<Item = (RelayUrl, Result<Event, E>)> + Unpin,
     cap: FetchCap,
 ) -> Vec<Event> {
     let mut newest: BTreeSet<Event> = BTreeSet::new();
     let mut bytes = 0usize;
+    let now = Timestamp::now().as_secs();
     while let Some((url, item)) = stream.next().await {
         match item {
-            Ok(event) if !event.verify_id() => {
-                tracing::debug!(relay = %url, "skipping an event whose id does not match it");
+            Ok(event) if !plausible_at(event.created_at.as_secs(), now) => {
+                tracing::debug!(relay = %url, event_id = %event.id, "skipping an event dated too far ahead");
             }
             Ok(event) => {
                 let size = event_bytes(&event);
@@ -775,14 +802,21 @@ mod tests {
             .collect();
         assert_eq!(kept, vec![5, 4]);
 
-        let mut tampered = events[0].clone();
-        tampered.content = "changed".to_string();
-        let items = [(url.clone(), Ok::<_, String>(tampered))];
-        assert!(
-            collect_newest(futures_util::stream::iter(items), FetchCap::PER_REQ)
-                .await
-                .is_empty()
-        );
+        let far = Timestamp::now().as_secs() + super::super::MAX_FUTURE_SKEW + 3600;
+        let future = make_site_event(&k, 35980, "future.example", CID_A, far);
+        let items = [future, events[4].clone()]
+            .into_iter()
+            .map(|e| (url.clone(), Ok::<_, String>(e)));
+        let cap = FetchCap {
+            events: 1,
+            bytes: usize::MAX,
+        };
+        let kept: Vec<u64> = collect_newest(futures_util::stream::iter(items), cap)
+            .await
+            .into_iter()
+            .map(|e| e.created_at.as_secs())
+            .collect();
+        assert_eq!(kept, vec![5]);
     }
 
     #[tokio::test]
@@ -987,6 +1021,114 @@ mod tests {
             .unwrap();
         assert!(referencing.is_empty());
 
+        client.shutdown().await;
+    }
+
+    type DbFuture<'a, T> = std::pin::Pin<
+        Box<dyn Future<Output = Result<T, nostr_database::error::Error>> + Send + 'a>,
+    >;
+
+    #[derive(Debug)]
+    struct ServesForgeries(Vec<Event>);
+
+    impl NostrDatabase for ServesForgeries {
+        fn backend(&self) -> &'static str {
+            "forgeries"
+        }
+
+        fn features(&self) -> Features {
+            Features {
+                persistent: false,
+                event_expiration: false,
+                full_text_search: false,
+                request_to_vanish: false,
+            }
+        }
+
+        fn save_event<'a>(&'a self, _event: &'a Event) -> DbFuture<'a, SaveEventStatus> {
+            Box::pin(async { Ok(SaveEventStatus::Success) })
+        }
+
+        fn check_id<'a>(&'a self, _event_id: &'a EventId) -> DbFuture<'a, DatabaseEventStatus> {
+            Box::pin(async { Ok(DatabaseEventStatus::NotExistent) })
+        }
+
+        fn event_by_id<'a>(&'a self, _event_id: &'a EventId) -> DbFuture<'a, Option<Event>> {
+            Box::pin(async { Ok(None) })
+        }
+
+        fn count(&self, _filter: Filter) -> DbFuture<'_, usize> {
+            Box::pin(async { Ok(self.0.len()) })
+        }
+
+        fn query(&self, _filter: Filter) -> DbFuture<'_, BTreeSet<Event>> {
+            Box::pin(async { Ok(self.0.iter().cloned().collect()) })
+        }
+
+        fn delete(&self, _filter: Filter) -> DbFuture<'_, ()> {
+            Box::pin(async { Ok(()) })
+        }
+
+        fn wipe(&self) -> DbFuture<'_, ()> {
+            Box::pin(async { Ok(()) })
+        }
+    }
+
+    #[tokio::test]
+    async fn a_forged_copy_of_a_verified_event_does_not_hide_the_real_one() {
+        let k = keys();
+        let now = Timestamp::now().as_secs();
+        let genuine = make_site_event(&k, 35980, "a.example", CID_A, now);
+        let mut forged = genuine.clone();
+        forged.content = "forged".to_string();
+
+        let honest = LocalRelay::new();
+        honest.run().await.unwrap();
+        let honest_url = honest.url().await;
+        let seeder = Client::default();
+        seeder.add_relay(honest_url.clone()).await.unwrap();
+        seeder.connect().await;
+        seeder.send_event(&genuine).await.unwrap();
+        seeder.shutdown().await;
+        let hostile = LocalRelayBuilder::default()
+            .database(ServesForgeries(vec![forged]))
+            .build();
+        hostile.run().await.unwrap();
+        let hostile_url = hostile.url().await;
+
+        let client = RelayClient::connect(Signer::Local(keys()), &[honest_url.to_string()])
+            .await
+            .unwrap();
+        let first = client
+            .fetch_site_events(35980, &[k.public_key()])
+            .await
+            .unwrap();
+        assert_eq!(first.len(), 1);
+        assert_eq!(first[0].content, genuine.content);
+
+        client.client.add_relay(hostile_url.clone()).await.unwrap();
+        client
+            .client
+            .connect_relay(hostile_url.clone())
+            .await
+            .unwrap();
+        let filter = Filter::new()
+            .kind(Kind::Custom(35980))
+            .author(k.public_key());
+        let from_hostile = client
+            .client
+            .fetch_events(ReqTarget::single(hostile_url, [filter]))
+            .timeout(Duration::from_secs(5))
+            .await
+            .unwrap();
+        assert!(from_hostile.is_empty());
+
+        let both = client
+            .fetch_site_events(35980, &[k.public_key()])
+            .await
+            .unwrap();
+        assert_eq!(both.len(), 1);
+        assert_eq!(both[0].content, genuine.content);
         client.shutdown().await;
     }
 }

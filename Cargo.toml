@@ -39,6 +39,7 @@ windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Globa
 
 [dev-dependencies]
 nostr-sdk = { version = "0.45", default-features = false, features = ["local-relay"] }
+nostr-database = "0.45"
 tempfile = "3"
 tower = { version = "0.5", default-features = false, features = ["util"] }
 
