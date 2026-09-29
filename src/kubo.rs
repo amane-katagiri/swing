@@ -117,56 +117,37 @@ pub fn locate_binary(explicit: Option<&Path>) -> Result<PathBuf> {
     );
 }
 
-fn command_error(
-    program: &str,
-    args: &[&str],
-    status: std::process::ExitStatus,
-    stderr: &str,
-) -> anyhow::Error {
-    anyhow::anyhow!(
-        "`{program} {}` failed ({status}): {}",
-        args.join(" "),
-        stderr.trim()
-    )
-}
-
-async fn run_ipfs(bin: &Path, repo: &Path, args: &[&str]) -> Result<String> {
-    let output = Command::new(bin)
-        .args(args)
-        .env("IPFS_PATH", repo)
-        .stdin(Stdio::null())
+async fn run(bin: &Path, repo: Option<&Path>, args: &[&str]) -> Result<String> {
+    let mut command = Command::new(bin);
+    command.args(args).stdin(Stdio::null());
+    if let Some(repo) = repo {
+        command.env("IPFS_PATH", repo);
+    }
+    let output = command
         .output()
         .await
         .with_context(|| format!("running `{} {}`", bin.display(), args.join(" ")))?;
     if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(command_error(
-            &bin.display().to_string(),
-            args,
+        bail!(
+            "`{} {}` failed ({}): {}",
+            bin.display(),
+            args.join(" "),
             output.status,
-            &stderr,
-        ));
+            String::from_utf8_lossy(&output.stderr).trim()
+        );
     }
     Ok(String::from_utf8_lossy(&output.stdout).into_owned())
 }
 
+async fn run_ipfs(bin: &Path, repo: &Path, args: &[&str]) -> Result<String> {
+    run(bin, Some(repo), args).await
+}
+
 pub async fn version(bin: &Path) -> Result<String> {
-    let output = Command::new(bin)
-        .args(["version", "--number"])
-        .stdin(Stdio::null())
-        .output()
-        .await
-        .with_context(|| format!("running `{} version --number`", bin.display()))?;
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(command_error(
-            &bin.display().to_string(),
-            &["version", "--number"],
-            output.status,
-            &stderr,
-        ));
-    }
-    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+    Ok(run(bin, None, &["version", "--number"])
+        .await?
+        .trim()
+        .to_string())
 }
 
 pub async fn ensure_repo(bin: &Path, repo: &Path) -> Result<bool> {
@@ -413,7 +394,7 @@ async fn wait_for_exit(pid: u32, timeout: Duration) -> bool {
 
 async fn attempt_graceful_shutdown(api_port: u16, pid: u32) -> bool {
     let url = format!("http://127.0.0.1:{api_port}/api/v0/shutdown");
-    let responded = reqwest::Client::new()
+    let responded = crate::ipfs::kubo_http_client()
         .post(&url)
         .timeout(ORPHAN_SHUTDOWN_RPC_TIMEOUT)
         .send()
@@ -426,14 +407,20 @@ async fn attempt_graceful_shutdown(api_port: u16, pid: u32) -> bool {
 }
 
 #[cfg(unix)]
-async fn terminate_process(pid: u32) -> Result<()> {
-    let ret = unsafe { libc::kill(pid as libc::pid_t, libc::SIGTERM) };
+fn send_signal(pid: u32, signal: libc::c_int) -> std::io::Result<()> {
+    let ret = unsafe { libc::kill(pid as libc::pid_t, signal) };
     if ret != 0 {
         let err = std::io::Error::last_os_error();
         if err.raw_os_error() != Some(libc::ESRCH) {
-            return Err(err).context("sending SIGTERM to orphaned Kubo");
+            return Err(err);
         }
     }
+    Ok(())
+}
+
+#[cfg(unix)]
+async fn terminate_process(pid: u32) -> Result<()> {
+    send_signal(pid, libc::SIGTERM).context("sending SIGTERM to orphaned Kubo")?;
     if wait_for_exit(pid, ORPHAN_SIGTERM_GRACE).await {
         return Ok(());
     }
@@ -441,13 +428,7 @@ async fn terminate_process(pid: u32) -> Result<()> {
         pid,
         "orphaned Kubo did not exit after SIGTERM, sending SIGKILL"
     );
-    let ret = unsafe { libc::kill(pid as libc::pid_t, libc::SIGKILL) };
-    if ret != 0 {
-        let err = std::io::Error::last_os_error();
-        if err.raw_os_error() != Some(libc::ESRCH) {
-            return Err(err).context("sending SIGKILL to orphaned Kubo");
-        }
-    }
+    send_signal(pid, libc::SIGKILL).context("sending SIGKILL to orphaned Kubo")?;
     if wait_for_exit(pid, ORPHAN_KILL_WAIT).await {
         return Ok(());
     }
@@ -554,6 +535,10 @@ where
     }
 }
 
+fn is_repo_lock_error(line: &str) -> bool {
+    line.contains("repo.lock") || line.contains("someone else has the lock")
+}
+
 fn forward_lines<R>(reader: R, stream: &'static str, saw_repo_lock: Option<Arc<AtomicBool>>)
 where
     R: tokio::io::AsyncRead + Unpin + Send + 'static,
@@ -564,7 +549,7 @@ where
             match lines.next_line().await {
                 Ok(Some(line)) => {
                     if let Some(flag) = &saw_repo_lock
-                        && line.contains("lock")
+                        && is_repo_lock_error(&line)
                     {
                         flag.store(true, Ordering::Relaxed);
                     }
@@ -659,8 +644,7 @@ impl Daemon {
 
     pub async fn stop(mut self, grace: Duration) -> Result<()> {
         let shutdown_url = format!("{}/api/v0/shutdown", self.api_url.trim_end_matches('/'));
-        let client = reqwest::Client::new();
-        match client
+        match crate::ipfs::kubo_http_client()
             .post(&shutdown_url)
             .timeout(SHUTDOWN_RPC_TIMEOUT)
             .send()
@@ -692,14 +676,10 @@ impl Daemon {
 
         #[cfg(unix)]
         {
-            if let Some(pid) = self.child.id() {
-                let ret = unsafe { libc::kill(pid as libc::pid_t, libc::SIGTERM) };
-                if ret != 0 {
-                    let err = std::io::Error::last_os_error();
-                    if err.raw_os_error() != Some(libc::ESRCH) {
-                        tracing::warn!("failed to send SIGTERM to Kubo (pid {pid}): {err}");
-                    }
-                }
+            if let Some(pid) = self.child.id()
+                && let Err(err) = send_signal(pid, libc::SIGTERM)
+            {
+                tracing::warn!("failed to send SIGTERM to Kubo (pid {pid}): {err}");
             }
             match tokio::time::timeout(SIGTERM_GRACE, self.child.wait()).await {
                 Ok(Ok(_)) => {
@@ -781,20 +761,92 @@ mod windows_job {
     }
 }
 
+#[derive(Deserialize)]
+struct IdResponse {
+    #[serde(rename = "ID")]
+    id: String,
+}
+
+fn id_url(api_url: &str) -> String {
+    format!("{}/api/v0/id", api_url.trim_end_matches('/'))
+}
+
+async fn post_id(client: &reqwest::Client, url: &str) -> Option<reqwest::Response> {
+    match client
+        .post(url)
+        .timeout(Duration::from_secs(5))
+        .send()
+        .await
+    {
+        Ok(resp) if resp.status().is_success() => Some(resp),
+        _ => None,
+    }
+}
+
+fn read_peer_id(repo: &Path) -> Result<String> {
+    let path = repo.join("config");
+    let text =
+        std::fs::read_to_string(&path).with_context(|| format!("reading {}", path.display()))?;
+    let config: serde_json::Value =
+        serde_json::from_str(&text).with_context(|| format!("parsing {}", path.display()))?;
+    config["Identity"]["PeerID"]
+        .as_str()
+        .filter(|id| !id.is_empty())
+        .map(str::to_string)
+        .with_context(|| format!("{} has no Identity.PeerID", path.display()))
+}
+
 pub async fn wait_healthy(api_url: &str, timeout: Duration) -> Result<()> {
-    let client = reqwest::Client::new();
-    let url = format!("{}/api/v0/id", api_url.trim_end_matches('/'));
+    let client = crate::ipfs::kubo_http_client();
+    let url = id_url(api_url);
     let healthy = wait_until(timeout, Duration::from_secs(1), || async {
-        matches!(
-            client.post(&url).timeout(Duration::from_secs(5)).send().await,
-            Ok(resp) if resp.status().is_success()
-        )
+        post_id(&client, &url).await.is_some()
     })
     .await;
     if healthy {
         Ok(())
     } else {
         bail!("Kubo did not become healthy within {timeout:?} (POST {url})")
+    }
+}
+
+impl Daemon {
+    pub async fn wait_healthy(&mut self, repo: &Path, timeout: Duration) -> Result<()> {
+        let expected = match read_peer_id(repo) {
+            Ok(id) => Some(id),
+            Err(e) => {
+                tracing::warn!(error = %e, "cannot read the Kubo peer ID; accepting any API that answers");
+                None
+            }
+        };
+        let client = crate::ipfs::kubo_http_client();
+        let url = id_url(&self.api_url);
+        let deadline = tokio::time::Instant::now() + timeout;
+        let mut foreign: Option<String> = None;
+        loop {
+            let answered = match post_id(&client, &url).await {
+                Some(resp) => Some(resp.json::<IdResponse>().await.ok().map(|r| r.id)),
+                None => None,
+            };
+            if let Some(status) = self.child.try_wait().context("checking the Kubo daemon")? {
+                bail!("Kubo exited ({status}) before becoming healthy");
+            }
+            match (answered, &expected) {
+                (Some(_), None) => return Ok(()),
+                (Some(Some(id)), Some(expected)) if &id == expected => return Ok(()),
+                (Some(id), Some(_)) => foreign = Some(id.unwrap_or_default()),
+                (None, _) => {}
+            }
+            if tokio::time::Instant::now() >= deadline {
+                match (foreign, expected) {
+                    (Some(got), Some(expected)) => bail!(
+                        "Kubo did not become healthy within {timeout:?}: POST {url} answered with peer ID {got:?}, expected {expected}"
+                    ),
+                    _ => bail!("Kubo did not become healthy within {timeout:?} (POST {url})"),
+                }
+            }
+            tokio::time::sleep(Duration::from_secs(1)).await;
+        }
     }
 }
 
@@ -889,6 +941,110 @@ mod tests {
     #[test]
     fn storage_max_is_decimal_bytes() {
         assert_eq!((100u64 * (1u64 << 30)).to_string(), "107374182400");
+    }
+
+    #[test]
+    fn repo_lock_detection_ignores_unrelated_lock_words() {
+        assert!(is_repo_lock_error("Error: someone else has the lock"));
+        assert!(is_repo_lock_error(
+            "cannot acquire lock: Lock FcntlFlock of /x/repo.lock failed"
+        ));
+        assert!(!is_repo_lock_error("fetched block bafy from peer"));
+        assert!(!is_repo_lock_error("blockstore: 12 blocks"));
+    }
+
+    #[test]
+    fn read_peer_id_reads_identity_from_repo_config() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(read_peer_id(dir.path()).is_err());
+        std::fs::write(dir.path().join("config"), r#"{"Identity":{}}"#).unwrap();
+        assert!(read_peer_id(dir.path()).is_err());
+        std::fs::write(
+            dir.path().join("config"),
+            r#"{"Identity":{"PeerID":"12D3KooWmine"}}"#,
+        )
+        .unwrap();
+        assert_eq!(read_peer_id(dir.path()).unwrap(), "12D3KooWmine");
+    }
+
+    #[cfg(unix)]
+    fn fake_kubo(dir: &Path, script: &str, peer_id: &str) -> PathBuf {
+        use std::os::unix::fs::PermissionsExt;
+        let path = dir.join("fake-ipfs");
+        std::fs::write(&path, format!("#!/bin/sh\n{script}\n")).unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        std::fs::write(
+            dir.join("config"),
+            format!(r#"{{"Identity":{{"PeerID":"{peer_id}"}}}}"#),
+        )
+        .unwrap();
+        path
+    }
+
+    #[cfg(unix)]
+    async fn serve_id(peer_id: &'static str) -> String {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            while let Ok((mut socket, _)) = listener.accept().await {
+                tokio::spawn(async move {
+                    let mut buf = [0u8; 4096];
+                    let _ = socket.read(&mut buf).await;
+                    let body = format!(r#"{{"ID":"{peer_id}"}}"#);
+                    let resp = format!(
+                        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                        body.len()
+                    );
+                    let _ = socket.write_all(resp.as_bytes()).await;
+                });
+            }
+        });
+        format!("http://{addr}")
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn daemon_wait_healthy_fails_fast_when_the_child_exits() {
+        let dir = tempfile::tempdir().unwrap();
+        let bin = fake_kubo(dir.path(), "exit 3", "mine");
+        let api = serve_id("mine").await;
+        let mut daemon = Daemon::spawn(&bin, dir.path(), api).await.unwrap();
+        let _ = daemon.wait().await;
+        let err = daemon
+            .wait_healthy(dir.path(), Duration::from_secs(30))
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("exited"), "{err}");
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn daemon_wait_healthy_requires_the_repo_peer_id() {
+        let dir = tempfile::tempdir().unwrap();
+        let bin = fake_kubo(dir.path(), "exec sleep 30", "mine");
+
+        let foreign = serve_id("someone-else").await;
+        let mut daemon = Daemon::spawn(&bin, dir.path(), foreign).await.unwrap();
+        let err = daemon
+            .wait_healthy(dir.path(), Duration::from_secs(1))
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains("someone-else") && err.contains("mine"),
+            "{err}"
+        );
+        daemon.stop(Duration::ZERO).await.unwrap();
+
+        let own = serve_id("mine").await;
+        let mut daemon = Daemon::spawn(&bin, dir.path(), own).await.unwrap();
+        daemon
+            .wait_healthy(dir.path(), Duration::from_secs(5))
+            .await
+            .unwrap();
+        daemon.stop(Duration::ZERO).await.unwrap();
     }
 
     #[test]
@@ -1052,7 +1208,7 @@ mod tests {
         let api_url = format!("http://127.0.0.1:{api_port}");
         let mut daemon = Daemon::spawn(&bin, &repo, api_url.clone()).await.unwrap();
 
-        let health = wait_healthy(&api_url, Duration::from_secs(60)).await;
+        let health = daemon.wait_healthy(&repo, Duration::from_secs(60)).await;
         if health.is_err() {
             let _ = daemon.wait().await;
         }
@@ -1106,11 +1262,12 @@ mod tests {
         apply_config(bin, &repo, &settings).await.unwrap();
 
         let api_url = format!("http://127.0.0.1:{api_port}");
-        let daemon = Daemon::spawn(bin, &repo, api_url.clone()).await.unwrap();
+        let mut daemon = Daemon::spawn(bin, &repo, api_url.clone()).await.unwrap();
         let pid = daemon.pid().unwrap();
         write_pid_file(&state_dir, pid, api_port).unwrap();
 
-        wait_healthy(&api_url, Duration::from_secs(60))
+        daemon
+            .wait_healthy(&repo, Duration::from_secs(60))
             .await
             .unwrap();
 

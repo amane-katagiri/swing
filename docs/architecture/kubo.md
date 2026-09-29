@@ -52,7 +52,9 @@ Kubo は `Host` と `X-Forwarded-Host` をそのまま信じるので、Kubo の
 - `kubo::multiaddr_to_http_url(addr)`: `/ip4/<ip>/tcp/<port>` → `http://<ip>:<port>`、`/ip6/<ip>/tcp/<port>` → `http://[<ip>]:<port>`（`[::1]` のように角括弧を付ける）。`/dns4`・`/dns6`・`/dns` も同様にホスト名をそのまま使う。それ以外のプロトコルや `tcp` 以外はエラー。
 - `Config::ipfs_api_url()`（`src/config/mod.rs`）は `[ipfs].api` が `Url` ならそのまま返し、`Managed` なら `api_url_from_repo(&config.kubo.repo)` を呼ぶ。CLI の `swing publish` はこれを経由して、`swing up` が管理している Kubo の実際のポートを見つける。agent（`agent/lifecycle.rs`）と unmanaged の `swing up` のヘルス待ちも同じ関数で URL を得る（managed の agent には `swing up` が `[ipfs].api` を実際の URL に差し替えた設定を渡す。[`up.md#managed`](up.md#managed)）。
 
-`kubo::wait_healthy` はこのファイルを読まない。起動直後はまだ `<repo>/api` が存在しないため、`swing up` は選んだポート番号から直接 `http://127.0.0.1:<api_port>` を組み立ててヘルスチェックする。
+`Daemon::wait_healthy` はこのファイルを読まない。起動直後はまだ `<repo>/api` が存在しないため、`swing up` は選んだポート番号から直接 `http://127.0.0.1:<api_port>` を組み立てて `Daemon` に渡し、それでヘルスチェックする。
+
+Kubo の RPC を呼ぶ HTTP クライアントはすべて `ipfs::kubo_http_client()`（`IpfsClient`・ヘルス待ち・RPC シャットダウン・孤児回収）で作り、プロキシの環境変数（`HTTP_PROXY` など）やシステムのプロキシ設定を使わない（`no_proxy`）。プロキシが `add` の `Hash` や `dag/stat` の応答を差し替えて、publish に別の CID へ署名させることを防ぐため。
 
 ### デーモンの起動（`kubo::Daemon::spawn`）
 
@@ -65,18 +67,21 @@ Kubo は `Host` と `X-Forwarded-Host` をそのまま信じるので、Kubo の
 - `IPFS_PATH=<repo>`。stdin は `/dev/null` 相当、stdout/stderr は pipe。
 - Linux（`cfg(target_os = "linux")`）のみ、`pre_exec` で `PR_SET_PDEATHSIG(SIGTERM)` を設定する。swing プロセスが SIGKILL 等で消えても、Linux では子の Kubo に SIGTERM が届く。
 - Windows（`cfg(windows)`）のみ、`JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` の Job Object に子プロセスを割り当てる。ハンドルは `Daemon` が持ち `Drop` で閉じるので、swing が強制終了されても Kubo は一緒に落ちる。macOS にはこの種の機構が無く、`kill_on_drop(true)` と次回起動時の孤児回収に頼る。
-- 標準出力・標準エラーは 1 行ずつ `target: "kubo"` のログ（`stream` フィールド付き）に流す。標準エラーに `"lock"` を含む行が出たら覚えておく（`Daemon::saw_repo_lock_error()`。下記「repo lock のヒント」）。
+- 標準出力・標準エラーは 1 行ずつ `target: "kubo"` のログ（`stream` フィールド付き）に流す。標準エラーに `repo.lock` か `someone else has the lock` を含む行が出たら覚えておく（`"lock"` だけだと `block` に当たるため）（`Daemon::saw_repo_lock_error()`。下記「repo lock のヒント」）。
 
-### ヘルス待ち（`kubo::wait_healthy`）
+### ヘルス待ち（`kubo::wait_healthy` / `Daemon::wait_healthy`）
 
-`POST <api_url>/api/v0/id` を 1 秒間隔で叩き、2xx が返れば成功。1 回ごとのリクエストタイムアウトは 5 秒。指定した `timeout` を超えたらエラー。
+どちらも `POST <api_url>/api/v0/id` を 1 秒間隔で叩き、1 回ごとのリクエストタイムアウトは 5 秒。指定した `timeout` を超えたらエラー。
+
+- `kubo::wait_healthy(api_url, timeout)`（unmanaged）: 2xx が返れば成功。
+- `Daemon::wait_healthy(repo, timeout)`（managed）: 始めに `<repo>/config` の `Identity.PeerID` を 1 回読む。毎回、応答の後に子プロセスが終わっていないか（`try_wait`）を見て、終わっていれば待たずに `Kubo exited (<status>) before becoming healthy` でエラーにする。2xx の応答の `ID` が読んだ PeerID と一致したときだけ成功とし、別の ID を返す相手（同じポートの別プロセス）には成功しない（時間切れのエラーにその ID と期待した PeerID を入れる）。PeerID が読めなければ warn を出し、unmanaged と同じく 2xx だけで成功とする。
 
 `timeout` は `up.rs` の定数で決まる。
 
 - unmanaged: 30 秒（`UNMANAGED_HEALTH_TIMEOUT`）。
 - managed: 120 秒（`MANAGED_HEALTH_TIMEOUT`）。
 
-待機中も `CancellationToken` の cancel に即座に応答する（`tokio::select!` で `wait_healthy` と `token.cancelled()` を競走させる）。
+待機中も `CancellationToken` の cancel に即座に応答する（`tokio::select!` でヘルス待ちと `token.cancelled()` を競走させる）。
 
 ### 停止（`Daemon::stop(grace)`）
 
@@ -106,7 +111,7 @@ Kubo は `Host` と `X-Forwarded-Host` をそのまま信じるので、Kubo の
 
 #### repo lock のヒント
 
-`recover_orphan` が拾えるのは自分が書いた `kubo.pid` だけで、`swing up` の管理下に無い Kubo が同じ repo を使っていると起動が失敗し続ける。`wait_healthy` が失敗した時点で daemon が exit していて、標準エラーに `"lock"` を含む行が出ていたら、`another ipfs daemon seems to hold the Kubo repo lock; ...` を warn で出してから通常のバックオフに入る。
+`recover_orphan` が拾えるのは自分が書いた `kubo.pid` だけで、`swing up` の管理下に無い Kubo が同じ repo を使っていると起動が失敗し続ける。`Daemon::wait_healthy` が失敗した時点で daemon が exit していて、標準エラーに repo lock の行（上記）が出ていたら、`another ipfs daemon seems to hold the Kubo repo lock; ...` を warn で出してから通常のバックオフに入る。
 
 ## MFS の使い方
 

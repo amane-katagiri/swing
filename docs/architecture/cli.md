@@ -56,13 +56,13 @@ Windows の `swing service stop` もこの `stop::run` を使う（失敗した�
 - `--title` は任意。指定すると `title` タグになる。空文字・空白のみは付けない扱いにする。256 バイトを超える、または制御文字か見えない書式文字（[`title` の条件](nostr.md#検証)）を含む場合は `invalid --title: ...` でエラー終了する。
 - `--message` はサイトイベントの `content` になる。受け取る側の SWING は `MAX_CONTENT_BYTES`（4096 バイト）を超える更新メモを捨てる（[`content` の扱い](nostr.md#検証)）ので、`publish::validate_message` で同じ上限を確かめ、超えたら何もせずにエラー（`invalid --message: must not exceed 4096 bytes (got N bytes)`）。最初に `Site: <d>`、`--url` があれば `URL:`、`--title` があれば `Title:`、`--message` があれば `Message:` を表示する。省略時は空文字。
 
-引数とモードを解釈した後、表示の前に、`DIR` の実体（`canonicalize`）の中に設定ファイル・`[agent].state_dir`・`[kubo].repo` のどれかの実体があれば（`DIR` そのものである場合を含む）、確認のモードにかかわらず何もせずにエラー終了する（`publish::refuse_protected_paths`。存在しないパスは見ない）。どれも Nostr の秘密鍵・ダッシュボードのトークン・Kubo の秘密鍵を持つため。逆向き（`DIR` が `state_dir` の中にある場合。ダッシュボードのアップロード先がこれ）は止めない。
+引数とモードを解釈した後、表示の前に、`DIR` の実体（`canonicalize`）の中に設定ファイル・`[agent].state_dir`・`[kubo].repo` のどれかの実体があれば（`DIR` そのものである場合を含む）、確認のモードにかかわらず何もせずにエラー終了する（`publish::refuse_protected_paths`。存在しないパスは見ない）。どれも Nostr の秘密鍵・ダッシュボードのトークン・Kubo の秘密鍵を持つため。逆向きに、`DIR` の実体が `[kubo].repo` か `[agent].state_dir` の実体の中にある（そのものである場合を含む）ときも同じくエラー終了する。ただし `<state_dir>/upload/` の下（ダッシュボードのアップロードを展開する場所。`upload/` そのものは除く）は止めない。設定ファイルのあるディレクトリの中は止めない。
 
 処理順:
 
 1. `--nip05` が `off` でなければ、`d` と自分の pubkey で NIP-05 を検証し、`NIP-05` 見出しの下に結果を表示する（`✓ verified` / `! mismatch: ...` / `- not applicable (d is not a domain)` / `! error: ...`）。`require` で `Verified` 以外（`NotApplicable` を含む）なら add せず終了する。
 2. `--check-dotfiles` と `--check-size` のどちらかが `off` でなければ、`DIR` を add と同じ辿り方（`ipfs::list_site`。シンボリックリンクを辿り、ドットファイルも含める。リンク先が `DIR` の外ならこの時点でエラー）で一覧し、`Checks` 見出しの下に 1 行ずつ結果を表示する（`publish::LocalChecks`。`off` の項目は `- dotfiles: off` のように出す）。
-   - ドットファイル: 各パスをサイトのルートから順にセグメントごとに見て、`[publish].dotfiles_allow` の名前と一致するセグメントがあればそのパスは見逃し、先に名前が `.` で始まるセグメントがあればそこまでを 1 件とする（ディレクトリは 1 回だけ数え、その下は見ない）。無ければ `✓ dotfiles: none`、あれば `! dotfiles: N found (not in [publish].dotfiles_allow)` の後に先頭 `LISTED_DOTFILES`（10）件のパスを字下げして並べ、残りは `… and N more` にまとめる。
+   - ドットファイル: 各パスをサイトのルートから順にセグメントごとに見て、名前が `.` で始まり `[publish].dotfiles_allow` のどれとも一致しない最初のセグメントまでを 1 件とする（ディレクトリは 1 回だけ数え、その下は見ない）。一致するセグメントはそれ自身だけを見逃し、その下は続けて見る（`.well-known/.env` は `.well-known/.env` を 1 件とする）。無ければ `✓ dotfiles: none`、あれば `! dotfiles: N found (not in [publish].dotfiles_allow)` の後に先頭 `LISTED_DOTFILES`（10）件のパスを字下げして並べ、残りは `… and N more` にまとめる。
    - サイズ: ファイルの大きさの合計（`metadata().len()` の和。ブロックの共有やディレクトリのノードは数えない）が `SIZE_GUIDELINE`（512 MiB、固定）を超えたら（ちょうどは超えない扱い）`! size: <合計> is over the 512 MiB guideline; each mirror decides by its own limits (max_update_size, default 2 GiB)`、超えなければ `✓ size: <合計> (guideline 512 MiB)`。
    - `require` の項目が引っかかったら、項目ごとの理由（ドットファイルは消す・名前を `[publish].dotfiles_allow` に足す・`--check-dotfiles` か `[publish].check_dotfiles` を `warn`/`off` にする、の案内、サイズは `--check-size` か `[publish].check_size` の案内）を `; ` でつないだメッセージで、add せずにエラー終了する。
 3. 現在時刻を `created_at` に決め、`DIR` を CIDv1・pin なしで add し、`<mfs_root>/publish/<pubkey hex>/<site>/<created_at>` に置く（既存の項目は先に消す）。

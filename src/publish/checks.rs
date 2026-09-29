@@ -11,6 +11,8 @@ use crate::nostr::SiteEvent;
 pub const SIZE_GUIDELINE: u64 = 512 << 20;
 pub const LISTED_DOTFILES: usize = 10;
 
+const DASHBOARD_UPLOAD_DIR: &str = "upload";
+
 pub fn find_dotfiles<'a>(
     paths: impl IntoIterator<Item = &'a str>,
     allow: &[String],
@@ -21,10 +23,7 @@ pub fn find_dotfiles<'a>(
         let mut end = 0;
         for segment in path.split('/') {
             end += segment.len();
-            if allow.iter().any(|name| name == segment) {
-                break;
-            }
-            if segment.starts_with('.') {
+            if segment.starts_with('.') && !allow.iter().any(|name| name == segment) {
                 let hit = &path[..end];
                 if seen.insert(hit.to_string()) {
                     hits.push(hit.to_string());
@@ -45,19 +44,31 @@ pub fn refuse_protected_paths(dir: &Path, config: &Config) -> Result<()> {
             ("[agent].state_dir", &config.agent.state_dir),
             ("[kubo].repo", &config.kubo.repo),
         ],
+    )?;
+    let upload = config.agent.state_dir.join(DASHBOARD_UPLOAD_DIR);
+    refuse_site_inside(
+        dir,
+        &[
+            ("[kubo].repo", &config.kubo.repo, None),
+            ("[agent].state_dir", &config.agent.state_dir, Some(&upload)),
+        ],
     )
+}
+
+fn canonicalize_existing(path: &Path) -> Result<Option<std::path::PathBuf>> {
+    match std::fs::canonicalize(path) {
+        Ok(canon) => Ok(Some(canon)),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(e).with_context(|| format!("resolving path {}", path.display())),
+    }
 }
 
 fn refuse_paths_inside(dir: &Path, protected: &[(&str, &Path)]) -> Result<()> {
     let root =
         std::fs::canonicalize(dir).with_context(|| format!("resolving path {}", dir.display()))?;
     for (what, path) in protected {
-        let canon = match std::fs::canonicalize(path) {
-            Ok(canon) => canon,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
-            Err(e) => {
-                return Err(e).with_context(|| format!("resolving path {}", path.display()));
-            }
+        let Some(canon) = canonicalize_existing(path)? else {
+            continue;
         };
         if canon.starts_with(&root) {
             bail!(
@@ -66,6 +77,32 @@ fn refuse_paths_inside(dir: &Path, protected: &[(&str, &Path)]) -> Result<()> {
                 canon.display()
             );
         }
+    }
+    Ok(())
+}
+
+fn refuse_site_inside(dir: &Path, containers: &[(&str, &Path, Option<&Path>)]) -> Result<()> {
+    let root =
+        std::fs::canonicalize(dir).with_context(|| format!("resolving path {}", dir.display()))?;
+    for (what, path, allowed) in containers {
+        let Some(canon) = canonicalize_existing(path)? else {
+            continue;
+        };
+        if !root.starts_with(&canon) {
+            continue;
+        }
+        if let Some(allowed) = allowed
+            && let Some(allowed) = canonicalize_existing(allowed)?
+            && root != allowed
+            && root.starts_with(&allowed)
+        {
+            continue;
+        }
+        bail!(
+            "{} is inside {what} ({}), which holds swing's data; publish a directory outside swing's config and data",
+            dir.display(),
+            canon.display()
+        );
     }
     Ok(())
 }
@@ -342,17 +379,72 @@ mod tests {
     }
 
     #[test]
-    fn find_dotfiles_skips_allowed_names_and_everything_beneath_them() {
+    fn find_dotfiles_skips_allowed_names_but_not_dotfiles_beneath_them() {
         let paths = [
             "index.html",
             ".well-known",
             ".well-known/nostr.json",
             ".well-known/.secret",
+            ".well-known/.git/HEAD",
             ".nojekyll",
             "blog/.gitkeep",
             ".env",
         ];
-        assert_eq!(find_dotfiles(paths, &allow()), vec![".env"]);
+        assert_eq!(
+            find_dotfiles(paths, &allow()),
+            vec![".well-known/.secret", ".well-known/.git", ".env"]
+        );
+    }
+
+    #[test]
+    fn a_site_inside_the_kubo_repo_or_the_state_dir_is_refused() {
+        let state = tempfile::tempdir().unwrap();
+        let repo = state.path().join("kubo");
+        std::fs::create_dir_all(repo.join("blocks")).unwrap();
+        let upload = state.path().join(DASHBOARD_UPLOAD_DIR);
+        std::fs::create_dir_all(upload.join("abc/sub")).unwrap();
+        std::fs::create_dir_all(state.path().join("site")).unwrap();
+        let containers = [
+            ("[kubo].repo", repo.as_path(), None),
+            ("[agent].state_dir", state.path(), Some(upload.as_path())),
+        ];
+
+        for site in [repo.join("blocks"), repo.clone()] {
+            let err = refuse_site_inside(&site, &containers).unwrap_err();
+            assert!(err.to_string().contains("[kubo].repo"), "{err}");
+        }
+        for site in [
+            state.path().join("site"),
+            state.path().to_path_buf(),
+            upload.clone(),
+        ] {
+            let err = refuse_site_inside(&site, &containers).unwrap_err();
+            assert!(err.to_string().contains("[agent].state_dir"), "{err}");
+        }
+        refuse_site_inside(&upload.join("abc"), &containers).unwrap();
+        refuse_site_inside(&upload.join("abc/sub"), &containers).unwrap();
+
+        let elsewhere = tempfile::tempdir().unwrap();
+        refuse_site_inside(elsewhere.path(), &containers).unwrap();
+        refuse_site_inside(
+            elsewhere.path(),
+            &[("[kubo].repo", &elsewhere.path().join("missing"), None)],
+        )
+        .unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_site_reached_through_a_symlink_into_the_repo_is_refused() {
+        use std::os::unix::fs::symlink;
+
+        let repo = tempfile::tempdir().unwrap();
+        std::fs::create_dir(repo.path().join("keystore")).unwrap();
+        let elsewhere = tempfile::tempdir().unwrap();
+        let link = elsewhere.path().join("site");
+        symlink(repo.path().join("keystore"), &link).unwrap();
+        let err = refuse_site_inside(&link, &[("[kubo].repo", repo.path(), None)]).unwrap_err();
+        assert!(err.to_string().contains("[kubo].repo"), "{err}");
     }
 
     #[test]
@@ -388,6 +480,7 @@ mod tests {
         std::fs::write(dir.path().join(".git/objects/aa"), b"x").unwrap();
         std::fs::create_dir_all(dir.path().join("docs/.well-known")).unwrap();
         std::fs::write(dir.path().join("docs/.well-known/.hidden"), b"x").unwrap();
+        std::fs::write(dir.path().join("docs/.well-known/ok.json"), b"x").unwrap();
         std::fs::write(dir.path().join("docs/.env"), b"SECRET=1").unwrap();
         let checks = LocalChecks::evaluate(
             &entries(dir.path()),
@@ -395,8 +488,11 @@ mod tests {
             CheckMode::Warn,
             &allow(),
         );
-        assert_eq!(checks.dotfiles.as_deref().unwrap(), [".git", "docs/.env"]);
-        assert_eq!(checks.bytes, Some(2 + 1 + 1 + 8));
+        assert_eq!(
+            checks.dotfiles.as_deref().unwrap(),
+            [".git", "docs/.env", "docs/.well-known/.hidden"]
+        );
+        assert_eq!(checks.bytes, Some(2 + 1 + 1 + 1 + 8));
         assert!(checks.abort_message().unwrap().contains("dotfiles_allow"));
     }
 

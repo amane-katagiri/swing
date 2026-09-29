@@ -449,11 +449,9 @@ pub fn parse_mfs_root(input: &str) -> Result<String> {
 
 fn parse_http_origin(input: &str) -> Option<String> {
     let trimmed = input.trim().trim_end_matches('/');
-    let authority = trimmed
-        .strip_prefix("http://")
-        .or_else(|| trimmed.strip_prefix("https://"))?;
-    (!authority.is_empty() && !authority.contains(['/', '?', '#', ' ', '@']))
-        .then(|| trimmed.to_string())
+    let url = reqwest::Url::parse(trimmed).ok()?;
+    let origin = url.origin().ascii_serialization();
+    (matches!(url.scheme(), "http" | "https") && origin == trimmed).then_some(origin)
 }
 
 pub fn parse_public_url(input: &str) -> Result<String> {
@@ -713,8 +711,23 @@ mod tests {
             "http://x/dash",
             "http://x?y",
             "http://x y",
+            "http://a\\b",
+            "http://a\tb",
+            "http://a\u{7f}b",
+            "http://a\nb:80",
+            "http://x:port",
+            "http://x:99999",
+            "http://user@x",
+            "http://x#frag",
+            "http://x/?",
+            "http://x:80",
+            "https://X.example",
         ] {
-            assert!(parse_public_url(bad).is_err(), "{bad}");
+            assert!(parse_public_url(bad).is_err(), "{bad:?}");
         }
+        assert_eq!(
+            parse_public_url("http://[::1]:5001/").unwrap(),
+            "http://[::1]:5001"
+        );
     }
 }

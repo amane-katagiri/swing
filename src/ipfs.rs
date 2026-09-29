@@ -254,10 +254,17 @@ fn query_path(path: &str) -> String {
     percent_encode_relative_path(path)
 }
 
+pub fn kubo_http_client() -> reqwest::Client {
+    reqwest::Client::builder()
+        .no_proxy()
+        .build()
+        .expect("reqwest client uses only built-in TLS options")
+}
+
 impl IpfsClient {
     pub fn new(api: impl Into<String>) -> Self {
         Self {
-            http: reqwest::Client::new(),
+            http: kubo_http_client(),
             api: api.into().trim_end_matches('/').to_string(),
         }
     }
@@ -676,6 +683,58 @@ mod tests {
             .unwrap_err();
         assert!(err.to_string().contains("larger than"), "{err}");
         server.abort();
+    }
+
+    #[tokio::test]
+    #[ignore]
+    async fn kubo_client_probe() {
+        let Ok(api) = std::env::var("SWING_TEST_KUBO_PROBE_API") else {
+            return;
+        };
+        IpfsClient::new(api)
+            .call("id", "", Duration::from_secs(5))
+            .await
+            .unwrap();
+    }
+
+    #[test]
+    fn kubo_client_ignores_proxy_environment() {
+        use std::io::{Read, Write};
+        let kubo = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let kubo_addr = kubo.local_addr().unwrap();
+        let server = std::thread::spawn(move || {
+            let (mut sock, _) = kubo.accept().unwrap();
+            let mut buf = [0u8; 4096];
+            let _ = sock.read(&mut buf);
+            sock.write_all(b"HTTP/1.1 200 OK\r\ncontent-length: 2\r\nconnection: close\r\n\r\n{}")
+                .unwrap();
+        });
+        let proxy = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        proxy.set_nonblocking(true).unwrap();
+        let proxy_url = format!("http://{}", proxy.local_addr().unwrap());
+
+        let status = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "ipfs::tests::kubo_client_probe",
+                "--ignored",
+                "--quiet",
+            ])
+            .env("SWING_TEST_KUBO_PROBE_API", format!("http://{kubo_addr}"))
+            .env("HTTP_PROXY", &proxy_url)
+            .env("http_proxy", &proxy_url)
+            .env("ALL_PROXY", &proxy_url)
+            .env_remove("NO_PROXY")
+            .env_remove("no_proxy")
+            .status()
+            .unwrap();
+        assert!(status.success());
+        server.join().unwrap();
+        assert_eq!(
+            proxy.accept().unwrap_err().kind(),
+            std::io::ErrorKind::WouldBlock,
+            "the Kubo client must not go through the proxy"
+        );
     }
 
     #[cfg(unix)]

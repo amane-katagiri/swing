@@ -174,7 +174,7 @@ async fn start_kubo(
     }
 
     let health = tokio::select! {
-        res = kubo::wait_healthy(&api_url, MANAGED_HEALTH_TIMEOUT) => Some(res),
+        res = daemon.wait_healthy(&config.kubo.repo, MANAGED_HEALTH_TIMEOUT) => Some(res),
         _ = token.cancelled() => None,
     };
     let health = match health {
