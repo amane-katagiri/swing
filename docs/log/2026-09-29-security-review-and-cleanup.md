@@ -101,3 +101,16 @@
 - `state_dir`・`kubo.repo` の中にあるディレクトリの公開も拒否する（ダッシュボードのアップロードを展開する `<state_dir>/upload/` の下だけは除く）。許可したドットファイルの下（`.well-known/.env` など）も確認の対象にする。
 - `ipfs.api`・`gateway.upstream`・`dashboard.public_url`・`dashboard.gateway` のオリジンは URL として解釈し、正規化した形と完全に一致するものだけを受け付ける。大文字のホスト名や既定のポートを書いた値も拒否するようになった。
 - CLI が表示するダッシュボードのエラー文から端末の制御文字と見えない書式文字を除き、内蔵 gateway から Kubo への要求もプロキシを使わないようにした。
+
+## 4 回目の修正
+
+3 回目の再評価でも重大なものは無かった。残った中程度のものを直した。
+
+- 管理下の Kubo の RPC に認証が無く、同じマシンのほかのユーザーが MFS に任意の CID を置いて自分の鍵でレプリカ報告に署名させたり、設定を変えたり止めたりできた。Kubo の起動のたびに乱数の secret を作って `<state_dir>/kubo-api.secret`（0600）に置き、`API.Authorizations` に入れ、Kubo への要求はすべて `Authorization: Bearer` を付ける。secret は `ipfs config` の引数でなく repo の設定ファイルへ直接書く（コマンドラインはほかのユーザーから見えるため）。管理下の Kubo へ `ipfs` コマンドを使うときは `--api-auth` が要る。管理外の `[ipfs].api` には設定を足さず、露出を README と architecture に書いた。`swing publish` は管理下の Kubo の `/api/v0/id` が repo の PeerID と合うことを確かめてから使う（secret は起動ごとに変わるので、止まった Kubo のポートを取った相手に渡っても次の Kubo では使えない）。MFS から読んだ CID は正規化してから使う。
+- 同じサイト（同じホストの別ポート）のページから cookie 付きの GET を送らせ、重い relay の問い合わせを繰り返させられた。cookie で認証する `/api/*` は GET でも `X-Swing-Dashboard` ヘッダを要求し（bearer トークンの CLI と tray は対象外）、relay に問い合わせる API は同時に 4 本までにした（待ちきれなければ 503）。
+- nostr-sdk の検証のキャッシュを使い、悪意のある relay が検証済みの id を使い回した偽のイベントを先に返すと、正しい relay からの本物が重複として捨てられ、偽物もこちらで捨てるのでイベントが消えた。id の検証を nostr-sdk の `AdmitPolicy` に移し、重複の判定より前で捨てる。
+- 保存済みのサイトの取得の失敗も `min_update_interval` で間隔を空け、間隔の確認を NIP-05 の確認より先にした。取得の上限を超えたときに未来の日時のイベントが残らないようにした。レプリカ報告の署名と送信はイベントのループの外で 1 回ずつ走らせる。
+- 設定ファイルの構文エラーに元の行を含めない（`secret_key` の行が表示されうるため）。`--log-file` は Unix で 0600 で作る。公開したばかりの版は古い版の整理で消さない。system unit の `ReadWritePaths` に `state_dir` と `kubo.repo` も入れる。
+- CLI と tray は、ポートを取った相手かもしれない応答の本文を 64 KiB までしか読まず、ログインコードは形を確かめてから表示する。トークンファイルが 0600 より広ければ警告する（`state_dir` は Docker のボリュームなどで広いことが多いので確かめない）。
+
+管理下の Kubo の認証は、Kubo 0.43.1 の実物で `#[ignore]` の統合テストを走らせ、secret の無い要求が拒否され、secret 付きなら PeerID が返ることを確かめた。
