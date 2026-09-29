@@ -52,6 +52,34 @@ pub(crate) fn test_config(ui: bool) -> (Config, String) {
     (config, secret_hex)
 }
 
+pub(crate) fn test_config_in_dir(
+    dir: &std::path::Path,
+    ui: bool,
+    with_key: bool,
+) -> (Config, String) {
+    let (mut config, secret_hex) = test_config(ui);
+    config.config_path = dir.join("swing.toml");
+    config.config_exists = false;
+    if !with_key {
+        config.nostr.secret_key = None;
+    }
+    (config, secret_hex)
+}
+
+#[cfg(unix)]
+pub(crate) fn read_only_config_dir(dir: &std::path::Path) -> Option<PathBuf> {
+    use std::os::unix::fs::PermissionsExt;
+
+    let locked = dir.join("locked");
+    std::fs::create_dir(&locked).unwrap();
+    std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o500)).unwrap();
+    // Root, or a filesystem that ignores the mode, can still write here; skip under those runners.
+    if std::fs::write(locked.join("probe"), "").is_ok() {
+        return None;
+    }
+    Some(locked)
+}
+
 pub(crate) fn test_keys(secret_hex: &str) -> Option<Signer> {
     Some(Signer::Local(Keys::parse(secret_hex).unwrap()))
 }

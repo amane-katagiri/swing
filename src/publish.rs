@@ -226,8 +226,10 @@ pub async fn sign_and_send(
 pub enum SiteFieldError {
     InvalidD(anyhow::Error),
     InvalidUrl(String),
-    InvalidTitle,
 }
+
+#[derive(Debug)]
+pub struct InvalidTitle;
 
 pub fn validate_site_fields(d: &str, url: Option<&str>) -> Result<(), SiteFieldError> {
     nostr::validate_d_tag(d).map_err(SiteFieldError::InvalidD)?;
@@ -239,7 +241,7 @@ pub fn validate_site_fields(d: &str, url: Option<&str>) -> Result<(), SiteFieldE
     Ok(())
 }
 
-pub fn normalize_title(title: Option<&str>) -> Result<Option<&str>, SiteFieldError> {
+pub fn normalize_title(title: Option<&str>) -> Result<Option<&str>, InvalidTitle> {
     let Some(title) = title else {
         return Ok(None);
     };
@@ -248,7 +250,7 @@ pub fn normalize_title(title: Option<&str>) -> Result<Option<&str>, SiteFieldErr
         return Ok(None);
     }
     if !nostr::valid_title(trimmed) {
-        return Err(SiteFieldError::InvalidTitle);
+        return Err(InvalidTitle);
     }
     Ok(Some(trimmed))
 }
@@ -336,17 +338,12 @@ fn check_arguments<'a>(
             SiteFieldError::InvalidUrl(url) => {
                 anyhow::anyhow!("invalid --url: {url} is not an http or https URL")
             }
-            SiteFieldError::InvalidTitle => unreachable!(),
         });
     }
-    let title = match normalize_title(title) {
-        Ok(title) => title,
-        Err(SiteFieldError::InvalidTitle) => {
-            anyhow::bail!(
-                "invalid --title: must not exceed 256 bytes and must not contain control characters"
-            )
-        }
-        Err(_) => unreachable!(),
+    let Ok(title) = normalize_title(title) else {
+        anyhow::bail!(
+            "invalid --title: must not exceed 256 bytes and must not contain control characters"
+        )
     };
     if let Some(message) = message {
         validate_message(message).map_err(|e| anyhow::anyhow!("invalid --message: {e}"))?;
@@ -566,13 +563,10 @@ mod tests {
     #[test]
     fn normalize_title_rejects_oversized_or_control_titles() {
         let long = "a".repeat(257);
-        assert!(matches!(
-            normalize_title(Some(&long)),
-            Err(SiteFieldError::InvalidTitle)
-        ));
+        assert!(matches!(normalize_title(Some(&long)), Err(InvalidTitle)));
         assert!(matches!(
             normalize_title(Some("bad\ntitle")),
-            Err(SiteFieldError::InvalidTitle)
+            Err(InvalidTitle)
         ));
     }
 

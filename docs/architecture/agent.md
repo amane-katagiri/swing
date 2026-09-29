@@ -7,9 +7,9 @@
 | ファイル | 内容 |
 |---|---|
 | `agent/mod.rs` | `Agent` 構造体の定義、`new`、`poll_once`、メンテナンス系（`sweep`・`collect_garbage`・`reconcile`・`remove_unfollowed`）、state 保存の共通ヘルパー（`save`） |
-| `agent/lifecycle.rs` | `run_until`（プロセスのライフサイクル本体。`CancellationToken`・`swing up` から渡される共有の `Arc<dashboard::AppState>`・`Arc<Notify>` を受け取る。`AppState.activity` を `Agent` に渡して共有する）、内蔵 gateway タスクの起動・終了、ダッシュボードへの準備完了・未準備の通知（`AppState::set_ready`/`set_not_ready`） |
+| `agent/lifecycle.rs` | `run_until`（プロセスのライフサイクル本体。`CancellationToken`・`swing up` から渡される共有の `Arc<dashboard::AppState>`・`Arc<Notify>` を受け取る。`AppState.activity` を `Agent` に渡して共有する）、内蔵 gateway の bind（`bind_gateway`）とタスクの起動・終了、購読の通知からのサイトイベントの取り出し（`site_event_of`）、ダッシュボードへの準備完了・未準備の通知（`AppState::set_ready`/`set_not_ready`） |
 | `agent/follow.rs` | `refresh_follow_set`（Follow Set の取得・保存・再送は `choose_and_apply_follow_set`、対象の切り替え・サイトイベントの購読・取得は `resubscribe_and_backfill` に分かれた薄い呼び出し元）、`limit_sites_per_account` |
-| `agent/store.rs` | `Agent::submit`/`drain`（キューイングと直列実行）、`apply_site_event`（「保存の順序」の中核）、NIP-05 検証、`decide`/`version_infos` |
+| `agent/store.rs` | `Agent::submit`/`drain`（キューイングと直列実行）、`apply_site_event`（「保存の順序」の中核。事前判定の `worth_fetching`・取得とディレクトリ判定の `fetch_directory`・MFS への保存と state への記録の `store_fetched` を順に呼ぶ）、NIP-05 検証、`decide`/`version_infos` |
 | `agent/replicas.rs` | レプリカ報告の差分計算・送信（`SentReport`・`ReportBook`・`Held`・`reports_to_send`・`held`・`load_sent_reports`・`sync_reports`）、他の報告者からの報告の時刻の記録（`record_replica_reports`） |
 | `agent/test_support.rs` | ユニットテスト共通のフィクスチャ（`Fixture`・`FakeNip05`・`FakeRelay`、`test_config`）。`#[cfg(test)]`。`FakeKubo` は `src/test_support.rs` のものを `pub(super) use` で再公開する |
 

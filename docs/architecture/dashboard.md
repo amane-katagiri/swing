@@ -89,9 +89,11 @@ HTTP サーバー（axum 0.8）で、ダッシュボードのブラウザ向け�
 
 `[dashboard].ui = true` のときだけ配信する（`ui_router()`。上の「UI と API の分離」を参照）。差し替え不要なファイルは `assets.rs::STATIC_ASSETS`（パス・Content-Type・本体の配列）にまとめてあり、`assets::register()` がこれをそのままルートに登録する。
 
-例外は `/desktop-page.html`・`/desktop-page.css`・`/desktop-banner` の 3 つで、`ui = true` のときだけ、`[dashboard]` にパスが設定されていればそのファイルを起動時（`AppState::new` → `DesktopAssets::load`）に 1 回読んで `AppState.desktop` に持ち、以降はそこから配信する（設定が無ければ同梱のものを持つ）。`/mascots/*`（下記）も同じく起動時に 1 回読む例外だが、`assets.rs` ではなく `mascots.rs` が持つ。リクエストのたびにディスクを見るのは `/custom.css` だけ。
+例外は `/desktop-page.html`・`/desktop-page.css`・`/desktop-banner` の 3 つで、`ui = true` のときだけ、`[dashboard]` にパスが設定されていればそのファイルを起動時（`AppState::new` → `DesktopAssets::load`）に 1 回読んで `AppState.desktop` に持ち、以降はそこから配信する（設定が無ければ同梱のものを持つ）。`/mascots/*`（下記）も同じく起動時に 1 回読む例外だが、`assets.rs` ではなく `mascots/` が持つ。リクエストのたびにディスクを見るのは `/custom.css` だけ。
 
-### マスコットのパック配信（`src/dashboard/mascots.rs`）
+### マスコットのパック配信（`src/dashboard/mascots/`）
+
+`mascots/mod.rs` がパックの読み込み・配信、`mascots/nofollow.rs` がリンクを辿らずにディレクトリとファイルを開く処理（Unix と Windows の実装を `Dir` にまとめる）と上限付きの読み込み（`read_limited`）、`mascots/image.rs` がスプライトのヘッダの読み取りと大きさの検証（`check_sprite`）を持つ。
 
 `/mascots/index.json` と `/mascots/{id}/{file}` は `assets::register()` の対象外で、`ui_router()` に直接ルートを持つ。`AppState::new` が `ui = true` のときだけ `mascots::MascotRegistry::load(config.dashboard.mascots_dir)` を呼び、結果を `AppState.mascots` に持つ（`DesktopAssets::load` と並ぶ起動時 1 回読み込み。設定の再反映には再起動が要る）。
 
@@ -119,7 +121,7 @@ HTTP サーバー（axum 0.8）で、ダッシュボードのブラウザ向け�
 | `GET /desktop-frame.css` | `text/css; charset=utf-8`。差し替え対象ではない |
 | `GET /desktop-banner` | 既定は `image/gif`（`web/desktop-banner.gif`）。差し替えると拡張子から決める。差し替えられるので拡張子はパスに持たせない |
 | `GET /desktop-mascot.css` | `text/css; charset=utf-8` |
-| `GET /mascots/index.json` `/mascots/<id>/manifest.json` | `application/json`。Desktop 画面のマスコットのパック一覧と各パックのマニフェスト（同梱パックと `mascots_dir` のユーザー定義パック。詳細は上記「[マスコットのパック配信](#マスコットのパック配信srcdashboardmascotsrs)」、パック形式は [`dashboard/mascot.md#パック形式-1`](dashboard/mascot.md#パック形式-1)） |
+| `GET /mascots/index.json` `/mascots/<id>/manifest.json` | `application/json`。Desktop 画面のマスコットのパック一覧と各パックのマニフェスト（同梱パックと `mascots_dir` のユーザー定義パック。詳細は上記「[マスコットのパック配信](#マスコットのパック配信srcdashboardmascots)」、パック形式は [`dashboard/mascot.md#パック形式-1`](dashboard/mascot.md#パック形式-1)） |
 | `GET /mascots/<id>/<sprite>` | `image/png`/`image/gif`/`image/webp`（拡張子から決める）。各パックのスプライトシート |
 | `GET /fonts/pixelmplus12-regular.woff2` `/fonts/pixelmplus12-bold.woff2` | `font/woff2` |
 | `GET /login?code=<code>` | ファイルではなくログインリンクの受け口（`session::login_page`）。コードは消費せず、`303` で Web UI にリダイレクトする（上記「認証」） |

@@ -39,16 +39,7 @@ pub async fn run_until(
     let state = State::load(&state_path).await?;
     info!(path = %state_path.display(), sites = state.sites.len(), "loaded state");
 
-    let gateway_listener = match &config.gateway.listen {
-        Listen::Off => None,
-        Listen::Addr(addr) => {
-            let listener = tokio::net::TcpListener::bind(addr)
-                .await
-                .with_context(|| format!("binding gateway listener on {addr}"))?;
-            info!(%addr, hosts = ?config.gateway.hosts, upstream = %config.gateway.upstream, "gateway will listen");
-            Some(listener)
-        }
-    };
+    let gateway_listener = bind_gateway(&config).await?;
 
     let site_event_kind = config.nostr.site_event_kind;
     let mut poll_timer = tokio::time::interval(config.agent.poll_interval);
@@ -94,19 +85,8 @@ pub async fn run_until(
             maybe_note = notifications.next() => {
                 match maybe_note {
                     Some(ClientNotification::Event { event, subscription_id, .. }) => {
-                        if subscription_id.as_str() == nostr::SITE_SUBSCRIPTION_ID
-                            && event.kind == Kind::Custom(site_event_kind)
-                        {
-                            match nostr::parse_site_event(&event, site_event_kind) {
-                                Ok(ev) => agent.submit(ev, &mut tasks),
-                                Err(e) => warn!(error = %e, "skipping invalid site event"),
-                            }
-                        } else {
-                            debug!(
-                                kind = %event.kind,
-                                subscription_id = %subscription_id,
-                                "ignoring notification outside the site subscription"
-                            );
+                        if let Some(ev) = site_event_of(&event, &subscription_id, site_event_kind) {
+                            agent.submit(ev, &mut tasks);
                         }
                     }
                     Some(ClientNotification::Shutdown) | None => {
@@ -149,6 +129,37 @@ pub async fn run_until(
     relay.client.shutdown().await;
     dashboard.set_not_ready().await;
     result
+}
+
+async fn bind_gateway(config: &Config) -> Result<Option<tokio::net::TcpListener>> {
+    let Listen::Addr(addr) = &config.gateway.listen else {
+        return Ok(None);
+    };
+    let listener = tokio::net::TcpListener::bind(addr)
+        .await
+        .with_context(|| format!("binding gateway listener on {addr}"))?;
+    info!(%addr, hosts = ?config.gateway.hosts, upstream = %config.gateway.upstream, "gateway will listen");
+    Ok(Some(listener))
+}
+
+fn site_event_of(
+    event: &Event,
+    subscription_id: &SubscriptionId,
+    site_event_kind: u16,
+) -> Option<nostr::SiteEvent> {
+    if subscription_id.as_str() != nostr::SITE_SUBSCRIPTION_ID
+        || event.kind != Kind::Custom(site_event_kind)
+    {
+        debug!(
+            kind = %event.kind,
+            subscription_id = %subscription_id,
+            "ignoring notification outside the site subscription"
+        );
+        return None;
+    }
+    nostr::parse_site_event(event, site_event_kind)
+        .inspect_err(|e| warn!(error = %e, "skipping invalid site event"))
+        .ok()
 }
 
 async fn race_with_shutdown<F: std::future::Future<Output = ()>>(

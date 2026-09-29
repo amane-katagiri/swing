@@ -1,4 +1,4 @@
-# ダッシュボード HTTP API（`src/dashboard/api.rs`, `src/dashboard/dto.rs`, `src/dashboard/config_dto.rs`）
+# ダッシュボード HTTP API（`src/dashboard/api.rs`, `src/dashboard/setup.rs`, `src/dashboard/dto.rs`, `src/dashboard/config_dto.rs`）
 
 [`../dashboard.md`](../dashboard.md) の一部。ガード・タイムアウトは [`../dashboard.md`](../dashboard.md)、画面側からの使い方は [`web.md`](web.md) を参照。
 

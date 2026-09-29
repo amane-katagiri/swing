@@ -5,6 +5,7 @@ pub(crate) mod dto;
 pub mod guard;
 mod mascots;
 mod session;
+mod setup;
 #[cfg(test)]
 mod test_support;
 mod upload;
@@ -195,12 +196,12 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/api/replicas", get(api::replicas))
         .route("/api/publish/sites", get(api::publish_sites))
         .route("/api/config", get(api::config).put(api::update_config))
-        .route("/api/setup", post(api::setup))
+        .route("/api/setup", post(setup::setup))
         .route(
             "/api/setup/signer",
-            get(api::pairing_status).post(api::start_pairing),
+            get(setup::pairing_status).post(setup::start_pairing),
         )
-        .route("/api/signer/reconnect", post(api::reconnect_signer))
+        .route("/api/signer/reconnect", post(setup::reconnect_signer))
         .route("/api/shutdown", post(api::shutdown))
         .route("/api/restart", post(api::restart))
         .route("/api/login", post(session::login))

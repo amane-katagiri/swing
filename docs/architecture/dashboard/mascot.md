@@ -1,10 +1,10 @@
 # Desktop 画面のマスコット（`web/desktop-mascot*`）
 
-[`desktop.md`](desktop.md) の子ページ。Desktop 画面全体（モジュールの一覧・更新の確認・コントロール パネルの殻）は [`desktop.md`](desktop.md)、パックを配信するサーバ側は [`../dashboard.md#マスコットのパック配信srcdashboardmascotsrs`](../dashboard.md#マスコットのパック配信srcdashboardmascotsrs) を参照。
+[`desktop.md`](desktop.md) の子ページ。Desktop 画面全体（モジュールの一覧・更新の確認・コントロール パネルの殻）は [`desktop.md`](desktop.md)、パックを配信するサーバ側は [`../dashboard.md#マスコットのパック配信srcdashboardmascots`](../dashboard.md#マスコットのパック配信srcdashboardmascots) を参照。
 
 ## 概要
 
-デスクトップの上を歩き回るキャラクター。見た目・動き・せりふはパック（下記「[パック形式 1](#パック形式-1)」）に宣言的に書き、パックに JS は入れられない。同梱のパックは `yureko`（64×64）・`mochi`（48×48）・`neko`（32×32）の 3 つで、`yureko` と `mochi` は `scale: 2`、`neko` は `scale: 1` で描く。加えて、サーバ側で `[dashboard].mascots_dir` を指していれば、その下のサブディレクトリをユーザー定義パックとして読み込む（サーバ側の検証規則は [`../dashboard.md#マスコットのパック配信srcdashboardmascotsrs`](../dashboard.md#マスコットのパック配信srcdashboardmascotsrs)）。読み込めたパックのうち「コントロール パネル」の「マスコット」タブで選んだもの（既定は `yureko` だけ）を 1 体ずつ出す。
+デスクトップの上を歩き回るキャラクター。見た目・動き・せりふはパック（下記「[パック形式 1](#パック形式-1)」）に宣言的に書き、パックに JS は入れられない。同梱のパックは `yureko`（64×64）・`mochi`（48×48）・`neko`（32×32）の 3 つで、`yureko` と `mochi` は `scale: 2`、`neko` は `scale: 1` で描く。加えて、サーバ側で `[dashboard].mascots_dir` を指していれば、その下のサブディレクトリをユーザー定義パックとして読み込む（サーバ側の検証規則は [`../dashboard.md#マスコットのパック配信srcdashboardmascots`](../dashboard.md#マスコットのパック配信srcdashboardmascots)）。読み込めたパックのうち「コントロール パネル」の「マスコット」タブで選んだもの（既定は `yureko` だけ）を 1 体ずつ出す。
 
 モジュールの分担（[`desktop.md#構成`](desktop.md#構成) の表と同じ）:
 

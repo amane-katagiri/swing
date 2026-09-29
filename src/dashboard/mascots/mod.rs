@@ -1,6 +1,8 @@
+mod image;
+mod nofollow;
+
 use std::collections::HashMap;
 use std::ffi::OsStr;
-use std::io::Read;
 use std::path::Path;
 use std::sync::Arc;
 
@@ -13,12 +15,12 @@ use tracing::warn;
 
 use super::AppState;
 use super::assets::bytes_asset;
+use image::check_sprite;
+use nofollow::{Dir, read_limited};
 
 const JSON: &str = "application/json";
 const MAX_MANIFEST_BYTES: u64 = 64 * 1024;
 const MAX_SPRITE_BYTES: u64 = 1024 * 1024;
-const MAX_SPRITE_SIDE: u32 = 4096;
-const MAX_SPRITE_PIXELS: u64 = 2048 * 2048;
 const MAX_USER_PACKS: usize = 32;
 const MAX_PACK_ID_LEN: usize = 32;
 const MAX_DIR_ENTRIES: usize = 1024;
@@ -33,18 +35,18 @@ struct BundledPack {
 const BUNDLED: &[BundledPack] = &[
     BundledPack {
         id: "yureko",
-        manifest: include_str!("../../web/mascots/yureko/manifest.json"),
-        sprite: include_bytes!("../../web/mascots/yureko/sprite.png"),
+        manifest: include_str!("../../../web/mascots/yureko/manifest.json"),
+        sprite: include_bytes!("../../../web/mascots/yureko/sprite.png"),
     },
     BundledPack {
         id: "mochi",
-        manifest: include_str!("../../web/mascots/mochi/manifest.json"),
-        sprite: include_bytes!("../../web/mascots/mochi/sprite.png"),
+        manifest: include_str!("../../../web/mascots/mochi/manifest.json"),
+        sprite: include_bytes!("../../../web/mascots/mochi/sprite.png"),
     },
     BundledPack {
         id: "neko",
-        manifest: include_str!("../../web/mascots/neko/manifest.json"),
-        sprite: include_bytes!("../../web/mascots/neko/sprite.png"),
+        manifest: include_str!("../../../web/mascots/neko/manifest.json"),
+        sprite: include_bytes!("../../../web/mascots/neko/sprite.png"),
     },
 ];
 
@@ -142,243 +144,6 @@ fn sprite_extension(name: &str) -> Option<&'static str> {
         "webp" => Some("image/webp"),
         _ => None,
     }
-}
-
-fn sniff_image(bytes: &[u8]) -> Option<(&'static str, u32, u32)> {
-    let u16_le = |at: usize| -> Option<u32> {
-        Some(u32::from(u16::from_le_bytes(
-            bytes.get(at..at + 2)?.try_into().ok()?,
-        )))
-    };
-    let u24_le = |at: usize| -> Option<u32> {
-        let b = bytes.get(at..at + 3)?;
-        Some(u32::from(b[0]) | u32::from(b[1]) << 8 | u32::from(b[2]) << 16)
-    };
-    if bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
-        if bytes.get(12..16)? != b"IHDR" {
-            return None;
-        }
-        let width = u32::from_be_bytes(bytes.get(16..20)?.try_into().ok()?);
-        let height = u32::from_be_bytes(bytes.get(20..24)?.try_into().ok()?);
-        return Some(("image/png", width, height));
-    }
-    if bytes.starts_with(b"GIF87a") || bytes.starts_with(b"GIF89a") {
-        return Some(("image/gif", u16_le(6)?, u16_le(8)?));
-    }
-    if bytes.get(0..4)? == b"RIFF" && bytes.get(8..12)? == b"WEBP" {
-        let (width, height) = match bytes.get(12..16)? {
-            b"VP8 " => {
-                if bytes.get(23..26)? != [0x9d, 0x01, 0x2a] {
-                    return None;
-                }
-                (u16_le(26)? & 0x3fff, u16_le(28)? & 0x3fff)
-            }
-            b"VP8L" => {
-                if *bytes.get(20)? != 0x2f {
-                    return None;
-                }
-                let bits = u32::from_le_bytes(bytes.get(21..25)?.try_into().ok()?);
-                ((bits & 0x3fff) + 1, ((bits >> 14) & 0x3fff) + 1)
-            }
-            b"VP8X" => (u24_le(24)? + 1, u24_le(27)? + 1),
-            _ => return None,
-        };
-        return Some(("image/webp", width, height));
-    }
-    None
-}
-
-fn check_sprite(bytes: &[u8], content_type: &str) -> Result<(), String> {
-    let Some((detected, width, height)) = sniff_image(bytes) else {
-        return Err("is not a readable PNG/GIF/WebP image".to_string());
-    };
-    if detected != content_type {
-        return Err(format!(
-            "is {detected} but its extension says {content_type}"
-        ));
-    }
-    if width == 0 || height == 0 {
-        return Err("has a zero width or height".to_string());
-    }
-    if width > MAX_SPRITE_SIDE
-        || height > MAX_SPRITE_SIDE
-        || u64::from(width) * u64::from(height) > MAX_SPRITE_PIXELS
-    {
-        return Err(format!(
-            "is {width}x{height} px, over the {MAX_SPRITE_SIDE} px side / {MAX_SPRITE_PIXELS} pixel limit"
-        ));
-    }
-    Ok(())
-}
-
-#[cfg(unix)]
-mod nofollow {
-    use std::ffi::CString;
-    use std::fs::File;
-    use std::io;
-    use std::os::fd::{AsRawFd, FromRawFd};
-    use std::os::unix::fs::OpenOptionsExt;
-    use std::path::Path;
-
-    pub struct Dir(File);
-
-    fn describe(err: io::Error) -> String {
-        match err.raw_os_error() {
-            Some(libc::ELOOP) => "is a symlink".to_string(),
-            Some(libc::ENOTDIR) => "is a symlink or not a directory".to_string(),
-            _ => format!("cannot open: {err}"),
-        }
-    }
-
-    impl Dir {
-        pub fn open_root(path: &Path) -> io::Result<Self> {
-            std::fs::OpenOptions::new()
-                .read(true)
-                .custom_flags(libc::O_DIRECTORY)
-                .open(path)
-                .map(Self)
-        }
-
-        pub fn open_dir(&self, name: &str) -> Result<Self, String> {
-            self.open_at(name, libc::O_DIRECTORY).map(Self)
-        }
-
-        pub fn open_file(&self, name: &str) -> Result<File, String> {
-            self.open_at(name, 0)
-        }
-
-        fn open_at(&self, name: &str, flags: libc::c_int) -> Result<File, String> {
-            let c_name = CString::new(name).map_err(|_| "name contains NUL".to_string())?;
-            let fd = unsafe {
-                libc::openat(
-                    self.0.as_raw_fd(),
-                    c_name.as_ptr(),
-                    libc::O_RDONLY | libc::O_NOFOLLOW | libc::O_NONBLOCK | libc::O_CLOEXEC | flags,
-                )
-            };
-            if fd < 0 {
-                return Err(describe(io::Error::last_os_error()));
-            }
-            Ok(unsafe { File::from_raw_fd(fd) })
-        }
-    }
-}
-
-#[cfg(windows)]
-mod nofollow {
-    use std::ffi::OsString;
-    use std::fs::File;
-    use std::io;
-    use std::os::windows::ffi::OsStringExt;
-    use std::os::windows::fs::{MetadataExt, OpenOptionsExt};
-    use std::os::windows::io::AsRawHandle;
-    use std::path::{Path, PathBuf};
-
-    use windows_sys::Win32::Storage::FileSystem::{
-        FILE_ATTRIBUTE_REPARSE_POINT, FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT,
-        FILE_NAME_NORMALIZED, GetFinalPathNameByHandleW, VOLUME_NAME_DOS,
-    };
-
-    pub struct Dir(PathBuf);
-
-    fn final_path(file: &File) -> io::Result<PathBuf> {
-        let mut buf = vec![0u16; 512];
-        loop {
-            let len = unsafe {
-                GetFinalPathNameByHandleW(
-                    file.as_raw_handle(),
-                    buf.as_mut_ptr(),
-                    buf.len() as u32,
-                    FILE_NAME_NORMALIZED | VOLUME_NAME_DOS,
-                )
-            } as usize;
-            if len == 0 {
-                return Err(io::Error::last_os_error());
-            }
-            if len < buf.len() {
-                buf.truncate(len);
-                return Ok(PathBuf::from(OsString::from_wide(&buf)));
-            }
-            buf.resize(len, 0);
-        }
-    }
-
-    impl Dir {
-        pub fn open_root(path: &Path) -> io::Result<Self> {
-            let canonical = std::fs::canonicalize(path)?;
-            if !std::fs::metadata(&canonical)?.is_dir() {
-                return Err(io::Error::other("not a directory"));
-            }
-            Ok(Self(canonical))
-        }
-
-        pub fn open_dir(&self, name: &str) -> Result<Self, String> {
-            let dir = self.open_at(name, FILE_FLAG_BACKUP_SEMANTICS)?;
-            let meta = dir
-                .metadata()
-                .map_err(|err| format!("cannot stat: {err}"))?;
-            if !meta.is_dir() {
-                return Err("is not a directory".to_string());
-            }
-            let path = final_path(&dir).map_err(|err| format!("cannot resolve: {err}"))?;
-            Ok(Self(path))
-        }
-
-        pub fn open_file(&self, name: &str) -> Result<File, String> {
-            self.open_at(name, 0)
-        }
-
-        fn open_at(&self, name: &str, flags: u32) -> Result<File, String> {
-            let file = std::fs::OpenOptions::new()
-                .read(true)
-                .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT | flags)
-                .open(self.0.join(name))
-                .map_err(|err| format!("cannot open: {err}"))?;
-            let meta = file
-                .metadata()
-                .map_err(|err| format!("cannot stat: {err}"))?;
-            if meta.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
-                return Err("is a symlink or reparse point".to_string());
-            }
-            let opened = final_path(&file).map_err(|err| format!("cannot resolve: {err}"))?;
-            if opened.parent() != Some(self.0.as_path()) {
-                return Err("was moved outside its directory while opening".to_string());
-            }
-            Ok(file)
-        }
-    }
-}
-
-use nofollow::Dir;
-
-fn read_limited(dir: &Dir, name: &str, max_bytes: u64) -> Result<Vec<u8>, String> {
-    let file = dir.open_file(name)?;
-    let meta = file
-        .metadata()
-        .map_err(|err| format!("cannot stat: {err}"))?;
-    if !meta.is_file() {
-        return Err("is not a regular file".to_string());
-    }
-    #[cfg(unix)]
-    if std::os::unix::fs::MetadataExt::nlink(&meta) > 1 {
-        return Err("has more than one hard link".to_string());
-    }
-    if meta.len() > max_bytes {
-        return Err(format!(
-            "is {} bytes, over the {max_bytes} byte limit",
-            meta.len()
-        ));
-    }
-    let mut bytes = Vec::new();
-    file.take(max_bytes + 1)
-        .read_to_end(&mut bytes)
-        .map_err(|err| format!("cannot read: {err}"))?;
-    if bytes.len() as u64 > max_bytes {
-        return Err(format!(
-            "grew past the {max_bytes} byte limit while reading"
-        ));
-    }
-    Ok(bytes)
 }
 
 fn load_user_pack(root: &Dir, id: &str) -> Result<MascotPack, String> {
@@ -572,6 +337,7 @@ pub async fn file(
 mod tests {
     use super::super::router;
     use super::super::test_support::*;
+    use super::image::png;
     use super::*;
     use axum::body::Body;
     use axum::http::Request;
@@ -597,14 +363,6 @@ mod tests {
         std::fs::create_dir_all(&pack_dir).unwrap();
         std::fs::write(pack_dir.join("manifest.json"), manifest).unwrap();
         std::fs::write(pack_dir.join("sprite.png"), sprite).unwrap();
-    }
-
-    fn png(width: u32, height: u32) -> Vec<u8> {
-        let mut bytes = b"\x89PNG\r\n\x1a\n\0\0\0\x0dIHDR".to_vec();
-        bytes.extend_from_slice(&width.to_be_bytes());
-        bytes.extend_from_slice(&height.to_be_bytes());
-        bytes.extend_from_slice(&[8, 3, 0, 0, 0]);
-        bytes
     }
 
     fn minimal_manifest(sprite: &str) -> String {
@@ -815,97 +573,11 @@ mod tests {
         assert!(registry.find("my-pack").is_none());
     }
 
-    fn webp(fourcc: &[u8; 4], payload: &[u8]) -> Vec<u8> {
-        let mut bytes = b"RIFF\0\0\0\0WEBP".to_vec();
-        bytes.extend_from_slice(fourcc);
-        bytes.extend_from_slice(&(payload.len() as u32).to_le_bytes());
-        bytes.extend_from_slice(payload);
-        bytes
-    }
-
-    #[test]
-    fn image_headers_are_parsed() {
-        assert_eq!(sniff_image(&png(384, 96)), Some(("image/png", 384, 96)));
-        assert_eq!(
-            sniff_image(b"GIF89a\x40\x01\xf0\x00\x80\0\0"),
-            Some(("image/gif", 320, 240))
-        );
-        assert_eq!(
-            sniff_image(b"GIF87a\x08\0\x10\0"),
-            Some(("image/gif", 8, 16))
-        );
-        assert_eq!(
-            sniff_image(&webp(
-                b"VP8 ",
-                &[0x10, 0x02, 0x00, 0x9d, 0x01, 0x2a, 0x40, 0x01, 0xf0, 0x00]
-            )),
-            Some(("image/webp", 320, 240))
-        );
-        let (w, h) = (320u32 - 1, 240u32 - 1);
-        let bits = w | h << 14;
-        let mut vp8l = vec![0x2f];
-        vp8l.extend_from_slice(&bits.to_le_bytes());
-        assert_eq!(
-            sniff_image(&webp(b"VP8L", &vp8l)),
-            Some(("image/webp", 320, 240))
-        );
-        assert_eq!(
-            sniff_image(&webp(
-                b"VP8X",
-                &[0x10, 0, 0, 0, 0x3f, 0x01, 0x00, 0xef, 0x00, 0x00]
-            )),
-            Some(("image/webp", 320, 240))
-        );
-    }
-
     #[test]
     fn bundled_sprites_pass_the_sprite_checks() {
         for bundled in BUNDLED {
             check_sprite(bundled.sprite, "image/png").unwrap();
         }
-    }
-
-    #[test]
-    fn truncated_or_garbage_image_headers_are_rejected() {
-        let full = png(8, 8);
-        for len in 0..24 {
-            assert_eq!(sniff_image(&full[..len]), None, "png truncated to {len}");
-        }
-        assert_eq!(sniff_image(b"GIF89a\x08\0\x08"), None);
-        assert_eq!(sniff_image(b"GIF88a\x08\0\x08\0"), None);
-        let vp8 = webp(
-            b"VP8 ",
-            &[0x10, 0x02, 0x00, 0x9d, 0x01, 0x2a, 0x40, 0x01, 0xf0, 0x00],
-        );
-        for len in 0..30 {
-            assert_eq!(sniff_image(&vp8[..len]), None, "vp8 truncated to {len}");
-        }
-        assert_eq!(
-            sniff_image(&webp(
-                b"VP8 ",
-                &[0x10, 0x02, 0x00, 0, 0, 0, 0x40, 0x01, 0xf0, 0x00]
-            )),
-            None
-        );
-        assert_eq!(sniff_image(&webp(b"VP8L", &[0x00, 0, 0, 0, 0])), None);
-        assert_eq!(sniff_image(&webp(b"VP9 ", &[0; 10])), None);
-        assert_eq!(sniff_image(b"not an image at all, just text"), None);
-        let mut bad_chunk = png(8, 8);
-        bad_chunk[12..16].copy_from_slice(b"IDAT");
-        assert_eq!(sniff_image(&bad_chunk), None);
-    }
-
-    #[test]
-    fn sprite_dimensions_are_limited() {
-        assert!(check_sprite(&png(4096, 1024), "image/png").is_ok());
-        assert!(check_sprite(&png(2048, 2048), "image/png").is_ok());
-        assert!(check_sprite(&png(4097, 8), "image/png").is_err());
-        assert!(check_sprite(&png(8, 4097), "image/png").is_err());
-        assert!(check_sprite(&png(4096, 2048), "image/png").is_err());
-        assert!(check_sprite(&png(u32::MAX, u32::MAX), "image/png").is_err());
-        assert!(check_sprite(&png(0, 8), "image/png").is_err());
-        assert!(check_sprite(&png(8, 8), "image/gif").is_err());
-        assert!(check_sprite(b"x", "image/png").is_err());
     }
 
     #[test]
@@ -919,34 +591,6 @@ mod tests {
         );
         let registry = MascotRegistry::load(Some(dir.path()));
         assert!(registry.find("my-pack").is_none());
-    }
-
-    #[test]
-    fn read_limited_rejects_a_file_over_the_limit() {
-        let dir = tempfile::tempdir().unwrap();
-        std::fs::write(dir.path().join("f"), [0u8; 11]).unwrap();
-        std::fs::write(dir.path().join("g"), [0u8; 10]).unwrap();
-        let root = Dir::open_root(dir.path()).unwrap();
-        assert!(read_limited(&root, "f", 10).is_err());
-        assert_eq!(read_limited(&root, "g", 10).unwrap().len(), 10);
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn opening_through_a_symlink_is_refused() {
-        let dir = tempfile::tempdir().unwrap();
-        let real = dir.path().join("real");
-        std::fs::create_dir(&real).unwrap();
-        std::fs::write(real.join("file"), b"x").unwrap();
-        std::os::unix::fs::symlink(&real, dir.path().join("dir-link")).unwrap();
-        std::os::unix::fs::symlink(real.join("file"), dir.path().join("file-link")).unwrap();
-        let root = Dir::open_root(dir.path()).unwrap();
-        assert!(root.open_dir("dir-link").is_err());
-        assert_eq!(
-            read_limited(&root, "file-link", 10).unwrap_err(),
-            "is a symlink"
-        );
-        assert!(root.open_dir("real").is_ok());
     }
 
     #[cfg(unix)]

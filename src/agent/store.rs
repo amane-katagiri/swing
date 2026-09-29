@@ -215,6 +215,13 @@ impl<C: KuboStore, N: Nip05Verify, R: ReportRelay> Agent<C, N, R> {
 
     pub(super) async fn apply_site_event(&self, ev: &SiteEvent) -> bool {
         let pubkey_hex = ev.pubkey.to_hex();
+        let key = state::site_key(&pubkey_hex, &ev.d);
+        self.worth_fetching(&key, ev, &pubkey_hex).await
+            && self.fetch_directory(&key, ev).await
+            && self.store_fetched(&key, ev, &pubkey_hex).await
+    }
+
+    async fn worth_fetching(&self, key: &SiteKey, ev: &SiteEvent, pubkey_hex: &str) -> bool {
         if !self.is_target(&ev.pubkey) {
             warn!(
                 site = %ev.d,
@@ -223,15 +230,14 @@ impl<C: KuboStore, N: Nip05Verify, R: ReportRelay> Agent<C, N, R> {
             );
             return false;
         }
-        let key = state::site_key(&pubkey_hex, &ev.d);
-        if self.rejected.lock().unwrap().get(&key) == Some(&ev.cid) {
+        if self.rejected.lock().unwrap().get(key) == Some(&ev.cid) {
             debug!(cid = %ev.cid, site = %ev.d, "skip: this cid was already rejected after fetch");
             return false;
         }
 
         let precheck = {
             let state = self.state.lock().await;
-            decide(&state, &key, &pubkey_hex, ev, ev.size, &self.config)
+            decide(&state, key, pubkey_hex, ev, ev.size, &self.config)
         };
         if precheck.store.is_none() {
             info!(site = %ev.d, pubkey = %pubkey_hex, reason = %precheck.reason, "skip");
@@ -240,12 +246,15 @@ impl<C: KuboStore, N: Nip05Verify, R: ReportRelay> Agent<C, N, R> {
 
         let nip05_mode = self.config.policy.nip05;
         if nip05_mode != CheckMode::Off {
-            let verified = self.nip05_verified(&key, ev, &pubkey_hex).await;
+            let verified = self.nip05_verified(key, ev, pubkey_hex).await;
             if nip05_mode == CheckMode::Require && !verified {
                 return false;
             }
         }
+        true
+    }
 
+    async fn fetch_directory(&self, key: &SiteKey, ev: &SiteEvent) -> bool {
         let limits = FetchLimits {
             max_bytes: policy::fetch_limit(&self.config.policy),
             total: self.config.agent.fetch_timeout,
@@ -255,7 +264,7 @@ impl<C: KuboStore, N: Nip05Verify, R: ReportRelay> Agent<C, N, R> {
             Ok(Fetched::Complete) => {}
             Ok(Fetched::TooLarge) => {
                 warn!(cid = %ev.cid, site = %ev.d, limit = limits.max_bytes, "content exceeds the fetch limit; aborted");
-                self.reject(&key, ev);
+                self.reject(key, ev);
                 return false;
             }
             Err(e) => {
@@ -264,19 +273,21 @@ impl<C: KuboStore, N: Nip05Verify, R: ReportRelay> Agent<C, N, R> {
             }
         }
         match self.ipfs.is_directory(&ev.cid).await {
-            Ok(true) => {}
+            Ok(true) => true,
             Ok(false) => {
                 warn!(cid = %ev.cid, site = %ev.d, reason = "not_a_directory", "cid is not a UnixFS directory; not storing");
-                self.reject(&key, ev);
-                return false;
+                self.reject(key, ev);
+                false
             }
             Err(e) => {
                 warn!(cid = %ev.cid, site = %ev.d, error = %e, "checking whether cid is a directory failed; will retry on next poll");
-                return false;
+                false
             }
         }
+    }
 
-        let path = self.layout.agent_version(&pubkey_hex, &ev.d, ev.created_at);
+    async fn store_fetched(&self, key: &SiteKey, ev: &SiteEvent, pubkey_hex: &str) -> bool {
+        let path = self.layout.agent_version(pubkey_hex, &ev.d, ev.created_at);
         let _storing = Storing::new(&self.storing, path.clone());
         {
             let _state = self.state.lock().await;
@@ -310,15 +321,15 @@ impl<C: KuboStore, N: Nip05Verify, R: ReportRelay> Agent<C, N, R> {
             warn!(cid = %ev.cid, site = %ev.d, declared, actual = size, "size tag understates the content");
         }
 
-        let decision = decide(&state, &key, &pubkey_hex, ev, Some(size), &self.config);
+        let decision = decide(&state, key, pubkey_hex, ev, Some(size), &self.config);
         let Some(cid) = decision.store else {
             warn!(cid = %ev.cid, site = %ev.d, size, reason = %decision.reason, "rejected after fetch");
             self.remove_path(&path).await;
-            self.reject(&key, ev);
+            self.reject(key, ev);
             return false;
         };
         state.apply_store(
-            &key,
+            key,
             VersionRecord {
                 cid: cid.clone(),
                 size,
@@ -326,10 +337,10 @@ impl<C: KuboStore, N: Nip05Verify, R: ReportRelay> Agent<C, N, R> {
                 stored_at: now_secs(),
             },
         );
-        self.rejected.lock().unwrap().remove(&key);
-        let evicted = state.remove_versions(&key, &decision.evict);
+        self.rejected.lock().unwrap().remove(key);
+        let evicted = state.remove_versions(key, &decision.evict);
         self.save(&state, "store").await;
-        self.remove_versions(&key, &evicted).await;
+        self.remove_versions(key, &evicted).await;
         info!(cid = %cid, site = %ev.d, pubkey = %pubkey_hex, size, "stored");
         true
     }

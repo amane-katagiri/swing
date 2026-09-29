@@ -1,6 +1,6 @@
 # マスコットのパックを作る
 
-Desktop 画面を歩き回るマスコットを自分で作る人向けの手引き。キーの意味・値の範囲・検証規則の正本は [`architecture/dashboard/mascot.md#パック形式-1`](architecture/dashboard/mascot.md#パック形式-1) と [`architecture/dashboard.md#マスコットのパック配信srcdashboardmascotsrs`](architecture/dashboard.md#マスコットのパック配信srcdashboardmascotsrs)。この文書と食い違うときはそちらに従う。
+Desktop 画面を歩き回るマスコットを自分で作る人向けの手引き。キーの意味・値の範囲・検証規則の正本は [`architecture/dashboard/mascot.md#パック形式-1`](architecture/dashboard/mascot.md#パック形式-1) と [`architecture/dashboard.md#マスコットのパック配信srcdashboardmascots`](architecture/dashboard.md#マスコットのパック配信srcdashboardmascots)。この文書と食い違うときはそちらに従う。
 
 ## パックの置き方
 
