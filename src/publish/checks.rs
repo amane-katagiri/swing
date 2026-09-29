@@ -3,14 +3,13 @@ use std::path::Path;
 
 use anyhow::{Context, Result};
 
-use crate::config::CheckMode;
+use crate::config::{CheckMode, DEFAULT_MAX_UPDATE_SIZE};
 use crate::format::{format_bytes, format_bytes_approx};
 use crate::ipfs::{self, SiteEntry};
 use crate::nostr::SiteEvent;
 
 pub const SIZE_GUIDELINE: u64 = 512 << 20;
 pub const LISTED_DOTFILES: usize = 10;
-const DEFAULT_MAX_UPDATE_SIZE: u64 = 2 << 30;
 
 pub fn find_dotfiles<'a>(
     paths: impl IntoIterator<Item = &'a str>,

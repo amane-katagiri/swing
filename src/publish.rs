@@ -313,6 +313,149 @@ pub async fn check_unchanged(
     UnchangedOutcome::decide(mode, previous, cid)
 }
 
+pub fn validate_message(message: &str) -> Result<(), String> {
+    let max = nostr::budget::MAX_CONTENT_BYTES;
+    if message.len() > max {
+        return Err(format!(
+            "must not exceed {max} bytes (got {} bytes)",
+            message.len()
+        ));
+    }
+    Ok(())
+}
+
+fn check_arguments<'a>(
+    d: &str,
+    url: Option<&str>,
+    title: Option<&'a str>,
+    message: Option<&str>,
+) -> Result<Option<&'a str>> {
+    if let Err(e) = validate_site_fields(d, url) {
+        return Err(match e {
+            SiteFieldError::InvalidD(err) => err.context("invalid --site"),
+            SiteFieldError::InvalidUrl(url) => {
+                anyhow::anyhow!("invalid --url: {url} is not an http or https URL")
+            }
+            SiteFieldError::InvalidTitle => unreachable!(),
+        });
+    }
+    let title = match normalize_title(title) {
+        Ok(title) => title,
+        Err(SiteFieldError::InvalidTitle) => {
+            anyhow::bail!(
+                "invalid --title: must not exceed 256 bytes and must not contain control characters"
+            )
+        }
+        Err(_) => unreachable!(),
+    };
+    if let Some(message) = message {
+        validate_message(message).map_err(|e| anyhow::anyhow!("invalid --message: {e}"))?;
+    }
+    Ok(title)
+}
+
+fn print_header(d: &str, url: Option<&str>, title: Option<&str>, message: Option<&str>) {
+    println!("Site: {d}");
+    if let Some(url) = url {
+        println!("URL: {url}");
+    }
+    if let Some(title) = title {
+        println!("Title: {title}");
+    }
+    if let Some(message) = message {
+        println!("Message: {message}");
+    }
+}
+
+async fn run_nip05_check(mode: CheckMode, d: &str, pubkey_hex: &str) -> Result<()> {
+    if mode == CheckMode::Off {
+        return Ok(());
+    }
+    let verifier = nip05::HttpNip05Verifier::new();
+    let outcome = check_nip05(&verifier, mode, d, pubkey_hex).await;
+
+    println!();
+    println!("NIP-05");
+    println!("  {}", outcome.line);
+
+    if let Some(msg) = outcome.abort {
+        anyhow::bail!(msg);
+    }
+    Ok(())
+}
+
+async fn run_local_checks(dir: &Path, modes: &Modes, dotfiles_allow: &[String]) -> Result<()> {
+    let local =
+        LocalChecks::run(dir, modes.check_dotfiles, modes.check_size, dotfiles_allow).await?;
+    if local.all_off() {
+        return Ok(());
+    }
+    println!();
+    println!("Checks");
+    for line in local.lines() {
+        println!("  {line}");
+    }
+    if let Some(msg) = local.abort_message() {
+        anyhow::bail!(msg);
+    }
+    Ok(())
+}
+
+async fn withdraw_if_unchanged(
+    relay: &RelayClient,
+    ipfs: &IpfsClient,
+    mode: CheckMode,
+    site_event_kind: u16,
+    d: &str,
+    stage: &IpfsStage,
+) -> Result<bool> {
+    if mode == CheckMode::Off {
+        return Ok(false);
+    }
+    let unchanged = check_unchanged(relay, mode, site_event_kind, d, &stage.cid).await;
+    println!();
+    println!("Previous version");
+    println!("  {}", unchanged.line());
+    if !unchanged.stops_publish() {
+        return Ok(false);
+    }
+    relay.shutdown().await;
+    ipfs.mfs_remove(&stage.path)
+        .await
+        .with_context(|| format!("could not remove {}", stage.path))?;
+    println!("  \u{2713} removed {}", stage.path);
+    println!();
+    println!("Unchanged; not published.");
+    Ok(true)
+}
+
+async fn announce(
+    relay: RelayClient,
+    remote_signer: bool,
+    announcement: &SiteAnnouncement<'_>,
+) -> Result<()> {
+    println!();
+    println!("Nostr");
+
+    if remote_signer {
+        println!("  waiting for the signer app to sign the site event...");
+    }
+    let results = match sign_and_send(&relay, announcement).await {
+        Ok(results) => results,
+        Err(e) => {
+            relay.shutdown().await;
+            return Err(e);
+        }
+    };
+
+    nostr::print_relay_send_result_lines(&results);
+    relay.shutdown().await;
+    if !results.iter().any(|r| r.ok) {
+        anyhow::bail!("no relay accepted the site event; old versions were kept");
+    }
+    Ok(())
+}
+
 pub async fn run(
     config: Config,
     d: String,
@@ -322,71 +465,19 @@ pub async fn run(
     title: Option<String>,
     message: Option<String>,
 ) -> Result<()> {
-    if let Err(e) = validate_site_fields(&d, url.as_deref()) {
-        return Err(match e {
-            SiteFieldError::InvalidD(err) => err.context("invalid --site"),
-            SiteFieldError::InvalidUrl(url) => {
-                anyhow::anyhow!("invalid --url: {url} is not an http or https URL")
-            }
-            SiteFieldError::InvalidTitle => unreachable!(),
-        });
-    }
-    let title = match normalize_title(title.as_deref()) {
-        Ok(title) => title,
-        Err(SiteFieldError::InvalidTitle) => {
-            anyhow::bail!(
-                "invalid --title: must not exceed 256 bytes and must not contain control characters"
-            )
-        }
-        Err(_) => unreachable!(),
-    };
+    let url = url.as_deref();
+    let message = message.as_deref();
+    let title = check_arguments(&d, url, title.as_deref(), message)?;
     let modes = resolve_modes(&overrides, &config.publish)
         .map_err(|(name, e)| e.context(format!("invalid --{name}")))?;
 
-    println!("Site: {d}");
-    if let Some(url) = &url {
-        println!("URL: {url}");
-    }
-    if let Some(title) = &title {
-        println!("Title: {title}");
-    }
-    if let Some(message) = &message {
-        println!("Message: {message}");
-    }
+    print_header(&d, url, title, message);
 
     let signer = Signer::require(&config)?;
     let pubkey_hex = signer.public_key().to_hex();
 
-    if modes.nip05 != CheckMode::Off {
-        let verifier = nip05::HttpNip05Verifier::new();
-        let outcome = check_nip05(&verifier, modes.nip05, &d, &pubkey_hex).await;
-
-        println!();
-        println!("NIP-05");
-        println!("  {}", outcome.line);
-
-        if let Some(msg) = outcome.abort {
-            anyhow::bail!(msg);
-        }
-    }
-
-    let local = LocalChecks::run(
-        dir,
-        modes.check_dotfiles,
-        modes.check_size,
-        &config.publish.dotfiles_allow,
-    )
-    .await?;
-    if !local.all_off() {
-        println!();
-        println!("Checks");
-        for line in local.lines() {
-            println!("  {line}");
-        }
-        if let Some(msg) = local.abort_message() {
-            anyhow::bail!(msg);
-        }
-    }
+    run_nip05_check(modes.nip05, &d, &pubkey_hex).await?;
+    run_local_checks(dir, &modes, &config.publish.dotfiles_allow).await?;
 
     println!();
     println!("IPFS");
@@ -402,63 +493,35 @@ pub async fn run(
     let remote_signer = signer.is_remote();
     let relay = RelayClient::connect(signer, &config.nostr.relays).await?;
 
-    if modes.check_unchanged != CheckMode::Off {
-        let unchanged = check_unchanged(
-            &relay,
-            modes.check_unchanged,
-            config.nostr.site_event_kind,
-            &d,
-            &stage.cid,
-        )
-        .await;
-        println!();
-        println!("Previous version");
-        println!("  {}", unchanged.line());
-        if unchanged.stops_publish() {
-            relay.shutdown().await;
-            ipfs.mfs_remove(&stage.path)
-                .await
-                .with_context(|| format!("could not remove {}", stage.path))?;
-            println!("  \u{2713} removed {}", stage.path);
-            println!();
-            println!("Unchanged; not published.");
-            return Ok(());
-        }
-    }
-
-    println!();
-    println!("Nostr");
-
-    if remote_signer {
-        println!("  waiting for the signer app to sign the site event...");
-    }
-    let send_result = sign_and_send(
+    let site_event_kind = config.nostr.site_event_kind;
+    if withdraw_if_unchanged(
         &relay,
+        &ipfs,
+        modes.check_unchanged,
+        site_event_kind,
+        &d,
+        &stage,
+    )
+    .await?
+    {
+        return Ok(());
+    }
+
+    announce(
+        relay,
+        remote_signer,
         &SiteAnnouncement {
-            site_event_kind: config.nostr.site_event_kind,
+            site_event_kind,
             d: &d,
             cid: &stage.cid,
-            url: url.as_deref(),
+            url,
             size: stage.size,
             title,
-            message: message.as_deref(),
+            message,
             created_at,
         },
     )
-    .await;
-    let results = match send_result {
-        Ok(results) => results,
-        Err(e) => {
-            relay.shutdown().await;
-            return Err(e);
-        }
-    };
-
-    nostr::print_relay_send_result_lines(&results);
-    relay.shutdown().await;
-    if !results.iter().any(|r| r.ok) {
-        anyhow::bail!("no relay accepted the site event; old versions were kept");
-    }
+    .await?;
 
     println!();
     println!("Old versions (keeping {})", config.publish.keep_versions);
@@ -511,6 +574,25 @@ mod tests {
             normalize_title(Some("bad\ntitle")),
             Err(SiteFieldError::InvalidTitle)
         ));
+    }
+
+    #[test]
+    fn validate_message_allows_up_to_the_content_limit() {
+        let at_limit = "a".repeat(nostr::budget::MAX_CONTENT_BYTES);
+        assert!(validate_message(&at_limit).is_ok());
+        let over = "あ".repeat(nostr::budget::MAX_CONTENT_BYTES / 3 + 1);
+        assert!(validate_message(&over).unwrap_err().contains("4096 bytes"));
+    }
+
+    #[test]
+    fn check_arguments_names_the_message_flag() {
+        let over = "a".repeat(nostr::budget::MAX_CONTENT_BYTES + 1);
+        let err = check_arguments("example.com", None, None, Some(&over)).unwrap_err();
+        assert!(err.to_string().starts_with("invalid --message: "), "{err}");
+        assert_eq!(
+            check_arguments("example.com", None, Some(" t "), Some("note")).unwrap(),
+            Some("t")
+        );
     }
 
     struct FakeNip05(nip05::VerificationResult);

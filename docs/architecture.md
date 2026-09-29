@@ -48,7 +48,7 @@ swing/
     lib.rs           各モジュールを公開するクレートルート
     activity.rs      agent とダッシュボードが共有する最新の publish・レプリカ報告の時刻（`/api/activity` 用。メモリだけに持つ）
     main.rs          CLI エントリ (clap)
-    config/          設定読み込み、サイズ・時間パーサ（mod.rs: 型・パーサ・`Config::load`、build.rs: セクションごとの解決関数に分けた `build_config`）
+    config/          設定読み込み、サイズ・時間パーサ（mod.rs: 型・パーサ・`Config::load`、build.rs: `Resolver` とセクションごとの解決関数に分けた `build_config`、build/tests.rs: そのテスト）
     nostr/           Nostr イベントまわり（mod.rs: 未来ずれの許容・上限 `budget`・replaceable の新旧比較、client.rs: relay 接続・取得・購読・発行と送信結果、site.rs: site event の検証・組み立て・パース・最新版の選択、follow.rs: follow set の選択と p タグの取り出し、report.rs: レプリカ報告の組み立て・パース）
     ipfs.rs          Kubo RPC クライアント
     mfs.rs           MFS 上のパスの組み立て
@@ -157,7 +157,7 @@ swing-tray [--config <path>]
 2. 環境変数 `SWING_CONFIG`
 3. `<カレントディレクトリ>/swing.toml`
 
-すべての設定キー（TOML フィールド、環境変数、種類、例、編集可否、説明）は `src/settings/mod.rs` の `SETTINGS`（`Setting` の配列）1 箇所にカタログとして持つ。既定値は `config::build_config`（`src/config/build.rs`）が持つ。環境変数は TOML の値を上書きする。`config::build_config` は各キーの env 名をこのカタログから `settings::env_of("<section>.<field>")` で引く。
+すべての設定キー（TOML フィールド、環境変数、種類、例、編集可否、説明）は `src/settings/mod.rs` の `SETTINGS`（`Setting` の配列）1 箇所にカタログとして持つ。既定値は `config::build_config`（`src/config/build.rs`）が持つ（`[policy].max_update_size` の既定値は `publish` のサイズ確認の表示でも使うので `config::DEFAULT_MAX_UPDATE_SIZE` として公開している）。環境変数は TOML の値を上書きする。`config::build_config` はキーごとの解決を `Resolver` にまとめ、各キーの env 名をこのカタログから `settings::env_of("<section>.<field>")` で引き、値の出どころ（`Env`・`File`・`Default`）を `Config.sources` に記録する。値のパースや検証の失敗は、実際に使った出どころの名前で報告する（環境変数から来た値なら `invalid SWING_MAX_PER_SITE`・`SWING_POLL_INTERVAL must be greater than 0`、設定ファイルから来た値なら `invalid [policy].max_per_site`・`[agent].poll_interval must be greater than 0`）。
 
 `swing.example.toml` と `.env.example` はこのカタログから生成する（生成するコマンドは [`architecture/cli.md#config-example--config-env-example`](architecture/cli.md#config-example--config-env-example)）。両ファイルは `.gitattributes` で改行を LF に固定している。
 
@@ -186,7 +186,7 @@ compose でのコンテナ内の待ち受けとホスト側の公開アドレス
 - `[publish].dotfiles_allow` の各要素は前後の空白を除き、空になった要素は捨てる。残りは `.` で始まり、`/` を含まず、`.`・`..` そのものでないこと（`config::validate_dotfile_name`）。違反はエラー。TOML で空配列にすると何も見逃さない（環境変数は空文字だと未設定扱いなので、`,` だけを渡す）。未設定なら `config::DEFAULT_DOTFILES_ALLOW`。
 - `report_ttl` の半分が `poll_interval` 以下ならエラー。`report_ttl` が `nostr::MAX_REPORT_AGE`（7 日）を超えてもエラー（`report_ttl must be at most 7d`）。
 - `mfs_root` は `/` で始まる絶対パス。`/` そのもの、空の要素、`.`、`..` を含むとエラー。末尾の `/` は取り除く。
-- `[kubo].managed = true` のときに `[ipfs].api`（TOML または `SWING_IPFS_API`）が指定されているとエラー（`[ipfs].api conflicts with [kubo].managed = true`）。
+- `[kubo].managed = true` のときに `[ipfs].api`（TOML または `SWING_IPFS_API`）が指定されているとエラー（`[ipfs].api conflicts with [kubo].managed = true`。環境変数なら `SWING_IPFS_API conflicts with ...`）。
 - `[gateway].listen` が `off` 以外で `[gateway].hosts` が空ならエラー。
 - `[gateway].hosts` の各要素は前後の空白を除き、空になった要素は捨てる。残りは `a-z 0-9 . -` のみで構成され、`.` で始まらず・終わらず、`..` を含まないこと（`config::is_valid_gateway_host`。`docker/kubo-init.d/001-swing-config.sh` の `SWING_GATEWAY_HOSTS` 検証と同じ規則）。違反はエラー。
 - `[gateway].hosts` の要素がダッシュボードで開けるホスト名（`[dashboard].allowed_hosts` の要素（大文字小文字を区別しない）と `localhost`・`127.0.0.1`）と重なればエラー（[`architecture/gateway.md`](architecture/gateway.md#設定gateway)）。

@@ -1,407 +1,275 @@
+use std::str::FromStr;
+
 use super::*;
 use crate::settings;
 
-#[allow(clippy::too_many_arguments)]
-fn resolve<T>(
-    sources: &mut BTreeMap<String, Source>,
-    key: &str,
-    get_env: &impl Fn(&str) -> Option<String>,
-    env_key: &str,
-    file_val: Option<String>,
-    parse: impl Fn(&str) -> Result<T>,
-    env_ctx: &str,
-    file_ctx: &str,
-    default: T,
-) -> Result<T> {
-    match get_env(env_key) {
-        Some(v) => {
-            sources.insert(key.to_string(), Source::Env);
-            parse(&v).context(env_ctx.to_string())
+enum Picked<T> {
+    Env(String),
+    File(T),
+    Default,
+}
+
+struct Resolver<E> {
+    sources: BTreeMap<String, Source>,
+    get_env: E,
+}
+
+impl<E: Fn(&str) -> Option<String>> Resolver<E> {
+    fn new(get_env: E) -> Self {
+        Self {
+            sources: BTreeMap::new(),
+            get_env,
         }
-        None => match file_val {
-            Some(v) => {
-                sources.insert(key.to_string(), Source::File);
-                parse(&v).context(file_ctx.to_string())
-            }
-            None => {
-                sources.insert(key.to_string(), Source::Default);
-                Ok(default)
-            }
-        },
     }
-}
 
-#[allow(clippy::too_many_arguments)]
-fn resolve_typed<T>(
-    sources: &mut BTreeMap<String, Source>,
-    key: &str,
-    get_env: &impl Fn(&str) -> Option<String>,
-    env_key: &str,
-    file_val: Option<T>,
-    parse: impl Fn(&str) -> Result<T>,
-    env_ctx: &str,
-    default: T,
-) -> Result<T> {
-    match get_env(env_key) {
-        Some(v) => {
-            sources.insert(key.to_string(), Source::Env);
-            parse(&v).context(env_ctx.to_string())
+    fn pick<T>(&mut self, key: &str, file_val: Option<T>) -> Picked<T> {
+        let picked = match (self.get_env)(settings::env_of(key)) {
+            Some(v) => Picked::Env(v),
+            None => match file_val {
+                Some(v) => Picked::File(v),
+                None => Picked::Default,
+            },
+        };
+        let source = match picked {
+            Picked::Env(_) => Source::Env,
+            Picked::File(_) => Source::File,
+            Picked::Default => Source::Default,
+        };
+        self.sources.insert(key.to_string(), source);
+        picked
+    }
+
+    fn source(&self, key: &str) -> Option<Source> {
+        self.sources.get(key).copied()
+    }
+
+    fn name(&self, key: &str) -> String {
+        let setting =
+            settings::find(key).unwrap_or_else(|| panic!("config: no such catalog key: {key}"));
+        match self.source(key) {
+            Some(Source::Env) => setting.env.to_string(),
+            _ => format!("[{}].{}", setting.section, setting.field),
         }
-        None => match file_val {
-            Some(v) => {
-                sources.insert(key.to_string(), Source::File);
-                Ok(v)
+    }
+
+    fn invalid(&self, key: &str) -> String {
+        format!("invalid {}", self.name(key))
+    }
+
+    fn parse<T>(
+        &mut self,
+        key: &str,
+        file_val: Option<String>,
+        parse: impl Fn(&str) -> Result<T>,
+        default: T,
+    ) -> Result<T> {
+        Ok(self.opt(key, file_val, parse)?.unwrap_or(default))
+    }
+
+    fn opt<T>(
+        &mut self,
+        key: &str,
+        file_val: Option<String>,
+        parse: impl Fn(&str) -> Result<T>,
+    ) -> Result<Option<T>> {
+        match self.pick(key, file_val) {
+            Picked::Env(v) | Picked::File(v) => {
+                parse(&v).map(Some).with_context(|| self.invalid(key))
             }
-            None => {
-                sources.insert(key.to_string(), Source::Default);
-                Ok(default)
+            Picked::Default => Ok(None),
+        }
+    }
+
+    fn typed<T>(
+        &mut self,
+        key: &str,
+        file_val: Option<T>,
+        parse: impl Fn(&str) -> Result<T>,
+        default: T,
+    ) -> Result<T> {
+        Ok(self.opt_typed(key, file_val, parse)?.unwrap_or(default))
+    }
+
+    fn opt_typed<T>(
+        &mut self,
+        key: &str,
+        file_val: Option<T>,
+        parse: impl Fn(&str) -> Result<T>,
+    ) -> Result<Option<T>> {
+        match self.pick(key, file_val) {
+            Picked::Env(v) => parse(&v).map(Some).with_context(|| self.invalid(key)),
+            Picked::File(v) => Ok(Some(v)),
+            Picked::Default => Ok(None),
+        }
+    }
+
+    fn opt_string(&mut self, key: &str, file_val: Option<String>) -> Option<String> {
+        match self.pick(key, file_val) {
+            Picked::Env(v) | Picked::File(v) => Some(v),
+            Picked::Default => None,
+        }
+    }
+
+    fn string(&mut self, key: &str, file_val: Option<String>, default: &str) -> String {
+        self.opt_string(key, file_val)
+            .unwrap_or_else(|| default.to_string())
+    }
+
+    fn rebase(&self, key: &str, base: Option<&Path>, path: PathBuf) -> PathBuf {
+        match base {
+            Some(base) if self.source(key) != Some(Source::Env) && path.is_relative() => {
+                base.join(path.strip_prefix(".").unwrap_or(&path))
             }
-        },
-    }
-}
-
-fn rebase_path(
-    sources: &BTreeMap<String, Source>,
-    key: &str,
-    base: Option<&Path>,
-    path: PathBuf,
-) -> PathBuf {
-    match base {
-        Some(base) if sources.get(key) != Some(&Source::Env) && path.is_relative() => {
-            base.join(path.strip_prefix(".").unwrap_or(&path))
+            _ => path,
         }
-        _ => path,
-    }
-}
-
-fn resolve_opt_path(
-    sources: &mut BTreeMap<String, Source>,
-    key: &str,
-    get_env: &impl Fn(&str) -> Option<String>,
-    env_key: &str,
-    file_val: Option<String>,
-    base: Option<&Path>,
-) -> Option<PathBuf> {
-    let env_val = get_env(env_key);
-    sources.insert(
-        key.to_string(),
-        if env_val.is_some() {
-            Source::Env
-        } else if file_val.is_some() {
-            Source::File
-        } else {
-            Source::Default
-        },
-    );
-    match env_val {
-        Some(v) => Some(PathBuf::from(v)),
-        None => file_val.map(|v| rebase_path(sources, key, base, PathBuf::from(v))),
-    }
-}
-
-/// One function instead of three: the callers differ only in whether file
-/// entries get trimmed and whether an empty result falls back to a default.
-fn resolve_csv_list(
-    sources: &mut BTreeMap<String, Source>,
-    key: &str,
-    get_env: &impl Fn(&str) -> Option<String>,
-    env_key: &str,
-    file_val: Option<Vec<String>>,
-    clean_file_items: bool,
-    default_when_empty: Option<&[&str]>,
-) -> Vec<String> {
-    fn split_csv(v: &str) -> Vec<String> {
-        v.split(',')
-            .map(|s| s.trim().to_string())
-            .filter(|s| !s.is_empty())
-            .collect()
-    }
-    fn clean(items: Vec<String>) -> Vec<String> {
-        items
-            .into_iter()
-            .map(|s| s.trim().to_string())
-            .filter(|s| !s.is_empty())
-            .collect()
     }
 
-    let (mut list, mut source) = match get_env(env_key) {
-        Some(v) => (split_csv(&v), Source::Env),
-        None => {
-            let has_file_val = file_val.is_some();
-            let raw = file_val.unwrap_or_default();
-            let cleaned = if clean_file_items { clean(raw) } else { raw };
-            let source = if has_file_val {
-                Source::File
-            } else {
-                Source::Default
-            };
-            (cleaned, source)
+    fn opt_path(
+        &mut self,
+        key: &str,
+        file_val: Option<String>,
+        base: Option<&Path>,
+    ) -> Option<PathBuf> {
+        match self.pick(key, file_val) {
+            Picked::Env(v) => Some(PathBuf::from(v)),
+            Picked::File(v) => Some(self.rebase(key, base, PathBuf::from(v))),
+            Picked::Default => None,
         }
-    };
-
-    if list.is_empty()
-        && let Some(default) = default_when_empty
-    {
-        list = default.iter().map(|s| s.to_string()).collect();
-        source = Source::Default;
     }
 
-    sources.insert(key.to_string(), source);
-    list
+    fn list(
+        &mut self,
+        key: &str,
+        file_val: Option<Vec<String>>,
+        clean_file_items: bool,
+        default: &[&str],
+    ) -> Vec<String> {
+        fn clean<'a>(items: impl Iterator<Item = &'a str>) -> Vec<String> {
+            items
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect()
+        }
+        match self.pick(key, file_val) {
+            Picked::Env(v) => clean(v.split(',')),
+            Picked::File(items) if clean_file_items => clean(items.iter().map(String::as_str)),
+            Picked::File(items) => items,
+            Picked::Default => default.iter().map(|s| s.to_string()).collect(),
+        }
+    }
+
+    fn positive<T: PartialEq + Default>(&self, key: &str, value: T) -> Result<T> {
+        if value == T::default() {
+            bail!("{} must be greater than 0", self.name(key));
+        }
+        Ok(value)
+    }
 }
 
-fn resolve_nostr(
-    sources: &mut BTreeMap<String, Source>,
-    get_env: &impl Fn(&str) -> Option<String>,
+fn integer<T: FromStr>(v: &str) -> Result<T>
+where
+    T::Err: std::error::Error + Send + Sync + 'static,
+{
+    v.parse().context("expected integer")
+}
+
+fn u16_value(v: &str) -> Result<u16> {
+    v.parse().context("expected u16")
+}
+
+fn resolve_nostr<E: Fn(&str) -> Option<String>>(
+    r: &mut Resolver<E>,
     file: NostrFile,
 ) -> Result<NostrConfig> {
-    let secret_key_env = get_env(settings::env_of("nostr.secret_key"));
-    sources.insert(
-        "nostr.secret_key".to_string(),
-        if secret_key_env.is_some() {
-            Source::Env
-        } else if file.secret_key.is_some() {
-            Source::File
-        } else {
-            Source::Default
-        },
-    );
-    let secret_key = secret_key_env.or(file.secret_key);
+    let secret_key = r.opt_string("nostr.secret_key", file.secret_key);
 
-    let relays = resolve_csv_list(
-        sources,
-        "nostr.relays",
-        get_env,
-        settings::env_of("nostr.relays"),
-        file.relays,
-        false,
-        Some(&DEFAULT_RELAYS),
-    );
-
-    let mirror_set = resolve(
-        sources,
-        "nostr.mirror_set",
-        get_env,
-        settings::env_of("nostr.mirror_set"),
-        file.mirror_set,
-        |s| Ok(s.to_string()),
-        "invalid SWING_MIRROR_SET",
-        "invalid [nostr].mirror_set",
-        "swing".to_string(),
-    )?;
-
-    let site_event_kind = resolve_typed(
-        sources,
-        "nostr.site_event_kind",
-        get_env,
-        settings::env_of("nostr.site_event_kind"),
-        file.site_event_kind,
-        |v| v.parse().context("expected u16"),
-        "invalid SWING_SITE_EVENT_KIND: expected u16",
-        35980,
-    )?;
-
-    let replica_event_kind = resolve_typed(
-        sources,
-        "nostr.replica_event_kind",
-        get_env,
-        settings::env_of("nostr.replica_event_kind"),
-        file.replica_event_kind,
-        |v| v.parse().context("expected u16"),
-        "invalid SWING_REPLICA_EVENT_KIND: expected u16",
-        35981,
-    )?;
+    let mut relays = r.list("nostr.relays", file.relays, false, &DEFAULT_RELAYS);
+    if relays.is_empty() {
+        relays = DEFAULT_RELAYS.iter().map(|s| s.to_string()).collect();
+        r.sources
+            .insert("nostr.relays".to_string(), Source::Default);
+    }
 
     Ok(NostrConfig {
         secret_key: secret_key.map(NostrSecretKey::from),
         relays,
-        mirror_set,
-        site_event_kind,
-        replica_event_kind,
+        mirror_set: r.string("nostr.mirror_set", file.mirror_set, "swing"),
+        site_event_kind: r.typed(
+            "nostr.site_event_kind",
+            file.site_event_kind,
+            u16_value,
+            35980,
+        )?,
+        replica_event_kind: r.typed(
+            "nostr.replica_event_kind",
+            file.replica_event_kind,
+            u16_value,
+            35981,
+        )?,
     })
 }
 
-fn resolve_ipfs(
-    sources: &mut BTreeMap<String, Source>,
-    get_env: &impl Fn(&str) -> Option<String>,
+fn resolve_ipfs<E: Fn(&str) -> Option<String>>(
+    r: &mut Resolver<E>,
     file: IpfsFile,
     kubo_managed: bool,
 ) -> Result<IpfsConfig> {
-    let ipfs_api_env = get_env(settings::env_of("ipfs.api"));
-    let ipfs_api_explicit_source = if ipfs_api_env.is_some() {
-        Some(Source::Env)
-    } else if file.api.is_some() {
-        Some(Source::File)
-    } else {
-        None
+    let api = match r.opt_string("ipfs.api", file.api) {
+        Some(_) if kubo_managed => bail!(
+            "{} conflicts with {} = true",
+            r.name("ipfs.api"),
+            r.name("kubo.managed")
+        ),
+        None if kubo_managed => IpfsApi::Managed,
+        Some(url) => IpfsApi::Url(url),
+        None => IpfsApi::Url("http://127.0.0.1:5001".to_string()),
     };
-    let ipfs_api_file = ipfs_api_env.or(file.api);
-    if kubo_managed && ipfs_api_file.is_some() {
-        bail!("[ipfs].api conflicts with [kubo].managed = true");
-    }
-    let api = if kubo_managed {
-        IpfsApi::Managed
-    } else {
-        IpfsApi::Url(ipfs_api_file.unwrap_or_else(|| "http://127.0.0.1:5001".to_string()))
-    };
-    sources.insert(
-        "ipfs.api".to_string(),
-        if kubo_managed {
-            Source::Default
-        } else {
-            ipfs_api_explicit_source.unwrap_or(Source::Default)
-        },
-    );
 
-    let mfs_root = resolve(
-        sources,
+    let mfs_root = r.parse(
         "ipfs.mfs_root",
-        get_env,
-        settings::env_of("ipfs.mfs_root"),
         file.mfs_root,
         parse_mfs_root,
-        "invalid SWING_MFS_ROOT",
-        "invalid [ipfs].mfs_root",
         "/swing".to_string(),
     )?;
 
     Ok(IpfsConfig { api, mfs_root })
 }
 
-fn resolve_policy(
-    sources: &mut BTreeMap<String, Source>,
-    get_env: &impl Fn(&str) -> Option<String>,
+fn resolve_policy<E: Fn(&str) -> Option<String>>(
+    r: &mut Resolver<E>,
     file: PolicyFile,
 ) -> Result<PolicyConfig> {
-    let max_total_storage = resolve(
-        sources,
+    let max_total_storage = r.parse(
         "policy.max_total_storage",
-        get_env,
-        settings::env_of("policy.max_total_storage"),
         file.max_total_storage,
         parse_size,
-        "invalid SWING_MAX_TOTAL_STORAGE",
-        "invalid [policy].max_total_storage",
         100 * (1u64 << 30),
     )?;
-
-    let max_per_site = resolve(
-        sources,
+    let max_per_site = r.parse(
         "policy.max_per_site",
-        get_env,
-        settings::env_of("policy.max_per_site"),
         file.max_per_site,
         parse_size,
-        "invalid SWING_MAX_PER_SITE",
-        "invalid [policy].max_per_site",
         10 * (1u64 << 30),
     )?;
-
-    let max_per_account = resolve(
-        sources,
+    let max_per_account = r.parse(
         "policy.max_per_account",
-        get_env,
-        settings::env_of("policy.max_per_account"),
         file.max_per_account,
         parse_size,
-        "invalid SWING_MAX_PER_ACCOUNT",
-        "invalid [policy].max_per_account",
         20 * (1u64 << 30),
     )?;
-
-    let max_sites_per_account = resolve_typed(
-        sources,
+    let max_sites_per_account = r.typed(
         "policy.max_sites_per_account",
-        get_env,
-        settings::env_of("policy.max_sites_per_account"),
         file.max_sites_per_account,
-        |v| v.parse().context("expected integer"),
-        "invalid SWING_MAX_SITES_PER_ACCOUNT: expected integer",
+        integer,
         10,
     )?;
-    if max_sites_per_account == 0 {
-        bail!("max_sites_per_account must be greater than 0");
-    }
-
-    let max_update_size = resolve(
-        sources,
+    let max_sites_per_account =
+        r.positive("policy.max_sites_per_account", max_sites_per_account)?;
+    let max_update_size = r.parse(
         "policy.max_update_size",
-        get_env,
-        settings::env_of("policy.max_update_size"),
         file.max_update_size,
         parse_size,
-        "invalid SWING_MAX_UPDATE_SIZE",
-        "invalid [policy].max_update_size",
-        2 * (1u64 << 30),
-    )?;
-
-    let keep_versions = resolve_typed(
-        sources,
-        "policy.keep_versions",
-        get_env,
-        settings::env_of("policy.keep_versions"),
-        file.keep_versions,
-        |v| v.parse().context("expected integer"),
-        "invalid SWING_KEEP_VERSIONS: expected integer",
-        5,
-    )?;
-
-    let keep_days = resolve_typed(
-        sources,
-        "policy.keep_days",
-        get_env,
-        settings::env_of("policy.keep_days"),
-        file.keep_days,
-        |v| v.parse().context("expected integer"),
-        "invalid SWING_KEEP_DAYS: expected integer",
-        365,
-    )?;
-
-    let min_update_interval = resolve(
-        sources,
-        "policy.min_update_interval",
-        get_env,
-        settings::env_of("policy.min_update_interval"),
-        file.min_update_interval,
-        parse_duration_secs,
-        "invalid SWING_MIN_UPDATE_INTERVAL",
-        "invalid [policy].min_update_interval",
-        3600,
-    )?;
-
-    let remove_on_unfollow = resolve_typed(
-        sources,
-        "policy.remove_on_unfollow",
-        get_env,
-        settings::env_of("policy.remove_on_unfollow"),
-        file.remove_on_unfollow,
-        parse_bool,
-        "invalid SWING_REMOVE_ON_UNFOLLOW",
-        true,
-    )?;
-
-    let nip05 = resolve(
-        sources,
-        "policy.nip05",
-        get_env,
-        settings::env_of("policy.nip05"),
-        file.nip05,
-        parse_check_mode,
-        "invalid SWING_NIP05",
-        "invalid [policy].nip05",
-        CheckMode::Warn,
-    )?;
-
-    let nip05_cache_ttl = resolve(
-        sources,
-        "policy.nip05_cache_ttl",
-        get_env,
-        settings::env_of("policy.nip05_cache_ttl"),
-        file.nip05_cache_ttl,
-        parse_duration_secs,
-        "invalid SWING_NIP05_CACHE_TTL",
-        "invalid [policy].nip05_cache_ttl",
-        86_400,
+        DEFAULT_MAX_UPDATE_SIZE,
     )?;
 
     Ok(PolicyConfig {
@@ -410,101 +278,74 @@ fn resolve_policy(
         max_per_account,
         max_sites_per_account,
         max_update_size,
-        keep_versions,
-        keep_days,
-        min_update_interval,
-        remove_on_unfollow,
-        nip05,
-        nip05_cache_ttl,
+        keep_versions: r.typed("policy.keep_versions", file.keep_versions, integer, 5)?,
+        keep_days: r.typed("policy.keep_days", file.keep_days, integer, 365)?,
+        min_update_interval: r.parse(
+            "policy.min_update_interval",
+            file.min_update_interval,
+            parse_duration_secs,
+            3600,
+        )?,
+        remove_on_unfollow: r.typed(
+            "policy.remove_on_unfollow",
+            file.remove_on_unfollow,
+            parse_bool,
+            true,
+        )?,
+        nip05: r.parse(
+            "policy.nip05",
+            file.nip05,
+            parse_check_mode,
+            CheckMode::Warn,
+        )?,
+        nip05_cache_ttl: r.parse(
+            "policy.nip05_cache_ttl",
+            file.nip05_cache_ttl,
+            parse_duration_secs,
+            86_400,
+        )?,
     })
 }
 
-fn resolve_agent(
-    sources: &mut BTreeMap<String, Source>,
-    get_env: &impl Fn(&str) -> Option<String>,
+fn resolve_agent<E: Fn(&str) -> Option<String>>(
+    r: &mut Resolver<E>,
     file: AgentFile,
     base: Option<&Path>,
 ) -> Result<AgentConfig> {
-    let state_dir = resolve(
-        sources,
-        "agent.state_dir",
-        get_env,
-        settings::env_of("agent.state_dir"),
-        file.state_dir,
-        |s| Ok(s.to_string()),
-        "invalid SWING_STATE_DIR",
-        "invalid [agent].state_dir",
-        "./data".to_string(),
-    )?;
+    let state_dir = r.string("agent.state_dir", file.state_dir, "./data");
+    let state_dir = r.rebase("agent.state_dir", base, PathBuf::from(state_dir));
 
-    let poll_interval = resolve(
-        sources,
+    let poll_interval = r.parse(
         "agent.poll_interval",
-        get_env,
-        settings::env_of("agent.poll_interval"),
         file.poll_interval,
         parse_duration_secs,
-        "invalid SWING_POLL_INTERVAL",
-        "invalid [agent].poll_interval",
         300,
     )?;
-    if poll_interval == 0 {
-        bail!("poll_interval must be greater than 0");
-    }
+    let poll_interval = r.positive("agent.poll_interval", poll_interval)?;
 
-    let fetch_timeout = resolve(
-        sources,
+    let fetch_timeout = r.parse(
         "agent.fetch_timeout",
-        get_env,
-        settings::env_of("agent.fetch_timeout"),
         file.fetch_timeout,
         parse_duration_secs,
-        "invalid SWING_FETCH_TIMEOUT",
-        "invalid [agent].fetch_timeout",
         900,
     )?;
-    if fetch_timeout == 0 {
-        bail!("SWING_FETCH_TIMEOUT must be greater than 0");
-    }
+    let fetch_timeout = r.positive("agent.fetch_timeout", fetch_timeout)?;
 
-    let fetch_idle_timeout = resolve(
-        sources,
+    let fetch_idle_timeout = r.parse(
         "agent.fetch_idle_timeout",
-        get_env,
-        settings::env_of("agent.fetch_idle_timeout"),
         file.fetch_idle_timeout,
         parse_duration_secs,
-        "invalid SWING_FETCH_IDLE_TIMEOUT",
-        "invalid [agent].fetch_idle_timeout",
         120,
     )?;
-    if fetch_idle_timeout == 0 {
-        bail!("SWING_FETCH_IDLE_TIMEOUT must be greater than 0");
-    }
+    let fetch_idle_timeout = r.positive("agent.fetch_idle_timeout", fetch_idle_timeout)?;
 
-    let concurrency = resolve_typed(
-        sources,
-        "agent.concurrency",
-        get_env,
-        settings::env_of("agent.concurrency"),
-        file.concurrency,
-        |v| v.parse().context("expected integer"),
-        "invalid SWING_CONCURRENCY: expected integer",
-        4,
-    )?;
-    if concurrency == 0 {
-        bail!("concurrency must be greater than 0");
-    }
+    let concurrency = r.typed("agent.concurrency", file.concurrency, integer, 4)?;
+    let concurrency = r.positive("agent.concurrency", concurrency)?;
 
-    let report_ttl = resolve(
-        sources,
+    let report_ttl = r.parse(
         "agent.report_ttl",
-        get_env,
-        settings::env_of("agent.report_ttl"),
         file.report_ttl,
         parse_duration_secs,
-        "invalid SWING_REPORT_TTL",
-        "invalid [agent].report_ttl",
         3 * 86_400,
     )?;
     if report_ttl / 2 <= poll_interval {
@@ -518,7 +359,7 @@ fn resolve_agent(
     }
 
     Ok(AgentConfig {
-        state_dir: rebase_path(sources, "agent.state_dir", base, PathBuf::from(state_dir)),
+        state_dir,
         poll_interval: Duration::from_secs(poll_interval),
         fetch_timeout: Duration::from_secs(fetch_timeout),
         fetch_idle_timeout: Duration::from_secs(fetch_idle_timeout),
@@ -527,81 +368,47 @@ fn resolve_agent(
     })
 }
 
-fn resolve_publish(
-    sources: &mut BTreeMap<String, Source>,
-    get_env: &impl Fn(&str) -> Option<String>,
+fn resolve_publish<E: Fn(&str) -> Option<String>>(
+    r: &mut Resolver<E>,
     file: PublishFile,
 ) -> Result<PublishConfig> {
-    let nip05 = resolve(
-        sources,
+    let nip05 = r.parse(
         "publish.nip05",
-        get_env,
-        settings::env_of("publish.nip05"),
         file.nip05,
         parse_check_mode,
-        "invalid SWING_PUBLISH_NIP05",
-        "invalid [publish].nip05",
         CheckMode::Warn,
     )?;
 
-    let keep_versions = resolve_typed(
-        sources,
-        "publish.keep_versions",
-        get_env,
-        settings::env_of("publish.keep_versions"),
-        file.keep_versions,
-        |v| v.parse().context("expected integer"),
-        "invalid SWING_PUBLISH_KEEP_VERSIONS: expected integer",
-        5,
-    )?;
-    if keep_versions == 0 {
-        bail!("publish keep_versions must be greater than 0");
-    }
+    let keep_versions = r.typed("publish.keep_versions", file.keep_versions, integer, 5)?;
+    let keep_versions = r.positive("publish.keep_versions", keep_versions)?;
 
-    let mut check_mode = |key: &str, file_val: Option<String>, default: CheckMode| {
-        let field = key.trim_start_matches("publish.");
-        let env = settings::env_of(key);
-        resolve(
-            sources,
-            key,
-            get_env,
-            env,
-            file_val,
-            parse_check_mode,
-            &format!("invalid {env}"),
-            &format!("invalid [publish].{field}"),
-            default,
-        )
-    };
-    let check_dotfiles = check_mode(
+    let check_dotfiles = r.parse(
         "publish.check_dotfiles",
         file.check_dotfiles,
+        parse_check_mode,
         CheckMode::Require,
     )?;
-    let check_size = check_mode("publish.check_size", file.check_size, CheckMode::Warn)?;
-    let check_unchanged = check_mode(
+    let check_size = r.parse(
+        "publish.check_size",
+        file.check_size,
+        parse_check_mode,
+        CheckMode::Warn,
+    )?;
+    let check_unchanged = r.parse(
         "publish.check_unchanged",
         file.check_unchanged,
+        parse_check_mode,
         CheckMode::Require,
     )?;
 
-    let mut dotfiles_allow = resolve_csv_list(
-        sources,
+    let dotfiles_allow = r.list(
         "publish.dotfiles_allow",
-        get_env,
-        settings::env_of("publish.dotfiles_allow"),
         file.dotfiles_allow,
         true,
-        None,
+        &DEFAULT_DOTFILES_ALLOW,
     );
-    if sources.get("publish.dotfiles_allow") == Some(&Source::Default) {
-        dotfiles_allow = DEFAULT_DOTFILES_ALLOW
-            .iter()
-            .map(|s| s.to_string())
-            .collect();
-    }
     for name in &dotfiles_allow {
-        validate_dotfile_name(name).context("invalid publish dotfiles_allow")?;
+        validate_dotfile_name(name).with_context(|| r.invalid("publish.dotfiles_allow"))?;
     }
 
     Ok(PublishConfig {
@@ -614,134 +421,41 @@ fn resolve_publish(
     })
 }
 
-fn resolve_dashboard(
-    sources: &mut BTreeMap<String, Source>,
-    get_env: &impl Fn(&str) -> Option<String>,
+fn resolve_dashboard<E: Fn(&str) -> Option<String>>(
+    r: &mut Resolver<E>,
     file: DashboardFile,
     base: Option<&Path>,
 ) -> Result<DashboardConfig> {
-    let listen = resolve(
-        sources,
+    let listen = r.parse(
         "dashboard.listen",
-        get_env,
-        settings::env_of("dashboard.listen"),
         file.listen,
         parse_dashboard_listen,
-        "invalid SWING_DASHBOARD_LISTEN",
-        "invalid [dashboard].listen",
         SocketAddr::from(([127, 0, 0, 1], 8082)),
     )?;
-
-    let ui = resolve_typed(
-        sources,
-        "dashboard.ui",
-        get_env,
-        settings::env_of("dashboard.ui"),
-        file.ui,
-        parse_bool,
-        "invalid SWING_DASHBOARD_UI",
-        true,
-    )?;
-
-    let allowed_hosts = resolve_csv_list(
-        sources,
-        "dashboard.allowed_hosts",
-        get_env,
-        settings::env_of("dashboard.allowed_hosts"),
-        file.allowed_hosts,
-        false,
-        None,
-    );
-
-    let public_url_env = get_env(settings::env_of("dashboard.public_url"));
-    sources.insert(
-        "dashboard.public_url".to_string(),
-        if public_url_env.is_some() {
-            Source::Env
-        } else if file.public_url.is_some() {
-            Source::File
-        } else {
-            Source::Default
-        },
-    );
-    let public_url = match public_url_env {
-        Some(v) => Some(parse_public_url(&v).context("invalid SWING_DASHBOARD_PUBLIC_URL")?),
-        None => file
-            .public_url
-            .as_deref()
-            .map(parse_public_url)
-            .transpose()
-            .context("invalid [dashboard].public_url")?,
-    };
-
-    let gateway_raw = resolve(
-        sources,
+    let ui = r.typed("dashboard.ui", file.ui, parse_bool, true)?;
+    let allowed_hosts = r.list("dashboard.allowed_hosts", file.allowed_hosts, false, &[]);
+    let public_url = r.opt("dashboard.public_url", file.public_url, parse_public_url)?;
+    let gateway = r.parse(
         "dashboard.gateway",
-        get_env,
-        settings::env_of("dashboard.gateway"),
         file.gateway,
         parse_dashboard_gateway,
-        "invalid SWING_DASHBOARD_GATEWAY",
-        "invalid [dashboard].gateway",
         "http://localhost:8080".to_string(),
     )?;
-    let gateway = Some(gateway_raw).filter(|s| !s.is_empty());
+    let gateway = Some(gateway).filter(|s| !s.is_empty());
 
-    let custom_css = resolve_opt_path(
-        sources,
-        "dashboard.custom_css",
-        get_env,
-        settings::env_of("dashboard.custom_css"),
-        file.custom_css,
-        base,
-    );
-    let desktop_page = resolve_opt_path(
-        sources,
-        "dashboard.desktop_page",
-        get_env,
-        settings::env_of("dashboard.desktop_page"),
-        file.desktop_page,
-        base,
-    );
-    let desktop_page_css = resolve_opt_path(
-        sources,
-        "dashboard.desktop_page_css",
-        get_env,
-        settings::env_of("dashboard.desktop_page_css"),
-        file.desktop_page_css,
-        base,
-    );
-    let desktop_banner = resolve_opt_path(
-        sources,
-        "dashboard.desktop_banner",
-        get_env,
-        settings::env_of("dashboard.desktop_banner"),
-        file.desktop_banner,
-        base,
-    );
-    let mascots_dir = resolve_opt_path(
-        sources,
-        "dashboard.mascots_dir",
-        get_env,
-        settings::env_of("dashboard.mascots_dir"),
-        file.mascots_dir,
-        base,
-    );
+    let custom_css = r.opt_path("dashboard.custom_css", file.custom_css, base);
+    let desktop_page = r.opt_path("dashboard.desktop_page", file.desktop_page, base);
+    let desktop_page_css = r.opt_path("dashboard.desktop_page_css", file.desktop_page_css, base);
+    let desktop_banner = r.opt_path("dashboard.desktop_banner", file.desktop_banner, base);
+    let mascots_dir = r.opt_path("dashboard.mascots_dir", file.mascots_dir, base);
 
-    let max_upload = resolve(
-        sources,
+    let max_upload = r.parse(
         "dashboard.max_upload",
-        get_env,
-        settings::env_of("dashboard.max_upload"),
         file.max_upload,
         parse_size,
-        "invalid SWING_DASHBOARD_MAX_UPLOAD",
-        "invalid [dashboard].max_upload",
         2 * (1u64 << 30),
     )?;
-    if max_upload == 0 {
-        bail!("dashboard max_upload must be greater than 0");
-    }
+    let max_upload = r.positive("dashboard.max_upload", max_upload)?;
 
     Ok(DashboardConfig {
         listen,
@@ -758,114 +472,48 @@ fn resolve_dashboard(
     })
 }
 
-fn resolve_kubo(
-    sources: &mut BTreeMap<String, Source>,
-    get_env: &impl Fn(&str) -> Option<String>,
+fn resolve_kubo<E: Fn(&str) -> Option<String>>(
+    r: &mut Resolver<E>,
     file: KuboFile,
     state_dir: &Path,
     max_total_storage: u64,
     base: Option<&Path>,
 ) -> Result<KuboConfig> {
-    let managed = resolve_typed(
-        sources,
-        "kubo.managed",
-        get_env,
-        settings::env_of("kubo.managed"),
-        file.managed,
-        parse_bool,
-        "invalid SWING_KUBO_MANAGED",
-        true,
-    )?;
+    let managed = r.typed("kubo.managed", file.managed, parse_bool, true)?;
+    let binary = r.opt_path("kubo.binary", file.binary, base);
 
-    let binary = resolve_opt_path(
-        sources,
-        "kubo.binary",
-        get_env,
-        settings::env_of("kubo.binary"),
-        file.binary,
-        base,
-    );
-
-    let repo = resolve(
-        sources,
-        "kubo.repo",
-        get_env,
-        settings::env_of("kubo.repo"),
-        file.repo,
-        |v| Ok(PathBuf::from(v.trim())),
-        "invalid SWING_KUBO_REPO",
-        "invalid [kubo].repo",
-        state_dir.join("kubo"),
-    )?;
-    let repo = match sources.get("kubo.repo") {
-        Some(Source::Default) => repo,
-        _ => rebase_path(sources, "kubo.repo", base, repo),
+    let repo = match r.pick("kubo.repo", file.repo) {
+        Picked::Env(v) => PathBuf::from(v.trim()),
+        Picked::File(v) => r.rebase("kubo.repo", base, PathBuf::from(v.trim())),
+        Picked::Default => state_dir.join("kubo"),
     };
 
-    let storage_max = resolve(
-        sources,
+    let storage_max = r.parse(
         "kubo.storage_max",
-        get_env,
-        settings::env_of("kubo.storage_max"),
         file.storage_max,
         parse_size,
-        "invalid SWING_KUBO_STORAGE_MAX",
-        "invalid [kubo].storage_max",
         max_total_storage,
     )?;
 
-    let provide_strategy = resolve(
-        sources,
-        "kubo.provide_strategy",
-        get_env,
-        settings::env_of("kubo.provide_strategy"),
-        file.provide_strategy,
-        |s| Ok(s.to_string()),
-        "invalid SWING_KUBO_PROVIDE_STRATEGY",
-        "invalid [kubo].provide_strategy",
-        "pinned+mfs".to_string(),
-    )?;
+    let provide_strategy = r.string("kubo.provide_strategy", file.provide_strategy, "pinned+mfs");
     if provide_strategy.trim().is_empty() {
-        bail!("[kubo].provide_strategy must not be empty");
+        bail!("{} must not be empty", r.name("kubo.provide_strategy"));
     }
 
-    let gateway_listen = resolve(
-        sources,
+    let gateway_listen = r.parse(
         "kubo.gateway_listen",
-        get_env,
-        settings::env_of("kubo.gateway_listen"),
         file.gateway_listen,
         |v| {
             v.trim()
                 .parse::<SocketAddr>()
                 .with_context(|| format!("invalid gateway listen address: {v}"))
         },
-        "invalid SWING_KUBO_GATEWAY_LISTEN",
-        "invalid [kubo].gateway_listen",
         SocketAddr::from(([127, 0, 0, 1], 8080)),
     )?;
 
-    let kubo_swarm_port_env = get_env(settings::env_of("kubo.swarm_port"));
-    sources.insert(
-        "kubo.swarm_port".to_string(),
-        if kubo_swarm_port_env.is_some() {
-            Source::Env
-        } else if file.swarm_port.is_some() {
-            Source::File
-        } else {
-            Source::Default
-        },
-    );
-    let swarm_port = match kubo_swarm_port_env {
-        Some(v) => Some(
-            v.trim()
-                .parse::<u16>()
-                .context("invalid SWING_KUBO_SWARM_PORT: expected u16")?,
-        ),
-        None => file.swarm_port,
-    };
+    let swarm_port = r.opt_typed("kubo.swarm_port", file.swarm_port, |v| u16_value(v.trim()))?;
     if swarm_port == Some(0) {
-        bail!("[kubo].swarm_port must be between 1 and 65535");
+        bail!("{} must be between 1 and 65535", r.name("kubo.swarm_port"));
     }
 
     Ok(KuboConfig {
@@ -879,37 +527,18 @@ fn resolve_kubo(
     })
 }
 
-fn resolve_gateway(
-    sources: &mut BTreeMap<String, Source>,
-    get_env: &impl Fn(&str) -> Option<String>,
+fn resolve_gateway<E: Fn(&str) -> Option<String>>(
+    r: &mut Resolver<E>,
     file: GatewayFile,
     kubo_managed: bool,
     kubo_gateway_listen: SocketAddr,
 ) -> Result<GatewayConfig> {
-    let listen = resolve(
-        sources,
-        "gateway.listen",
-        get_env,
-        settings::env_of("gateway.listen"),
-        file.listen,
-        parse_listen,
-        "invalid SWING_GATEWAY_LISTEN",
-        "invalid [gateway].listen",
-        Listen::Off,
-    )?;
+    let listen = r.parse("gateway.listen", file.listen, parse_listen, Listen::Off)?;
 
-    let hosts = resolve_csv_list(
-        sources,
-        "gateway.hosts",
-        get_env,
-        settings::env_of("gateway.hosts"),
-        file.hosts,
-        true,
-        None,
-    );
+    let hosts = r.list("gateway.hosts", file.hosts, true, &[]);
     for host in &hosts {
         if !is_valid_gateway_host(host) {
-            bail!("invalid [gateway].hosts entry: {host}");
+            bail!("invalid {} entry: {host}", r.name("gateway.hosts"));
         }
     }
     if !matches!(listen, Listen::Off) && hosts.is_empty() {
@@ -921,17 +550,7 @@ fn resolve_gateway(
     } else {
         "http://127.0.0.1:8080".to_string()
     };
-    let upstream = resolve(
-        sources,
-        "gateway.upstream",
-        get_env,
-        settings::env_of("gateway.upstream"),
-        file.upstream,
-        |s| Ok(s.to_string()),
-        "invalid SWING_GATEWAY_UPSTREAM",
-        "invalid [gateway].upstream",
-        upstream_default,
-    )?;
+    let upstream = r.string("gateway.upstream", file.upstream, &upstream_default);
 
     Ok(GatewayConfig {
         listen,
@@ -962,30 +581,22 @@ pub(super) fn build_config(
     base: Option<&Path>,
     get_env: impl Fn(&str) -> Option<String>,
 ) -> Result<Config> {
-    let mut sources: BTreeMap<String, Source> = BTreeMap::new();
-    let get_env = &get_env;
+    let mut r = Resolver::new(get_env);
 
-    let nostr = resolve_nostr(&mut sources, get_env, file.nostr)?;
-    let policy = resolve_policy(&mut sources, get_env, file.policy)?;
-    let agent = resolve_agent(&mut sources, get_env, file.agent, base)?;
+    let nostr = resolve_nostr(&mut r, file.nostr)?;
+    let policy = resolve_policy(&mut r, file.policy)?;
+    let agent = resolve_agent(&mut r, file.agent, base)?;
     let kubo = resolve_kubo(
-        &mut sources,
-        get_env,
+        &mut r,
         file.kubo,
         &agent.state_dir,
         policy.max_total_storage,
         base,
     )?;
-    let ipfs = resolve_ipfs(&mut sources, get_env, file.ipfs, kubo.managed)?;
-    let publish = resolve_publish(&mut sources, get_env, file.publish)?;
-    let dashboard = resolve_dashboard(&mut sources, get_env, file.dashboard, base)?;
-    let gateway = resolve_gateway(
-        &mut sources,
-        get_env,
-        file.gateway,
-        kubo.managed,
-        kubo.gateway_listen,
-    )?;
+    let ipfs = resolve_ipfs(&mut r, file.ipfs, kubo.managed)?;
+    let publish = resolve_publish(&mut r, file.publish)?;
+    let dashboard = resolve_dashboard(&mut r, file.dashboard, base)?;
+    let gateway = resolve_gateway(&mut r, file.gateway, kubo.managed, kubo.gateway_listen)?;
     check_gateway_hosts_apart_from_dashboard(&gateway.hosts, &dashboard.allowed_hosts)?;
 
     Ok(Config {
@@ -999,981 +610,9 @@ pub(super) fn build_config(
         gateway,
         config_path: PathBuf::new(),
         config_exists: false,
-        sources,
+        sources: r.sources,
     })
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn minimal_file() -> ConfigFile {
-        ConfigFile {
-            nostr: NostrFile {
-                secret_key: Some("k".into()),
-                relays: Some(vec!["wss://r".into()]),
-                ..Default::default()
-            },
-            ..Default::default()
-        }
-    }
-
-    fn assert_env_rejects(env_key: &'static str, value: &'static str, expected_substring: &str) {
-        let err = build_config(minimal_file(), None, move |k| {
-            (k == env_key).then(|| value.to_string())
-        })
-        .unwrap_err();
-        assert!(
-            err.to_string().contains(expected_substring),
-            "expected error containing {expected_substring:?}, got: {err}"
-        );
-    }
-
-    fn file_with_paths(state_dir: &str) -> ConfigFile {
-        let mut file = minimal_file();
-        file.agent.state_dir = Some(state_dir.into());
-        file.kubo.binary = Some("bin/ipfs".into());
-        file.dashboard.mascots_dir = Some("mascots".into());
-        file
-    }
-
-    fn base_dir() -> PathBuf {
-        std::env::temp_dir().join("swing-config-dir")
-    }
-
-    #[test]
-    fn relative_file_paths_are_joined_to_the_base_dir() {
-        let base = base_dir();
-        let cfg = build_config(file_with_paths("./data"), Some(&base), |_| None).unwrap();
-        assert_eq!(cfg.agent.state_dir, base.join("data"));
-        assert_eq!(cfg.kubo.repo, base.join("data").join("kubo"));
-        assert_eq!(cfg.kubo.binary, Some(base.join("bin").join("ipfs")));
-        assert_eq!(cfg.dashboard.mascots_dir, Some(base.join("mascots")));
-    }
-
-    #[test]
-    fn env_relative_paths_are_not_joined_to_the_base_dir() {
-        let base = base_dir();
-        let cfg = build_config(file_with_paths("./data"), Some(&base), |k| match k {
-            "SWING_STATE_DIR" => Some("./env-data".into()),
-            "SWING_KUBO_BINARY" => Some("env/ipfs".into()),
-            "SWING_DASHBOARD_MASCOTS_DIR" => Some("env-mascots".into()),
-            _ => None,
-        })
-        .unwrap();
-        assert_eq!(cfg.agent.state_dir, PathBuf::from("./env-data"));
-        assert_eq!(cfg.kubo.repo, PathBuf::from("./env-data").join("kubo"));
-        assert_eq!(cfg.kubo.binary, Some(PathBuf::from("env/ipfs")));
-        assert_eq!(
-            cfg.dashboard.mascots_dir,
-            Some(PathBuf::from("env-mascots"))
-        );
-    }
-
-    #[test]
-    fn absolute_file_paths_ignore_the_base_dir() {
-        let elsewhere = std::env::temp_dir().join("swing-elsewhere");
-        let mut file = file_with_paths(&elsewhere.join("state").to_string_lossy());
-        file.kubo.repo = Some(elsewhere.join("kubo").to_string_lossy().into_owned());
-        let cfg = build_config(file, Some(&base_dir()), |_| None).unwrap();
-        assert_eq!(cfg.agent.state_dir, elsewhere.join("state"));
-        assert_eq!(cfg.kubo.repo, elsewhere.join("kubo"));
-    }
-
-    #[test]
-    fn default_kubo_repo_follows_the_rebased_state_dir() {
-        let base = base_dir();
-        let cfg = build_config(file_with_paths("data"), Some(&base), |_| None).unwrap();
-        assert_eq!(cfg.kubo.repo, base.join("data").join("kubo"));
-        assert_eq!(cfg.source_of("kubo.repo"), Some(Source::Default));
-    }
-
-    #[test]
-    fn default_state_dir_is_joined_to_the_base_dir() {
-        let base = base_dir();
-        let cfg = build_config(minimal_file(), Some(&base), |_| None).unwrap();
-        assert_eq!(cfg.agent.state_dir, base.join("data"));
-        assert_eq!(cfg.kubo.repo, base.join("data").join("kubo"));
-    }
-
-    #[test]
-    fn relative_file_paths_stay_as_written_without_a_base_dir() {
-        let cfg = build_config(file_with_paths("./data"), None, |_| None).unwrap();
-        assert_eq!(cfg.agent.state_dir, PathBuf::from("./data"));
-    }
-
-    #[test]
-    fn zero_poll_interval_is_rejected() {
-        assert_env_rejects("SWING_POLL_INTERVAL", "0s", "poll_interval");
-    }
-
-    #[test]
-    fn zero_concurrency_and_idle_timeout_are_rejected() {
-        assert_env_rejects("SWING_CONCURRENCY", "0", "concurrency");
-        assert_env_rejects("SWING_FETCH_IDLE_TIMEOUT", "0", "SWING_FETCH_IDLE_TIMEOUT");
-    }
-
-    #[test]
-    fn report_ttl_must_outlast_two_polls() {
-        let env = |ttl: &'static str| {
-            move |k: &str| match k {
-                "SWING_POLL_INTERVAL" => Some("10m".to_string()),
-                "SWING_REPORT_TTL" => Some(ttl.to_string()),
-                _ => None,
-            }
-        };
-        let err = build_config(minimal_file(), None, env("20m")).unwrap_err();
-        assert!(err.to_string().contains("report_ttl"));
-        let cfg = build_config(minimal_file(), None, env("21m")).unwrap();
-        assert_eq!(cfg.agent.report_ttl, Duration::from_secs(21 * 60));
-    }
-
-    #[test]
-    fn report_ttl_must_not_outlive_the_receivers_max_report_age() {
-        let env = |ttl: &'static str| {
-            move |k: &str| match k {
-                "SWING_REPORT_TTL" => Some(ttl.to_string()),
-                _ => None,
-            }
-        };
-        let cfg = build_config(minimal_file(), None, env("7d")).unwrap();
-        assert_eq!(
-            cfg.agent.report_ttl,
-            Duration::from_secs(crate::nostr::MAX_REPORT_AGE)
-        );
-        let err = build_config(minimal_file(), None, env("604801s")).unwrap_err();
-        assert!(
-            err.to_string().contains("report_ttl must be at most 7d"),
-            "{err}"
-        );
-    }
-
-    #[test]
-    fn zero_max_sites_per_account_is_rejected() {
-        assert_env_rejects("SWING_MAX_SITES_PER_ACCOUNT", "0", "max_sites_per_account");
-    }
-
-    #[test]
-    fn mfs_root_env_override_is_normalized() {
-        let cfg = build_config(minimal_file(), None, |k| match k {
-            "SWING_MFS_ROOT" => Some("/mirror/".into()),
-            _ => None,
-        })
-        .unwrap();
-        assert_eq!(cfg.ipfs.mfs_root, "/mirror");
-    }
-
-    #[test]
-    fn zero_publish_keep_versions_is_rejected() {
-        assert_env_rejects("SWING_PUBLISH_KEEP_VERSIONS", "0", "keep_versions");
-    }
-
-    #[test]
-    fn zero_fetch_timeout_is_rejected() {
-        assert_env_rejects("SWING_FETCH_TIMEOUT", "0", "SWING_FETCH_TIMEOUT");
-    }
-
-    #[test]
-    fn env_overrides_toml() {
-        let file = ConfigFile {
-            nostr: NostrFile {
-                secret_key: Some("file-key".into()),
-                relays: Some(vec!["wss://from-file".into()]),
-                mirror_set: Some("from-file-set".into()),
-                site_event_kind: Some(1111),
-                replica_event_kind: Some(2222),
-            },
-            ..Default::default()
-        };
-        let cfg = build_config(file, None, |k| match k {
-            "SWING_NOSTR_SECRET_KEY" => Some("env-key".into()),
-            "SWING_NOSTR_RELAYS" => Some("wss://a,wss://b".into()),
-            _ => None,
-        })
-        .unwrap();
-        assert_eq!(
-            cfg.nostr.secret_key.as_ref().unwrap().expose_secret(),
-            "env-key"
-        );
-        assert_eq!(cfg.nostr.relays, vec!["wss://a", "wss://b"]);
-        assert_eq!(cfg.nostr.mirror_set, "from-file-set");
-        assert_eq!(cfg.nostr.site_event_kind, 1111);
-        assert_eq!(cfg.nostr.replica_event_kind, 2222);
-    }
-
-    #[test]
-    fn defaults_applied_when_nothing_set() {
-        let file = ConfigFile {
-            nostr: NostrFile {
-                secret_key: Some("k".into()),
-                relays: Some(vec!["wss://r".into()]),
-                ..Default::default()
-            },
-            ..Default::default()
-        };
-        let cfg = build_config(file, None, |_| None).unwrap();
-        assert_eq!(cfg.nostr.mirror_set, "swing");
-        assert_eq!(cfg.nostr.site_event_kind, 35980);
-        assert_eq!(cfg.nostr.replica_event_kind, 35981);
-        assert_eq!(cfg.ipfs.api, IpfsApi::Managed);
-        assert_eq!(cfg.policy.max_total_storage, 100 * (1u64 << 30));
-        assert_eq!(cfg.policy.max_per_site, 10 * (1u64 << 30));
-        assert_eq!(cfg.policy.max_per_account, 20 * (1u64 << 30));
-        assert_eq!(cfg.policy.max_sites_per_account, 10);
-        assert_eq!(cfg.policy.max_update_size, 2 * (1u64 << 30));
-        assert_eq!(cfg.policy.keep_versions, 5);
-        assert_eq!(cfg.policy.keep_days, 365);
-        assert_eq!(cfg.policy.min_update_interval, 3600);
-        assert!(cfg.policy.remove_on_unfollow);
-        assert_eq!(cfg.policy.nip05, CheckMode::Warn);
-        assert_eq!(cfg.policy.nip05_cache_ttl, 86_400);
-        assert_eq!(cfg.agent.poll_interval, Duration::from_secs(300));
-        assert_eq!(cfg.agent.fetch_timeout, Duration::from_secs(900));
-        assert_eq!(cfg.agent.fetch_idle_timeout, Duration::from_secs(120));
-        assert_eq!(cfg.agent.concurrency, 4);
-        assert_eq!(cfg.agent.report_ttl, Duration::from_secs(3 * 86_400));
-        assert_eq!(cfg.ipfs.mfs_root, "/swing");
-        assert_eq!(cfg.publish.keep_versions, 5);
-        assert!(cfg.kubo.managed);
-        assert_eq!(cfg.kubo.binary, None);
-        assert_eq!(cfg.kubo.repo, PathBuf::from("./data").join("kubo"));
-        assert_eq!(cfg.kubo.storage_max, 100 * (1u64 << 30));
-        assert_eq!(cfg.kubo.provide_strategy, "pinned+mfs");
-        assert_eq!(
-            cfg.kubo.gateway_listen,
-            SocketAddr::from(([127, 0, 0, 1], 8080))
-        );
-        assert_eq!(cfg.kubo.swarm_port, None);
-        assert_eq!(cfg.gateway.listen, Listen::Off);
-        assert!(cfg.gateway.hosts.is_empty());
-        assert_eq!(cfg.gateway.upstream, "http://127.0.0.1:8080");
-    }
-
-    #[test]
-    fn default_relays_used_when_none_configured() {
-        let file = ConfigFile {
-            nostr: NostrFile {
-                secret_key: Some("k".into()),
-                ..Default::default()
-            },
-            ..Default::default()
-        };
-        let cfg = build_config(file, None, |_| None).unwrap();
-        assert_eq!(
-            cfg.nostr.relays,
-            DEFAULT_RELAYS
-                .iter()
-                .map(|s| s.to_string())
-                .collect::<Vec<_>>()
-        );
-    }
-
-    #[test]
-    fn nip05_mode_env_overrides_file() {
-        let file = ConfigFile {
-            nostr: NostrFile {
-                secret_key: Some("k".into()),
-                relays: Some(vec!["wss://r".into()]),
-                ..Default::default()
-            },
-            policy: PolicyFile {
-                nip05: Some("require".into()),
-                ..Default::default()
-            },
-            ..Default::default()
-        };
-        let cfg = build_config(file, None, |k| match k {
-            "SWING_NIP05" => Some("off".into()),
-            _ => None,
-        })
-        .unwrap();
-        assert_eq!(cfg.policy.nip05, CheckMode::Off);
-    }
-
-    #[test]
-    fn nip05_mode_rejects_garbage() {
-        assert_env_rejects("SWING_NIP05", "maybe", "invalid SWING_NIP05");
-    }
-
-    #[test]
-    fn publish_nip05_defaults_to_warn() {
-        let file = ConfigFile {
-            nostr: NostrFile {
-                secret_key: Some("k".into()),
-                relays: Some(vec!["wss://r".into()]),
-                ..Default::default()
-            },
-            ..Default::default()
-        };
-        let cfg = build_config(file, None, |_| None).unwrap();
-        assert_eq!(cfg.publish.nip05, CheckMode::Warn);
-    }
-
-    #[test]
-    fn publish_nip05_env_overrides_file() {
-        let file = ConfigFile {
-            nostr: NostrFile {
-                secret_key: Some("k".into()),
-                relays: Some(vec!["wss://r".into()]),
-                ..Default::default()
-            },
-            publish: PublishFile {
-                nip05: Some("require".into()),
-                ..Default::default()
-            },
-            ..Default::default()
-        };
-        let cfg = build_config(file, None, |k| match k {
-            "SWING_PUBLISH_NIP05" => Some("off".into()),
-            _ => None,
-        })
-        .unwrap();
-        assert_eq!(cfg.publish.nip05, CheckMode::Off);
-    }
-
-    #[test]
-    fn publish_checks_default_to_require_warn_require_with_the_default_allow_list() {
-        let cfg = build_config(minimal_file(), None, |_| None).unwrap();
-        assert_eq!(cfg.publish.check_dotfiles, CheckMode::Require);
-        assert_eq!(cfg.publish.check_size, CheckMode::Warn);
-        assert_eq!(cfg.publish.check_unchanged, CheckMode::Require);
-        assert_eq!(cfg.publish.dotfiles_allow, DEFAULT_DOTFILES_ALLOW);
-        assert_eq!(
-            cfg.source_of("publish.dotfiles_allow"),
-            Some(Source::Default)
-        );
-    }
-
-    #[test]
-    fn publish_check_env_overrides_file_which_overrides_default() {
-        let mut file = minimal_file();
-        file.publish = PublishFile {
-            check_dotfiles: Some("warn".into()),
-            check_size: Some("require".into()),
-            ..Default::default()
-        };
-        let cfg = build_config(file, None, |k| match k {
-            "SWING_PUBLISH_CHECK_DOTFILES" => Some("off".into()),
-            _ => None,
-        })
-        .unwrap();
-        assert_eq!(cfg.publish.check_dotfiles, CheckMode::Off);
-        assert_eq!(cfg.source_of("publish.check_dotfiles"), Some(Source::Env));
-        assert_eq!(cfg.publish.check_size, CheckMode::Require);
-        assert_eq!(cfg.source_of("publish.check_size"), Some(Source::File));
-        assert_eq!(cfg.publish.check_unchanged, CheckMode::Require);
-        assert_eq!(
-            cfg.source_of("publish.check_unchanged"),
-            Some(Source::Default)
-        );
-    }
-
-    #[test]
-    fn publish_check_modes_reject_garbage() {
-        assert_env_rejects(
-            "SWING_PUBLISH_CHECK_SIZE",
-            "maybe",
-            "invalid SWING_PUBLISH_CHECK_SIZE",
-        );
-        let mut file = minimal_file();
-        file.publish.check_unchanged = Some("sometimes".into());
-        let err = build_config(file, None, |_| None).unwrap_err();
-        assert!(
-            err.to_string().contains("[publish].check_unchanged"),
-            "{err}"
-        );
-    }
-
-    #[test]
-    fn dotfiles_allow_replaces_the_default_list() {
-        let cfg = build_config(minimal_file(), None, |k| {
-            (k == "SWING_PUBLISH_DOTFILES_ALLOW").then(|| " .htaccess , .nojekyll ".to_string())
-        })
-        .unwrap();
-        assert_eq!(cfg.publish.dotfiles_allow, vec![".htaccess", ".nojekyll"]);
-
-        let mut file = minimal_file();
-        file.publish.dotfiles_allow = Some(Vec::new());
-        let cfg = build_config(file, None, |_| None).unwrap();
-        assert!(cfg.publish.dotfiles_allow.is_empty());
-        assert_eq!(cfg.source_of("publish.dotfiles_allow"), Some(Source::File));
-    }
-
-    #[test]
-    fn dotfiles_allow_rejects_entries_that_are_not_single_dot_names() {
-        for bad in ["nojekyll", ".well-known/nostr.json", ".", ".."] {
-            let mut file = minimal_file();
-            file.publish.dotfiles_allow = Some(vec![bad.to_string()]);
-            let err = build_config(file, None, |_| None).unwrap_err();
-            assert!(
-                format!("{err:#}").contains("invalid dotfile name"),
-                "{bad}: {err:#}"
-            );
-        }
-    }
-
-    #[test]
-    fn publish_nip05_rejects_garbage() {
-        assert_env_rejects(
-            "SWING_PUBLISH_NIP05",
-            "maybe",
-            "invalid SWING_PUBLISH_NIP05",
-        );
-    }
-
-    #[test]
-    fn dashboard_defaults_to_localhost_8082_with_default_gateway() {
-        let cfg = build_config(minimal_file(), None, |_| None).unwrap();
-        assert_eq!(
-            cfg.dashboard.listen,
-            SocketAddr::from(([127, 0, 0, 1], 8082))
-        );
-        assert!(cfg.dashboard.ui);
-        assert!(cfg.dashboard.allowed_hosts.is_empty());
-        assert_eq!(
-            cfg.dashboard.gateway.as_deref(),
-            Some("http://localhost:8080")
-        );
-        assert_eq!(cfg.dashboard.custom_css, None);
-        assert_eq!(cfg.dashboard.desktop_page, None);
-        assert_eq!(cfg.dashboard.desktop_page_css, None);
-        assert_eq!(cfg.dashboard.desktop_banner, None);
-        assert_eq!(cfg.dashboard.mascots_dir, None);
-        assert_eq!(cfg.dashboard.max_upload, 2 * (1u64 << 30));
-    }
-
-    #[test]
-    fn dashboard_max_upload_env_overrides_file() {
-        let file = ConfigFile {
-            nostr: NostrFile {
-                secret_key: Some("k".into()),
-                relays: Some(vec!["wss://r".into()]),
-                ..Default::default()
-            },
-            dashboard: DashboardFile {
-                max_upload: Some("4GB".into()),
-                ..Default::default()
-            },
-            ..Default::default()
-        };
-        let cfg = build_config(file, None, |k| match k {
-            "SWING_DASHBOARD_MAX_UPLOAD" => Some("512MB".into()),
-            _ => None,
-        })
-        .unwrap();
-        assert_eq!(cfg.dashboard.max_upload, 512 * (1u64 << 20));
-    }
-
-    #[test]
-    fn dashboard_max_upload_zero_is_rejected() {
-        assert_env_rejects("SWING_DASHBOARD_MAX_UPLOAD", "0", "max_upload");
-    }
-
-    #[test]
-    fn dashboard_listen_off_is_not_a_valid_address() {
-        assert_env_rejects("SWING_DASHBOARD_LISTEN", "off", "SWING_DASHBOARD_LISTEN");
-    }
-
-    #[test]
-    fn dashboard_listen_rejects_garbage() {
-        assert_env_rejects(
-            "SWING_DASHBOARD_LISTEN",
-            "not-an-address",
-            "SWING_DASHBOARD_LISTEN",
-        );
-    }
-
-    #[test]
-    fn dashboard_ui_defaults_to_true_and_can_be_disabled() {
-        let cfg = build_config(minimal_file(), None, |_| None).unwrap();
-        assert!(cfg.dashboard.ui);
-
-        let cfg = build_config(minimal_file(), None, |k| match k {
-            "SWING_DASHBOARD_UI" => Some("false".into()),
-            _ => None,
-        })
-        .unwrap();
-        assert!(!cfg.dashboard.ui);
-    }
-
-    #[test]
-    fn dashboard_ui_file_value_is_used_when_env_unset() {
-        let file = ConfigFile {
-            dashboard: DashboardFile {
-                ui: Some(false),
-                ..Default::default()
-            },
-            ..minimal_file()
-        };
-        let cfg = build_config(file, None, |_| None).unwrap();
-        assert!(!cfg.dashboard.ui);
-    }
-
-    #[test]
-    fn dashboard_env_overrides_file() {
-        let file = ConfigFile {
-            nostr: NostrFile {
-                secret_key: Some("k".into()),
-                relays: Some(vec!["wss://r".into()]),
-                ..Default::default()
-            },
-            dashboard: DashboardFile {
-                listen: Some("127.0.0.1:9000".into()),
-                ui: Some(false),
-                allowed_hosts: Some(vec!["example.com".into()]),
-                public_url: None,
-                gateway: Some("http://gateway.example".into()),
-                custom_css: Some("/etc/swing/custom.css".into()),
-                desktop_page: Some("/etc/swing/page.html".into()),
-                desktop_page_css: Some("/etc/swing/page.css".into()),
-                desktop_banner: Some("/etc/swing/banner.png".into()),
-                mascots_dir: Some("/etc/swing/mascots".into()),
-                max_upload: Some("4GB".into()),
-            },
-            ..Default::default()
-        };
-        let cfg = build_config(file, None, |k| match k {
-            "SWING_DASHBOARD_LISTEN" => Some("0.0.0.0:8082".into()),
-            "SWING_DASHBOARD_ALLOWED_HOSTS" => Some("a.example, b.example".into()),
-            "SWING_DASHBOARD_GATEWAY" => Some("http://env-gateway.example".into()),
-            "SWING_DASHBOARD_CUSTOM_CSS" => Some("/env/custom.css".into()),
-            "SWING_DASHBOARD_DESKTOP_PAGE" => Some("/env/page.html".into()),
-            "SWING_DASHBOARD_DESKTOP_PAGE_CSS" => Some("/env/page.css".into()),
-            "SWING_DASHBOARD_DESKTOP_BANNER" => Some("/env/banner.gif".into()),
-            "SWING_DASHBOARD_MASCOTS_DIR" => Some("/env/mascots".into()),
-            _ => None,
-        })
-        .unwrap();
-        assert_eq!(cfg.dashboard.listen, SocketAddr::from(([0, 0, 0, 0], 8082)));
-        assert!(!cfg.dashboard.ui);
-        assert_eq!(
-            cfg.dashboard.allowed_hosts,
-            vec!["a.example".to_string(), "b.example".to_string()]
-        );
-        assert_eq!(
-            cfg.dashboard.gateway.as_deref(),
-            Some("http://env-gateway.example")
-        );
-        assert_eq!(
-            cfg.dashboard.custom_css,
-            Some(PathBuf::from("/env/custom.css"))
-        );
-        assert_eq!(
-            cfg.dashboard.desktop_page,
-            Some(PathBuf::from("/env/page.html"))
-        );
-        assert_eq!(
-            cfg.dashboard.desktop_page_css,
-            Some(PathBuf::from("/env/page.css"))
-        );
-        assert_eq!(
-            cfg.dashboard.desktop_banner,
-            Some(PathBuf::from("/env/banner.gif"))
-        );
-        assert_eq!(
-            cfg.dashboard.mascots_dir,
-            Some(PathBuf::from("/env/mascots"))
-        );
-    }
-
-    #[test]
-    fn dashboard_gateway_empty_string_in_file_disables_links() {
-        let file = ConfigFile {
-            nostr: NostrFile {
-                secret_key: Some("k".into()),
-                relays: Some(vec!["wss://r".into()]),
-                ..Default::default()
-            },
-            dashboard: DashboardFile {
-                gateway: Some(String::new()),
-                ..Default::default()
-            },
-            ..Default::default()
-        };
-        let cfg = build_config(file, None, |_| None).unwrap();
-        assert_eq!(cfg.dashboard.gateway, None);
-    }
-
-    #[test]
-    fn max_total_storage_env_is_a_size_string() {
-        let file = ConfigFile {
-            nostr: NostrFile {
-                secret_key: Some("k".into()),
-                relays: Some(vec!["wss://r".into()]),
-                ..Default::default()
-            },
-            ..Default::default()
-        };
-        let cfg = build_config(file, None, |k| match k {
-            "SWING_MAX_TOTAL_STORAGE" => Some("20GB".into()),
-            _ => None,
-        })
-        .unwrap();
-        assert_eq!(cfg.policy.max_total_storage, 20 * (1u64 << 30));
-    }
-
-    #[test]
-    fn managed_kubo_rejects_explicit_ipfs_api_from_file() {
-        let file = ConfigFile {
-            ipfs: IpfsFile {
-                api: Some("http://127.0.0.1:5001".into()),
-                ..Default::default()
-            },
-            ..minimal_file()
-        };
-        let err = build_config(file, None, |_| None).unwrap_err();
-        assert!(err.to_string().contains("[ipfs].api conflicts"));
-    }
-
-    #[test]
-    fn managed_kubo_rejects_explicit_ipfs_api_from_env() {
-        assert_env_rejects(
-            "SWING_IPFS_API",
-            "http://127.0.0.1:5001",
-            "[ipfs].api conflicts",
-        );
-    }
-
-    #[test]
-    fn unmanaged_kubo_uses_ipfs_api() {
-        let cfg = build_config(minimal_file(), None, |k| match k {
-            "SWING_KUBO_MANAGED" => Some("false".into()),
-            "SWING_IPFS_API" => Some("http://127.0.0.1:15001".into()),
-            _ => None,
-        })
-        .unwrap();
-        assert_eq!(
-            cfg.ipfs.api,
-            IpfsApi::Url("http://127.0.0.1:15001".to_string())
-        );
-        assert!(!cfg.kubo.managed);
-    }
-
-    #[test]
-    fn unmanaged_kubo_defaults_ipfs_api() {
-        let cfg = build_config(minimal_file(), None, |k| match k {
-            "SWING_KUBO_MANAGED" => Some("false".into()),
-            _ => None,
-        })
-        .unwrap();
-        assert_eq!(
-            cfg.ipfs.api,
-            IpfsApi::Url("http://127.0.0.1:5001".to_string())
-        );
-    }
-
-    #[test]
-    fn kubo_repo_defaults_under_state_dir() {
-        let cfg = build_config(minimal_file(), None, |k| match k {
-            "SWING_STATE_DIR" => Some("/var/lib/swing".into()),
-            _ => None,
-        })
-        .unwrap();
-        assert_eq!(cfg.kubo.repo, PathBuf::from("/var/lib/swing/kubo"));
-    }
-
-    #[test]
-    fn kubo_repo_env_overrides_default() {
-        let cfg = build_config(minimal_file(), None, |k| match k {
-            "SWING_KUBO_REPO" => Some("/data/kubo-repo".into()),
-            _ => None,
-        })
-        .unwrap();
-        assert_eq!(cfg.kubo.repo, PathBuf::from("/data/kubo-repo"));
-    }
-
-    #[test]
-    fn kubo_binary_env_overrides_file() {
-        let file = ConfigFile {
-            kubo: KuboFile {
-                binary: Some("/opt/kubo/ipfs".into()),
-                ..Default::default()
-            },
-            ..minimal_file()
-        };
-        let cfg = build_config(file, None, |k| match k {
-            "SWING_KUBO_BINARY" => Some("/usr/local/bin/ipfs".into()),
-            _ => None,
-        })
-        .unwrap();
-        assert_eq!(cfg.kubo.binary, Some(PathBuf::from("/usr/local/bin/ipfs")));
-    }
-
-    #[test]
-    fn kubo_storage_max_defaults_to_max_total_storage() {
-        let cfg = build_config(minimal_file(), None, |k| match k {
-            "SWING_MAX_TOTAL_STORAGE" => Some("50GB".into()),
-            _ => None,
-        })
-        .unwrap();
-        assert_eq!(cfg.kubo.storage_max, 50 * (1u64 << 30));
-    }
-
-    #[test]
-    fn kubo_storage_max_can_differ_from_max_total_storage() {
-        let cfg = build_config(minimal_file(), None, |k| match k {
-            "SWING_MAX_TOTAL_STORAGE" => Some("50GB".into()),
-            "SWING_KUBO_STORAGE_MAX" => Some("80GB".into()),
-            _ => None,
-        })
-        .unwrap();
-        assert_eq!(cfg.policy.max_total_storage, 50 * (1u64 << 30));
-        assert_eq!(cfg.kubo.storage_max, 80 * (1u64 << 30));
-    }
-
-    #[test]
-    fn kubo_provide_strategy_empty_is_rejected() {
-        let file = ConfigFile {
-            kubo: KuboFile {
-                provide_strategy: Some(String::new()),
-                ..Default::default()
-            },
-            ..minimal_file()
-        };
-        let err = build_config(file, None, |_| None).unwrap_err();
-        assert!(err.to_string().contains("provide_strategy"));
-    }
-
-    #[test]
-    fn kubo_gateway_listen_env_overrides_file() {
-        let file = ConfigFile {
-            kubo: KuboFile {
-                gateway_listen: Some("127.0.0.1:9090".into()),
-                ..Default::default()
-            },
-            ..minimal_file()
-        };
-        let cfg = build_config(file, None, |k| match k {
-            "SWING_KUBO_GATEWAY_LISTEN" => Some("127.0.0.1:8181".into()),
-            _ => None,
-        })
-        .unwrap();
-        assert_eq!(
-            cfg.kubo.gateway_listen,
-            SocketAddr::from(([127, 0, 0, 1], 8181))
-        );
-    }
-
-    #[test]
-    fn kubo_gateway_listen_rejects_garbage() {
-        assert_env_rejects(
-            "SWING_KUBO_GATEWAY_LISTEN",
-            "not-an-address",
-            "SWING_KUBO_GATEWAY_LISTEN",
-        );
-    }
-
-    #[test]
-    fn kubo_swarm_port_defaults_to_unset() {
-        let cfg = build_config(minimal_file(), None, |_| None).unwrap();
-        assert_eq!(cfg.kubo.swarm_port, None);
-    }
-
-    #[test]
-    fn kubo_swarm_port_zero_is_rejected() {
-        assert_env_rejects("SWING_KUBO_SWARM_PORT", "0", "swarm_port");
-    }
-
-    #[test]
-    fn kubo_swarm_port_in_range_is_accepted() {
-        let cfg = build_config(minimal_file(), None, |k| match k {
-            "SWING_KUBO_SWARM_PORT" => Some("4001".into()),
-            _ => None,
-        })
-        .unwrap();
-        assert_eq!(cfg.kubo.swarm_port, Some(4001));
-    }
-
-    #[test]
-    fn gateway_listen_enabled_requires_hosts() {
-        assert_env_rejects("SWING_GATEWAY_LISTEN", "127.0.0.1:8081", "[gateway].hosts");
-    }
-
-    #[test]
-    fn gateway_listen_enabled_with_hosts_is_accepted() {
-        let cfg = build_config(minimal_file(), None, |k| match k {
-            "SWING_GATEWAY_LISTEN" => Some("127.0.0.1:8081".into()),
-            "SWING_GATEWAY_HOSTS" => Some("example.com".into()),
-            _ => None,
-        })
-        .unwrap();
-        assert_eq!(
-            cfg.gateway.listen,
-            Listen::Addr(([127, 0, 0, 1], 8081).into())
-        );
-        assert_eq!(cfg.gateway.hosts, vec!["example.com".to_string()]);
-    }
-
-    #[test]
-    fn gateway_hosts_must_not_overlap_dashboard_hosts() {
-        let err = build_config(minimal_file(), None, |k| match k {
-            "SWING_GATEWAY_HOSTS" => Some("example.com,dash.example".into()),
-            "SWING_DASHBOARD_ALLOWED_HOSTS" => Some("Dash.Example".into()),
-            _ => None,
-        })
-        .unwrap_err();
-        assert!(err.to_string().contains("dash.example"), "{err}");
-        assert_env_rejects("SWING_GATEWAY_HOSTS", "localhost", "also a dashboard host");
-        assert_env_rejects("SWING_GATEWAY_HOSTS", "127.0.0.1", "also a dashboard host");
-        assert!(
-            build_config(minimal_file(), None, |k| match k {
-                "SWING_GATEWAY_HOSTS" => Some("example.com".into()),
-                "SWING_DASHBOARD_ALLOWED_HOSTS" => Some("dash.example".into()),
-                _ => None,
-            })
-            .is_ok()
-        );
-    }
-
-    #[test]
-    fn dashboard_gateway_must_be_an_http_origin() {
-        assert_env_rejects(
-            "SWING_DASHBOARD_GATEWAY",
-            "javascript:alert(1)",
-            "invalid SWING_DASHBOARD_GATEWAY",
-        );
-        assert_env_rejects(
-            "SWING_DASHBOARD_GATEWAY",
-            "http://gw.example/sub",
-            "invalid SWING_DASHBOARD_GATEWAY",
-        );
-        let cfg = build_config(minimal_file(), None, |k| {
-            (k == "SWING_DASHBOARD_GATEWAY").then(|| "https://gw.example/".to_string())
-        })
-        .unwrap();
-        assert_eq!(cfg.dashboard.gateway.as_deref(), Some("https://gw.example"));
-        let cfg = build_config(minimal_file(), None, |k| {
-            (k == "SWING_DASHBOARD_GATEWAY").then(String::new)
-        })
-        .unwrap();
-        assert_eq!(cfg.dashboard.gateway, None);
-    }
-
-    #[test]
-    fn gateway_hosts_rejects_invalid_hostnames() {
-        assert_env_rejects(
-            "SWING_GATEWAY_HOSTS",
-            "Example.com",
-            "invalid [gateway].hosts entry",
-        );
-    }
-
-    #[test]
-    fn gateway_hosts_env_overrides_file_and_trims_entries() {
-        let file = ConfigFile {
-            gateway: GatewayFile {
-                hosts: Some(vec!["from-file.example".into()]),
-                ..Default::default()
-            },
-            ..minimal_file()
-        };
-        let cfg = build_config(file, None, |k| match k {
-            "SWING_GATEWAY_HOSTS" => Some(" a.example , b.example ".into()),
-            _ => None,
-        })
-        .unwrap();
-        assert_eq!(
-            cfg.gateway.hosts,
-            vec!["a.example".to_string(), "b.example".to_string()]
-        );
-    }
-
-    #[test]
-    fn gateway_upstream_defaults_to_managed_kubo_gateway_listen() {
-        let cfg = build_config(minimal_file(), None, |_| None).unwrap();
-        assert!(cfg.kubo.managed);
-        assert_eq!(cfg.gateway.upstream, "http://127.0.0.1:8080");
-
-        let cfg = build_config(minimal_file(), None, |k| match k {
-            "SWING_KUBO_GATEWAY_LISTEN" => Some("127.0.0.1:9999".into()),
-            _ => None,
-        })
-        .unwrap();
-        assert_eq!(cfg.gateway.upstream, "http://127.0.0.1:9999");
-    }
-
-    #[test]
-    fn gateway_upstream_defaults_to_localhost_when_unmanaged() {
-        let cfg = build_config(minimal_file(), None, |k| match k {
-            "SWING_KUBO_MANAGED" => Some("false".into()),
-            _ => None,
-        })
-        .unwrap();
-        assert_eq!(cfg.gateway.upstream, "http://127.0.0.1:8080");
-    }
-
-    #[test]
-    fn gateway_upstream_env_overrides_default() {
-        let cfg = build_config(minimal_file(), None, |k| match k {
-            "SWING_GATEWAY_UPSTREAM" => Some("http://ipfs:8080".into()),
-            _ => None,
-        })
-        .unwrap();
-        assert_eq!(cfg.gateway.upstream, "http://ipfs:8080");
-    }
-
-    #[test]
-    fn source_tracking_distinguishes_env_file_and_default() {
-        let file = ConfigFile {
-            policy: PolicyFile {
-                max_per_site: Some("5GB".into()),
-                ..Default::default()
-            },
-            ..minimal_file()
-        };
-        let cfg = build_config(file, None, |k| match k {
-            "SWING_MAX_TOTAL_STORAGE" => Some("10GB".into()),
-            _ => None,
-        })
-        .unwrap();
-        assert_eq!(cfg.source_of("policy.max_total_storage"), Some(Source::Env));
-        assert_eq!(cfg.source_of("policy.max_per_site"), Some(Source::File));
-        assert_eq!(
-            cfg.source_of("policy.max_per_account"),
-            Some(Source::Default)
-        );
-        assert_eq!(cfg.source_of("kubo.storage_max"), Some(Source::Default));
-    }
-
-    #[test]
-    fn source_tracking_covers_secret_key_and_managed_ipfs_api() {
-        let cfg = build_config(minimal_file(), None, |_| None).unwrap();
-        assert_eq!(cfg.source_of("nostr.secret_key"), Some(Source::File));
-        assert_eq!(cfg.source_of("ipfs.api"), Some(Source::Default));
-
-        let cfg = build_config(ConfigFile::default(), None, |_| None).unwrap();
-        assert_eq!(cfg.source_of("nostr.secret_key"), Some(Source::Default));
-    }
-
-    #[test]
-    fn public_url_comes_from_env_or_file() {
-        let config = build_config_from_str(
-            "[dashboard]\npublic_url = \"http://127.0.0.1:18082/\"\n",
-            |_| None,
-        )
-        .unwrap();
-        assert_eq!(
-            config.dashboard.public_url.as_deref(),
-            Some("http://127.0.0.1:18082")
-        );
-        let config = build_config_from_str("", |k| {
-            (k == "SWING_DASHBOARD_PUBLIC_URL").then(|| "http://localhost:9000".to_string())
-        })
-        .unwrap();
-        assert_eq!(
-            config.dashboard.public_url.as_deref(),
-            Some("http://localhost:9000")
-        );
-        assert!(
-            build_config_from_str("", |_| None)
-                .unwrap()
-                .dashboard
-                .public_url
-                .is_none()
-        );
-        assert!(
-            build_config_from_str("[dashboard]\npublic_url = \"http://x/sub\"\n", |_| None)
-                .is_err()
-        );
-    }
-}
+mod tests;

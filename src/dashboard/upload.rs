@@ -223,7 +223,12 @@ async fn receive_upload(multipart: &mut Multipart, dest: &Path) -> Result<Parsed
             "site" => site = Some(read_text_field(field).await?),
             "url" => url = Some(read_text_field(field).await?),
             "title" => title = Some(read_text_field(field).await?),
-            "message" => message = Some(read_text_field(field).await?),
+            "message" => {
+                let text = read_text_field(field).await?;
+                crate::publish::validate_message(&text)
+                    .map_err(|e| ApiError::BadRequest(format!("invalid message: {e}")))?;
+                message = Some(text);
+            }
             name @ ("nip05" | "check_dotfiles" | "check_size" | "check_unchanged") => {
                 let slot = match name {
                     "nip05" => &mut modes.nip05,
@@ -671,6 +676,25 @@ mod tests {
         let body = error_body(resp).await;
         assert!(upload_dir_entries(dir.path()).is_empty());
         (status, body)
+    }
+
+    #[tokio::test]
+    async fn upload_rejects_a_message_over_the_content_limit() {
+        let long = vec![b'a'; crate::nostr::budget::MAX_CONTENT_BYTES + 1];
+        let (status, body) = upload_with(&[
+            ("site", None, b"example.com"),
+            ("message", None, &long),
+            ("file", Some("index.html"), b"<html></html>"),
+        ])
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert!(
+            body["error"]
+                .as_str()
+                .unwrap()
+                .starts_with("invalid message: "),
+            "{body}"
+        );
     }
 
     #[tokio::test]

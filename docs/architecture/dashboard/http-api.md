@@ -184,7 +184,7 @@ Follow Set が無ければ `title: null`、`members: []`。
 
 `multipart/form-data`。
 
-パート: `site`（必須）・`url`・`title`・`message`・`nip05`・`check_dotfiles`・`check_size`・`check_unchanged`（省略可。モードの 4 つは `off`/`warn`/`require` で、省略時は `[publish]` の同名の設定。不正な値は 400 `invalid <パート名>: ...`）。これらのテキストのパートは 1 つあたり `MAX_TEXT_FIELD_BYTES`（64 KiB）までで、超えるか UTF-8 でなければ 400。知らない名前のパートは中身をためずに読み捨てる。`site`/`url`/`title` は CLI と同じ規則で検証し違反は 400。`title` が空白のみなら未指定として扱う。`file`（1 個以上）: 各パートの `filename` がサイトルートからの相対パス（`/` 区切り。ブラウザは `webkitRelativePath` の先頭フォルダ名を取り除いて送る）。
+パート: `site`（必須）・`url`・`title`・`message`・`nip05`・`check_dotfiles`・`check_size`・`check_unchanged`（省略可。モードの 4 つは `off`/`warn`/`require` で、省略時は `[publish]` の同名の設定。不正な値は 400 `invalid <パート名>: ...`）。これらのテキストのパートは 1 つあたり `MAX_TEXT_FIELD_BYTES`（64 KiB）までで、超えるか UTF-8 でなければ 400。知らない名前のパートは中身をためずに読み捨てる。`site`/`url`/`title` は CLI と同じ規則で検証し違反は 400。`message` は CLI と同じく `MAX_CONTENT_BYTES`（4096 バイト）を超えたら、パートを読んだ時点で 400 `invalid message: ...`。`title` が空白のみなら未指定として扱う。`file`（1 個以上）: 各パートの `filename` がサイトルートからの相対パス（`/` 区切り。ブラウザは `webkitRelativePath` の先頭フォルダ名を取り除いて送る）。
 
 サーバの検証（`upload::validate_relative_path` など。パートを受け取りながら順に検証し、違反は 400）:
 

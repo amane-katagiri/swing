@@ -17,6 +17,8 @@ pub const DEFAULT_RELAYS: [&str; 5] = [
     "wss://relay-jp.nostr.wirednet.jp",
 ];
 
+pub const DEFAULT_MAX_UPDATE_SIZE: u64 = 2 << 30;
+
 #[derive(Debug, Clone, Deserialize, Default)]
 #[serde(default)]
 pub struct NostrFile {
