@@ -21,7 +21,6 @@
 | 低 | レプリカ報告の裏付け。報告に Peer ID を載せ、`routing/findprovs` でその Peer が CID を提供しているかを確かめる | レプリカ報告の実装 |
 | 低 | ダッシュボードのヘッダ読み取りタイムアウト。`TimeoutLayer` はリクエストを受け取ってからしか効かず、ヘッダを少しずつ送る接続は切れない。`axum::serve` に設定が無いので `hyper_util` のサーバへ切り替える必要がある。HTTP のリバースプロキシの裏に置く構成ならプロキシ側で止まるので、平文のまま LAN に直接出す構成でだけ効いてくる（[リバースプロキシ経由での公開](architecture/dashboard.md#リバースプロキシ経由での公開)） | レビュー（DoS） |
 | 低 | ダッシュボードのセッションを 1 つだけ取り消す手段。今は `swing dashboard rotate-token` で全セッションをまとめて無効にするしかない。サーバ側に何も持たない設計（HMAC の検証だけ）を崩すことになるので、発行時刻より前のセッションを拒否する「最小発行時刻」をトークンの横に持つ、などの軽い形から検討する | [ダッシュボードの認証](log/2026-09-23-dashboard-auth.md) |
-| 低 | MFS パスは `mfs::site_name` で 1 回、`ipfs::query_path` で Kubo API のクエリとしてもう 1 回 percent-encode される。Kubo 側のデコードは 1 回なので正しく往復するが、片方だけを直接使う変更で壊れやすい。実 Kubo で空白や `!` を含む `d` の往復を確かめる統合テストを足す | 結合確認 |
 | 低 | 「全履歴保持」オプション（`keep_versions` / `keep_days` を無制限にする明示的な設定） | plan §4 |
 | 低 | private mode: WireGuard / Tailscale / private IPFS network を使う別モード | plan §17 |
 | 低 | サブパス公開サイト向けに NIP-05 の代替検証（例: `<url>/.well-known/swing.json`）を検討 | レビュー |

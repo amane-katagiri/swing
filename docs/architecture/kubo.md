@@ -156,6 +156,7 @@ agent も publish も pin を使わず、MFS にサイトの CID を置いて GC
 | `<mfs_root>/publish/<pubkey hex>/<site>/<created_at>` | publish。自分のサイトの版ごとに 1 つ |
 
 - `<site>` は `d` のパーセントエンコード（`A-Z a-z 0-9 - . _ ~` 以外を `%XX`）。`d` が `.` か `..` ならドットも `%2E` にする。
+- MFS のパスを RPC のクエリ（`arg`・`to-files`）に載せるときは、`/` で区切った各段をもう 1 回パーセントエンコードする（`<site>` の `%` は `%25` になる）。Kubo はクエリを 1 回だけデコードするので、MFS 上の名前は `<site>` のまま残る。実 Kubo での往復は `mfs_kubo_integration` で確かめる。
 - `<created_at>` はサイトイベントの `created_at`（10 進）。
 
 MFS は DAG が欠けていても置け、GC も `block/rm` も止めない。そのため置いた後の完全性は `dag/stat`（`offline=true`）で確かめる。
@@ -211,4 +212,4 @@ MFS から消したコンテンツや打ち切った取得のブロックは、K
 - 各 RPC の JSON の形（`TotalSize`、`Hash`、`Type`（`files/stat` は文字列、`Entries[].Type` は数値）など）と、`add` の multipart・`to-files`
 - MFS の保護・GC・`offline=true` の挙動
 
-これを確かめるテストは、統合テスト（`kubo_integration`・`agent_stores_and_removes_through_real_kubo`）と `kubo::tests` の `#[ignore]` テスト（`SWING_TEST_KUBO_BIN` が必要）。コマンドは [`../architecture.md#テスト`](../architecture.md#テスト)。
+これを確かめるテストは、統合テスト（`kubo_integration`・`mfs_kubo_integration`・`agent_stores_and_removes_through_real_kubo`）と `kubo::tests` の `#[ignore]` テスト（`SWING_TEST_KUBO_BIN` が必要）。コマンドは [`../architecture.md#テスト`](../architecture.md#テスト)。

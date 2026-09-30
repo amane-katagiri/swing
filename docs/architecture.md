@@ -88,6 +88,7 @@ swing/
   assets/swing.ico   swing.exe のファイルアイコン（web/favicon.svg から書き出した 16〜256px）
   tests/
     kubo_integration.rs          Kubo 連携の統合テスト（#[ignore]）
+    mfs_kubo_integration.rs      MFS パスのエンコードの実 Kubo での往復（#[ignore]、Kubo のバイナリを子プロセスで起動）
     nostr_relay_integration.rs   relay 連携の統合テスト（#[ignore]）
   tray/              タスクトレイ（`swing-tray`）の別クレート。workspace のメンバーで、`swing` クレートをライブラリとして使う。詳細は architecture/tray.md
     src/main.rs      エントリポイント（`--config` の解釈、多重起動の防止）
@@ -224,10 +225,11 @@ docker run -d --rm -p 127.0.0.1:18080:8080 scsibug/nostr-rs-relay
 cargo test --test nostr_relay_integration -- --ignored --test-threads=1
 ```
 
-`kubo::tests` の `#[ignore]` テスト（`full_lifecycle_against_real_kubo`・`recover_orphan_shuts_down_a_leftover_daemon_via_its_api`・`recover_orphan_falls_back_to_signals_when_api_is_unreachable`）は Kubo のバイナリを子プロセスとして起動する（repo は一時ディレクトリ）。`SWING_TEST_KUBO_BIN` が無ければ何もせずに通る:
+`kubo::tests` の `#[ignore]` テスト（`full_lifecycle_against_real_kubo`・`recover_orphan_shuts_down_a_leftover_daemon_via_its_api`・`recover_orphan_falls_back_to_signals_when_api_is_unreachable`）と `mfs_kubo_integration`（空白・`!`・`%`・`#`・`?`・`/`・`.`/`..`・日本語・253 バイトなどを含む `d` を、agent と publish の MFS パスへ置いて、一覧から `site_from_name` で同じ `d` と CID に戻ること、`find_garbage` が誤検知しないこと、削除できることを確かめる）は Kubo のバイナリを子プロセスとして起動する（repo は一時ディレクトリ）。`SWING_TEST_KUBO_BIN` が無ければ何もせずに通る:
 
 ```bash
 SWING_TEST_KUBO_BIN=/path/to/ipfs cargo test --lib kubo::tests -- --ignored
+SWING_TEST_KUBO_BIN=/path/to/ipfs cargo test --test mfs_kubo_integration -- --ignored
 ```
 
 ビルド（Windows 向けのクロスビルドを含む）とリリース（`.github/workflows/release.yml`）、macOS と Windows の動作確認（`.github/workflows/macos-check.yml`・`windows-check.yml`）は [`architecture/release.md`](architecture/release.md) を参照。
