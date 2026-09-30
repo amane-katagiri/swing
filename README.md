@@ -198,7 +198,7 @@ swing sites
 swing status
 ```
 
-状態ファイルに記録した版が Kubo の MFS に揃っているかと、状態ファイルに無い余分なパスを表示します。問題があれば 0 以外で終了するので、cron などからの監視にも使えます。詳しくは [`docs/architecture/cli.md`](docs/architecture/cli.md#status) を参照してください。
+状態ファイルに記録した版が Kubo の MFS に揃っているかと、状態ファイルに無い余分なパスを表示します。問題があれば 0 以外で終了するので、cron などからの監視にも使えます。詳しくは [`docs/architecture/cli/views.md`](docs/architecture/cli/views.md#status) を参照してください。
 
 動いている `swing up` の CPU・メモリと IPFS の通信量は `swing stats` で見られます。`swing up` が 1 分ごとに測って直近 24 時間分をメモリに持っていて、`--last 6h` のように期間を指定すると、その間の平均と最大を表示します。ダッシュボードの Settings 画面にも同じ内容が出ます。詳しくは [`docs/architecture/stats.md`](docs/architecture/stats.md) を参照してください。
 
@@ -243,11 +243,11 @@ SWING_DASHBOARD_BIND=0.0.0.0:8082
 SWING_DASHBOARD_UI=false
 ```
 
-見た目は `--swing-*` の CSS 変数と `SWING_DASHBOARD_CUSTOM_CSS`（`/custom.css` として配信される追加スタイルシート）でカスタマイズできます。Desktop 画面のリンク集ページは、`SWING_DASHBOARD_DESKTOP_PAGE`（ページ本体の HTML）・`SWING_DASHBOARD_DESKTOP_PAGE_CSS`（そのページ専用の CSS）・`SWING_DASHBOARD_DESKTOP_BANNER`（88×31 バナー画像）で丸ごと自分のものに差し替えられます（いずれも起動時に読み込みます）。このページは同一オリジンの iframe に入っているので、ダッシュボードのスタイルは一切当たらず、こちらのスタイルも外に漏れません。ページに `desk-link-list` などの決まった `id` を置いておくと、そこにリンク一覧が描画されます（詳しくは [`docs/architecture/dashboard/web.md`](docs/architecture/dashboard/web.md)）。API の詳しい仕様やガード（Host 検証、CSRF 対策など）は [`docs/architecture/dashboard.md`](docs/architecture/dashboard.md) を参照してください。
+見た目は `--swing-*` の CSS 変数と `SWING_DASHBOARD_CUSTOM_CSS`（`/custom.css` として配信される追加スタイルシート）でカスタマイズできます（使える変数・class・data 属性は [`docs/architecture/dashboard/css.md`](docs/architecture/dashboard/css.md)）。Desktop 画面のリンク集ページは、`SWING_DASHBOARD_DESKTOP_PAGE`（ページ本体の HTML）・`SWING_DASHBOARD_DESKTOP_PAGE_CSS`（そのページ専用の CSS）・`SWING_DASHBOARD_DESKTOP_BANNER`（88×31 バナー画像）で丸ごと自分のものに差し替えられます（いずれも起動時に読み込みます）。このページは同一オリジンの iframe に入っているので、ダッシュボードのスタイルは一切当たらず、こちらのスタイルも外に漏れません。ページに `desk-link-list` などの決まった `id` を置いておくと、そこにリンク一覧が描画されます（詳しくは [`docs/architecture/dashboard/desktop.md#リンク集ページiframe`](docs/architecture/dashboard/desktop.md#リンク集ページiframe)）。API の詳しい仕様は [`docs/architecture/dashboard/http-api.md`](docs/architecture/dashboard/http-api.md)、ガード（Host 検証、CSRF 対策など）は [`docs/architecture/dashboard/security.md`](docs/architecture/dashboard/security.md) を参照してください。
 
 ### 自分のマスコットを追加する
 
-Desktop 画面を歩き回るマスコットは、同梱の 3 体（`yureko`・`mochi`・`neko`）に加えて自分で追加できます。`SWING_DASHBOARD_MASCOTS_DIR` にディレクトリを指定し、その直下に `manifest.json` とスプライト画像を入れたサブディレクトリ（1 つがそのまま 1 パック、ディレクトリ名がパックの id）を置いて `swing up` を再起動してください。作り方は [`docs/mascot-guide.md`](docs/mascot-guide.md)、マニフェストの書き方・検証規則の詳細は [`docs/architecture/dashboard/mascot.md#パック形式-1`](docs/architecture/dashboard/mascot.md#パック形式-1) を参照してください。
+Desktop 画面を歩き回るマスコットは、同梱の 3 体（`yureko`・`mochi`・`neko`）に加えて自分で追加できます。`SWING_DASHBOARD_MASCOTS_DIR` にディレクトリを指定し、その直下に `manifest.json` とスプライト画像を入れたサブディレクトリ（1 つがそのまま 1 パック、ディレクトリ名がパックの id）を置いて `swing up` を再起動してください。作り方は [`docs/mascot-guide.md`](docs/mascot-guide.md)、マニフェストの書き方・検証規則の詳細は [`docs/architecture/dashboard/mascot/pack.md#パック形式-1`](docs/architecture/dashboard/mascot/pack.md#パック形式-1) を参照してください。
 
 どのマスコットを出すか（既定は `yureko` だけ）と動きは、Desktop 画面の「コントロール パネル」の「マスコット」タブで選べます。更新の確認の間隔と、おしらせする内容（フォロー中のサイトを新しくミラーしたとき・サイトを公開したとき・自分のサイトが新しくミラーされたとき）は「通知」タブで、デスクトップ（マスコット）とブラウザの通知で別々に選べます。ブラウザの通知をオンにすると、Desktop 画面を見ていないときやタブが裏にあるときもブラウザの通知でおしらせします（`https://` か `localhost`・`127.0.0.1` で開いたときだけ使えます）。確認の間隔とブラウザの通知の設定は Settings 画面にもあります。
 
@@ -466,13 +466,13 @@ SWING は、常時起動のサーバでも、普段使いの PC でも動かせ�
 
 ## 設定一覧
 
-TOML の設定ファイル（`swing.toml`）を使う場合と、環境変数だけで動かす場合のどちらにも対応しています。優先順位は環境変数 > TOML > 既定値。キーごとの環境変数名・既定値・説明は [`swing.example.toml`](swing.example.toml) にすべて載っています（`swing config example` で生成、Docker Compose 用の `.env` は [`.env.example`](.env.example)、`swing config env-example` で生成）。設定ファイルの探索順や、容量・時間の書式（`"100GiB"` や `"10m"` のような文字列）は [`docs/architecture.md`](docs/architecture.md) を参照してください。ダッシュボードから編集できるのはそのうちの一部（ホワイトリスト、[`docs/architecture/dashboard.md`](docs/architecture/dashboard.md#設定の読み込みと編集srcsettings)）で、環境変数で設定した項目は編集できません。
+TOML の設定ファイル（`swing.toml`）を使う場合と、環境変数だけで動かす場合のどちらにも対応しています。優先順位は環境変数 > TOML > 既定値。キーごとの環境変数名・既定値・説明は [`swing.example.toml`](swing.example.toml) にすべて載っています（`swing config example` で生成、Docker Compose 用の `.env` は [`.env.example`](.env.example)、`swing config env-example` で生成）。設定ファイルの探索順や、容量・時間の書式（`"100GiB"` や `"10m"` のような文字列）は [`docs/architecture/config.md`](docs/architecture/config.md) を参照してください。ダッシュボードから編集できるのはそのうちの一部（ホワイトリスト、[`docs/architecture/config.md`](docs/architecture/config.md#編集できるキー)）で、環境変数で設定した項目は編集できません。
 
 ## プライバシーと注意点
 
 SWING は公開の IPFS Mainnet をそのまま使うため、匿名性は提供しません。他の IPFS peer から、あなたの Peer ID・IP アドレス・提供している CID などの関連を観測される可能性があります。もともと公開 Web サイトを保存することが前提のツールなので、この点は許容した上でご利用ください。
 
-一方で、Kubo の RPC やローカルのゲートウェイ、ダッシュボード（管理 UI）は外部に公開しません。外部に公開する必要があるのは IPFS swarm 用のポート（`4001`）だけです。バイナリで `swing up` が Kubo を管理する場合、RPC はループバックのランダムなポートで待ち受けるため外部から触ることはできず、同じマシンの他のユーザーからも使えないよう、起動のたびに作り直す秘密（`<state_dir>/kubo-api.json`）を要求します。ただし Kubo は同じポートの `/debug/`（メトリクス・プロファイル・スタック）と `/logs` を秘密なしで返すので、同じマシンの他のユーザーはこれらを読めます（[`docs/architecture/kubo.md`](docs/architecture/kubo.md#既知の制限-api-ポートの認証のないエンドポイント)）。`[ipfs].api` で外部の Kubo を使う場合、SWING はその RPC に認証を付けないので、同じマシンの他のユーザーやほかのコンテナから届かないようにしてください。Docker Compose の構成でも、Kubo の RPC（5001）はホストに公開されず、ゲートウェイ（`8080`）とダッシュボード（`8082`）はどちらも既定で `127.0.0.1` だけで待ち受けます。ダッシュボードは平文の HTTP なので、`SWING_DASHBOARD_BIND` を変えて平文のまま外部に出すと、ログインコードとログイン状態の cookie がそのまま流れます。外の端末から使う方法は下の「[ダッシュボードを外の端末から使う](#ダッシュボードを外の端末から使う)」、既知の弱点は [`docs/architecture/dashboard.md`](docs/architecture/dashboard.md#既知の弱点) を参照してください。内蔵ゲートウェイで外部に配信するのは、設定した `SWING_GATEWAY_HOSTS`（または `gateway.hosts`）のホストの DNSLink だけです。
+一方で、Kubo の RPC やローカルのゲートウェイ、ダッシュボード（管理 UI）は外部に公開しません。外部に公開する必要があるのは IPFS swarm 用のポート（`4001`）だけです。バイナリで `swing up` が Kubo を管理する場合、RPC はループバックのランダムなポートで待ち受けるため外部から触ることはできず、同じマシンの他のユーザーからも使えないよう、起動のたびに作り直す秘密（`<state_dir>/kubo-api.json`）を要求します。ただし Kubo は同じポートの `/debug/`（メトリクス・プロファイル・スタック）と `/logs` を秘密なしで返すので、同じマシンの他のユーザーはこれらを読めます（[`docs/architecture/kubo.md`](docs/architecture/kubo.md#既知の制限-api-ポートの認証のないエンドポイント)）。`[ipfs].api` で外部の Kubo を使う場合、SWING はその RPC に認証を付けないので、同じマシンの他のユーザーやほかのコンテナから届かないようにしてください。Docker Compose の構成でも、Kubo の RPC（5001）はホストに公開されず、ゲートウェイ（`8080`）とダッシュボード（`8082`）はどちらも既定で `127.0.0.1` だけで待ち受けます。ダッシュボードは平文の HTTP なので、`SWING_DASHBOARD_BIND` を変えて平文のまま外部に出すと、ログインコードとログイン状態の cookie がそのまま流れます。外の端末から使う方法は下の「[ダッシュボードを外の端末から使う](#ダッシュボードを外の端末から使う)」、既知の弱点は [`docs/architecture/dashboard/security.md`](docs/architecture/dashboard/security.md#既知の弱点) を参照してください。内蔵ゲートウェイで外部に配信するのは、設定した `SWING_GATEWAY_HOSTS`（または `gateway.hosts`）のホストの DNSLink だけです。
 
 Nostr の秘密鍵は、Docker Compose で動かす場合は `.env` に、バイナリで `swing.toml` を使う場合は `swing.toml` の `secret_key` に、どちらも平文で保存されます。サイト公開・ミラー参加専用の鍵を新しく作り、他の用途の鍵とは分けて扱うことをおすすめします。`.env` や `swing.toml` を Git にコミットしないよう注意してください。
 

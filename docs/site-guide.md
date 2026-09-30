@@ -2,7 +2,7 @@
 
 `swing publish` で自分のサイトを公開する人向けの手引き。SWING のミラーは、あなたのサイトを「ある時点のディレクトリの丸ごとのコピー」として保存し、IPFS のゲートウェイ越しに配る。普通の Web サーバーで動いているサイトがそのままでは壊れたり、保存してもらえなかったりする点を、チェックリストの形でまとめる。
 
-ここに出てくる上限の値は、ミラーする各参加者のローカル設定の既定値にすぎない。各キーの意味と既定値の正本は README の[設定一覧](../README.md#設定一覧)と [`../swing.example.toml`](../swing.example.toml)、判定の順序は [`architecture/agent.md#ポリシー判定policyrs`](architecture/agent.md#ポリシー判定policyrs)、publish の処理は [`architecture/cli.md#publish`](architecture/cli.md#publish)。この文書と食い違うときはそちらに従う。
+ここに出てくる上限の値は、ミラーする各参加者のローカル設定の既定値にすぎない。各キーの意味と既定値の正本は README の[設定一覧](../README.md#設定一覧)と [`../swing.example.toml`](../swing.example.toml)、判定の順序は [`architecture/agent/policy.md`](architecture/agent/policy.md)、publish の処理は [`architecture/cli/publish.md`](architecture/cli/publish.md)。この文書と食い違うときはそちらに従う。
 
 ## チェックリスト
 
@@ -39,7 +39,7 @@
 
 以下、各項目の理由と確かめ方。
 
-このうちドットファイル・1 版のサイズ・前回と同じ内容かどうかの 3 つは、`swing publish`（ダッシュボードの公開画面も）が自動で確かめる。項目ごとに `off`（確かめない）・`warn`（表示して続ける）・`require`（引っかかったら止める）を選べる。フラグ・設定のキーと既定値は README の「[自分のサイトを公開する](../README.md#自分のサイトを公開する)」、判定の細部は [`architecture/cli.md#publish`](architecture/cli.md#publish)。自動の確認は機械的に分かるものだけなので、残りの項目は自分で確かめる。
+このうちドットファイル・1 版のサイズ・前回と同じ内容かどうかの 3 つは、`swing publish`（ダッシュボードの公開画面も）が自動で確かめる。項目ごとに `off`（確かめない）・`warn`（表示して続ける）・`require`（引っかかったら止める）を選べる。フラグ・設定のキーと既定値は README の「[自分のサイトを公開する](../README.md#自分のサイトを公開する)」、判定の細部は [`architecture/cli/publish.md`](architecture/cli/publish.md)。自動の確認は機械的に分かるものだけなので、残りの項目は自分で確かめる。
 
 ## 中身
 

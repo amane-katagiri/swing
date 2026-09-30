@@ -4,26 +4,26 @@
 
 ## Dockerfile
 
-- builder に `Cargo.toml`・`Cargo.lock`・`build.rs`・`assets/`・`src/`・`tray/`・`web/` を COPY し、`cargo build --release` で `swing` だけをビルドする。`tray/` はビルドしないが workspace のメンバーなので入れる。`build.rs` は Linux では何もしない。
-- builder `rust:1.97-slim-trixie`、runtime `debian:trixie-slim`（glibc を揃えるため同じコードネーム）。
+- builder に `Cargo.toml`・`Cargo.lock`・`build.rs`・`assets/`・`src/`・`tray/`・`web/` を COPY し、`cargo build --release --locked` で `swing` だけをビルドする（`tray/` は workspace のメンバーなので入れるがビルドしない）。
+- builder `rust:1.97-slim-trixie`、runtime `debian:trixie-slim`。
 - runtime には `/usr/local/bin/swing` だけを置き、ユーザー `swing`（uid/gid 1000）で実行する。`/data` はそのユーザー所有の `VOLUME`。
-- `WORKDIR /data`。`--config`／`SWING_CONFIG` のどちらも無いときに `resolve_config_path` が返す `<cwd>/swing.toml`（[`../architecture.md#設定と環境変数`](../architecture.md#設定と環境変数)）がこの `/data`（volume の中）になる。
+- `WORKDIR /data`。`--config`／`SWING_CONFIG` のどちらも無いときに `resolve_config_path` が返す `<cwd>/swing.toml`（[`config.md`](config.md)）がこの `/data`（volume の中）になる。
 - `ENTRYPOINT ["swing"]`、`CMD ["up"]`（[`up.md`](up.md)）。
-- `ENV SWING_NO_PORT_SHIFT=true`。セットアップモードでもダッシュボードと Kubo の gateway のポートをずらさない（[`up.md#セットアップモードでのポートの調整`](up.md#セットアップモードでのポートの調整)）。コンテナの中ではほかのプロセスとポートがぶつかることがほぼ無く、ずれるとホストに公開したポート（`-p`）の先で誰も待ち受けていない状態になり、しかもその値が `/data/swing.toml` に残るため。`CMD` を上書きしても効くよう、フラグではなく環境変数で渡す。compose は `SWING_DASHBOARD_LISTEN` を渡し `SWING_KUBO_MANAGED=false` なので、これが無くてもずれない。
+- `ENV SWING_NO_PORT_SHIFT=true`。セットアップモードでもダッシュボードと Kubo の gateway のポートをずらさない（[`up.md#セットアップモードでのポートの調整`](up.md#セットアップモードでのポートの調整)）。`CMD` を上書きしても効く。
 - `docker/release.Dockerfile` は release ワークフローが ghcr.io に push するイメージ用。1 ステージで、ビルド済みの musl バイナリを `<TARGETARCH>/swing` から入れる。それ以外はこの Dockerfile の runtime と同じ（[`release.md`](release.md)）。`compose.yaml` はこれを使わずルートの `Dockerfile` からビルドする。
 
 ## compose.yaml
 
 | サービス | 内容 |
 |---|---|
-| `ipfs` | `ipfs/kubo:v0.43.1`（[Kubo のバージョン](kubo.md#kubo-のバージョン)）。`command: daemon --migrate=true --agent-version-suffix=docker --enable-gc` でイメージ既定の `command` を上書きする。`swing up` が管理する Kubo（[`kubo.md#デーモンの起動kubodaemonspawn`](kubo.md#デーモンの起動kubodaemonspawn)、`--agent-version-suffix=swing`）とは agent version で見分けられる。volume `ipfs-data:/data/ipfs` と `./docker/kubo-init.d:/container-init.d:ro`。公開ポートは `4001/tcp`・`4001/udp` と、Gateway の `${SWING_KUBO_GATEWAY_BIND:-127.0.0.1:8080}:8080`。RPC（5001）はホストに公開せず、compose の内部ネットワーク（`mirror` からは `http://ipfs:5001`）だけで待ち受ける。RPC の認証（`API.Authorizations`）は設定しないので、同じネットワークに参加したコンテナはすべて RPC を使える（[`kubo.md#rpc-の認証managed-のみ`](kubo.md#rpc-の認証managed-のみ)）。healthcheck は `ipfs id` |
+| `ipfs` | `ipfs/kubo:v0.43.1`（[Kubo のバージョン](kubo.md#kubo-のバージョン)）を `daemon --migrate=true --agent-version-suffix=docker --enable-gc` で動かす（`swing up` が管理する Kubo とは agent version で見分けられる。[`kubo.md#デーモンの起動kubodaemonspawn`](kubo.md#デーモンの起動kubodaemonspawn)）。RPC（5001）はホストに公開せず compose の内部ネットワーク（`mirror` からは `http://ipfs:5001`）だけで待ち受け、認証は設定しないので、同じネットワークのコンテナはすべて RPC を使える。healthcheck は `ipfs id` |
 | `mirror` | `swing up` の unmanaged 経路で動く（`SWING_KUBO_MANAGED=false` を固定で渡す）。Kubo は子プロセスにせず、外部の `ipfs` サービスの API と Gateway を使う。状態は volume `swing-data`（`/data`）。ダッシュボードと内蔵 gateway のホスト側の公開アドレスは `SWING_DASHBOARD_BIND`・`SWING_GATEWAY_BIND` で決める（下記）。`build: .` の直後に、release ワークフローが push するイメージ（`ghcr.io/amane-katagiri/swing`）の `image:` がコメントアウトしてある（`build` と入れ替えて使う）。`ipfs` が healthy になるのを待つ |
 
 環境変数・ポート・volume の値は [`../../compose.yaml`](../../compose.yaml) が正本。2 サービスとも `restart: unless-stopped`。内蔵 gateway（[`gateway.md`](gateway.md)）は `mirror` コンテナの中で動き、`SWING_GATEWAY_UPSTREAM=http://ipfs:8080` で `ipfs` の Kubo の Gateway にプロキシする。
 
-コンテナ内の待ち受け（`SWING_DASHBOARD_LISTEN`・`SWING_GATEWAY_LISTEN`）とホスト側の公開アドレス（`SWING_DASHBOARD_BIND`・`SWING_GATEWAY_BIND`・`SWING_KUBO_GATEWAY_BIND`。それぞれ `mirror` の 8082・`mirror` の 8081・`ipfs` の 8080 をホストに出す）は別々に決める。`*_BIND` は compose の変数展開だけに使う（[`../architecture.md#設定と環境変数`](../architecture.md#設定と環境変数)）。ホスト側のポートは `[gateway].listen` に関わらず常にマッピングされる。compose での `SWING_GATEWAY_LISTEN` の既定は `off`（有効にする手順は README の「[自分のサイトをゲートウェイで配信する](../../README.md#自分のサイトをゲートウェイで配信する)」）。
+コンテナ内の待ち受け（`SWING_DASHBOARD_LISTEN`・`SWING_GATEWAY_LISTEN`）とホスト側の公開アドレス（`SWING_DASHBOARD_BIND`・`SWING_GATEWAY_BIND`・`SWING_KUBO_GATEWAY_BIND`。それぞれ `mirror` の 8082・`mirror` の 8081・`ipfs` の 8080 をホストに出す）は別々に決める。`*_BIND` は compose の変数展開だけに使い、`swing` は読まない。ホスト側のポートは `[gateway].listen` に関わらず常にマッピングされる。compose での `SWING_GATEWAY_LISTEN` の既定は `off`（有効にする手順は README の「[自分のサイトをゲートウェイで配信する](../../README.md#自分のサイトをゲートウェイで配信する)」）。
 
-外部ネットワークに出ないデモ用の重ね合わせ（`docker/demo/`）は [`../../docker/demo/README.md`](../../docker/demo/README.md) を参照。`.env` は mirror の `env_file` と、compose の変数展開の両方に使われる。`.env`（と compose が固定で渡す環境変数）で設定したキーはすべて `Source::Env` になるので、ダッシュボードの Settings／Setup 画面ではロック表示（編集不可）になる（[`dashboard.md`](dashboard.md)）。
+外部ネットワークに出ないデモ用の重ね合わせ（`docker/demo/`）は [`../../docker/demo/README.md`](../../docker/demo/README.md) を参照。`.env` は mirror の `env_file` と、compose の変数展開の両方に使われる。`.env`（と compose が固定で渡す環境変数）で設定したキーはすべて `Source::Env` になるので、ダッシュボードの Settings／Setup 画面ではロック表示（編集不可）になる（[`config.md`](config.md)）。
 
 ## ダッシュボード（compose）
 
@@ -31,7 +31,7 @@
 
 コンテナ内で `swing dashboard open` が出す URL は、`public_url` が無ければコンテナ内の待ち受け（既定 8082）から組み立てる。compose は `SWING_DASHBOARD_BIND` から `SWING_DASHBOARD_PUBLIC_URL` を作らない。トークンは `swing-data` volume の `/data/dashboard.token` に置かれる。ログインの手順は README の「[ダッシュボード](../../README.md#ダッシュボード)」。
 
-ダッシュボードの Publish 画面はブラウザから直接フォルダをアップロードする方式（`POST /api/publish/upload`。上限は `SWING_DASHBOARD_MAX_UPLOAD`、既定 2 GiB）だけを使うため、`mirror` コンテナにサイトの volume は要らない（[`dashboard/http-api.md`](dashboard/http-api.md#post-apipublishupload)）。CLI の `swing publish` をコンテナで使う手順は README の「[自分のサイトを公開する](../../README.md#自分のサイトを公開する)」。
+ダッシュボードの Publish 画面はブラウザからフォルダをアップロードする（`POST /api/publish/upload`。上限は `SWING_DASHBOARD_MAX_UPLOAD`、既定 2 GiB）ので、`mirror` コンテナにサイトの volume は要らない（[`dashboard/http-api/publish.md`](dashboard/http-api/publish.md#post-apipublishupload)）。CLI の `swing publish` をコンテナで使う手順は README の「[自分のサイトを公開する](../../README.md#自分のサイトを公開する)」。
 
 ## Kubo の設定
 
@@ -43,7 +43,7 @@
 | `SWING_KUBO_PROVIDE_STRATEGY` | `Provide.Strategy` | `pinned+mfs` |
 | `SWING_GATEWAY_HOSTS` | `Gateway.PublicGateways` | 空 |
 
-`SWING_GATEWAY_HOSTS` 以外の値が空の場合と、`SWING_GATEWAY_HOSTS` に不正なホスト名がある場合（規則は `[gateway].hosts` と同じ。[`../architecture.md#設定と環境変数`](../architecture.md#設定と環境変数)）はコンテナは起動しない。ほかに毎回 `Gateway.NoFetch=true` と `Gateway.NoDNSLink=true` を設定する。
+`SWING_GATEWAY_HOSTS` 以外の値が空の場合と、`SWING_GATEWAY_HOSTS`（`,` 区切り、空の要素は捨てる）に [`[gateway].hosts` の検証](gateway.md#hosts-の検証)の文字の規則を満たさないホスト名がある場合はコンテナは起動しない。同じ検証のうちダッシュボードのホスト名との重なりと、空のときのエラーは確かめない。ほかに毎回 `Gateway.NoFetch=true` と `Gateway.NoDNSLink=true` を設定する。`Addresses.*` は設定しない（Kubo イメージの既定のまま）。
 
 `SWING_KUBO_STORAGE_MAX` は、managed の `swing up` では swing の容量パーサが 1024 基数のバイト数にしてから渡すのに対し、compose では Kubo が文字列のまま解釈する。Kubo は `GiB` 系を 1024 基数、`GB` 系を 10 進で読むので、`GiB` 系で書けば両者は同じ値になる。`GB` 系で書くと compose だけ 10 進になり、managed より約 7% 小さくなる（`100GB` なら 10^11 バイトと 100×2^30 バイト）。
 

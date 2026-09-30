@@ -1,6 +1,6 @@
 # マスコットのパックを作る
 
-Desktop 画面を歩き回るマスコットを自分で作る人向けの手引き。キーの意味・値の範囲・検証規則の正本は [`architecture/dashboard/mascot.md#パック形式-1`](architecture/dashboard/mascot.md#パック形式-1) と [`architecture/dashboard.md#マスコットのパック配信srcdashboardmascots`](architecture/dashboard.md#マスコットのパック配信srcdashboardmascots)。この文書と食い違うときはそちらに従う。
+Desktop 画面を歩き回るマスコットを自分で作る人向けの手引き。キーの意味・値の範囲・検証規則の正本は [`architecture/dashboard/mascot/pack.md#パック形式-1`](architecture/dashboard/mascot/pack.md#パック形式-1) と [`architecture/dashboard/mascot/pack.md#配信`](architecture/dashboard/mascot/pack.md#配信srcdashboardmascots)。この文書と食い違うときはそちらに従う。
 
 ## パックの置き方
 
@@ -90,7 +90,7 @@ Desktop 画面を歩き回るマスコットを自分で作る人向けの手引
 }
 ```
 
-種類と差し込める値（`{title}`・`{d}`・`{count}`）の一覧は [`architecture/dashboard/mascot.md#パック形式-1`](architecture/dashboard/mascot.md#パック形式-1) の「せりふ」の表を参照。
+種類と差し込める値（`{title}`・`{d}`・`{count}`）の一覧は [`architecture/dashboard/mascot/pack.md#パック形式-1`](architecture/dashboard/mascot/pack.md#パック形式-1) の「せりふ」の表を参照。
 
 - おしらせのせりふは 3 組ある。ミラーしているサイトの保存（`site-stored`・`sites-stored-many`）、自分のサイトの公開（`site-published`・`sites-published-many`）、自分のサイトをミラーしてくれる人が増えたとき（`replica-added`・`replicas-added-many`）。それぞれ 1 件用と 2 件以上用がある。
 - 種類の違うおしらせが同時に来ると、種類ごとのせりふを 1 行ずつ並べて 1 つの吹き出しに出す。1 つのせりふは 1 行で読める長さ（全角 20 字ほどまで）にしておくと、並べたときに吹き出しが縦に伸びすぎない。
@@ -103,13 +103,14 @@ Desktop 画面を歩き回るマスコットを自分で作る人向けの手引
 3. ログに何も出ていなければ、ブラウザの開発者ツールのコンソールを見る。マニフェストの値の範囲などはブラウザ側で確かめていて、合わないパックは理由付きの警告を出して読み飛ばす。
 4. 「コントロール パネル」の「マスコット」タブに名前とプレビューが出れば読み込めている。
 
-よく引っかかる制限:
+よく引っかかる制限（値の正本は [`architecture/dashboard/mascot/pack.md`](architecture/dashboard/mascot/pack.md)）:
 
 - `manifest.json` は 64 KiB まで、シートは 1 MiB まで。シートの幅・高さは 4096px まで、幅 × 高さは 2048 × 2048 ピクセルまで。
 - シートの拡張子と中身の形式が一致していること（PNG を `.gif` という名前で置くと読み込まれない）。
 - シンボリックリンクとハードリンクは使えない。
 - コマの表示時間は 16〜60000ms（`fps` なら 60 まで）、1 つのアニメーションは 256 コマまで。
 - パックは 32 個まで（id の順に先頭から）。
+- 同梱のパックと同じ id（`yureko`・`mochi`・`neko`）のディレクトリは読み飛ばす。同梱のパックは差し替えられない。
 
 ## 配布するときは
 

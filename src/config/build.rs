@@ -581,7 +581,7 @@ fn resolve_gateway<E: Fn(&str) -> Option<String>>(
     })
 }
 
-// Only keeps the built-in gateway's hosts off the dashboard's; Kubo's own gateway can still serve peer HTML on a loopback host (see the known weaknesses in docs/architecture/dashboard.md).
+// Only keeps the built-in gateway's hosts off the dashboard's; Kubo's own gateway can still serve peer HTML on a loopback host (see the known weaknesses in docs/architecture/dashboard/security.md).
 fn check_gateway_hosts_apart_from_dashboard(
     gateway_hosts: &[String],
     allowed_hosts: &[String],

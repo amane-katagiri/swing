@@ -6,20 +6,27 @@
 swing-tray [--config <path>]
 ```
 
-`tray/` にある別クレート（workspace のメンバー、バイナリ名 `swing-tray`）。Windows の通知領域と macOS のメニューバーにアイコンを出し、動いている `swing up` をメニューから操作する。`swing up` とは別のプロセスで、CLI の `swing status` や `swing stop` と同じく、ダッシュボード API のクライアントとして動く（`swing` クレートの `api_client::ApiClient`・`config::Config`・`login`・`service`・`stop` を使う）。
+引数がこれ以外なら usage を標準エラーに出して（Windows では見えない）終了コード 2 で終わる。
 
-- **対応 OS**: Windows と macOS だけ。GUI の依存（`tray-icon`・`tao`・`png`・`sys-locale`・`rfd`）は `cfg(any(windows, target_os = "macos"))` の target 依存にしてあり、他の OS では「swing-tray supports only Windows and macOS」を出して終了コード 1 で終わるだけのバイナリになる。
-- **Windows**: `windows_subsystem = "windows"` の GUI アプリなので、起動してもコンソールウィンドウが開かない。標準出力・標準エラーはどこにも出ない。
+`tray/` にある別クレート（workspace のメンバー、バイナリ名 `swing-tray`）。Windows の通知領域と macOS のメニューバーにアイコンを出し、動いている `swing up` をメニューから操作する。`swing up` とは別のプロセスで、CLI の `swing status` や `swing stop` と同じく、ダッシュボード API のクライアントとして動く（`swing` クレートの `api_client::ApiClient`・`config::Config`・`auth`・`lock`・`login`・`service`・`stop` を使う）。
+
+- **対応 OS**: Windows と macOS だけ。他の OS では「swing-tray supports only Windows and macOS」を出して終了コード 1 で終わる。
+- **Windows**: `windows_subsystem = "windows"` の GUI アプリで、コンソールウィンドウは開かず、標準出力・標準エラーはどこにも出ない。
 - **macOS**: `SWING.app` バンドル（下記）の中に入れて配る。activation policy を `Accessory` にし、`Info.plist` にも `LSUIElement` を入れて、Dock にアイコンを出さない。
 - **言語**: メニューとダイアログの文言は OS のロケール（`sys_locale::get_locale()`）が `ja` で始まれば日本語、それ以外は英語。
+- **ソース**（`tray/src/`）:
+  - `main.rs`: 引数の解釈と多重起動のロック。対応外の OS ではここで終わる。
+  - `app.rs`: イベントループ（`tao`）、トレイアイコンとメニュー、確認ダイアログ（`rfd`）。
+  - `worker.rs`: 別スレッドの tokio ランタイムで状態をポーリングし、メニューの操作を実行して、結果をイベントループへ送る。
+  - `status.rs`: OS に依存しない状態の判定（[下記](#状態の表示)の末尾）。
 
 ## 設定ファイル
 
-`--config <path>` を渡すか、渡さなければ他のサブコマンドと同じく `config::resolve_config_path`（`SWING_CONFIG` → カレントディレクトリの `swing.toml`）で決める。ポーリングと操作のたびに `Config::load` で読み直すので、ダッシュボードの設定画面で `[dashboard].listen` を変えて再起動しても、そのまま追いかけられる。
+`--config <path>` を渡すか、渡さなければ他のサブコマンドと同じく `config::resolve_config_path`（`SWING_CONFIG` → カレントディレクトリの `swing.toml`）で決める。ポーリングと操作のたびに `Config::load` で読み直す。
 
 ## 多重起動の防止
 
-起動時に設定を読めたら、`lock::try_acquire(state_dir, "swing-tray.lock")`（`swing.lock` と同じ仕組み。`state_dir` が無ければ `0700` で作り、ロックファイルに自分の PID を書く。[`up.md`](up.md#多重起動の防止lockrs)）で `<state_dir>/swing-tray.lock` をロックする。ほかの `swing-tray` が同じ `state_dir` でロックしていれば、何も出さずに終了コード 0 で終わる。設定が読めないときとロックの取得そのものに失敗したとき（ディレクトリを作れない・ファイルを開けないなど）は、`swing-tray: <理由>; running without the single-instance lock` を標準エラーに出して、ロックせずに起動する。ロックはプロセスが終わるまで持ち続ける。
+起動時に設定を読めたら、`lock::try_acquire(state_dir, "swing-tray.lock")`（`swing.lock` と同じ仕組み。`state_dir` が無ければ `0700` で作り、ロックファイルに自分の PID を書く。[`up.md`](up.md#多重起動の防止lockrs)）で `<state_dir>/swing-tray.lock` をロックする。ほかの `swing-tray` が同じ `state_dir` でロックしていれば、何も出さずに終了コード 0 で終わる。設定が読めないときとロックの取得そのものに失敗したとき（ディレクトリを作れない・ファイルを開けないなど）は、`swing-tray: <理由>; running without the single-instance lock` を標準エラーに出して（Windows では見えない）、ロックせずに起動する。ロックはプロセスが終わるまで持ち続ける。
 
 ## メニュー
 
@@ -36,7 +43,7 @@ swing-tray [--config <path>]
 
 ### 終了
 
-- 停止中やエラーのときは、確認せずにすぐ閉じる（閉じても止まるものが無いため）。
+- 停止中やエラーのときは、確認せずにすぐ閉じる。
 - 動作中なら「SWING を停止してからトレイを閉じますか？」と聞き、「いいえ」ならトレイだけを閉じることを添える。ボタンの文字は下記「[確認のダイアログ](#確認のダイアログ)」。
   - **はい**: `stop::run(&config, false, 90 秒)`（`swing stop` と同じ。`POST /api/shutdown` を送り、トークンを送らない `POST /api/identity` で API に接続できなくなるまで待つ）を呼び、止まったらトレイを閉じる。止められなかったら、エラーを表示してトレイは残す。
   - **いいえ**: トレイだけを閉じる。`swing up` は動き続ける。
@@ -48,8 +55,8 @@ swing-tray [--config <path>]
 
 `rfd::MessageDialog` をタイトル `SWING` で、別スレッドから出す。ダイアログを開いている間に、もう一度「停止」や「終了」を押しても、2 つ目は出さない。
 
-- **Windows**: `MessageBox` で出す。ボタンは `MessageButtons::YesNo`・`YesNoCancel` で、文字は OS の表示言語に従う。別スレッドで出すので、開いている間もイベントループは止まらない。
-- **macOS**: rfd はシステムのアラート（`CFUserNotificationDisplayAlert`。`UserNotificationCenter` のウィンドウになる）をメインスレッドで出し、答えるまでメインスレッドを止める。そのため、開いている間はメニューが開かず、アイコンと状態の表示も更新されない。開いている間にアイコンをクリックすると、答えた後でメニューが開く。rfd の `YesNo`・`YesNoCancel` はボタンの文字が英語に決め打ちなので、`OkCancelCustom`・`YesNoCancelCustom` に上記「言語」のボタンの文字（「はい」「いいえ」「キャンセル」、英語なら Yes・No・Cancel）を渡し、押されたボタンの文字から答えを決める（`status::Answer::from_label`。どれにも当たらなければキャンセル扱い）。
+- **Windows**: `MessageBox` で出す。ボタンの文字は OS の表示言語に従う。開いている間もイベントループは止まらない。
+- **macOS**: システムのアラート（`UserNotificationCenter` のウィンドウ）で出す。開いている間はメニューが開かず、アイコンと状態の表示も更新されない。開いている間にアイコンをクリックすると、答えた後でメニューが開く。ボタンの文字は上記「言語」に従い（「はい」「いいえ」「キャンセル」、英語なら Yes・No・Cancel）、押されたボタンの文字から答えを決める（`status::Answer::from_label`。どれにも当たらなければキャンセル扱い）。
 
 ## 起動したときの自動起動
 
@@ -57,15 +64,17 @@ swing-tray [--config <path>]
 
 ## 状態の表示
 
-別スレッドの tokio ランタイム（`worker::run`）が `GET /api/overview` を叩き（5 秒で返らなければエラー扱い）、結果をイベントループへ送る。`ApiClient` は 1 つを使い回し、毎回設定とトークンファイルを読み直して `listen` かトークンが変わったときだけ作り直す（`ApiClient::matches`）。トークン付きの呼び出しのたびに相手を確かめ直す（[`dashboard.md#認証srcauthrs-srcdashboardsessionrs`](dashboard.md#認証srcauthrs-srcdashboardsessionrs)）。間隔はふだん 5 秒で、操作をしてから（自動起動を含む）90 秒間は 1 秒にする。
+別スレッドの tokio ランタイム（`worker::run`）が `GET /api/overview` を叩き（5 秒で返らなければエラー扱い）、結果をイベントループへ送る。`ApiClient` は 1 つを使い回し、毎回設定とトークンファイルを読み直して `listen` かトークンが変わったときだけ作り直す（`ApiClient::matches`）。トークン付きの呼び出しのたびに相手を確かめ直す（[`dashboard/security.md`](dashboard/security.md#cli-と-swing-trayapiclient)）。間隔はふだん 5 秒で、操作をしてから（自動起動を含む）90 秒間は 1 秒にする。
 
 | 状態 | 条件 | 表示 | アイコン |
 |---|---|---|---|
 | 動作中 | `/api/overview` が返った | `SWING: 動作中`。`setup: true` なら `セットアップ待ち`、`signer.last_failure`（NIP-46 の署名アプリへの最後のリクエストが、時間切れ・拒否・接続できないなどで失敗した。次に成功すると消える。[`signer.md`](signer.md)）があれば `動作中（前回の署名に失敗しました）` | ロゴ |
 | 停止中 | API に接続できない（`ApiClientError::Unreachable`） | `SWING: 停止中`。サービスとして未登録と確認できたときだけ `停止中（サービス未登録）` | 灰色で半透明のロゴ（macOS は薄いロゴ。下記「アイコン」） |
-| エラー | 設定を読めない、トークンが合わない（401）、相手がトークンを知っていることを確かめられない（`ApiClientError::NotSwing`。[`dashboard.md`](dashboard.md#認証srcauthrs-srcdashboardsessionrs)）、応答が無いなど | `SWING: エラー: <メッセージの 1 行目>` | 灰色で半透明のロゴ（macOS は薄いロゴ。下記「アイコン」） |
+| エラー | 設定を読めない、トークンが合わない（401）、相手がトークンを知っていることを確かめられない（`ApiClientError::NotSwing`。[`dashboard/security.md`](dashboard/security.md#cli-と-swing-trayapiclient)）、応答が無いなど | `SWING: エラー: <メッセージの 1 行目>` | 灰色で半透明のロゴ（macOS は薄いロゴ。下記「アイコン」） |
 
-サービスとして登録済みかどうか（`service::is_installed`）は、状態の確認のたびに、設定ファイルを読む前に調べる（設定ファイルが読めなくても下記の判定が狂わないように）。結果は「登録済み／未登録／分からない」の三値で、分からないときも含めて 10 秒覚えておく（`schtasks` や `launchctl` を起動するため、1 秒ごとには呼ばない）。Windows の判定と、`schtasks` の 10 秒のタイムアウトは [`service.md`](service.md) の「Windows」。`spawn_blocking` の join に失敗したときも分からないとする。操作に失敗したら、状態の行を `操作に失敗しました: <メッセージ>` に 15 秒間差し替える。次の操作が成功したら元に戻す。ツールチップにも同じ文字列を出す。メッセージは 1 行目だけにし、80 文字を超えるときは先頭 79 文字に `…` を付けた 80 文字にする。
+サービスとして登録済みかどうか（`service::is_installed`）は、状態の確認のたびに、設定ファイルを読む前に調べる。結果は「登録済み／未登録／分からない」の三値で、分からないときも含めて 10 秒覚えておく。Windows の判定（`schtasks` の 10 秒のタイムアウトを含む）は [`service.md`](service.md#windowsタスクスケジューラ)。判定を走らせる `spawn_blocking` の join に失敗したときも分からないとする。
+
+操作に失敗したら、状態の行とツールチップを `操作に失敗しました: <メッセージ>` に差し替え、「起動」「再起動」「停止」「終了（はい）」を押すか、次の操作（「ダッシュボードを開く」を含む）が成功するか、15 秒たつと元に戻す。メッセージは 1 行目だけにし、80 文字を超えるときは先頭 79 文字に `…` を付けた 80 文字にする。
 
 ### 操作の途中の表示
 
@@ -82,23 +91,25 @@ swing-tray [--config <path>]
 - 操作が失敗したら（API が 4xx/5xx を返した、`schtasks` が失敗したなど）、途中の表示をやめて失敗を表示する。
 - 120 秒たっても状態が変わらなければ、途中の表示をやめて、確認できた状態に戻す（「終了（はい）」は `stop::run` の 90 秒のタイムアウトで失敗になる）。
 
-状態から表示・使える項目・アイコンを決める部分と、途中の表示を戻す条件は、`status.rs` の純粋関数（`Status::from_overview`・`menu_state`・`Pending::settled_by`）と、macOS のダイアログのボタンの文字から答えを決める部分（`Answer::from_label`）にしてある。OS に依存しないユニットテストがある。
+状態から表示・使える項目・アイコンを決める部分、途中の表示を戻す条件、ボタンの文字から答えを決める部分は `status.rs`（`Status::from_overview`・`menu_state`・`Pending::settled_by`・`Answer::from_label`）にあり、OS に依存しないユニットテストがある。
 
 ## サービスの登録が消えたら終了する
 
-`status::RegistrationWatch` は `swing` 本体のサービス登録（`service::is_installed`。Windows はタスク `swing`、macOS は `jp.ne.ama.swing.plist`）を見る。一度でも登録済み（`Some(true)`）と確認した後で、未登録（`Some(false)`）と確認したら、`swing service uninstall` されたとみなしてトレイを閉じる。分からない（`None`。Windows で `schtasks` が起動できない・失敗した・時間切れになった）ときは無視して前の状態を保つので、`schtasks` の一時的な失敗ではトレイは閉じない。最初から登録が無いまま手で起動したトレイは、この判定では閉じない。
+`status::RegistrationWatch` は `swing` 本体のサービス登録（`service::is_installed`。Windows はタスク `swing`、macOS は `jp.ne.ama.swing.plist`）を見る。一度でも登録済み（`Some(true)`）と確認した後で、未登録（`Some(false)`）と確認したら、`swing service uninstall` されたとみなしてトレイを閉じる。分からない（`None`）ときは無視して前の状態を保つ。最初から登録が無いまま手で起動したトレイは、この判定では閉じない。
 
 - Windows の `uninstall` はトレイのプロセスには触らない。タスクの削除から最大で約 15 秒（登録確認のキャッシュ 10 秒 + ポーリング間隔 5 秒）でトレイが閉じる。`install --no-tray` でトレイの自動起動の登録（Run キーの値）だけを消しても、タスクは残るので動いているトレイは閉じない。
 - macOS の `uninstall` はトレイの LaunchAgent を `bootout` するので、その時点でトレイも止まる。
 
 ## アイコン
 
-OS ごとに 1 枚の PNG をバイナリに埋め込む。停止中とエラーのときに使う版は、起動時にこの画像から作る（輝度に変換し、アルファを半分にする）。
+OS ごとに 1 枚の PNG をバイナリに埋め込み、停止中とエラーのときに使う版は起動時にこの画像から作る（輝度に変換し、アルファを半分にする）。
 
-- **Windows**: `tray/assets/icon-64.png`（`web/favicon.svg` を 64×64 に書き出したもの）。停止中は灰色で半透明になる。
-- **macOS**: `tray/assets/icon-template-64.png`（`web/favicon.svg` の図形をすべて黒で塗り、64×64 に書き出したもの）を、テンプレート画像として出す。メニューバーの色に合わせて macOS が白か黒で描く。停止中はアルファが半分になり、薄く表示される。
+- **Windows**: `tray/assets/icon-64.png`。停止中は灰色で半透明になる。
+- **macOS**: `tray/assets/icon-template-64.png` をテンプレート画像として出し、メニューバーの色に合わせて macOS が白か黒で描く。停止中はアルファが半分になる。
 
-`swing-tray.exe` のファイルアイコンは `tray/assets/swing-tray.ico`（元図は `tray/assets/swing-tray.svg`。[`release.md`](release.md)）。macOS の `SWING.app` のアイコンは `tray/assets/SWING.icns`（1024px の正方形の中央に 824px の白い角丸の板（角の半径 185px、下に薄い影）を置き、その上に `web/favicon.svg` を 640px で描いて、16〜1024px を格納したもの）。
+`swing-tray.exe` のファイルアイコンは `tray/assets/swing-tray.ico`（[`release.md`](release.md)）、`SWING.app` のアイコンは `tray/assets/SWING.icns`。
+
+これらの画像と `assets/swing.ico` は `web/favicon.svg` から書き出した派生物（`swing-tray.ico` は元図 `tray/assets/swing-tray.svg` から）。作り方は [`../log/2026-09-24-app-icons.md`](../log/2026-09-24-app-icons.md) と [`../log/2026-09-27-macos-app-bundle.md`](../log/2026-09-27-macos-app-bundle.md)。
 
 ## macOS のアプリバンドル（`SWING.app`）
 
@@ -111,15 +122,8 @@ SWING.app/Contents/
   Resources/SWING.icns
 ```
 
-| `Info.plist` のキー | 値 |
-|---|---|
-| `CFBundleIdentifier` | `jp.ne.ama.swing`（LaunchAgent の `AssociatedBundleIdentifiers` と同じ。[`service.md`](service.md)） |
-| `CFBundleName`・`CFBundleDisplayName` | `SWING` |
-| `CFBundleExecutable` | `swing-tray` |
-| `CFBundleIconFile` | `SWING` |
-| `LSUIElement` | `true` |
-| `LSMinimumSystemVersion` | `11.0` |
+`Info.plist` の値は `tray/macos/Info.plist` が正本。`CFBundleIdentifier`（`jp.ne.ama.swing`）は LaunchAgent の `AssociatedBundleIdentifiers` と同じ値にしている（[`service.md`](service.md)）。
 
-`codesign` があれば（macOS なら）バンドル全体に ad-hoc 署名（`codesign --force --sign -`）をする。開発者 ID の署名と公証はしていない。
+`codesign` があればバンドル全体に ad-hoc 署名（`codesign --force --sign -`）をする。開発者 ID の署名と公証はしていない。
 
 手で起動するときは `SWING.app/Contents/MacOS/swing-tray --config <path>` を実行する（`open SWING.app` では `--config` を渡せず、カレントディレクトリも `/` になる）。
