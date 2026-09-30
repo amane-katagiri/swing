@@ -323,7 +323,8 @@ async fn probe(file: &RemoteSignerFile, request: &PairingRequest) -> Result<()> 
 mod tests {
     use super::*;
     use crate::signer::Signer;
-    use crate::signer::tests::{answer_as, config_in};
+    use crate::signer::tests::{answer_as, config_in, refusal};
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
     #[test]
     fn perms_request_the_public_key_and_each_kind() {
@@ -521,9 +522,11 @@ mod tests {
                         signer.public_key(),
                     )),
                 );
-                NostrConnectEventBuilder::new(event.pubkey, answer)
-                    .finalize(&signer)
-                    .unwrap()
+                Some(
+                    NostrConnectEventBuilder::new(event.pubkey, answer)
+                        .finalize(&signer)
+                        .unwrap(),
+                )
             })
             .await
         };
@@ -564,5 +567,129 @@ mod tests {
                 other => panic!("unexpected state: {other:?}"),
             }
         }
+    }
+
+    async fn serve_fake_signer<F>(
+        relay: RelayUrl,
+        pairing: &Pairing,
+        signer: &Keys,
+        answer: F,
+    ) -> (Client, tokio::task::JoinHandle<()>)
+    where
+        F: Fn(&Event, NostrConnectMessage) -> Option<Event> + Send + 'static,
+    {
+        let NostrConnectUri::Client {
+            public_key: app,
+            secret,
+            ..
+        } = NostrConnectUri::parse(pairing.uri()).unwrap()
+        else {
+            panic!("not a nostrconnect URI");
+        };
+        let (client, answering) = answer_as(relay, signer, answer).await;
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        client
+            .send_event(&connect_answer(
+                signer,
+                &app,
+                ResponseResult::ConnectSecret(secret),
+            ))
+            .await
+            .unwrap();
+        (client, answering)
+    }
+
+    #[tokio::test]
+    async fn a_lost_public_key_request_is_sent_again() {
+        let relay = LocalRelay::new();
+        relay.run().await.unwrap();
+        let started = tokio::time::Instant::now();
+        let pairing = Pairing::start(request_via(relay.url().await)).unwrap();
+        let (user, signer_keys) = (Keys::generate(), Keys::generate());
+        let asked = Arc::new(AtomicUsize::new(0));
+        let (client, answering) = {
+            let (user, signer, asked) =
+                (user.public_key(), signer_keys.clone(), Arc::clone(&asked));
+            serve_fake_signer(
+                relay.url().await,
+                &pairing,
+                &signer_keys,
+                move |event, message| {
+                    let id = message.id().to_string();
+                    match message.to_request().unwrap() {
+                        NostrConnectRequest::GetPublicKey => {
+                            if asked.fetch_add(1, Ordering::SeqCst) == 0 {
+                                return None;
+                            }
+                            let answer = NostrConnectMessage::response(
+                                id,
+                                NostrConnectResponse::with_result(ResponseResult::GetPublicKey(
+                                    user,
+                                )),
+                            );
+                            Some(
+                                NostrConnectEventBuilder::new(event.pubkey, answer)
+                                    .finalize(&signer)
+                                    .unwrap(),
+                            )
+                        }
+                        _ => Some(refusal(&signer, event.pubkey, &id, "user rejected")),
+                    }
+                },
+            )
+            .await
+        };
+        let paired = wait_until_paired(&pairing).await;
+        assert_eq!(paired.user, user.public_key());
+        assert_eq!(paired.file.signer_pubkey, signer_keys.public_key().to_hex());
+        assert!(asked.load(Ordering::SeqCst) >= 2);
+        assert!(started.elapsed() < PUBLIC_KEY_TIMEOUT / 3);
+        assert!(!paired.probe_signed);
+        assert_eq!(
+            paired.probe_error.as_deref(),
+            Some("the signer app refused the request: user rejected")
+        );
+        answering.abort();
+        client.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn a_refused_public_key_fails_the_pairing_with_the_signers_reason() {
+        let relay = LocalRelay::new();
+        relay.run().await.unwrap();
+        let pairing = Pairing::start(request_via(relay.url().await)).unwrap();
+        let signer_keys = Keys::generate();
+        let (client, answering) = {
+            let signer = signer_keys.clone();
+            serve_fake_signer(
+                relay.url().await,
+                &pairing,
+                &signer_keys,
+                move |event, message| {
+                    Some(refusal(
+                        &signer,
+                        event.pubkey,
+                        message.id(),
+                        "user rejected",
+                    ))
+                },
+            )
+            .await
+        };
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+        loop {
+            match pairing.state() {
+                PairingState::Failed(e) => {
+                    assert_eq!(e, "the signer app refused the request: user rejected");
+                    break;
+                }
+                PairingState::Waiting if tokio::time::Instant::now() < deadline => {
+                    tokio::time::sleep(Duration::from_millis(100)).await;
+                }
+                other => panic!("unexpected state: {other:?}"),
+            }
+        }
+        answering.abort();
+        client.shutdown().await;
     }
 }

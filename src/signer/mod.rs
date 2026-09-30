@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -21,6 +22,8 @@ pub const REMOTE_SIGNER_FILE: &str = "remote-signer.json";
 pub const SIGN_TIMEOUT: Duration = Duration::from_secs(90);
 // A NIP-44 payload tops out near 87 KiB of base64, so the signer's answers need more room than site events.
 const MAX_SIGNER_EVENT_BYTES: u32 = 128 * 1024;
+const RESEND_INTERVAL: Duration = Duration::from_secs(5);
+const MAX_SIGNER_ERROR_CHARS: usize = 500;
 const NO_ANSWER_IN_TIME: &str =
     "the signer app did not answer in time; check that it is running and approve the request";
 
@@ -199,61 +202,109 @@ impl Channel {
     async fn request(&self, req: NostrConnectRequest) -> Result<ResponseResult> {
         self.start().await?;
         let method = req.method();
-        let message = NostrConnectMessage::request(&req);
-        let id = message.id().to_string();
-        let event = NostrConnectEventBuilder::new(self.signer, message)
-            .finalize(&self.app_keys)
-            .context("encrypting the request to the signer app")?;
         let mut notifications = self.client.notifications();
-        self.client
-            .send_event(&event)
-            .await
-            .context("sending the request to the signer app")?;
+        let mut sent = HashSet::from([self.send(&req).await?]);
+        let resend = resends(method);
+        let mut ticks = tokio::time::interval_at(
+            tokio::time::Instant::now() + RESEND_INTERVAL,
+            RESEND_INTERVAL,
+        );
         let answer = async {
-            while let Some(notification) = notifications.next().await {
-                let ClientNotification::Event { event, .. } = notification else {
-                    continue;
-                };
-                if event.kind != Kind::NostrConnect || event.pubkey != self.signer {
-                    continue;
+            loop {
+                tokio::select! {
+                    notification = notifications.next() => {
+                        let Some(notification) = notification else {
+                            bail!("the connection to the relay closed");
+                        };
+                        let Some(message) = self.response(notification) else {
+                            continue;
+                        };
+                        if sent.contains(message.id()) {
+                            return read_response(method, message);
+                        }
+                    }
+                    _ = ticks.tick(), if resend => match self.send(&req).await {
+                        Ok(id) => {
+                            sent.insert(id);
+                        }
+                        Err(e) => tracing::debug!("resending to the signer app failed: {e:#}"),
+                    },
                 }
-                let Ok(text) =
-                    nip44::decrypt(self.app_keys.secret_key(), &event.pubkey, &event.content)
-                else {
-                    continue;
-                };
-                let Ok(message) = NostrConnectMessage::from_json(text) else {
-                    continue;
-                };
-                if message.id() != id || !message.is_response() {
-                    continue;
-                }
-                let response = message
-                    .to_response(method)
-                    .context("reading the signer app's answer")?;
-                if response.is_auth_url() {
-                    bail!(
-                        "the signer app asks you to approve the request at {}",
-                        response.error.unwrap_or_default()
-                    );
-                }
-                if let Some(error) = response.error {
-                    bail!("the signer app refused the request: {error}");
-                }
-                return response
-                    .result
-                    .context("the signer app answered without a result");
             }
-            bail!("the connection to the relay closed")
         };
         tokio::time::timeout(self.timeout, answer)
             .await
             .map_err(|_| anyhow!(NO_ANSWER_IN_TIME))?
     }
 
+    async fn send(&self, req: &NostrConnectRequest) -> Result<String> {
+        let message = NostrConnectMessage::request(req);
+        let id = message.id().to_string();
+        let event = NostrConnectEventBuilder::new(self.signer, message)
+            .finalize(&self.app_keys)
+            .context("encrypting the request to the signer app")?;
+        self.client
+            .send_event(&event)
+            .await
+            .context("sending the request to the signer app")?;
+        Ok(id)
+    }
+
+    fn response(&self, notification: ClientNotification) -> Option<NostrConnectMessage> {
+        let ClientNotification::Event { event, .. } = notification else {
+            return None;
+        };
+        if event.kind != Kind::NostrConnect || event.pubkey != self.signer {
+            return None;
+        }
+        let text =
+            nip44::decrypt(self.app_keys.secret_key(), &event.pubkey, &event.content).ok()?;
+        NostrConnectMessage::from_json(text)
+            .ok()
+            .filter(NostrConnectMessage::is_response)
+    }
+
     async fn shutdown(&self) {
         self.client.shutdown().await;
     }
+}
+
+// Only requests without side effects: a signer may have acted on a request whose answer was lost.
+fn resends(method: NostrConnectMethod) -> bool {
+    matches!(
+        method,
+        NostrConnectMethod::GetPublicKey | NostrConnectMethod::Ping
+    )
+}
+
+// The error is read first: signers such as Amber and Clave answer failures with an empty `result`.
+fn read_response(
+    method: NostrConnectMethod,
+    message: NostrConnectMessage,
+) -> Result<ResponseResult> {
+    let NostrConnectMessage::Response { result, error, .. } = message else {
+        bail!("the signer app sent a request instead of an answer");
+    };
+    let result = result.filter(|r| !r.is_empty());
+    let error = error
+        .map(|e| crate::format::sanitize_display_text(&e, MAX_SIGNER_ERROR_CHARS))
+        .filter(|e| !e.is_empty());
+    if result.as_deref() == Some("auth_url") {
+        bail!(
+            "the signer app asks you to approve the request at {}",
+            error.unwrap_or_default()
+        );
+    }
+    if let Some(error) = error {
+        bail!("the signer app refused the request: {error}");
+    }
+    let Some(result) = result else {
+        bail!("the signer app answered without a result");
+    };
+    if result == "error" {
+        bail!("the signer app refused the request");
+    }
+    ResponseResult::parse(method, result).context("reading the signer app's answer")
 }
 
 async fn listen(client: &Client, relays: &[String], app: PublicKey) -> Result<()> {
@@ -488,11 +539,13 @@ mod tests {
                     nip44::Version::default(),
                 )
                 .unwrap();
-                EventBuilder::new(Kind::NostrConnect, content)
-                    .tag(Tag::public_key(event.pubkey))
-                    .custom_created_at(behind)
-                    .finalize(&signer)
-                    .unwrap()
+                Some(
+                    EventBuilder::new(Kind::NostrConnect, content)
+                        .tag(Tag::public_key(event.pubkey))
+                        .custom_created_at(behind)
+                        .finalize(&signer)
+                        .unwrap(),
+                )
             })
             .await
         };
@@ -514,13 +567,133 @@ mod tests {
         signer_client.shutdown().await;
     }
 
+    pub(super) fn refusal(signer: &Keys, to: PublicKey, id: &str, error: &str) -> Event {
+        let message = NostrConnectMessage::Response {
+            id: id.to_string(),
+            result: Some(String::new()),
+            error: Some(error.to_string()),
+        };
+        NostrConnectEventBuilder::new(to, message)
+            .finalize(signer)
+            .unwrap()
+    }
+
+    fn answer(result: Option<&str>, error: Option<&str>) -> NostrConnectMessage {
+        NostrConnectMessage::Response {
+            id: "1".to_string(),
+            result: result.map(str::to_string),
+            error: error.map(str::to_string),
+        }
+    }
+
+    #[test]
+    fn the_signers_error_is_read_before_the_empty_result() {
+        for method in [
+            NostrConnectMethod::GetPublicKey,
+            NostrConnectMethod::SignEvent,
+        ] {
+            let err = read_response(method, answer(Some(""), Some("user rejected"))).unwrap_err();
+            assert_eq!(
+                err.to_string(),
+                "the signer app refused the request: user rejected"
+            );
+        }
+        let err = read_response(
+            NostrConnectMethod::SignEvent,
+            answer(None, Some("no\u{1b}[31m\nway")),
+        )
+        .unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "the signer app refused the request: no [31m way"
+        );
+        let long = "x".repeat(MAX_SIGNER_ERROR_CHARS + 10);
+        let err = read_response(NostrConnectMethod::SignEvent, answer(Some(""), Some(&long)))
+            .unwrap_err()
+            .to_string();
+        assert!(err.ends_with('\u{2026}'), "{err}");
+        assert!(err.chars().count() < MAX_SIGNER_ERROR_CHARS + 50);
+    }
+
+    #[test]
+    fn an_answer_without_an_error_is_read_as_the_result() {
+        let user = Keys::generate().public_key();
+        let result = read_response(
+            NostrConnectMethod::GetPublicKey,
+            answer(Some(&user.to_hex()), Some("")),
+        )
+        .unwrap();
+        assert_eq!(result.to_get_public_key().unwrap(), user);
+        let err =
+            read_response(NostrConnectMethod::GetPublicKey, answer(Some(""), None)).unwrap_err();
+        assert!(err.to_string().contains("without a result"), "{err}");
+        let err = read_response(
+            NostrConnectMethod::GetPublicKey,
+            answer(Some("error"), None),
+        )
+        .unwrap_err();
+        assert_eq!(err.to_string(), "the signer app refused the request");
+        let err = read_response(
+            NostrConnectMethod::SignEvent,
+            answer(Some("auth_url"), Some("https://signer.example/approve")),
+        )
+        .unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("approve the request at https://signer.example/approve"),
+            "{err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_refused_signature_reports_the_signers_reason() {
+        let relay = LocalRelay::new();
+        relay.run().await.unwrap();
+        let url = relay.url().await;
+        let signer_keys = Keys::generate();
+        let (signer_client, answering) = {
+            let signer = signer_keys.clone();
+            answer_as(url.clone(), &signer_keys, move |event, message| {
+                Some(refusal(
+                    &signer,
+                    event.pubkey,
+                    message.id(),
+                    "user rejected",
+                ))
+            })
+            .await
+        };
+        let file = RemoteSignerFile {
+            app_secret_key: Keys::generate().secret_key().to_secret_hex().into(),
+            signer_pubkey: signer_keys.public_key().to_hex(),
+            relays: vec![url.to_string()],
+            user_pubkey: Keys::generate().public_key().to_hex(),
+        };
+        let remote = RemoteSigner::from_file(&file, Duration::from_secs(5)).unwrap();
+        let err = remote
+            .sign(EventBuilder::new(Kind::Custom(35981), ""))
+            .await
+            .unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "the signer app refused the request: user rejected"
+        );
+        assert_eq!(
+            remote.last_failure().unwrap().message,
+            "the signer app refused the request: user rejected"
+        );
+        answering.abort();
+        remote.shutdown().await;
+        signer_client.shutdown().await;
+    }
+
     pub(super) async fn answer_as<F>(
         url: RelayUrl,
         keys: &Keys,
         answer: F,
     ) -> (Client, tokio::task::JoinHandle<()>)
     where
-        F: Fn(&Event, NostrConnectMessage) -> Event + Send + 'static,
+        F: Fn(&Event, NostrConnectMessage) -> Option<Event> + Send + 'static,
     {
         let client = Client::new();
         client.add_relay(url).await.unwrap();
@@ -545,8 +718,9 @@ mod tests {
                     let text =
                         nip44::decrypt(keys.secret_key(), &event.pubkey, &event.content).unwrap();
                     let message = NostrConnectMessage::from_json(text).unwrap();
-                    let reply = answer(&event, message);
-                    client.send_event(&reply).await.unwrap();
+                    if let Some(reply) = answer(&event, message) {
+                        client.send_event(&reply).await.unwrap();
+                    }
                 }
             })
         };
