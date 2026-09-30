@@ -148,12 +148,16 @@ fn path_conflict_or_internal(filename: &str, e: std::io::Error) -> ApiError {
     use std::io::ErrorKind;
     match e.kind() {
         ErrorKind::AlreadyExists | ErrorKind::NotADirectory | ErrorKind::IsADirectory => {
-            ApiError::BadRequest(format!(
-                "file path conflicts with another uploaded path: {filename}"
-            ))
+            path_conflict(filename)
         }
         _ => internal("storing an uploaded file failed", e),
     }
+}
+
+fn path_conflict(filename: &str) -> ApiError {
+    ApiError::BadRequest(format!(
+        "file path conflicts with another uploaded path: {filename}"
+    ))
 }
 
 // Owns the upload temp dir so a timeout or client disconnect (which drops the handler future
@@ -204,6 +208,7 @@ async fn receive_upload(multipart: &mut Multipart, dest: &Path) -> Result<Parsed
     let mut message: Option<String> = None;
     let mut modes = crate::publish::ModeOverrides::default();
     let mut seen_paths: HashSet<String> = HashSet::new();
+    let mut seen_dirs: HashSet<String> = HashSet::new();
     let mut file_count = 0usize;
 
     loop {
@@ -243,7 +248,13 @@ async fn receive_upload(multipart: &mut Multipart, dest: &Path) -> Result<Parsed
                     ));
                 };
                 validate_relative_path(&filename).map_err(ApiError::BadRequest)?;
-                if !seen_paths.insert(filename.to_lowercase()) {
+                let key = filename.to_lowercase();
+                let parents: Vec<&str> = key.match_indices('/').map(|(i, _)| &key[..i]).collect();
+                if seen_dirs.contains(&key) || parents.iter().any(|p| seen_paths.contains(*p)) {
+                    return Err(path_conflict(&filename));
+                }
+                seen_dirs.extend(parents.iter().map(|p| p.to_string()));
+                if !seen_paths.insert(key) {
                     return Err(ApiError::BadRequest(format!(
                         "duplicate file path: {filename}"
                     )));
