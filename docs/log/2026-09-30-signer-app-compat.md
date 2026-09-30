@@ -19,4 +19,11 @@
 ## 検証
 
 - 最初の `get_public_key` を無視する偽の署名アプリで、ペアリングが再送で約 5 秒後に通ることをテストで確かめた。断りの理由が接続・署名の両方で表示されることもテストした。
-- 実機（Amber・Clave）でのペアリングはまだ確かめていない。
+
+## 実機での確認
+
+`swing signer pair`（relay は `wss://yabu.me` と、もう 1 つ公開の relay）で確かめた。
+
+- Amber: ペアリングと試し署名が通った。試し署名をアプリで拒否すると「the signer app refused the request: user rejected」と理由が出て、ペアリング自体は保存された。
+- Clave: ペアリングと試し署名が通った。試し署名を拒否したときも Amber と同じく理由（`user rejected`）が出た。別のアカウントで保存済みのときは、Clave の公開鍵を受け取ったうえで「別のアカウントには切り替えない」エラーで止まった（接続と `get_public_key` の応答は届いている）。
+- `swing signer pair` の既定の relay（`wss://relay.primal.net`）はこのとき接続できず（IPv4 で 502、IPv6 でタイムアウト）、`--relay` で別の relay を指定した。既定が 1 つだけなので、そこが落ちているとペアリングがすぐ失敗する。
