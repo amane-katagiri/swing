@@ -195,6 +195,77 @@ mod tests {
         assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
     }
 
+    const DESKTOP_ONLY_ASSETS: &[&str] = &[
+        "/desktop-page.html",
+        "/desktop-page.css",
+        "/desktop-banner",
+        "/mascots/index.json",
+        "/mascots/yureko/manifest.json",
+        "/mascots/yureko/sprite.png",
+    ];
+
+    #[tokio::test]
+    async fn desktop_only_assets_require_authentication() {
+        let state = test_state();
+        for path in DESKTOP_ONLY_ASSETS {
+            for method in ["GET", "HEAD"] {
+                let mut req = get(path);
+                *req.method_mut() = method.parse().unwrap();
+                let resp = call_anonymous(router(Arc::clone(&state)), req).await;
+                assert_eq!(resp.status(), StatusCode::UNAUTHORIZED, "{method} {path}");
+                assert_eq!(
+                    resp.headers().get("x-content-type-options").unwrap(),
+                    "nosniff"
+                );
+                assert!(resp.headers().get("content-security-policy").is_some());
+            }
+
+            let mut req = get(path);
+            req.headers_mut()
+                .insert("authorization", "Bearer wrong".parse().unwrap());
+            let resp = call_anonymous(router(Arc::clone(&state)), req).await;
+            assert_eq!(resp.status(), StatusCode::UNAUTHORIZED, "{path}");
+        }
+    }
+
+    #[tokio::test]
+    async fn desktop_only_assets_accept_a_session_cookie_without_the_marker() {
+        let state = test_state();
+        let session = crate::auth::new_session(TEST_TOKEN, crate::auth::DASHBOARD_SESSION);
+        let cookie = format!("swing_session_8082={session}");
+        for path in DESKTOP_ONLY_ASSETS {
+            let mut req = get(path);
+            req.headers_mut().insert("cookie", cookie.parse().unwrap());
+            let resp = call_anonymous(router(Arc::clone(&state)), req).await;
+            assert_eq!(resp.status(), StatusCode::OK, "{path}");
+            assert_eq!(
+                resp.headers().get("cross-origin-resource-policy").unwrap(),
+                "same-origin",
+                "{path}"
+            );
+
+            let resp = call(router(Arc::clone(&state)), get(path)).await;
+            assert_eq!(resp.status(), StatusCode::OK, "{path}");
+        }
+    }
+
+    #[tokio::test]
+    async fn the_login_screen_assets_stay_public() {
+        let state = test_state();
+        for path in [
+            "/",
+            "/custom.css",
+            "/style.css",
+            "/app.js",
+            "/login.js",
+            "/fonts/pixelmplus12-regular.woff2",
+            "/favicon.svg",
+        ] {
+            let resp = call_anonymous(router(Arc::clone(&state)), get(path)).await;
+            assert_eq!(resp.status(), StatusCode::OK, "{path}");
+        }
+    }
+
     #[tokio::test]
     async fn cookie_authenticated_reads_need_the_dashboard_marker() {
         let state = test_state();

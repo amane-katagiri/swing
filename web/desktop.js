@@ -91,6 +91,7 @@ function capturePageEls() {
   return doc;
 }
 
+const PAGE_URL = '/desktop-page.html';
 const FRAME_CHROME_CSS = '/desktop-frame.css';
 const FRAME_CHROME_ID = 'desk-frame-chrome';
 let frameChromeReady = Promise.resolve();
@@ -252,6 +253,7 @@ function injectFrameChrome(doc) {
 function wirePageFrame() {
   if (!deskEls.frame) return;
   const onLoad = () => {
+    if (!deskEls.frame.hasAttribute('src')) return;
     const doc = capturePageEls();
     frameChromeReady = injectFrameChrome(doc);
     if (doc) {
@@ -412,6 +414,11 @@ export const DesktopView = {
     window.addEventListener('blur', scheduleActiveSync);
     window.addEventListener('focus', scheduleActiveSync);
     document.getElementById('view-desktop').addEventListener('pointerdown', scheduleActiveSync);
+  },
+  /* The page and mascots need a session, so they are only requested once the overview has loaded. */
+  start() {
+    if (deskEls.frame && !deskEls.frame.hasAttribute('src')) deskEls.frame.src = PAGE_URL;
+    DesktopMascots.start();
   },
   onShow() {
     revealWindowWhenReady();

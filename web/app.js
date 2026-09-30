@@ -127,6 +127,7 @@ function init() {
     })
     .catch(() => {})
     .finally(() => {
+      if (!unauthorized) DesktopView.start();
       showRoute();
       desktopUpdates.checkNow();
     });

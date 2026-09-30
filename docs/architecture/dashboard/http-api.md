@@ -25,7 +25,7 @@
 
 ### 認証とガード
 
-- `POST /api/login`・`POST /api/identity` 以外の `/api/*` は認証が要る。`Authorization: Bearer <token>` かセッション cookie が無い・合わなければ 401 `{"error": "missing or invalid dashboard token or session"}`（仕組みは [`../dashboard.md#認証srcauthrs-srcdashboardsessionrs`](../dashboard.md#認証srcauthrs-srcdashboardsessionrs)）。
+- `POST /api/login`・`POST /api/identity` 以外の `/api/*` は認証が要る。`Authorization: Bearer <token>` かセッション cookie が無い・合わなければ 401 `{"error": "missing or invalid dashboard token or session"}`（仕組みは [`../dashboard.md#認証srcauthrs-srcdashboardsessionrs`](../dashboard.md#認証srcauthrs-srcdashboardsessionrs)）。`/api/` の外の `/desktop-page.html`・`/desktop-page.css`・`/desktop-banner`・`/mascots/*` も同じく認証が要る（`X-Swing-Dashboard` ヘッダは要らない）。
 - GET 以外のエンドポイント（`POST /api/login`・`POST /api/identity`・`POST /api/publish/upload` を含む）と、`Authorization: Bearer` を付けない GET/HEAD（セッション cookie で読む場合）は、`X-Swing-Dashboard: 1` ヘッダと Origin の検証を通す（[`../dashboard.md#ガードsrcdashboardguardrs`](../dashboard.md#ガードsrcdashboardguardrs)）。
 
 ### agent の準備状態とセットアップモード

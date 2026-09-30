@@ -13,6 +13,15 @@ use crate::host::{extract_host, split_host_port};
 const DASHBOARD_MARKER_HEADER: &str = "x-swing-dashboard";
 const SESSION_COOKIE_PREFIX: &str = "swing_session";
 const UNAUTHENTICATED_API_PATHS: &[&str] = &["/api/login", "/api/identity"];
+const PROTECTED_UI_PATHS: &[&str] = &["/desktop-page.html", "/desktop-page.css", "/desktop-banner"];
+const PROTECTED_UI_PREFIX: &str = "/mascots/";
+
+fn needs_auth(path: &str) -> bool {
+    if path.starts_with("/api/") {
+        return !UNAUTHENTICATED_API_PATHS.contains(&path);
+    }
+    PROTECTED_UI_PATHS.contains(&path) || path.starts_with(PROTECTED_UI_PREFIX)
+}
 
 // Cookies ignore the port, so instances on one host would otherwise overwrite each other's session.
 pub fn session_cookie_name(host_header: &str) -> String {
@@ -139,10 +148,8 @@ pub async fn security_middleware(
         }
     }
 
-    if is_api
-        && !UNAUTHENTICATED_API_PATHS.contains(&req.uri().path())
-        && !authorized(req.headers(), &host_header, &state.token())
-    {
+    let protected = needs_auth(req.uri().path());
+    if protected && !authorized(req.headers(), &host_header, &state.token()) {
         return guarded_error(
             StatusCode::UNAUTHORIZED,
             "missing or invalid dashboard token or session",
@@ -152,6 +159,13 @@ pub async fn security_middleware(
 
     let mut response = next.run(req).await;
     apply_security_headers(response.headers_mut(), is_api);
+    // Stops same-site pages on other ports from embedding authenticated files, which the Strict cookie would otherwise allow.
+    if protected && !is_api {
+        response.headers_mut().insert(
+            HeaderName::from_static("cross-origin-resource-policy"),
+            HeaderValue::from_static("same-origin"),
+        );
+    }
     response
 }
 

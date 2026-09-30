@@ -517,6 +517,8 @@ function greetOnce() {
   if (settings.chatter) say(active[0], 'greet');
 }
 
+let started = false;
+
 async function load() {
   allPacks = await loadPacks();
   const now = performance.now();
@@ -551,6 +553,10 @@ export const DesktopMascots = {
     reducedQuery.addEventListener('change', applyReduced);
     document.addEventListener('visibilitychange', onVisibility);
     watchDocument(document, topSource);
+  },
+  start() {
+    if (!els.container || started) return;
+    started = true;
     load();
   },
   watchFrame(doc) {

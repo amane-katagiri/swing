@@ -487,7 +487,7 @@ Nostr の秘密鍵は、Docker Compose で動かす場合は `.env` に、バイ
 - `SWING_DASHBOARD_PUBLIC_URL`（`[dashboard].public_url`）を `https://<公開ホスト>` にすると、`swing dashboard open --no-browser` が外の端末でそのまま開けるリンクを出します。
 - Cloudflare Tunnel なら、Cloudflare Access（メールのワンタイムコードなど）を前に重ねて、SWING のログインと二重にするのがおすすめです。
 - ヘッダの受信が遅い接続は、プロキシ側のタイムアウト（nginx の `client_header_timeout` など）で切ってください。
-- 画面の見た目のファイル（`/custom.css`、Desktop 画面のリンク集ページ `/desktop-page.html` と `/desktop-page.css`、バナー `/desktop-banner`、マスコット `/mascots/`）はログインしなくても取得できます。`custom_css`・`desktop_page` などで差し替えるファイルには、見られて困るものを書かないでください。
+- `/custom.css` はログイン画面の見た目にも使うので、ログインしなくても取得できます。`custom_css` で差し替える CSS には、見られて困るものを書かないでください。Desktop 画面だけで使うファイル（リンク集ページ `/desktop-page.html` と `/desktop-page.css`、バナー `/desktop-banner`、マスコット `/mascots/`）はログインが必要です。
 
 ### 署名アプリ（NIP-46）で署名する
 

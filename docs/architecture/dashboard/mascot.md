@@ -26,7 +26,7 @@
 | `GET /mascots/<id>/manifest.json` | パックのマニフェスト |
 | `GET /mascots/<id>/<sprite>` | スプライトシート |
 
-フロントエンドは `index.json` と各エントリの `base` だけを頼りに読む。`base` は同一オリジンでなければならず、`sprite` は `base` の下に解決できるものに限る。`manifest.json` は `base` の直下に置く。サーバはマニフェストを中身に手を加えずに返し、`format`・`sprite` 以外の検証はここ（下記「検証」）に任せる。
+どれもログインが要る（Bearer かセッション cookie。無ければ 401。[`../dashboard.md#ガードsrcdashboardguardrs`](../dashboard.md#ガードsrcdashboardguardrs)）。フロントエンドは `index.json` と各エントリの `base` だけを頼りに読む。`base` は同一オリジンでなければならず、`sprite` は `base` の下に解決できるものに限る。`manifest.json` は `base` の直下に置く。サーバはマニフェストを中身に手を加えずに返し、`format`・`sprite` 以外の検証はここ（下記「検証」）に任せる。
 
 ## パック形式 1
 

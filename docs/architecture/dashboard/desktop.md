@@ -117,7 +117,7 @@ Desktop 画面では `.swing-main` の幅制限と余白を外して画面いっ
 
 ### リンク集ページ（iframe）
 
-ウィンドウの中身（`#desk-page-frame`）は同一オリジンの `<iframe src="/desktop-page.html">` で開く別ドキュメントで、`index.html` のダッシュボードの CSS は当たらず、ページ側の CSS も外に漏れない。窓側の `desktop-frame.css` だけは `desktop.js` が iframe の `<head>` の先頭に `<link>` で差し込む。ページ専用 CSS は `--desk-*`・`@font-face`・リセットまで自己完結する。ルートと差し替え設定は [`../dashboard.md#静的ファイルの配信srcdashboardassetsrs`](../dashboard.md#静的ファイルの配信srcdashboardassetsrs)。
+ウィンドウの中身（`#desk-page-frame`）は同一オリジンの iframe で開く `/desktop-page.html` の別ドキュメントで、`index.html` のダッシュボードの CSS は当たらず、ページ側の CSS も外に漏れない。窓側の `desktop-frame.css` だけは `desktop.js` が iframe の `<head>` の先頭に `<link>` で差し込む。ページ専用 CSS は `--desk-*`・`@font-face`・リセットまで自己完結する。ルートと差し替え設定は [`../dashboard.md#静的ファイルの配信srcdashboardassetsrs`](../dashboard.md#静的ファイルの配信srcdashboardassetsrs)。このページとバナー・マスコットはログインが要る（[`../dashboard.md#ガードsrcdashboardguardrs`](../dashboard.md#ガードsrcdashboardguardrs)）ので、`index.html` の iframe には `src` を書かず、`app.js` が `/api/overview` を読み終えて 401 でなかったときに呼ぶ `DesktopView.start()` が `src` を入れ、`DesktopMascots.start()` でパックを読み始める。ログイン画面を出すときは呼ばないので、ログイン前にはどちらも要求しない。`src` の無い間の `about:blank` の `load` は無視する。
 
 iframe には `sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox"` を付ける。差し替えたページの `<script>`・イベントハンドラ属性・フォーム送信・親ウィンドウの遷移は動かず、`target="_blank"` のリンクは制限の無い新しいタブで開く。`allow-same-origin` は親の `desktop.js` が `contentDocument` を読み書きするためのもので、ページ側でスクリプトは動かないので同一オリジンの権限を使われることはない。
 
