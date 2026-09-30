@@ -315,7 +315,7 @@ publish はあわせて、[チェックリスト](docs/site-guide.md)のうち�
 
 | 確かめること | フラグ | 設定 | 既定 |
 |---|---|---|---|
-| 名前が `.` で始まるファイル・ディレクトリ（`.git`・`.env` など）が入っていないか。`dotfiles_allow`（既定 `.well-known`・`.nojekyll`・`.gitkeep`・`.keep`・`.domains`）に載っている名前は見逃す（その下にある `.` で始まるものは見逃さない） | `--check-dotfiles` | `check_dotfiles`・`dotfiles_allow` | `require` |
+| 名前が `.` で始まるファイル・ディレクトリ（`.git`・`.env` など）が入っていないか。`dotfiles_allow`（既定 `.well-known`・`.nojekyll`・`.gitkeep`・`.keep`・`.domains`）に載っている名前そのものは見逃す。ただし、そのディレクトリの中にある `.` で始まるもの（`.well-known/.env` など）は見逃さない | `--check-dotfiles` | `check_dotfiles`・`dotfiles_allow` | `require` |
 | ファイルの合計が 512 MiB を超えていないか（目安。保存するかどうかはミラーする側の設定で決まる） | `--check-size` | `check_size` | `warn` |
 | 追加した CID が relay 上の自分の最新版と同じではないか。`require` なら追加した版を消して、署名も送信もせずに `Unchanged; not published.` で正常終了する（終了コード 0） | `--check-unchanged` | `check_unchanged` | `require` |
 
