@@ -1,21 +1,24 @@
+use std::io::{IsTerminal, Write};
 use std::path::Path;
 
 use anyhow::{Context, Result};
 use nostr_sdk::prelude::*;
 
 use crate::config::{self, CheckMode, Config};
-use crate::ipfs::IpfsClient;
+use crate::ipfs::{self, IpfsClient, SiteEntry};
 use crate::mfs::MfsLayout;
 use crate::nip05::{self, Nip05Verify};
 use crate::nostr::{self, RelayClient, RelaySendResult, build_site_event_builder};
 use crate::signer::Signer;
 
 mod checks;
+mod new_files;
 
 pub use checks::{
     DASHBOARD_UPLOAD_DIR, LISTED_DOTFILES, LocalChecks, SIZE_GUIDELINE, UnchangedOutcome,
     UnchangedStatus, find_dotfiles, refuse_protected_paths,
 };
+pub use new_files::{PreviousFiles, count_new_files};
 
 fn versions_to_prune(names: &[String], current: u64, keep: usize) -> Vec<String> {
     let mut versions: Vec<(u64, &String)> = names
@@ -384,9 +387,20 @@ async fn run_nip05_check(mode: CheckMode, d: &str, pubkey_hex: &str) -> Result<(
     Ok(())
 }
 
-async fn run_local_checks(dir: &Path, modes: &Modes, dotfiles_allow: &[String]) -> Result<()> {
-    let local =
-        LocalChecks::run(dir, modes.check_dotfiles, modes.check_size, dotfiles_allow).await?;
+async fn list_site_entries(dir: &Path) -> Result<Vec<SiteEntry>> {
+    let dir = dir.to_path_buf();
+    tokio::task::spawn_blocking(move || ipfs::list_site(&dir))
+        .await
+        .context("listing task panicked")?
+}
+
+fn run_local_checks(entries: &[SiteEntry], modes: &Modes, dotfiles_allow: &[String]) -> Result<()> {
+    let local = LocalChecks::evaluate(
+        entries,
+        modes.check_dotfiles,
+        modes.check_size,
+        dotfiles_allow,
+    );
     if local.all_off() {
         return Ok(());
     }
@@ -401,18 +415,61 @@ async fn run_local_checks(dir: &Path, modes: &Modes, dotfiles_allow: &[String]) 
     Ok(())
 }
 
+async fn ask_to_publish(new_files: usize) -> Result<bool> {
+    print!("  Publish with {}? [y/N] ", count_new_files(new_files));
+    std::io::stdout().flush()?;
+    let answer = tokio::task::spawn_blocking(|| {
+        let mut line = String::new();
+        std::io::stdin().read_line(&mut line).map(|_| line)
+    })
+    .await
+    .context("prompt task panicked")??;
+    Ok(matches!(
+        answer.trim().to_ascii_lowercase().as_str(),
+        "y" | "yes"
+    ))
+}
+
+async fn confirm_new_files(
+    ipfs: &IpfsClient,
+    previous: &Result<Option<nostr::SiteEvent>, String>,
+    entries: &[SiteEntry],
+    yes: bool,
+) -> Result<()> {
+    let previous_files = PreviousFiles::load(ipfs, previous).await;
+    let new_files = previous_files.new_files(entries);
+    println!();
+    println!("New files");
+    for line in previous_files.lines(&new_files) {
+        println!("  {line}");
+    }
+    if new_files.is_empty() || yes {
+        return Ok(());
+    }
+    if !std::io::stdin().is_terminal() {
+        anyhow::bail!(
+            "confirmation needed for {}: review them above and rerun with --yes",
+            count_new_files(new_files.len())
+        );
+    }
+    if !ask_to_publish(new_files.len()).await? {
+        anyhow::bail!("cancelled; nothing was added or published");
+    }
+    Ok(())
+}
+
 async fn withdraw_if_unchanged(
     relay: &RelayClient,
     ipfs: &IpfsClient,
     mode: CheckMode,
-    site_event_kind: u16,
-    d: &str,
+    previous: &Result<Option<nostr::SiteEvent>, String>,
     stage: &IpfsStage,
 ) -> Result<bool> {
     if mode == CheckMode::Off {
         return Ok(false);
     }
-    let unchanged = check_unchanged(relay, mode, site_event_kind, d, &stage.cid).await;
+    let previous = previous.clone().map_err(anyhow::Error::msg);
+    let unchanged = UnchangedOutcome::decide(mode, previous, &stage.cid);
     println!();
     println!("Previous version");
     println!("  {}", unchanged.line());
@@ -456,15 +513,24 @@ async fn announce(
     Ok(())
 }
 
-pub async fn run(
-    config: Config,
-    d: String,
-    url: Option<String>,
-    dir: &Path,
-    overrides: ModeOverrides,
-    title: Option<String>,
-    message: Option<String>,
-) -> Result<()> {
+pub struct Request {
+    pub d: String,
+    pub url: Option<String>,
+    pub title: Option<String>,
+    pub message: Option<String>,
+    pub modes: ModeOverrides,
+    pub yes: bool,
+}
+
+pub async fn run(config: Config, dir: &Path, request: Request) -> Result<()> {
+    let Request {
+        d,
+        url,
+        title,
+        message,
+        modes: overrides,
+        yes,
+    } = request;
     let url = url.as_deref();
     let message = message.as_deref();
     let title = check_arguments(&d, url, title.as_deref(), message)?;
@@ -478,12 +544,25 @@ pub async fn run(
     let pubkey_hex = signer.public_key().to_hex();
 
     run_nip05_check(modes.nip05, &d, &pubkey_hex).await?;
-    run_local_checks(dir, &modes, &config.publish.dotfiles_allow).await?;
+    let entries = list_site_entries(dir).await?;
+    run_local_checks(&entries, &modes, &config.publish.dotfiles_allow)?;
+
+    let ipfs = config.ipfs_client().await?;
+    let remote_signer = signer.is_remote();
+    let relay = RelayClient::connect(signer, &config.nostr.relays).await?;
+    let site_event_kind = config.nostr.site_event_kind;
+    let previous = relay
+        .fetch_own_latest_site(site_event_kind, &d)
+        .await
+        .map_err(|e| format!("{e:#}"));
+    if let Err(e) = confirm_new_files(&ipfs, &previous, &entries, yes).await {
+        relay.shutdown().await;
+        return Err(e);
+    }
 
     println!();
     println!("IPFS");
 
-    let ipfs = config.ipfs_client().await?;
     let layout = MfsLayout::new(config.ipfs.mfs_root.clone());
     let created_at = Timestamp::now();
     let stage = add_and_measure(&ipfs, &layout, &pubkey_hex, &d, created_at.as_secs(), dir).await?;
@@ -491,20 +570,7 @@ pub async fn run(
     println!("  \u{2713} added to {}", stage.path);
     println!("  Size: {} bytes", stage.size);
 
-    let remote_signer = signer.is_remote();
-    let relay = RelayClient::connect(signer, &config.nostr.relays).await?;
-
-    let site_event_kind = config.nostr.site_event_kind;
-    if withdraw_if_unchanged(
-        &relay,
-        &ipfs,
-        modes.check_unchanged,
-        site_event_kind,
-        &d,
-        &stage,
-    )
-    .await?
-    {
+    if withdraw_if_unchanged(&relay, &ipfs, modes.check_unchanged, &previous, &stage).await? {
         return Ok(());
     }
 
@@ -712,23 +778,20 @@ mod tests {
         let mut config = config::build_config_from_str("", |_| None).unwrap();
         config.agent.state_dir = site.path().join("data");
         std::fs::create_dir(&config.agent.state_dir).unwrap();
-        let overrides = ModeOverrides {
-            nip05: Some("off".into()),
-            check_dotfiles: Some("off".into()),
-            check_size: Some("off".into()),
-            check_unchanged: Some("off".into()),
+        let request = Request {
+            d: "example.com".into(),
+            url: None,
+            title: None,
+            message: None,
+            modes: ModeOverrides {
+                nip05: Some("off".into()),
+                check_dotfiles: Some("off".into()),
+                check_size: Some("off".into()),
+                check_unchanged: Some("off".into()),
+            },
+            yes: false,
         };
-        let err = run(
-            config,
-            "example.com".into(),
-            None,
-            site.path(),
-            overrides,
-            None,
-            None,
-        )
-        .await
-        .unwrap_err();
+        let err = run(config, site.path(), request).await.unwrap_err();
         assert!(err.to_string().contains("[agent].state_dir"), "{err}");
     }
 

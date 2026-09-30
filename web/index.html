@@ -697,6 +697,16 @@
         <button type="submit" class="swing-btn swing-btn-accent" data-i18n="publishBtn" disabled>Publish</button>
       </form>
 
+      <div id="publish-confirm" class="swing-panel" hidden>
+        <h2 data-i18n="newFilesHeading">New files</h2>
+        <p class="swing-hint" id="publish-confirm-basis"></p>
+        <ul class="swing-file-list" id="publish-confirm-files"></ul>
+        <div class="swing-css-actions">
+          <button type="button" class="swing-btn swing-btn-accent" id="publish-confirm-ok" data-i18n="newFilesPublish">Publish with these files</button>
+          <button type="button" class="swing-btn" id="publish-confirm-cancel" data-i18n="cancel">Cancel</button>
+        </div>
+      </div>
+
       <div id="publish-status" class="swing-status" aria-live="polite"></div>
       <div id="publish-result" class="swing-panel" hidden></div>
     </section>

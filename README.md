@@ -289,6 +289,12 @@ Checks
   ✓ dotfiles: none
   ✓ size: 12.1 KiB (guideline 512 MiB)
 
+New files
+  compared with your latest version on the relays (bafy...)
+  ! 1 new file
+      posts/hello.html
+  Publish with 1 new file? [y/N] y
+
 IPFS
   CID: bafy...
   ✓ added to /swing/publish/<pubkey>/example.jp/1700000000
@@ -318,6 +324,8 @@ publish はあわせて、[チェックリスト](docs/site-guide.md)のうち�
 | 名前が `.` で始まるファイル・ディレクトリ（`.git`・`.env` など）が入っていないか。`dotfiles_allow`（既定 `.well-known`・`.nojekyll`・`.gitkeep`・`.keep`・`.domains`）に載っている名前そのものは見逃す。ただし、そのディレクトリの中にある `.` で始まるもの（`.well-known/.env` など）は見逃さない | `--check-dotfiles` | `check_dotfiles`・`dotfiles_allow` | `require` |
 | ファイルの合計が 512 MiB を超えていないか（目安。保存するかどうかはミラーする側の設定で決まる） | `--check-size` | `check_size` | `warn` |
 | 追加した CID が relay 上の自分の最新版と同じではないか。`require` なら追加した版を消して、署名も送信もせずに `Unchanged; not published.` で正常終了する（終了コード 0） | `--check-unchanged` | `check_unchanged` | `require` |
+
+IPFS に追加する前に、relay 上の自分の最新版に無かったファイル（増えたファイル）の一覧を出し、1 件でもあれば公開してよいか `y/N` で聞きます。一度公開したものは取り消せないので、鍵ファイルや `secrets.json` のように名前では見分けられないものが紛れ込んでいないかを、ここで目で確かめてください。前の版はこのマシンの Kubo にあるものだけを読むので、初めての publish や、別のマシンから publish した後は、すべてのファイルを増えたものとして出します。`--yes`（`-y`）を付けると聞かずに続けます。端末から実行していない（CI やスクリプトの中など）ときは聞けないので、増えたファイルがあれば `--yes` が無い限り止まります。ダッシュボードの公開画面でも、アップロードする前に同じ一覧を出して確かめます。
 
 ドットファイルとサイズは IPFS に追加する前、同じ内容かどうかは追加した後に確かめます。これとは別に、リンク先がディレクトリの外にあるシンボリックリンクがあるときと、ディレクトリの中に SWING の設定ファイル・状態ディレクトリ（`data/`）・Kubo のリポジトリがあるときは、設定にかかわらず何も追加せずに止まります。relay から前の版を取れなかったときは、`require` でも止めずに publish します。ダッシュボードの公開画面でも同じものを確かめて結果を出します。
 

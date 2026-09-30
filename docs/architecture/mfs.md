@@ -32,6 +32,7 @@ MFS は DAG が欠けていても置け、GC も `block/rm` も止めない。�
 | 配置 | `files/cp?arg=/ipfs/{cid}&arg={path}&offline=true` | 60 秒 |
 | 削除 | `files/rm?arg={path}&recursive=true&force=true` | 60 秒 |
 | 一覧 | `files/ls?arg={path}&long=true` → `Entries`（`Type` 1 がディレクトリ） | 60 秒 |
+| CID の中のファイル一覧 | `ls?arg={cid}&resolve-type=true&size=false&offline=true` → `Objects[].Links`（`Type` 1 と 5 がディレクトリ）。ディレクトリごとに呼ぶ | 60 秒（1 回あたり） |
 | CID の確認 | `files/stat?arg={path}&hash=true` → `Hash` | 60 秒 |
 | ディレクトリ判定 | `files/stat?arg=/ipfs/{cid}` → `Type`（`directory` か `file`） | 60 秒 |
 | PeerID | `id` → `ID` | 10 秒 |
@@ -42,6 +43,7 @@ MFS は DAG が欠けていても置け、GC も `block/rm` も止めない。�
 - `dag/stat` に CID を複数渡すと、`TotalSize` はそれらをまとめた重複排除後のサイズ（同じブロックを 1 回だけ数えた合計）になる。1 つでもブロックが欠けていれば呼び出し全体が失敗する。CID を 1 つも渡さないときは呼ばずに 0 を返す。
 - `dag/export` の無通信タイムアウトはヘッダー受信までにも適用する。
 - 配置は親ディレクトリを作り、同名の項目を消してから行う。`offline=true` なのでルートのブロックがローカルに無ければ即エラー。
+- CID の中のファイル一覧（`ipfs::list_files_local`。publish の[増えたファイルの確認](cli/publish.md)が前の版に使う）は、ディレクトリを 1 つずつ `ls` でたどり、ファイルのパス（ルートからの相対、`/` 区切り）を名前順で返す。`offline=true` なのでブロックがローカルに無ければその時点でエラーになり、たどった項目（ディレクトリを含む）が呼び出し元の指定した数を超えてもエラーにする。
 - `files/rm` は失敗しても 200 でボディにメッセージを返すので、ボディが空でなければ失敗とする。存在しないパスは成功。
 - `files/ls` と `files/stat` の `file does not exist` は、それぞれ空の一覧、「無い」として扱う。
 - ディレクトリ判定は MFS のパスではなく `/ipfs/{cid}` を `files/stat` に渡す。agent は取得の直後に呼ぶ（[`agent.md` の「保存の順序」](agent.md#保存の順序)）。

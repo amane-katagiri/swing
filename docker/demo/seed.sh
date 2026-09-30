@@ -77,7 +77,7 @@ HTML
 publish() {
   who=$1 ago=$2 site=$3 message=$4
   shift 4
-  run_as "$who" "-$ago" publish --nip05 off --site "$site" -m "$message" "$@" "/seed/$site"
+  run_as "$who" "-$ago" publish --nip05 off --yes --site "$site" -m "$message" "$@" "/seed/$site"
   echo "  $who: $site"
 }
 

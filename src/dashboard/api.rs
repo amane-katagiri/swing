@@ -577,6 +577,27 @@ pub async fn publish_sites(
     )))
 }
 
+pub async fn publish_previous_files(
+    State(state): State<Arc<AppState>>,
+    Query(params): Query<Vec<(String, String)>>,
+) -> Result<Json<dto::PreviousFilesDto>, ApiError> {
+    let site = params
+        .into_iter()
+        .find_map(|(k, v)| (k == "site").then_some(v))
+        .ok_or_else(|| ApiError::BadRequest("missing site".to_string()))?;
+    crate::nostr::validate_d_tag(&site)
+        .map_err(|e| ApiError::BadRequest(format!("invalid site: {e:#}")))?;
+    let _permit = state.relay_query_permit().await?;
+    let relay = state.require_relay().await?;
+    let ipfs = state.require_ipfs().await?;
+    let previous = relay
+        .fetch_own_latest_site(state.config.nostr.site_event_kind, &site)
+        .await
+        .map_err(|e| format!("{e:#}"));
+    let files = publish::PreviousFiles::load(&ipfs, &previous).await;
+    Ok(Json(dto::previous_files_dto(files)))
+}
+
 pub async fn config(State(state): State<Arc<AppState>>) -> Json<dto::ConfigDto> {
     let restart_required = state.restart_required.load(Ordering::SeqCst);
     let current = state.display_config().await;
@@ -828,6 +849,29 @@ mod tests {
             .unwrap();
         let resp = call(app, req).await;
         assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
+    }
+
+    #[tokio::test]
+    async fn previous_files_checks_the_site_before_the_relay() {
+        for (uri, status) in [
+            ("/api/publish/previous-files", StatusCode::BAD_REQUEST),
+            (
+                "/api/publish/previous-files?site=a%0Ab",
+                StatusCode::BAD_REQUEST,
+            ),
+            (
+                "/api/publish/previous-files?site=example.com",
+                StatusCode::SERVICE_UNAVAILABLE,
+            ),
+        ] {
+            let req = Request::builder()
+                .uri(uri)
+                .header("Host", "127.0.0.1:8082")
+                .body(Body::empty())
+                .unwrap();
+            let resp = call(router(test_state()), req).await;
+            assert_eq!(resp.status(), status, "{uri}");
+        }
     }
 
     #[tokio::test]

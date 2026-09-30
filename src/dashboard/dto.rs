@@ -764,6 +764,41 @@ pub fn publish_sites_dto(
     }
 }
 
+#[derive(Debug, Serialize, PartialEq, Eq)]
+pub struct PreviousFilesDto {
+    pub status: &'static str,
+    pub previous_cid: Option<String>,
+    pub previous_created_at: Option<u64>,
+    pub detail: Option<String>,
+    pub files: Vec<String>,
+}
+
+pub fn previous_files_dto(previous: crate::publish::PreviousFiles) -> PreviousFilesDto {
+    use crate::publish::PreviousFiles;
+    let empty = |status, detail| PreviousFilesDto {
+        status,
+        previous_cid: None,
+        previous_created_at: None,
+        detail,
+        files: Vec::new(),
+    };
+    match previous {
+        PreviousFiles::NoPrevious => empty("no_previous", None),
+        PreviousFiles::Unknown(reason) => empty("unknown", Some(reason)),
+        PreviousFiles::Listed {
+            cid,
+            created_at,
+            paths,
+        } => PreviousFilesDto {
+            status: "listed",
+            previous_cid: Some(cid),
+            previous_created_at: Some(created_at),
+            detail: None,
+            files: paths,
+        },
+    }
+}
+
 pub(crate) use super::config_dto::{ConfigDto, config_dto};
 
 #[cfg(test)]

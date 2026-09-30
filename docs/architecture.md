@@ -55,7 +55,7 @@
 | `agent/` | mirror-agent のループ。[agent.md](architecture/agent.md) |
 | `policy.rs`・`state.rs` | 保存ポリシーの判定（純粋関数）・`state.json` の永続化。[agent.md](architecture/agent.md) |
 | `health.rs` | 版と MFS の突き合わせ（agent と `status` で共通）と `status`。[cli/views.md](architecture/cli/views.md#status) |
-| `publish.rs`・`publish/checks.rs` | `publish` と、その前後の確認（ドットファイル・保護パス・サイズ・同じ内容）。[cli/publish.md](architecture/cli/publish.md) |
+| `publish.rs`・`publish/checks.rs`・`publish/new_files.rs` | `publish` と、その前後の確認（ドットファイル・保護パス・サイズ・同じ内容・増えたファイル）。[cli/publish.md](architecture/cli/publish.md) |
 | `mirror/` | `mirror list`/`add`/`remove`・`sites`（`set.rs`: Follow Set の編集、`print.rs`・`time.rs`: 表示）。[cli/views.md](architecture/cli/views.md#mirror-list--add--remove) |
 | `replicas.rs` | レプリカ報告の集計と `replicas`。[cli/views.md](architecture/cli/views.md#replicas) |
 | `webring/` | Follow Set のたどり方とグラフ、`webring`（`render.rs`: テキスト・DOT・Mermaid）。[cli/views.md](architecture/cli/views.md#webring) |

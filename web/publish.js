@@ -42,9 +42,15 @@ const publishEls = {
   uploadInput: document.getElementById('publish-upload-input'),
   uploadInfo: document.getElementById('publish-upload-info'),
   progress: document.getElementById('publish-progress'),
+  confirm: document.getElementById('publish-confirm'),
+  confirmBasis: document.getElementById('publish-confirm-basis'),
+  confirmFiles: document.getElementById('publish-confirm-files'),
+  confirmOk: document.getElementById('publish-confirm-ok'),
+  confirmCancel: document.getElementById('publish-confirm-cancel'),
 };
 
 let publishing = false;
+let pendingPublish = null;
 let reconnectPairing = null;
 let reconnectSaving = false;
 const publishLoadGuard = createLoadGuard();
@@ -495,6 +501,91 @@ function submitUpload({ site, url, title, message, modes, files }) {
   }
 }
 
+async function loadPreviousFiles(site) {
+  return apiFetch(`/api/publish/previous-files?site=${encodeURIComponent(site)}`);
+}
+
+function findNewFiles(previous, files) {
+  const known = new Set(previous.files);
+  return files.map(computeRelativePath).filter((path) => !known.has(path));
+}
+
+function groupByFolder(paths) {
+  const byFolder = new Map();
+  for (const path of paths) {
+    const cut = path.lastIndexOf('/');
+    const folder = cut === -1 ? '' : path.slice(0, cut);
+    if (!byFolder.has(folder)) byFolder.set(folder, []);
+    byFolder.get(folder).push(path.slice(cut + 1));
+  }
+  const byCodeUnit = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
+  return [...byFolder.keys()].sort(byCodeUnit).map((folder) => [folder, byFolder.get(folder).sort(byCodeUnit)]);
+}
+
+function buildFileList(paths) {
+  const items = [];
+  for (const [folder, names] of groupByFolder(paths)) {
+    const files = names.map((name) => el('li', {}, name));
+    if (folder === '') items.push(...files);
+    else items.push(el('li', {}, [`${folder}/`, el('ul', {}, files)]));
+  }
+  return items;
+}
+
+function describeNewFilesBasis(previous, n) {
+  switch (previous.status) {
+    case 'listed':
+      return t('newFilesListed', { n, cid: previous.previous_cid, time: formatTime(previous.previous_created_at) });
+    case 'no_previous':
+      return t('newFilesNoPrevious', { n });
+    default:
+      return t('newFilesUnknown', { n, detail: previous.detail || '' });
+  }
+}
+
+function showNewFiles(previous, newFiles, request) {
+  pendingPublish = request;
+  publishEls.confirmBasis.textContent = describeNewFilesBasis(previous, newFiles.length);
+  publishEls.confirmFiles.replaceChildren(...buildFileList(newFiles));
+  publishEls.confirm.hidden = false;
+  setFormDisabled(publishEls.form, true);
+  setStatus(publishEls.status, 'warn', t('newFilesConfirm'));
+  publishEls.confirmOk.focus();
+}
+
+function closeNewFiles() {
+  pendingPublish = null;
+  publishEls.confirm.hidden = true;
+  publishEls.confirmFiles.replaceChildren();
+  setFormDisabled(publishEls.form, false);
+  refreshSubmitState();
+}
+
+async function reviewAndPublish(request) {
+  const submitBtn = publishEls.form.querySelector('button[type="submit"]');
+  publishing = true;
+  setBusy(submitBtn, true);
+  publishEls.result.hidden = true;
+  setStatus(publishEls.status, 'loading', t('newFilesComparing'));
+  let previous;
+  try {
+    previous = await loadPreviousFiles(request.site);
+  } catch (err) {
+    setStatus(publishEls.status, 'error', describeError(err));
+    return;
+  } finally {
+    publishing = false;
+    setBusy(submitBtn, false);
+    refreshSubmitState();
+  }
+  const newFiles = findNewFiles(previous, request.files);
+  if (newFiles.length === 0) {
+    submitUpload(request);
+    return;
+  }
+  showNewFiles(previous, newFiles, request);
+}
+
 export const PublishView = {
   init() {
     publishEls.uploadInput.addEventListener('change', () => updateUploadInfo());
@@ -502,6 +593,15 @@ export const PublishView = {
     document.querySelector('[data-action="reload-my-sites"]').addEventListener('click', (ev) => loadMySites(true, ev.currentTarget));
     publishEls.reconnectSave.addEventListener('click', saveReconnect);
     publishEls.reconnectCancel.addEventListener('click', closeReconnect);
+    publishEls.confirmOk.addEventListener('click', () => {
+      const request = pendingPublish;
+      closeNewFiles();
+      if (request) submitUpload(request);
+    });
+    publishEls.confirmCancel.addEventListener('click', () => {
+      closeNewFiles();
+      setStatus(publishEls.status, 'ok', t('publishCancelled'));
+    });
 
     const last = readLastPublish();
     if (last) {
@@ -518,7 +618,7 @@ export const PublishView = {
 
     publishEls.form.addEventListener('submit', (ev) => {
       ev.preventDefault();
-      if (publishing) return;
+      if (publishing || pendingPublish) return;
       hideProgress();
       const fd = new FormData(publishEls.form);
       const site = String(fd.get('site') || '').trim();
@@ -532,7 +632,7 @@ export const PublishView = {
         setStatus(publishEls.status, 'error', t('chooseFolderToUpload'));
         return;
       }
-      submitUpload({ site, url, title, message, modes, files });
+      reviewAndPublish({ site, url, title, message, modes, files });
     });
   },
   onShow() {

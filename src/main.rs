@@ -132,6 +132,12 @@ enum Command {
         title: Option<String>,
         #[arg(short, long, help = "Update note shown to readers (event content)")]
         message: Option<String>,
+        #[arg(
+            short,
+            long,
+            help = "Publish files that are new since your latest version without asking (required when stdin is not a terminal)"
+        )]
+        yes: bool,
         #[arg(help = "Directory containing the built static site")]
         dir: PathBuf,
     },
@@ -483,16 +489,24 @@ async fn run_other(command: Command) -> Result<()> {
             check_unchanged,
             title,
             message,
+            yes,
             dir,
         } => {
             let cfg = config::Config::load(config.as_deref())?;
-            let overrides = publish::ModeOverrides {
-                nip05,
-                check_dotfiles,
-                check_size,
-                check_unchanged,
+            let request = publish::Request {
+                d: site,
+                url,
+                title,
+                message,
+                modes: publish::ModeOverrides {
+                    nip05,
+                    check_dotfiles,
+                    check_size,
+                    check_unchanged,
+                },
+                yes,
             };
-            publish::run(cfg, site, url, &dir, overrides, title, message).await
+            publish::run(cfg, &dir, request).await
         }
         Command::Mirror { action } => match action {
             MirrorCommand::List { config } => {

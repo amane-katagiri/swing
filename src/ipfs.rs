@@ -235,6 +235,31 @@ struct FilesLsEntry {
     hash: String,
 }
 
+#[derive(Debug, Deserialize)]
+struct LsResponse {
+    #[serde(rename = "Objects")]
+    objects: Vec<LsObject>,
+}
+
+#[derive(Debug, Deserialize)]
+struct LsObject {
+    #[serde(rename = "Links")]
+    links: Option<Vec<LsLink>>,
+}
+
+#[derive(Debug, Deserialize)]
+struct LsLink {
+    #[serde(rename = "Name")]
+    name: String,
+    #[serde(rename = "Hash")]
+    hash: String,
+    #[serde(rename = "Type")]
+    kind: u8,
+}
+
+const UNIXFS_DIRECTORY: u8 = 1;
+const UNIXFS_HAMT_SHARD: u8 = 5;
+
 const MFS_MISSING: &str = "file does not exist";
 const MAX_RESPONSE_BYTES: usize = 16 << 20;
 
@@ -510,6 +535,47 @@ impl IpfsClient {
         Ok(Some(parsed.hash))
     }
 
+    pub async fn list_files_local(&self, cid: &str, max_entries: usize) -> Result<Vec<String>> {
+        let mut files = Vec::new();
+        let mut entries = 0usize;
+        let mut pending = vec![(cid.to_string(), String::new())];
+        while let Some((dir_cid, prefix)) = pending.pop() {
+            let text = self
+                .call(
+                    "ls",
+                    &format!(
+                        "arg={}&resolve-type=true&size=false&offline=true",
+                        percent_encode_segment(&dir_cid)
+                    ),
+                    Duration::from_secs(60),
+                )
+                .await?;
+            let parsed: LsResponse = serde_json::from_str(&text).context("parsing ls response")?;
+            for link in parsed
+                .objects
+                .into_iter()
+                .flat_map(|o| o.links.unwrap_or_default())
+            {
+                entries += 1;
+                if entries > max_entries {
+                    bail!("more than {max_entries} entries");
+                }
+                let path = if prefix.is_empty() {
+                    link.name
+                } else {
+                    format!("{prefix}/{}", link.name)
+                };
+                if matches!(link.kind, UNIXFS_DIRECTORY | UNIXFS_HAMT_SHARD) {
+                    pending.push((link.hash, path));
+                } else {
+                    files.push(path);
+                }
+            }
+        }
+        files.sort();
+        Ok(files)
+    }
+
     pub async fn peer_id(&self) -> Result<String> {
         let text = self.call("id", "", Duration::from_secs(10)).await?;
         let parsed: IdResponse = serde_json::from_str(&text).context("parsing id response")?;
@@ -562,6 +628,41 @@ mod tests {
                 total_out: 456
             }
         );
+    }
+
+    fn fake_ls() -> axum::Router {
+        use axum::extract::Query;
+        use std::collections::HashMap;
+
+        axum::Router::new().route(
+            "/api/v0/ls",
+            axum::routing::post(|Query(q): Query<HashMap<String, String>>| async move {
+                assert_eq!(q.get("offline").map(String::as_str), Some("true"));
+                let links = match q["arg"].as_str() {
+                    "root" => serde_json::json!([
+                        { "Name": "index.html", "Hash": "f1", "Type": 2 },
+                        { "Name": "css", "Hash": "css", "Type": 1 },
+                        { "Name": "big", "Hash": "big", "Type": 5 },
+                    ]),
+                    "css" => serde_json::json!([{ "Name": "a b.css", "Hash": "f2", "Type": 2 }]),
+                    "big" => serde_json::json!([{ "Name": "x", "Hash": "f3", "Type": 0 }]),
+                    other => panic!("unexpected ls of {other}"),
+                };
+                axum::Json(serde_json::json!({ "Objects": [{ "Hash": q["arg"], "Links": links }] }))
+            }),
+        )
+    }
+
+    #[tokio::test]
+    async fn list_files_local_walks_directories_and_caps_the_entries() {
+        let addr = crate::test_support::serve_router(fake_ls()).await;
+        let client = IpfsClient::new(format!("http://{addr}"));
+        assert_eq!(
+            client.list_files_local("root", 5).await.unwrap(),
+            vec!["big/x", "css/a b.css", "index.html"]
+        );
+        let err = client.list_files_local("root", 4).await.unwrap_err();
+        assert!(err.to_string().contains("more than 4 entries"), "{err}");
     }
 
     fn entry_names(entries: &[Entry]) -> Vec<String> {

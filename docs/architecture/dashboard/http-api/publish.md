@@ -79,3 +79,18 @@
 - `gateway_url` は gateway 設定があれば付ける（`stored` 判定はしない）。
 - `state.json` は見ないので、`size` は常にイベントの自己申告の値。
 - relay の取得に失敗したら 502。
+
+## GET /api/publish/previous-files?site=<d>
+
+公開画面が、アップロードする前に増えたファイルを出すために使う。CLI の[増えたファイルの確認](../../cli/publish.md)と同じく、relay から自分の pubkey・この `d` の最新のサイトイベントを取り、その CID を Kubo でオフラインに一覧する（`publish::PreviousFiles::load`）。比べるのはブラウザ側で、サーバは一覧を返すだけ。`/api/publish/upload` はこの確認を経たかどうかを見ない。
+
+- `site` が無ければ 400 `missing site`、[`d` の条件](../../nostr.md#検証)を満たさなければ 400 `invalid site: ...`。
+- relay と Kubo を使う（準備状態と同時実行の上限は親ページ）。
+
+```json
+{ "status": "listed", "previous_cid": "bafy…", "previous_created_at": 1790000000, "detail": null, "files": ["index.html", "css/style.css"] }
+```
+
+- `status` は `listed`（一覧できた）/`no_previous`（relay に前の版が無い）/`unknown`（relay から取れなかった、または Kubo で一覧できなかった。理由が `detail`）。`listed` 以外では `previous_cid`・`previous_created_at` は `null`、`files` は空。
+- `files` はファイルのパス（ディレクトリは含まない）の名前順。前の版の項目が `MAX_PREVIOUS_ENTRIES`（100 000）を超えたら `unknown`。
+- relay や Kubo が失敗しても 200 の `unknown` で返す。

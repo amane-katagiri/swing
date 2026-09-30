@@ -198,6 +198,10 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/api/webring", get(api::webring))
         .route("/api/replicas", get(api::replicas))
         .route("/api/publish/sites", get(api::publish_sites))
+        .route(
+            "/api/publish/previous-files",
+            get(api::publish_previous_files),
+        )
         .route("/api/config", get(api::config).put(api::update_config))
         .route("/api/setup", post(setup::setup))
         .route(

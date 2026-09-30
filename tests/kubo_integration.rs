@@ -306,3 +306,36 @@ async fn is_directory_distinguishes_a_directory_root_from_a_file_root() {
     assert!(!client.is_directory(&file_cid).await.unwrap());
     client.mfs_remove(&root).await.unwrap();
 }
+
+#[tokio::test]
+#[ignore]
+async fn list_files_local_lists_nested_and_sharded_directories() {
+    let client = IpfsClient::new(kubo_api());
+    let root = unique_root("ls");
+    let dir = site_fixture();
+    let many = dir.path().join("many");
+    std::fs::create_dir(&many).unwrap();
+    let mut expected = vec!["css/style.css".to_string(), "index.html".to_string()];
+    let padding = "x".repeat(200);
+    for i in 0..1500 {
+        let name = format!("{padding}-{i:05}.txt");
+        std::fs::write(many.join(&name), i.to_string()).unwrap();
+        expected.push(format!("many/{name}"));
+    }
+    expected.sort();
+
+    let cid = client
+        .add_dir(dir.path(), &format!("{root}/site"))
+        .await
+        .expect("add_dir");
+    let files = client
+        .list_files_local(&cid, 10_000)
+        .await
+        .expect("list_files_local");
+    assert_eq!(files, expected);
+    assert!(client.list_files_local(&cid, 100).await.is_err());
+
+    let missing = "bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi";
+    assert!(client.list_files_local(missing, 10).await.is_err());
+    client.mfs_remove(&root).await.unwrap();
+}
