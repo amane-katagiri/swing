@@ -5,7 +5,6 @@
 | 優先度 | タスク | 出所 |
 |---|---|---|
 | 低 | ミラーしているサイトをサイト単位で削除する操作（CLI とダッシュボード）。今はサイトが state から消えるのは、フォローを外して `remove_on_unfollow` が有効なときだけで、古い版の整理も最新版は残す。そのため作者が更新をやめたサイトも `max_sites_per_account` の枠を使い続け、枠が埋まるとその作者の新しいサイトはミラーされない。消したサイトが次の poll でまた取り込まれないよう、除外の記録（state.json に持つか）も合わせて決める | [セキュリティレビュー](log/2026-09-29-security-review-and-cleanup.md) |
-| 中 | `ipfs::add_dir` がファイル数の多いサイトでスタックを使い切って落ちる。1 ファイル 1 パートの multipart を組むところで、実 Kubo 相手に試すとテストのスレッド（2 MiB）では debug ビルドで 8 000 ファイル、release ビルドで 50 000 ファイルのとき落ちた（release の 10 000 は通る）。ダッシュボードのアップロードは 10 000 ファイルまでだが、CLI には上限が無い。パートの組み方を変えるか、落ちる手前で件数を断る | [増えたファイルの確認](log/2026-09-30-publish-new-files.md) |
 | 中 | `swing publish` が管理下の Kubo を使うとき、`<state_dir>/kubo-api.json` のポートに応答する相手を PeerID（公開情報）の一致だけで信じる。`swing up` が後片付けせずに死んだ後、そのポートを取ったローカルの別ユーザーが PeerID を返せば、`add` の結果の CID を選べる。`kubo.pid` の記録の pid が生きていて起動時刻とポートが一致することも確かめる | [セキュリティレビュー](log/2026-09-29-security-review-and-cleanup.md) |
 | 中 | `swing mirror add`（ダッシュボードの追加も）は、応答した relay に Follow Set が無く state.json にも無いと、空から作って追加した鍵だけの Follow Set を出す。relay が 1 つでも応答すればこうなるので、Follow Set が見つからないときは確認を求めるか、設定したすべての relay が EOSE を返したときだけ空から作る | [セキュリティレビュー](log/2026-09-29-security-review-and-cleanup.md) |
 | 低 | agent の送った報告の読み込み（`load_sent_reports`）は、relay が 1 つでも応答すれば読み込み済みにする。報告を持つ relay が時間切れだと取り下げの対象が欠ける（`report_ttl` で失効はする）。relay ごとに管理するか、定期的に読み直す | [セキュリティレビュー](log/2026-09-29-security-review-and-cleanup.md) |

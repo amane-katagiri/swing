@@ -339,3 +339,23 @@ async fn list_files_local_lists_nested_and_sharded_directories() {
     assert!(client.list_files_local(missing, 10).await.is_err());
     client.mfs_remove(&root).await.unwrap();
 }
+
+#[tokio::test]
+#[ignore]
+async fn add_dir_handles_many_files() {
+    let client = IpfsClient::new(kubo_api());
+    let root = unique_root("many");
+    let dir = tempfile::tempdir().unwrap();
+    for i in 0..20_000 {
+        std::fs::write(dir.path().join(format!("f{i:05}.txt")), i.to_string()).unwrap();
+    }
+    let cid = client
+        .add_dir(dir.path(), &format!("{root}/site"))
+        .await
+        .expect("add_dir");
+    assert_eq!(
+        client.list_files_local(&cid, 30_000).await.unwrap().len(),
+        20_000
+    );
+    client.mfs_remove(&root).await.unwrap();
+}

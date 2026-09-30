@@ -4,8 +4,8 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
-use futures_util::StreamExt;
-use reqwest::multipart::{Form, Part};
+use bytes::Bytes;
+use futures_util::{StreamExt, TryStreamExt};
 use serde::Deserialize;
 
 use crate::kubo::ApiSecret;
@@ -175,6 +175,45 @@ fn walk_root(dir: &Path, root_name: &str) -> Result<Vec<Entry>> {
         &mut dir_ancestors,
     )?;
     Ok(entries)
+}
+
+fn multipart_boundary() -> String {
+    let mut bytes = [0u8; 16];
+    getrandom::fill(&mut bytes).expect("reading OS randomness");
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+// reqwest's Form chains one stream per part, so polling it recurses once per file and overflows the stack on large sites.
+fn multipart_body(
+    entries: Vec<Entry>,
+    boundary: String,
+) -> impl futures_util::Stream<Item = std::io::Result<Bytes>> + Send + 'static {
+    let end = Bytes::from(format!("--{boundary}--\r\n"));
+    futures_util::stream::iter(entries)
+        .flat_map(move |entry| {
+            let (rel, mime, path) = match entry {
+                Entry::Dir(rel) => (rel, "application/x-directory", None),
+                Entry::File(rel, path, _) => (rel, "application/octet-stream", Some(path)),
+            };
+            let header = Bytes::from(format!(
+                "--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"{}\"\r\nContent-Type: {mime}\r\n\r\n",
+                percent_encode_relative_path(&rel)
+            ));
+            let content = futures_util::stream::iter(path)
+                .then(|path| async move {
+                    tokio::fs::File::open(&path).await.map_err(|e| {
+                        std::io::Error::new(e.kind(), format!("opening {}: {e}", path.display()))
+                    })
+                })
+                .map_ok(tokio_util::io::ReaderStream::new)
+                .try_flatten();
+            futures_util::stream::once(std::future::ready(Ok(header)))
+                .chain(content)
+                .chain(futures_util::stream::once(std::future::ready(Ok(
+                    Bytes::from_static(b"\r\n"),
+                ))))
+        })
+        .chain(futures_util::stream::once(std::future::ready(Ok(end))))
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -352,24 +391,7 @@ impl IpfsClient {
             bail!("directory is empty: {}", dir.display());
         }
 
-        let mut form = Form::new();
-        for entry in entries {
-            let part = match entry {
-                Entry::Dir(rel) => Part::bytes(Vec::new())
-                    .file_name(percent_encode_relative_path(&rel))
-                    .mime_str("application/x-directory")?,
-                Entry::File(rel, path, _) => {
-                    let file = tokio::fs::File::open(&path)
-                        .await
-                        .with_context(|| format!("opening {}", path.display()))?;
-                    Part::stream(file)
-                        .file_name(percent_encode_relative_path(&rel))
-                        .mime_str("application/octet-stream")?
-                }
-            };
-            form = form.part("file", part);
-        }
-
+        let boundary = multipart_boundary();
         self.mfs_mkdir(mfs::parent(mfs_path)).await?;
         self.mfs_remove(mfs_path).await?;
         let url = self.url(&format!(
@@ -379,7 +401,13 @@ impl IpfsClient {
         let request = self
             .http
             .post(&url)
-            .multipart(form)
+            .header(
+                reqwest::header::CONTENT_TYPE,
+                format!("multipart/form-data; boundary={boundary}"),
+            )
+            .body(reqwest::Body::wrap_stream(multipart_body(
+                entries, boundary,
+            )))
             .timeout(Duration::from_secs(300));
         let text = self.send(request, "add").await?;
 
@@ -663,6 +691,54 @@ mod tests {
         );
         let err = client.list_files_local("root", 4).await.unwrap_err();
         assert!(err.to_string().contains("more than 4 entries"), "{err}");
+    }
+
+    async fn collect_body(entries: Vec<Entry>, boundary: &str) -> std::io::Result<Vec<u8>> {
+        let chunks: Vec<Bytes> = multipart_body(entries, boundary.to_string())
+            .try_collect()
+            .await?;
+        Ok(chunks.concat())
+    }
+
+    #[tokio::test]
+    async fn multipart_body_encodes_dirs_and_files_like_reqwest() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("a b.css");
+        std::fs::write(&file, b"body{}").unwrap();
+        let body = collect_body(
+            vec![
+                Entry::Dir("root/css".into()),
+                Entry::File("root/css/a b.css".into(), file, 6),
+            ],
+            "XYZ",
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            String::from_utf8(body).unwrap(),
+            "--XYZ\r\nContent-Disposition: form-data; name=\"file\"; filename=\"root/css\"\r\nContent-Type: application/x-directory\r\n\r\n\r\n\
+             --XYZ\r\nContent-Disposition: form-data; name=\"file\"; filename=\"root/css/a%20b.css\"\r\nContent-Type: application/octet-stream\r\n\r\nbody{}\r\n\
+             --XYZ--\r\n"
+        );
+    }
+
+    #[tokio::test]
+    async fn multipart_body_names_a_file_it_cannot_open() {
+        let missing = std::path::PathBuf::from("/nonexistent/swing-test");
+        let err = collect_body(vec![Entry::File("root/x".into(), missing, 0)], "B")
+            .await
+            .unwrap_err();
+        assert!(
+            err.to_string().contains("opening /nonexistent/swing-test"),
+            "{err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn multipart_body_does_not_nest_per_part() {
+        let entries = (0..100_000).map(|i| Entry::Dir(format!("d{i}"))).collect();
+        let body = collect_body(entries, "B").await.unwrap();
+        assert!(body.ends_with(b"--B--\r\n"));
     }
 
     fn entry_names(entries: &[Entry]) -> Vec<String> {
