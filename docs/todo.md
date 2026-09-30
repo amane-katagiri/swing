@@ -4,6 +4,8 @@
 
 | 優先度 | タスク | 出所 |
 |---|---|---|
+| 中 | 公開する前に、前の版から増えたファイルの一覧を見せて確かめさせる（CLI の `swing publish` とダッシュボードの公開画面）。今の確認は SWING 自身の秘密・サイトの外へのシンボリックリンク・ドットファイル・サイズだけで、ドットで始まらない名前の秘密（鍵ファイル・`secrets.json` など）は見逃す。前の版が取れないとき（初回など）は全ファイルを出すか、件数と大きいものだけにするかも決める | [セキュリティレビュー](log/2026-09-29-security-review-and-cleanup.md) |
+| 低 | `docs/site-guide.md` で、公開する前に秘密スキャナ（gitleaks・trufflehog・detect-secrets など）でサイトのディレクトリを確かめる方法を紹介する。SWING には組み込まず、CI や pre-commit で使う外部ツールとして案内する | [セキュリティレビュー](log/2026-09-29-security-review-and-cleanup.md) |
 | 低 | ミラーしているサイトをサイト単位で削除する操作（CLI とダッシュボード）。今はサイトが state から消えるのは、フォローを外して `remove_on_unfollow` が有効なときだけで、古い版の整理も最新版は残す。そのため作者が更新をやめたサイトも `max_sites_per_account` の枠を使い続け、枠が埋まるとその作者の新しいサイトはミラーされない。消したサイトが次の poll でまた取り込まれないよう、除外の記録（state.json に持つか）も合わせて決める | [セキュリティレビュー](log/2026-09-29-security-review-and-cleanup.md) |
 | 中 | `swing publish` が管理下の Kubo を使うとき、`<state_dir>/kubo-api.json` のポートに応答する相手を PeerID（公開情報）の一致だけで信じる。`swing up` が後片付けせずに死んだ後、そのポートを取ったローカルの別ユーザーが PeerID を返せば、`add` の結果の CID を選べる。`kubo.pid` の記録の pid が生きていて起動時刻とポートが一致することも確かめる | [セキュリティレビュー](log/2026-09-29-security-review-and-cleanup.md) |
 | 中 | `swing mirror add`（ダッシュボードの追加も）は、応答した relay に Follow Set が無く state.json にも無いと、空から作って追加した鍵だけの Follow Set を出す。relay が 1 つでも応答すればこうなるので、Follow Set が見つからないときは確認を求めるか、設定したすべての relay が EOSE を返したときだけ空から作る | [セキュリティレビュー](log/2026-09-29-security-review-and-cleanup.md) |
