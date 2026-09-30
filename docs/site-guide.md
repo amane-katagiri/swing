@@ -41,7 +41,7 @@
 
 以下、各項目の理由と確かめ方。
 
-このうちドットファイル・1 版のサイズ・前回と同じ内容かどうかの 3 つは、`swing publish`（ダッシュボードの公開画面も）が自動で確かめる。また、前の版から増えたファイルの一覧を出して、公開してよいかを聞く。項目ごとに `off`（確かめない）・`warn`（表示して続ける）・`require`（引っかかったら止める）を選べる。フラグ・設定のキーと既定値は README の「[自分のサイトを公開する](../README.md#自分のサイトを公開する)」、判定の細部は [`architecture/cli/publish.md`](architecture/cli/publish.md)。自動の確認は機械的に分かるものだけなので、残りの項目は自分で確かめる。
+このうちドットファイル・1 版のサイズ・前回と同じ内容かどうかの 3 つは、`swing publish`（ダッシュボードの公開画面も）が自動で確かめ、項目ごとに `off`（確かめない）・`warn`（表示して続ける）・`require`（引っかかったら止める）を選べる。あわせて、前の版から増えたファイルの一覧を出して公開してよいかを聞く（[下記](#増えたファイルを確かめる)）。フラグ・設定のキーと既定値は README の「[自分のサイトを公開する](../README.md#自分のサイトを公開する)」、判定の細部は [`architecture/cli/publish.md`](architecture/cli/publish.md)。自動の確認は機械的に分かるものだけなので、残りの項目は自分で確かめる。
 
 ## 中身
 
@@ -67,17 +67,17 @@ publish は既定で、名前が `.` で始まるファイルやディレクト�
 
 前の版は手元の Kubo にあるものだけを読むので、初めての publish や、別のマシンから publish した後は、すべてのファイルが一覧に出る。中身が変わっただけのファイルは出ないので、既存のファイルに秘密を書き足した場合はこの一覧では気づけない。
 
-CI などの端末の無い環境では聞けないので、増えたファイルがあると `--yes` を付けない限り止まる。自動で publish するなら、`--yes` を付けたうえで、その前に下のシークレットスキャンを走らせる。
+CI などの端末の無い環境では、増えたファイルがあると `--yes` を付けない限り止まる。
 
 ### シークレットスキャンで確かめる
 
 鍵やトークンの形をした文字列は、シークレットスキャンのツールで機械的に探せる。SWING には組み込んでいないので、ビルドの後・publish の前に、出力先のディレクトリに対して自分で実行する。どれもリポジトリの履歴ではなく、ただのディレクトリを調べられる。
 
-- [gitleaks](https://github.com/gitleaks/gitleaks): `gitleaks dir ./public`（v8.19 より前は `gitleaks detect --no-git --source ./public`）
-- [TruffleHog](https://github.com/trufflesecurity/trufflehog): `trufflehog filesystem ./public`（`--fail` を付けると見つかったときに終了コード 183 で終わる）
-- [detect-secrets](https://github.com/Yelp/detect-secrets): `detect-secrets scan --all-files ./public`（結果は JSON。基準を保存して差分だけ見る使い方が主）
+- [gitleaks](https://github.com/gitleaks/gitleaks): `gitleaks dir ./public`
+- [TruffleHog](https://github.com/trufflesecurity/trufflehog): `trufflehog filesystem --fail ./public`
+- [detect-secrets](https://github.com/Yelp/detect-secrets): `detect-secrets scan --all-files ./public`
 
-CI で publish しているなら、スキャナを publish の前の手順に置き、見つかったら止まるようにする。手元で publish するなら、ビルドのスクリプトや pre-commit のフックに入れておくと忘れない。スキャナが見つけられるのは既知の形式の秘密だけで、個人情報や下書きの文章は分からない。増えたファイルの確認と組み合わせて使う。
+CI で publish しているなら（`--yes` を付けることになる）、スキャンを publish の前の手順に置き、見つかったら止まるようにする。手元で publish するなら、ビルドのスクリプトや pre-commit のフックに入れておくと忘れない。スキャンで見つかるのは既知の形式の秘密だけで、個人情報や下書きの文章は分からない。増えたファイルの確認と組み合わせて使う。
 
 ## サイズ
 

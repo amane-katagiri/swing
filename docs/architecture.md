@@ -50,7 +50,7 @@
 | `nostr/` | イベントの検証・組み立て、relay との通信（`client.rs`）、site event（`site.rs`）、follow set（`follow.rs`）、レプリカ報告（`report.rs`）、上限 `budget`（`mod.rs`）。[nostr.md](architecture/nostr.md) |
 | `signer/`・`pair.rs` | 署名（秘密鍵か NIP-46 の署名アプリ）と `remote-signer.json`、ペアリング / `swing signer pair`。[signer.md](architecture/signer.md) |
 | `nip05.rs` | NIP-05 検証。[nip05.md](architecture/nip05.md) |
-| `ipfs.rs`・`mfs.rs` | Kubo RPC クライアント・MFS 上のパスの組み立て。[mfs.md](architecture/mfs.md) |
+| `ipfs.rs`・`ipfs/site.rs`・`mfs.rs` | Kubo RPC クライアント・サイトのディレクトリの一覧と add の multipart・MFS 上のパスの組み立て。[mfs.md](architecture/mfs.md) |
 | `kubo.rs` | Kubo の検出・init・設定・起動と終了・孤児回収。[kubo.md](architecture/kubo.md) |
 | `agent/` | mirror-agent のループ。[agent.md](architecture/agent.md) |
 | `policy.rs`・`state.rs` | 保存ポリシーの判定（純粋関数）・`state.json` の永続化。[agent.md](architecture/agent.md) |
@@ -98,7 +98,7 @@ swing service stop      [--system]
 swing service status    [--system]
 swing dashboard open         [--config <path>] [--no-browser]
 swing dashboard rotate-token [--config <path>]
-swing publish [--config <path>] --site <d-tag> [--url <URL>] [--nip05 <off|warn|require>] [--check-dotfiles <off|warn|require>] [--check-size <off|warn|require>] [--check-unchanged <off|warn|require>] [--title <TEXT>] [-m, --message <TEXT>] <DIR>
+swing publish [--config <path>] --site <d-tag> [--url <URL>] [--nip05 <off|warn|require>] [--check-dotfiles <off|warn|require>] [--check-size <off|warn|require>] [--check-unchanged <off|warn|require>] [--title <TEXT>] [-m, --message <TEXT>] [-y, --yes] <DIR>
 swing mirror list                      [--config <path>]
 swing mirror add <key>...              [--config <path>]
 swing mirror remove <key>...           [--config <path>]

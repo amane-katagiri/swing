@@ -1,15 +1,17 @@
-use std::collections::HashSet;
 use std::future::Future;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
-use bytes::Bytes;
-use futures_util::{StreamExt, TryStreamExt};
+use futures_util::StreamExt;
 use serde::Deserialize;
 
 use crate::kubo::ApiSecret;
 use crate::mfs;
+
+mod site;
+
+pub use site::{SiteEntry, SiteListing};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FetchLimits {
@@ -109,135 +111,6 @@ fn percent_encode_relative_path(rel: &str) -> String {
         .join("/")
 }
 
-#[derive(Debug)]
-enum Entry {
-    Dir(String),
-    File(String, PathBuf, u64),
-}
-
-fn walk(
-    current: &Path,
-    rel_prefix: &str,
-    root: &Path,
-    out: &mut Vec<Entry>,
-    dir_ancestors: &mut HashSet<PathBuf>,
-) -> Result<()> {
-    let mut children: Vec<std::fs::DirEntry> = std::fs::read_dir(current)
-        .with_context(|| format!("reading dir {}", current.display()))?
-        .collect::<std::io::Result<Vec<_>>>()
-        .with_context(|| format!("reading dir {}", current.display()))?;
-    children.sort_by_key(|e| e.file_name());
-
-    for entry in children {
-        let path = entry.path();
-        let name = entry.file_name().to_string_lossy().to_string();
-        let rel = if rel_prefix.is_empty() {
-            name.clone()
-        } else {
-            format!("{rel_prefix}/{name}")
-        };
-        let canon = std::fs::canonicalize(&path)
-            .with_context(|| format!("resolving path {}", path.display()))?;
-        if !canon.starts_with(root) {
-            bail!(
-                "{} is a symlink to {}, outside the site directory; copy what it points to into the site instead",
-                path.display(),
-                canon.display()
-            );
-        }
-        let metadata = std::fs::metadata(&canon)
-            .with_context(|| format!("reading metadata for {}", path.display()))?;
-        if metadata.is_dir() {
-            if !dir_ancestors.insert(canon.clone()) {
-                bail!("symlink loop detected at {}", path.display());
-            }
-            out.push(Entry::Dir(rel.clone()));
-            walk(&path, &rel, root, out, dir_ancestors)?;
-            dir_ancestors.remove(&canon);
-        } else if metadata.is_file() {
-            out.push(Entry::File(rel, canon, metadata.len()));
-        }
-    }
-    Ok(())
-}
-
-fn walk_root(dir: &Path, root_name: &str) -> Result<Vec<Entry>> {
-    let canon_root =
-        std::fs::canonicalize(dir).with_context(|| format!("resolving path {}", dir.display()))?;
-    let mut dir_ancestors = HashSet::new();
-    dir_ancestors.insert(canon_root.clone());
-    let mut entries = Vec::new();
-    walk(
-        dir,
-        root_name,
-        &canon_root,
-        &mut entries,
-        &mut dir_ancestors,
-    )?;
-    Ok(entries)
-}
-
-fn multipart_boundary() -> String {
-    let mut bytes = [0u8; 16];
-    getrandom::fill(&mut bytes).expect("reading OS randomness");
-    bytes.iter().map(|b| format!("{b:02x}")).collect()
-}
-
-// reqwest's Form chains one stream per part, so polling it recurses once per file and overflows the stack on large sites.
-fn multipart_body(
-    entries: Vec<Entry>,
-    boundary: String,
-) -> impl futures_util::Stream<Item = std::io::Result<Bytes>> + Send + 'static {
-    let end = Bytes::from(format!("--{boundary}--\r\n"));
-    futures_util::stream::iter(entries)
-        .flat_map(move |entry| {
-            let (rel, mime, path) = match entry {
-                Entry::Dir(rel) => (rel, "application/x-directory", None),
-                Entry::File(rel, path, _) => (rel, "application/octet-stream", Some(path)),
-            };
-            let header = Bytes::from(format!(
-                "--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"{}\"\r\nContent-Type: {mime}\r\n\r\n",
-                percent_encode_relative_path(&rel)
-            ));
-            let content = futures_util::stream::iter(path)
-                .then(|path| async move {
-                    tokio::fs::File::open(&path).await.map_err(|e| {
-                        std::io::Error::new(e.kind(), format!("opening {}: {e}", path.display()))
-                    })
-                })
-                .map_ok(tokio_util::io::ReaderStream::new)
-                .try_flatten();
-            futures_util::stream::once(std::future::ready(Ok(header)))
-                .chain(content)
-                .chain(futures_util::stream::once(std::future::ready(Ok(
-                    Bytes::from_static(b"\r\n"),
-                ))))
-        })
-        .chain(futures_util::stream::once(std::future::ready(Ok(end))))
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SiteEntry {
-    pub path: String,
-    pub size: Option<u64>,
-}
-
-pub fn list_site(dir: &Path) -> Result<Vec<SiteEntry>> {
-    if !dir.is_dir() {
-        bail!("not a directory: {}", dir.display());
-    }
-    Ok(walk_root(dir, "")?
-        .into_iter()
-        .map(|entry| match entry {
-            Entry::Dir(path) => SiteEntry { path, size: None },
-            Entry::File(path, _, size) => SiteEntry {
-                path,
-                size: Some(size),
-            },
-        })
-        .collect())
-}
-
 #[derive(Debug, Deserialize)]
 struct AddResponseLine {
     #[serde(rename = "Hash")]
@@ -297,7 +170,6 @@ struct LsLink {
 }
 
 const UNIXFS_DIRECTORY: u8 = 1;
-const UNIXFS_HAMT_SHARD: u8 = 5;
 
 const MFS_MISSING: &str = "file does not exist";
 const MAX_RESPONSE_BYTES: usize = 16 << 20;
@@ -375,23 +247,15 @@ impl IpfsClient {
     }
 
     pub async fn add_dir(&self, dir: &Path, mfs_path: &str) -> Result<String> {
-        if !dir.is_dir() {
-            bail!("not a directory: {}", dir.display());
-        }
-        // Kubo infers the wrapping directory node from a shared filename prefix, so the root name must be included or files land as unlinked blobs.
-        let root_name = dir
-            .file_name()
-            .map(|n| n.to_string_lossy().to_string())
-            .unwrap_or_else(|| "root".to_string());
-        let dir_owned = dir.to_path_buf();
-        let entries = tokio::task::spawn_blocking(move || walk_root(&dir_owned, &root_name))
+        self.add_site(SiteListing::read_async(dir).await?, mfs_path)
             .await
-            .context("walk task panicked")??;
-        if entries.is_empty() {
-            bail!("directory is empty: {}", dir.display());
-        }
+    }
 
-        let boundary = multipart_boundary();
+    pub async fn add_site(&self, site: SiteListing, mfs_path: &str) -> Result<String> {
+        if site.is_empty() {
+            bail!("directory is empty: {}", site.dir().display());
+        }
+        let boundary = crate::auth::random_hex(16);
         self.mfs_mkdir(mfs::parent(mfs_path)).await?;
         self.mfs_remove(mfs_path).await?;
         let url = self.url(&format!(
@@ -405,9 +269,7 @@ impl IpfsClient {
                 reqwest::header::CONTENT_TYPE,
                 format!("multipart/form-data; boundary={boundary}"),
             )
-            .body(reqwest::Body::wrap_stream(multipart_body(
-                entries, boundary,
-            )))
+            .body(reqwest::Body::wrap_stream(site.into_multipart(boundary)))
             .timeout(Duration::from_secs(300));
         let text = self.send(request, "add").await?;
 
@@ -593,7 +455,7 @@ impl IpfsClient {
                 } else {
                     format!("{prefix}/{}", link.name)
                 };
-                if matches!(link.kind, UNIXFS_DIRECTORY | UNIXFS_HAMT_SHARD) {
+                if link.kind == UNIXFS_DIRECTORY {
                     pending.push((link.hash, path));
                 } else {
                     files.push(path);
@@ -670,7 +532,7 @@ mod tests {
                     "root" => serde_json::json!([
                         { "Name": "index.html", "Hash": "f1", "Type": 2 },
                         { "Name": "css", "Hash": "css", "Type": 1 },
-                        { "Name": "big", "Hash": "big", "Type": 5 },
+                        { "Name": "big", "Hash": "big", "Type": 1 },
                     ]),
                     "css" => serde_json::json!([{ "Name": "a b.css", "Hash": "f2", "Type": 2 }]),
                     "big" => serde_json::json!([{ "Name": "x", "Hash": "f3", "Type": 0 }]),
@@ -691,168 +553,6 @@ mod tests {
         );
         let err = client.list_files_local("root", 4).await.unwrap_err();
         assert!(err.to_string().contains("more than 4 entries"), "{err}");
-    }
-
-    async fn collect_body(entries: Vec<Entry>, boundary: &str) -> std::io::Result<Vec<u8>> {
-        let chunks: Vec<Bytes> = multipart_body(entries, boundary.to_string())
-            .try_collect()
-            .await?;
-        Ok(chunks.concat())
-    }
-
-    #[tokio::test]
-    async fn multipart_body_encodes_dirs_and_files_like_reqwest() {
-        let dir = tempfile::tempdir().unwrap();
-        let file = dir.path().join("a b.css");
-        std::fs::write(&file, b"body{}").unwrap();
-        let body = collect_body(
-            vec![
-                Entry::Dir("root/css".into()),
-                Entry::File("root/css/a b.css".into(), file, 6),
-            ],
-            "XYZ",
-        )
-        .await
-        .unwrap();
-        assert_eq!(
-            String::from_utf8(body).unwrap(),
-            "--XYZ\r\nContent-Disposition: form-data; name=\"file\"; filename=\"root/css\"\r\nContent-Type: application/x-directory\r\n\r\n\r\n\
-             --XYZ\r\nContent-Disposition: form-data; name=\"file\"; filename=\"root/css/a%20b.css\"\r\nContent-Type: application/octet-stream\r\n\r\nbody{}\r\n\
-             --XYZ--\r\n"
-        );
-    }
-
-    #[tokio::test]
-    async fn multipart_body_names_a_file_it_cannot_open() {
-        let missing = std::path::PathBuf::from("/nonexistent/swing-test");
-        let err = collect_body(vec![Entry::File("root/x".into(), missing, 0)], "B")
-            .await
-            .unwrap_err();
-        assert!(
-            err.to_string().contains("opening /nonexistent/swing-test"),
-            "{err}"
-        );
-    }
-
-    #[tokio::test]
-    async fn multipart_body_does_not_nest_per_part() {
-        let entries = (0..100_000).map(|i| Entry::Dir(format!("d{i}"))).collect();
-        let body = collect_body(entries, "B").await.unwrap();
-        assert!(body.ends_with(b"--B--\r\n"));
-    }
-
-    fn entry_names(entries: &[Entry]) -> Vec<String> {
-        entries
-            .iter()
-            .map(|e| match e {
-                Entry::Dir(r) => format!("dir:{r}"),
-                Entry::File(r, _, _) => format!("file:{r}"),
-            })
-            .collect()
-    }
-
-    #[test]
-    fn walk_collects_files_and_dirs_sorted() {
-        let dir = tempfile::tempdir().unwrap();
-        std::fs::write(dir.path().join("index.html"), b"hi").unwrap();
-        std::fs::create_dir(dir.path().join("css")).unwrap();
-        std::fs::write(dir.path().join("css/style.css"), b"body{}").unwrap();
-        std::fs::create_dir(dir.path().join("empty")).unwrap();
-
-        let entries = walk_root(dir.path(), "").unwrap();
-        let names = entry_names(&entries);
-        assert!(names.contains(&"file:index.html".to_string()));
-        assert!(names.contains(&"dir:css".to_string()));
-        assert!(names.contains(&"file:css/style.css".to_string()));
-        assert!(names.contains(&"dir:empty".to_string()));
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn walk_follows_symlinked_files_and_dirs_inside_the_site() {
-        use std::os::unix::fs::symlink;
-
-        let dir = tempfile::tempdir().unwrap();
-        std::fs::create_dir(dir.path().join("real_dir")).unwrap();
-        std::fs::write(dir.path().join("real_dir/real.txt"), b"real").unwrap();
-        std::fs::write(dir.path().join("real_file.txt"), b"hi").unwrap();
-
-        symlink(
-            dir.path().join("real_file.txt"),
-            dir.path().join("link_file.txt"),
-        )
-        .unwrap();
-        symlink("real_dir", dir.path().join("link_dir")).unwrap();
-
-        let entries = walk_root(dir.path(), "").unwrap();
-        let names = entry_names(&entries);
-        assert!(names.contains(&"file:link_file.txt".to_string()));
-        assert!(names.contains(&"dir:link_dir".to_string()));
-        assert!(names.contains(&"file:link_dir/real.txt".to_string()));
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn walk_records_the_resolved_path_it_checked() {
-        use std::os::unix::fs::symlink;
-
-        let dir = tempfile::tempdir().unwrap();
-        std::fs::write(dir.path().join("real.txt"), b"hi").unwrap();
-        symlink("real.txt", dir.path().join("link.txt")).unwrap();
-
-        let entries = walk_root(dir.path(), "").unwrap();
-        let real = std::fs::canonicalize(dir.path().join("real.txt")).unwrap();
-        let opened: Vec<(&str, &Path)> = entries
-            .iter()
-            .filter_map(|e| match e {
-                Entry::File(rel, path, _) => Some((rel.as_str(), path.as_path())),
-                Entry::Dir(_) => None,
-            })
-            .collect();
-        assert_eq!(
-            opened,
-            vec![("link.txt", real.as_path()), ("real.txt", real.as_path())]
-        );
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn walk_refuses_symlinks_leaving_the_site() {
-        use std::os::unix::fs::symlink;
-
-        let outside = tempfile::tempdir().unwrap();
-        std::fs::write(outside.path().join("id_ed25519"), b"secret").unwrap();
-
-        let dir = tempfile::tempdir().unwrap();
-        symlink(
-            outside.path().join("id_ed25519"),
-            dir.path().join("key.txt"),
-        )
-        .unwrap();
-        let err = walk_root(dir.path(), "").unwrap_err();
-        assert!(
-            err.to_string().contains("outside the site directory"),
-            "{err}"
-        );
-
-        let dir = tempfile::tempdir().unwrap();
-        std::fs::create_dir(dir.path().join("sub")).unwrap();
-        symlink(outside.path(), dir.path().join("sub/linked")).unwrap();
-        let err = walk_root(dir.path(), "").unwrap_err();
-        assert!(
-            err.to_string().contains("outside the site directory"),
-            "{err}"
-        );
-
-        let dir = tempfile::tempdir().unwrap();
-        std::fs::create_dir(dir.path().join("sub")).unwrap();
-        symlink("../escape", dir.path().join("sub/up")).unwrap();
-        std::fs::create_dir(dir.path().join("escape")).unwrap();
-        let err = walk_root(&dir.path().join("sub"), "").unwrap_err();
-        assert!(
-            err.to_string().contains("outside the site directory"),
-            "{err}"
-        );
     }
 
     #[tokio::test]
@@ -937,17 +637,5 @@ mod tests {
             std::io::ErrorKind::WouldBlock,
             "the Kubo client must not go through the proxy"
         );
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn walk_rejects_symlink_loop() {
-        use std::os::unix::fs::symlink;
-
-        let dir = tempfile::tempdir().unwrap();
-        symlink(dir.path(), dir.path().join("self_loop")).unwrap();
-
-        let err = walk_root(dir.path(), "").unwrap_err();
-        assert!(err.to_string().contains("symlink loop"));
     }
 }

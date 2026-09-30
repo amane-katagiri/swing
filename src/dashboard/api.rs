@@ -433,14 +433,15 @@ pub(super) async fn run_publish(
         Err(resp) => return Ok(PublishOutcome::CheckFailed(resp)),
     };
 
-    let local = publish::LocalChecks::run(
-        dir,
+    let site = crate::ipfs::SiteListing::read_async(dir)
+        .await
+        .map_err(|e| internal("listing the uploaded files failed", e))?;
+    let local = publish::LocalChecks::evaluate(
+        &site.entries(),
         modes.check_dotfiles,
         modes.check_size,
         &state.config.publish.dotfiles_allow,
-    )
-    .await
-    .map_err(|e| internal("listing the uploaded files failed", e))?;
+    );
     if let Some(abort) = local.abort_message() {
         let body = serde_json::json!({
             "nip05": nip05_dto,
@@ -458,7 +459,7 @@ pub(super) async fn run_publish(
         &pubkey_hex,
         &fields.site,
         created_at.as_secs(),
-        dir,
+        site,
     )
     .await
     .map_err(upstream)?;
@@ -587,13 +588,15 @@ pub async fn publish_previous_files(
         .ok_or_else(|| ApiError::BadRequest("missing site".to_string()))?;
     crate::nostr::validate_d_tag(&site)
         .map_err(|e| ApiError::BadRequest(format!("invalid site: {e:#}")))?;
-    let _permit = state.relay_query_permit().await?;
-    let relay = state.require_relay().await?;
+    let previous = {
+        let _permit = state.relay_query_permit().await?;
+        let relay = state.require_relay().await?;
+        relay
+            .fetch_own_latest_site(state.config.nostr.site_event_kind, &site)
+            .await
+            .map_err(|e| format!("{e:#}"))
+    };
     let ipfs = state.require_ipfs().await?;
-    let previous = relay
-        .fetch_own_latest_site(state.config.nostr.site_event_kind, &site)
-        .await
-        .map_err(|e| format!("{e:#}"));
     let files = publish::PreviousFiles::load(&ipfs, &previous).await;
     Ok(Json(dto::previous_files_dto(files)))
 }

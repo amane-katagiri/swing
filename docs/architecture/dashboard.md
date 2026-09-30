@@ -6,6 +6,7 @@
 - [`dashboard/http-api.md`](dashboard/http-api.md) — HTTP API の共通規則とエンドポイント一覧（各エンドポイントは `dashboard/http-api/` の子ページ）
 - [`dashboard/web.md`](dashboard/web.md) — フロントエンド（`web/*.js`）の構成と共通部品
   - [`dashboard/views.md`](dashboard/views.md) — Desktop 以外の各画面
+    - [`dashboard/views/publish.md`](dashboard/views/publish.md) — Publish 画面
   - [`dashboard/css.md`](dashboard/css.md) — CSS カスタマイズのインターフェース
 - [`dashboard/desktop.md`](dashboard/desktop.md) — Desktop 画面（`web/desktop*`）
   - [`dashboard/desktop/control-panel.md`](dashboard/desktop/control-panel.md) — 「コントロール パネル」ダイアログ

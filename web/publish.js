@@ -564,6 +564,7 @@ function closeNewFiles() {
 async function reviewAndPublish(request) {
   const submitBtn = publishEls.form.querySelector('button[type="submit"]');
   publishing = true;
+  setFormDisabled(publishEls.form, true);
   setBusy(submitBtn, true);
   publishEls.result.hidden = true;
   setStatus(publishEls.status, 'loading', t('newFilesComparing'));
@@ -575,6 +576,7 @@ async function reviewAndPublish(request) {
     return;
   } finally {
     publishing = false;
+    setFormDisabled(publishEls.form, false);
     setBusy(submitBtn, false);
     refreshSubmitState();
   }
@@ -646,7 +648,7 @@ export const PublishView = {
       const overview = await loadOverview(force);
       if (!publishLoadGuard.isCurrent(gen)) return;
       renderIdentity(overview);
-      clearStatus(publishEls.status);
+      if (!pendingPublish) clearStatus(publishEls.status);
       updateNavFooter(overview);
       updateUploadInfo();
     } catch (err) {

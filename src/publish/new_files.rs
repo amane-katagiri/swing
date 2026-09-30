@@ -3,8 +3,8 @@ use std::collections::HashSet;
 use crate::ipfs::{IpfsClient, SiteEntry};
 use crate::nostr::SiteEvent;
 
-pub const LISTED_NEW_FILES: usize = 50;
-pub const MAX_PREVIOUS_ENTRIES: usize = 100_000;
+const LISTED_NEW_FILES: usize = 50;
+const MAX_PREVIOUS_ENTRIES: usize = 100_000;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PreviousFiles {
@@ -91,7 +91,7 @@ impl PreviousFiles {
     }
 }
 
-pub fn group_by_folder(paths: &[String]) -> Vec<(&str, Vec<&str>)> {
+fn group_by_folder(paths: &[String]) -> Vec<(&str, Vec<&str>)> {
     let mut split: Vec<(&str, &str)> = paths
         .iter()
         .map(|path| path.rsplit_once('/').unwrap_or(("", path)))
@@ -107,7 +107,7 @@ pub fn group_by_folder(paths: &[String]) -> Vec<(&str, Vec<&str>)> {
     groups
 }
 
-pub fn count_new_files(n: usize) -> String {
+pub(super) fn count_new_files(n: usize) -> String {
     if n == 1 {
         "1 new file".to_string()
     } else {

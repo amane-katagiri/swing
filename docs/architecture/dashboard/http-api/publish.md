@@ -42,7 +42,7 @@
 処理:
 
 - `<state_dir>/upload/` の下に一時ディレクトリを作り、各 `file` パートをストリーミングで書き込む。unix ではディレクトリを `0o700`、ファイルを `0o600` で作る。
-- 展開先をサイトのディレクトリとして、CLI の `swing publish`（[`../../cli/publish.md`](../../cli/publish.md)）と同じ処理と判定を上記の順で行う。ドットファイル・サイズは受け取ったファイルそのもので判定する（空のディレクトリは届かない）。relay は agent の接続を使う。受け取ったファイルの一覧に失敗したら 500。
+- 展開先をサイトのディレクトリとして、CLI の `swing publish`（[`../../cli/publish.md`](../../cli/publish.md)）と同じ処理と判定を上記の順で行う（増えたファイルの確認は除く。画面側が [previous-files](#get-apipublishprevious-filessited) で先に行う）。展開先は 1 回だけ一覧し、その一覧でドットファイル・サイズを判定して、同じ一覧を add する（空のディレクトリは届かない）。relay は agent の接続を使う。受け取ったファイルの一覧に失敗したら 500。
 - 展開先ディレクトリは、成功・失敗のときは応答の前に削除する。タイムアウト（[`../../dashboard.md#タイムアウトsrcdashboardmodrs`](../../dashboard.md#タイムアウトsrcdashboardmodrs)）とクライアントの切断では処理を打ち切ったときに削除を始めるので、削除は応答の後になりうる。取りこぼした分は `up::run` の起動時に `<state_dir>/upload/` ごと掃除する（[`../../up.md`](../../up.md)）。
 - ボディが `[dashboard].max_upload` を超えたら 413（ストリーミング中に超えても打ち切る）。それ以外の multipart の受信エラー（ボディの読み取り自体の失敗を含む）は 400。
 
@@ -85,12 +85,12 @@
 公開画面が、アップロードする前に増えたファイルを出すために使う。CLI の[増えたファイルの確認](../../cli/publish.md)と同じく、relay から自分の pubkey・この `d` の最新のサイトイベントを取り、その CID を Kubo でオフラインに一覧する（`publish::PreviousFiles::load`）。比べるのはブラウザ側で、サーバは一覧を返すだけ。`/api/publish/upload` はこの確認を経たかどうかを見ない。
 
 - `site` が無ければ 400 `missing site`、[`d` の条件](../../nostr.md#検証)を満たさなければ 400 `invalid site: ...`。
-- relay と Kubo を使う（準備状態と同時実行の上限は親ページ）。
+- 判定の順は `site` の検証（400）→ relay の同時実行の空き（503）→ relay の準備（503）→ relay から前の版を取る → Kubo の準備（503）→ Kubo で一覧。relay の同時実行の枠（親ページ）は relay から取る間だけ使う。
 
 ```json
 { "status": "listed", "previous_cid": "bafy…", "previous_created_at": 1790000000, "detail": null, "files": ["index.html", "css/style.css"] }
 ```
 
 - `status` は `listed`（一覧できた）/`no_previous`（relay に前の版が無い）/`unknown`（relay から取れなかった、または Kubo で一覧できなかった。理由が `detail`）。`listed` 以外では `previous_cid`・`previous_created_at` は `null`、`files` は空。
-- `files` はファイルのパス（ディレクトリは含まない）の名前順。前の版の項目が `MAX_PREVIOUS_ENTRIES`（100 000）を超えたら `unknown`。
+- `files` はファイルのパス（ディレクトリは含まない）のバイト順。一覧の条件と上限は CLI と同じ（[`../../cli/publish.md`](../../cli/publish.md) の 5）。
 - relay や Kubo が失敗しても 200 の `unknown` で返す。

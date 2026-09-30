@@ -2,7 +2,7 @@
 
 [`../dashboard.md`](../dashboard.md) の子ページ。サーバ側の起動・タイムアウト・静的ファイル配信は [`../dashboard.md`](../dashboard.md)、ガードと認証は [`security.md`](security.md)、HTTP API の入出力は [`http-api.md`](http-api.md)、Desktop 画面は並列の [`desktop.md`](desktop.md)、おしらせは [`notices.md`](notices.md) を参照。子ページ:
 
-- [`views.md`](views.md): Sites・Webring・Publish・Settings・Setup・Login の各画面
+- [`views.md`](views.md): Sites・Webring・Publish・Settings・Setup・Login の各画面（Publish は子ページ [`views/publish.md`](views/publish.md)）
 - [`css.md`](css.md): CSS カスタマイズのインターフェース
 
 ## 構成
@@ -20,7 +20,7 @@
 | `notify-settings.js` | おしらせの設定（[`notices.md#設定`](notices.md#設定)）と `swing:desktop:mascot` 全体の読み書き、ブラウザの通知の許可、種類を確認するかどうか（`kindWanted`）、イベント名 `SHOW_SELF_IN_WEBRING`。Settings 画面・Webring 画面・Desktop 画面が使う | `storage.js` |
 | `stats.js` | Settings 画面のリソース使用量のパネル（`loadStats`・`renderStats`） | `util.js`・`i18n.js` |
 | `settings-notify.js` | Settings 画面の「通知」パネル（`BrowserNotifySettings`） | `notify-settings.js`・`util.js`・`i18n.js` |
-| `sites.js` / `webring.js` / `publish.js` / `settings.js` / `setup.js` / `login.js` | 各画面（[`views.md`](views.md)）。`webring.js` は `graph.js`・`notify-settings.js`、`publish.js` と `setup.js` は `pairing.js`、`settings.js` は `stats.js`・`settings-notify.js`、`setup.js` は `publish.js` の `loadOverview` も使う | 上記 |
+| `sites.js` / `webring.js` / `publish.js` / `settings.js` / `setup.js` / `login.js` | 各画面（[`views.md`](views.md)、Publish は [`views/publish.md`](views/publish.md)）。`webring.js` は `graph.js`・`notify-settings.js`、`publish.js` と `setup.js` は `pairing.js`、`settings.js` は `stats.js`・`settings-notify.js`、`setup.js` は `publish.js` の `loadOverview` も使う | 上記 |
 | `boot.js` | 描画前に同期実行する小さな通常スクリプト（下記「共通の UI 部品」の読み込み時） | なし |
 | `app.js` | ルーター兼エントリポイント。`<script type="module" src="/app.js">` から読み込まれる | `i18n.js`・`storage.js`・`util.js`・各画面（`sites.js`・`webring.js`・`publish.js`・`settings.js`・`setup.js`・`login.js`）・`settings-notify.js`・`stats.js`・`desktop.js`・`desktop-system-settings.js`（`startupView`） |
 
@@ -72,7 +72,7 @@ CSS の読み込み順と上書きの仕方は [`css.md#読み込み順`](css.md
 | Desktop | [`/api/sites`](http-api/status.md#get-apisites) の `stored: true` のサイトをレトロ調（Win95/98 風デスクトップ＋ブラウザ風ウィンドウ内の「リンク集」ページ）に描画する（[`desktop.md`](desktop.md)） | なし |
 | Sites | [`/api/sites`](http-api/status.md#get-apisites) の一覧、mirror への追加・削除、`Unfollowed but still stored`、Storage check（[`views.md#sites-画面`](views.md#sites-画面)） | `cards`（既定）/ `table` |
 | Webring | [`/api/webring`](http-api/nostr.md#get-apiwebringrootkeydepthn) のグラフとノードの詳細・ミラー操作（[`views.md#webring-画面`](views.md#webring-画面)） | `graph`（既定）/ `list` / `ascii` / `source`（dot・mermaid） |
-| Publish | 自分の情報、My sites、publish フォーム（[`views.md#publish-画面`](views.md#publish-画面)） | なし |
+| Publish | 自分の情報、My sites、publish フォーム（[`views/publish.md`](views/publish.md)） | なし |
 | Settings | 設定の表示と編集、テーマ・言語・カスタム CSS、通知、リソース使用量、プロセスの停止・再起動（[`views.md#settings-画面settingsjs`](views.md#settings-画面settingsjs)） | なし |
 | Setup | 鍵が未設定（`overview.setup === true`）の間だけ表示できる導入画面（[`views.md#setup-画面setupjs`](views.md#setup-画面setupjs)） | なし |
 | Login | 未ログインのときだけ出すログインコードの入力画面（[`views.md#login-画面loginjs`](views.md#login-画面loginjs)） | なし |

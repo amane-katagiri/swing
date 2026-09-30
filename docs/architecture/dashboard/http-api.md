@@ -1,6 +1,6 @@
 # ダッシュボード HTTP API（`src/dashboard/api.rs`, `src/dashboard/setup.rs`, `src/dashboard/session.rs`, `src/dashboard/upload.rs`, `src/dashboard/dto.rs`, `src/dashboard/config_dto.rs`）
 
-[`../dashboard.md`](../dashboard.md) の子ページ。ガードと認証は [`security.md`](security.md)、画面側からの使い方は [`views.md`](views.md) を参照。各エンドポイントの入出力は [一覧](#エンドポイント一覧)から辿る子ページにある。
+[`../dashboard.md`](../dashboard.md) の子ページ。ガードと認証は [`security.md`](security.md)、画面側からの使い方は [`views.md`](views.md)（Publish は [`views/publish.md`](views/publish.md)）を参照。各エンドポイントの入出力は [一覧](#エンドポイント一覧)から辿る子ページにある。
 
 ## 共通
 
@@ -41,7 +41,7 @@ API は `swing up` の寿命で動き続ける（[`../up.md`](../up.md)）。
 ### 件数と負荷
 
 - `keys`（mirror add/remove）・`root`（webring）・`key`（replicas）は 1 リクエストあたり最大 100 件、超えると 400。
-- relay を引く GET の API（`/api/sites`・`/api/mirror`・`/api/webring`・`/api/replicas`・`/api/publish/sites`・`/api/publish/previous-files`）はサーバ側でキャッシュしない。同時に relay を引けるのはこれらを合わせて 4 本までで、空きを最大 20 秒待っても取れなければ 503 `{"error": "too many relay queries are running; try again later"}`。
+- relay を引く GET の API（`/api/sites`・`/api/mirror`・`/api/webring`・`/api/replicas`・`/api/publish/sites`・`/api/publish/previous-files`）はサーバ側でキャッシュしない。同時に relay を引けるのはこれらを合わせて 4 本までで、空きを最大 20 秒待っても取れなければ 503 `{"error": "too many relay queries are running; try again later"}`。`/api/publish/previous-files` は relay から取る間だけ枠を使い、その後の Kubo での一覧では使わない。
 - `webring`・`replicas` の判定の順は、件数の上限（400）→ 空きを取る（503）→ agent の準備（503）→ `root`・`key` の解析（400）。`mirror/add`・`mirror/remove` は件数（空も含む）と解析（400）→ agent の準備（503）の順で、空きは取らない。レート制限は無い。
 - API を叩く CLI サブコマンドの一覧は [`../cli.md#共通`](../cli.md#共通)。
 

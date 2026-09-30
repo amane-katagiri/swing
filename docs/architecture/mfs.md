@@ -1,4 +1,4 @@
-# MFS と Kubo RPC（mfs.rs, ipfs.rs）
+# MFS と Kubo RPC（mfs.rs, ipfs.rs, ipfs/site.rs）
 
 [`../architecture.md`](../architecture.md) の一部。managed／unmanaged どちらの Kubo にも共通する。Kubo プロセスの管理は [`kubo.md`](kubo.md)。
 
@@ -43,16 +43,16 @@ MFS は DAG が欠けていても置け、GC も `block/rm` も止めない。�
 - `dag/stat` に CID を複数渡すと、`TotalSize` はそれらをまとめた重複排除後のサイズ（同じブロックを 1 回だけ数えた合計）になる。1 つでもブロックが欠けていれば呼び出し全体が失敗する。CID を 1 つも渡さないときは呼ばずに 0 を返す。
 - `dag/export` の無通信タイムアウトはヘッダー受信までにも適用する。
 - 配置は親ディレクトリを作り、同名の項目を消してから行う。`offline=true` なのでルートのブロックがローカルに無ければ即エラー。
-- CID の中のファイル一覧（`ipfs::list_files_local`。publish の[増えたファイルの確認](cli/publish.md)が前の版に使う）は、ディレクトリを 1 つずつ `ls` でたどり、ファイルのパス（ルートからの相対、`/` 区切り）を名前順で返す。`offline=true` なのでブロックがローカルに無ければその時点でエラーになり、たどった項目（ディレクトリを含む）が呼び出し元の指定した数を超えてもエラーにする。
-- add の本体は `multipart/form-data`（境界は 16 バイトの乱数の hex）を 1 本の平らなストリームとして自分で組む（`ipfs::multipart_body`）。パートはディレクトリと各ファイルに 1 つずつで、`filename` はルート名から始まる相対パスを要素ごとにパーセントエンコードしたもの、`Content-Type` はディレクトリが `application/x-directory`、ファイルが `application/octet-stream`。ファイルは送る順が来たときに開くので、同時に開くのは 1 つだけ。開けなければ送信の途中で `opening <パス>: ...` のエラーになる。
+- CID の中のファイル一覧（`ipfs::list_files_local`。publish の[増えたファイルの確認](cli/publish.md)が前の版に使う）は、ディレクトリを 1 つずつ `ls` でたどり、ファイルのパス（ルートからの相対、`/` 区切り）をバイト順で返す。`offline=true` なのでブロックがローカルに無ければその時点でエラーになり、たどった項目（ディレクトリを含む）が呼び出し元の指定した数を超えてもエラーにする。
 - `files/rm` は失敗しても 200 でボディにメッセージを返すので、ボディが空でなければ失敗とする。存在しないパスは成功。
 - `files/ls` と `files/stat` の `file does not exist` は、それぞれ空の一覧、「無い」として扱う。
 - ディレクトリ判定は MFS のパスではなく `/ipfs/{cid}` を `files/stat` に渡す。agent は取得の直後に呼ぶ（[`agent.md` の「保存の順序」](agent.md#保存の順序)）。
 
-`add` の multipart:
+`add`（`IpfsClient::add_site`。`add_dir` はディレクトリを一覧してから `add_site` を呼ぶ）:
 
-- 各ファイルは `name="file"` パート。`filename` はルートディレクトリ名を先頭に付けた相対パス（例: `public/css/style.css`、URL エンコード）。
-- ファイルは `application/octet-stream` でストリーミング送信、ディレクトリは空ボディの `application/x-directory`。
-- シンボリックリンクは辿る。ただし、リンク先を `canonicalize` した実パスが、`canonicalize` したルートディレクトリの下に無ければエラーにして何も追加しない。循環もエラー。
+- 送るのは `ipfs::SiteListing`（`site.rs`）が一覧したものだけ。一覧はシンボリックリンクを辿り、ファイルはリンク先を `canonicalize` した実パスで持つ。実パスが `canonicalize` したルートディレクトリの下に無ければエラーにして何も追加しない。循環もエラー。一覧の後に増えたファイルは送らない。
+- 本体は `multipart/form-data` を 1 本のストリームとして自分で組む（境界は 16 バイトの乱数の hex）。パートはディレクトリと各ファイルに 1 つずつで、どれも `name="file"`。
+- `filename` はルートディレクトリ名を先頭に付けた相対パス（例: `public/css/style.css`）を要素ごとにパーセントエンコードしたもの。`Content-Type` はディレクトリが空ボディの `application/x-directory`、ファイルが `application/octet-stream`。
+- ファイルは送る順が来たときに開く（同時に開くのは 1 つ）。開けなければ送信の途中で `opening <パス>: ...` のエラー。
 - 最後の JSON 行の `Hash` がルート CID（`ipfs add -Qr --cid-version=1` と同じ）。
 - `to-files` のパスにルートディレクトリそのものが置かれる。add の前に親ディレクトリを作り、同じパスの既存の項目を `files/rm` で消す。

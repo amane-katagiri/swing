@@ -5,7 +5,7 @@ use anyhow::{Context, Result};
 use nostr_sdk::prelude::*;
 
 use crate::config::{self, CheckMode, Config};
-use crate::ipfs::{self, IpfsClient, SiteEntry};
+use crate::ipfs::{IpfsClient, SiteEntry, SiteListing};
 use crate::mfs::MfsLayout;
 use crate::nip05::{self, Nip05Verify};
 use crate::nostr::{self, RelayClient, RelaySendResult, build_site_event_builder};
@@ -18,7 +18,8 @@ pub use checks::{
     DASHBOARD_UPLOAD_DIR, LISTED_DOTFILES, LocalChecks, SIZE_GUIDELINE, UnchangedOutcome,
     UnchangedStatus, find_dotfiles, refuse_protected_paths,
 };
-pub use new_files::{PreviousFiles, count_new_files};
+pub use new_files::PreviousFiles;
+use new_files::count_new_files;
 
 fn versions_to_prune(names: &[String], current: u64, keep: usize) -> Vec<String> {
     let mut versions: Vec<(u64, &String)> = names
@@ -185,10 +186,10 @@ pub async fn add_and_measure(
     pubkey_hex: &str,
     d: &str,
     created_at: u64,
-    dir: &Path,
+    site: SiteListing,
 ) -> Result<IpfsStage> {
     let path = layout.publish_version(pubkey_hex, d, created_at);
-    let cid = nostr::canonical_cid(&ipfs.add_dir(dir, &path).await?)
+    let cid = nostr::canonical_cid(&ipfs.add_site(site, &path).await?)
         .context("Kubo returned an invalid cid")?;
     // add with pin=false doesn't hold Kubo's GC lock, so this verifies nothing was dropped before MFS linked it.
     let size = ipfs
@@ -387,13 +388,6 @@ async fn run_nip05_check(mode: CheckMode, d: &str, pubkey_hex: &str) -> Result<(
     Ok(())
 }
 
-async fn list_site_entries(dir: &Path) -> Result<Vec<SiteEntry>> {
-    let dir = dir.to_path_buf();
-    tokio::task::spawn_blocking(move || ipfs::list_site(&dir))
-        .await
-        .context("listing task panicked")?
-}
-
 fn run_local_checks(entries: &[SiteEntry], modes: &Modes, dotfiles_allow: &[String]) -> Result<()> {
     let local = LocalChecks::evaluate(
         entries,
@@ -544,7 +538,8 @@ pub async fn run(config: Config, dir: &Path, request: Request) -> Result<()> {
     let pubkey_hex = signer.public_key().to_hex();
 
     run_nip05_check(modes.nip05, &d, &pubkey_hex).await?;
-    let entries = list_site_entries(dir).await?;
+    let site = SiteListing::read_async(dir).await?;
+    let entries = site.entries();
     run_local_checks(&entries, &modes, &config.publish.dotfiles_allow)?;
 
     let ipfs = config.ipfs_client().await?;
@@ -565,7 +560,14 @@ pub async fn run(config: Config, dir: &Path, request: Request) -> Result<()> {
 
     let layout = MfsLayout::new(config.ipfs.mfs_root.clone());
     let created_at = Timestamp::now();
-    let stage = add_and_measure(&ipfs, &layout, &pubkey_hex, &d, created_at.as_secs(), dir).await?;
+    let stage =
+        match add_and_measure(&ipfs, &layout, &pubkey_hex, &d, created_at.as_secs(), site).await {
+            Ok(stage) => stage,
+            Err(e) => {
+                relay.shutdown().await;
+                return Err(e);
+            }
+        };
     println!("  CID: {}", stage.cid);
     println!("  \u{2713} added to {}", stage.path);
     println!("  Size: {} bytes", stage.size);

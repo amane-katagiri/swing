@@ -5,7 +5,7 @@ use anyhow::{Context, Result, bail};
 
 use crate::config::{CheckMode, Config, DEFAULT_MAX_UPDATE_SIZE};
 use crate::format::{format_bytes, format_bytes_approx};
-use crate::ipfs::{self, SiteEntry};
+use crate::ipfs::SiteEntry;
 use crate::nostr::SiteEvent;
 
 pub const SIZE_GUIDELINE: u64 = 512 << 20;
@@ -135,22 +135,6 @@ impl LocalChecks {
             size_mode,
             bytes,
         }
-    }
-
-    pub async fn run(
-        dir: &Path,
-        dotfiles_mode: CheckMode,
-        size_mode: CheckMode,
-        allow: &[String],
-    ) -> Result<Self> {
-        if dotfiles_mode == CheckMode::Off && size_mode == CheckMode::Off {
-            return Ok(Self::evaluate(&[], dotfiles_mode, size_mode, allow));
-        }
-        let dir = dir.to_path_buf();
-        let entries = tokio::task::spawn_blocking(move || ipfs::list_site(&dir))
-            .await
-            .context("listing task panicked")??;
-        Ok(Self::evaluate(&entries, dotfiles_mode, size_mode, allow))
     }
 
     pub fn all_off(&self) -> bool {
@@ -325,7 +309,7 @@ mod tests {
     }
 
     fn entries(dir: &Path) -> Vec<SiteEntry> {
-        ipfs::list_site(dir).unwrap()
+        crate::ipfs::SiteListing::read(dir).unwrap().entries()
     }
 
     #[test]
