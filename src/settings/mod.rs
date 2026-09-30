@@ -596,8 +596,8 @@ pub const SETTINGS: &[Setting] = &[
         example: Example::Commented("\"/path/to/mascots\""),
         editable: false,
         description: Text {
-            en: "Directory of user-defined Desktop mascot packs (one subdirectory per pack); read once at startup in addition to the two bundled packs.",
-            ja: "ユーザー定義の Desktop マスコットパックを置くディレクトリ（1 サブディレクトリ = 1 パック）。同梱の 2 パックに加えて起動時に 1 回読み込む",
+            en: "Directory of user-defined Desktop mascot packs (one subdirectory per pack); read once at startup in addition to the three bundled packs.",
+            ja: "ユーザー定義の Desktop マスコットパックを置くディレクトリ（1 サブディレクトリ = 1 パック）。同梱の 3 パックに加えて起動時に 1 回読み込む",
         },
     },
     Setting {

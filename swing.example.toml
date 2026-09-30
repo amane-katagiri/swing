@@ -56,7 +56,7 @@ allowed_hosts = []                   # SWING_DASHBOARD_ALLOWED_HOSTS: Host ヘ�
                                      # SWING_DASHBOARD_DESKTOP_PAGE_CSS: そのリンク集ページ専用の CSS ファイルのパス。未設定なら同梱の CSS
 #desktop_banner = "/path/to/banner.gif"
                                      # SWING_DASHBOARD_DESKTOP_BANNER: リンク集ページの 88×31 バナー画像のパス（png/gif/jpeg/webp/svg）。未設定なら同梱の GIF
-#mascots_dir = "/path/to/mascots"    # SWING_DASHBOARD_MASCOTS_DIR: ユーザー定義の Desktop マスコットパックを置くディレクトリ（1 サブディレクトリ = 1 パック）。同梱の 2 パックに加えて起動時に 1 回読み込む
+#mascots_dir = "/path/to/mascots"    # SWING_DASHBOARD_MASCOTS_DIR: ユーザー定義の Desktop マスコットパックを置くディレクトリ（1 サブディレクトリ = 1 パック）。同梱の 3 パックに加えて起動時に 1 回読み込む
 max_upload = "2GiB"                  # SWING_DASHBOARD_MAX_UPLOAD: POST /api/publish/upload のボディ上限。0 はエラー
 
 [kubo]

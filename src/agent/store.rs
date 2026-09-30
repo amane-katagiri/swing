@@ -377,7 +377,7 @@ impl<C: KuboStore, N: Nip05Verify, R: ReportRelay> Agent<C, N, R> {
                 return false;
             }
             Err(e) => {
-                warn!(cid = %ev.cid, site = %ev.d, error = %e, "fetching content failed; will retry on next poll");
+                warn!(cid = %ev.cid, site = %ev.d, error = %e, "fetching content failed; will retry after min_update_interval");
                 return false;
             }
         }
@@ -389,7 +389,7 @@ impl<C: KuboStore, N: Nip05Verify, R: ReportRelay> Agent<C, N, R> {
                 false
             }
             Err(e) => {
-                warn!(cid = %ev.cid, site = %ev.d, error = %e, "checking whether cid is a directory failed; will retry on next poll");
+                warn!(cid = %ev.cid, site = %ev.d, error = %e, "checking whether cid is a directory failed; will retry after min_update_interval");
                 false
             }
         }
@@ -414,7 +414,7 @@ impl<C: KuboStore, N: Nip05Verify, R: ReportRelay> Agent<C, N, R> {
         let size = match size {
             Ok(size) => size,
             Err(e) => {
-                warn!(cid = %ev.cid, error = %e, "content is incomplete after fetch; will retry on next poll");
+                warn!(cid = %ev.cid, error = %e, "content is incomplete after fetch; will retry after min_update_interval");
                 self.remove_path(&path).await;
                 return false;
             }
