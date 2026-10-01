@@ -74,6 +74,22 @@ cd swing
 
 `swing.toml` を用意せずに `swing up` を起動することもできます。設定ファイルが無い（かつ環境変数にも鍵が無い）状態で起動すると、ダッシュボードだけが動く「セットアップモード」になります。ダッシュボードにログインする（下記）とセットアップ画面が表示され、鍵の生成（または既存の鍵の貼り付け、署名アプリとの接続）・relay・保存上限を入力して送信すると `swing.toml` が作られ（バイナリなら、カレントディレクトリに `swing.toml` が無ければユーザーごとの既定の場所（Linux は `~/.local/share/swing`（`XDG_DATA_HOME` があれば `$XDG_DATA_HOME/swing`）、macOS は `~/Library/Application Support/swing`、Windows は `%LOCALAPPDATA%\swing`）で、状態ファイルと Kubo のリポジトリもその下の `data` に置かれます。Docker Compose ならコンテナの `/data`＝`swing-data` volume）、エージェントはプロセスを終了させずにそのまま通常モードで動き直します。セットアップモードでは、ダッシュボード（8082）や Kubo のゲートウェイ（8080）のポートがほかのプログラムに使われていると、近くの空いているポートにずらして `swing.toml` に書き込みます（ずらしたときはログに出ます。環境変数で指定したポートはずらしません。ずらしたくなければ `swing up --no-port-shift` か環境変数 `SWING_NO_PORT_SHIFT=true`。Docker イメージでは最初から有効で、ずらしません）。以下は設定ファイルを事前に用意して起動する手順で、どちらでも構いません。設定は後からダッシュボードの Settings 画面（環境変数で設定した値を除く）からも変更でき、変更後は再起動すると反映されます。詳しくは [`docs/architecture/dashboard.md`](docs/architecture/dashboard.md) と [`docs/architecture/up.md`](docs/architecture/up.md) を参照してください。
 
+### Linux ではインストールスクリプトで入れる
+
+Linux（x86_64・aarch64）では、リリースの `swing` と Kubo をまとめて入れるスクリプトを使えます。ビルドも Kubo の取得も要りません。
+
+```bash
+curl -fsSL https://github.com/amane-katagiri/swing/releases/latest/download/install.sh | sh
+```
+
+バージョンを指定するときは `sh -s -- --version v0.1.0` とします。`swing` のアーカイブと Kubo は SHA-256 / SHA-512 のチェックサムを確かめてから入れます。`~/.local/lib/swing/` に `swing`・`ipfs` などを置き、`~/.local/bin/swing` からのシンボリックリンクを作ります（`~/.local/bin` が PATH に無ければ警告します）。同じコマンドをもう一度実行すると、その場で更新します。systemd のユーザーサービスとして動いていれば、止めてから入れ替えて、動いていたなら再び起動します。
+
+- `--service` を付けると、入れた後に `swing service install` まで行います。設定ファイルが無ければセットアップモードで起動するので、`swing dashboard open` でダッシュボードを開いて設定を進めます。
+- `--prefix DIR` で入れる場所を変えられます（`DIR/lib/swing` と `DIR/bin`）。システム全体に入れるなら `curl -fsSL .../install.sh | sudo sh -s -- --prefix /usr/local` とします。
+- 設定ファイルとデータは `~/.local/share/swing`（`XDG_DATA_HOME` があれば `$XDG_DATA_HOME/swing`）に置かれます。
+
+削除は `~/.local/lib/swing/swing-uninstall.sh` です（`--prefix` で入れたときは、その `lib/swing` の中の同名のスクリプト）。サービスの登録と入れたファイルだけを消し、設定ファイルとデータは残します。それも消すときは `--purge` を付けます（確認を求められます。`--yes` で省けます）。詳しい動作は [`docs/architecture/install-sh.md`](docs/architecture/install-sh.md) を参照してください。
+
 ### バイナリで動かす
 
 GitHub のリリースにビルド済みアーカイブがあればそれを展開して使います。無ければ `swing` バイナリをビルドします（Rust 1.97 が必要です）。

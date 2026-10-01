@@ -156,6 +156,7 @@ unmanaged（`[ipfs].api`）の Kubo には秘密を送らず、認証は SWING �
 
 - `compose.yaml` の `ipfs` サービスのイメージタグ（`ipfs/kubo:v0.43.1`）
 - `kubo::KUBO_VERSION`（`src/kubo.rs`）
+- `packaging/linux/install.sh` の `KUBO_VERSION`（[`install-sh.md`](install-sh.md)）
 - README と docs の版表記（`v0.43.1` で検索できる）
 
 次の Kubo の挙動に依存しているので、上げると壊れうる。

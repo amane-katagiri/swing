@@ -21,6 +21,7 @@
 | [`architecture/docker.md`](architecture/docker.md) | Dockerfile、compose、外部 Kubo コンテナの設定 |
 | [`architecture/dashboard.md`](architecture/dashboard.md) | Web ダッシュボード兼制御 API（`dashboard/`）: 起動と終了、設定、タイムアウト、静的ファイル。子ページの一覧もここ |
 | [`architecture/release.md`](architecture/release.md) | ビルドとリリース、macOS と Windows の動作確認の CI |
+| [`architecture/install-sh.md`](architecture/install-sh.md) | Linux 向けのインストールスクリプト（`packaging/linux/install.sh`）: 入れる物と場所、更新、アンインストール、テスト |
 
 ## 構成要素
 
@@ -81,6 +82,7 @@
 | `build.rs`・`assets/swing.ico` | Windows 向けに exe へアイコンとバージョン情報を埋め込む。アイコンは `tray/assets/` の画像とともに `web/favicon.svg` から書き出した派生物（[tray.md](architecture/tray.md#アイコン)） |
 | `Dockerfile`・`compose.yaml`・`docker/` | コンテナと compose（`kubo-init.d/`: 外部 Kubo の設定、`release.Dockerfile`: 配布イメージ、`demo/`: デモ環境）。[docker.md](architecture/docker.md)・[docker/demo/README.md](../docker/demo/README.md) |
 | `swing.example.toml`・`.env.example` | 設定例（カタログから生成） |
+| `packaging/linux/` | Linux 向けの `install.sh` とそのテスト（`test-install.sh`）。[install-sh.md](architecture/install-sh.md) |
 | `.github/workflows/` | `release.yml`・`macos-check.yml`・`windows-check.yml`。[release.md](architecture/release.md) |
 | `docs/` | 役割は AGENTS.md |
 
