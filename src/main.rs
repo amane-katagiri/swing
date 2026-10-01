@@ -13,7 +13,10 @@ use tracing_subscriber::EnvFilter;
 
 #[derive(Args)]
 struct ConfigArg {
-    #[arg(long, help = "Config file (default: $SWING_CONFIG or ./swing.toml)")]
+    #[arg(
+        long,
+        help = "Config file (default: $SWING_CONFIG, ./swing.toml if it exists, or swing.toml in the per-user data directory)"
+    )]
     config: Option<PathBuf>,
 }
 

@@ -72,7 +72,7 @@ git clone <このリポジトリ>
 cd swing
 ```
 
-`swing.toml` を用意せずに `swing up` を起動することもできます。設定ファイルが無い（かつ環境変数にも鍵が無い）状態で起動すると、ダッシュボードだけが動く「セットアップモード」になります。ダッシュボードにログインする（下記）とセットアップ画面が表示され、鍵の生成（または既存の鍵の貼り付け、署名アプリとの接続）・relay・保存上限を入力して送信すると `swing.toml` が作られ（バイナリならカレントディレクトリ、Docker Compose ならコンテナの `/data`＝`swing-data` volume）、エージェントはプロセスを終了させずにそのまま通常モードで動き直します。セットアップモードでは、ダッシュボード（8082）や Kubo のゲートウェイ（8080）のポートがほかのプログラムに使われていると、近くの空いているポートにずらして `swing.toml` に書き込みます（ずらしたときはログに出ます。環境変数で指定したポートはずらしません。ずらしたくなければ `swing up --no-port-shift` か環境変数 `SWING_NO_PORT_SHIFT=true`。Docker イメージでは最初から有効で、ずらしません）。以下は設定ファイルを事前に用意して起動する手順で、どちらでも構いません。設定は後からダッシュボードの Settings 画面（環境変数で設定した値を除く）からも変更でき、変更後は再起動すると反映されます。詳しくは [`docs/architecture/dashboard.md`](docs/architecture/dashboard.md) と [`docs/architecture/up.md`](docs/architecture/up.md) を参照してください。
+`swing.toml` を用意せずに `swing up` を起動することもできます。設定ファイルが無い（かつ環境変数にも鍵が無い）状態で起動すると、ダッシュボードだけが動く「セットアップモード」になります。ダッシュボードにログインする（下記）とセットアップ画面が表示され、鍵の生成（または既存の鍵の貼り付け、署名アプリとの接続）・relay・保存上限を入力して送信すると `swing.toml` が作られ（バイナリなら、カレントディレクトリに `swing.toml` が無ければユーザーごとの既定の場所（Linux は `~/.local/share/swing`（`XDG_DATA_HOME` があれば `$XDG_DATA_HOME/swing`）、macOS は `~/Library/Application Support/swing`、Windows は `%LOCALAPPDATA%\swing`）で、状態ファイルと Kubo のリポジトリもその下の `data` に置かれます。Docker Compose ならコンテナの `/data`＝`swing-data` volume）、エージェントはプロセスを終了させずにそのまま通常モードで動き直します。セットアップモードでは、ダッシュボード（8082）や Kubo のゲートウェイ（8080）のポートがほかのプログラムに使われていると、近くの空いているポートにずらして `swing.toml` に書き込みます（ずらしたときはログに出ます。環境変数で指定したポートはずらしません。ずらしたくなければ `swing up --no-port-shift` か環境変数 `SWING_NO_PORT_SHIFT=true`。Docker イメージでは最初から有効で、ずらしません）。以下は設定ファイルを事前に用意して起動する手順で、どちらでも構いません。設定は後からダッシュボードの Settings 画面（環境変数で設定した値を除く）からも変更でき、変更後は再起動すると反映されます。詳しくは [`docs/architecture/dashboard.md`](docs/architecture/dashboard.md) と [`docs/architecture/up.md`](docs/architecture/up.md) を参照してください。
 
 ### バイナリで動かす
 
@@ -118,7 +118,7 @@ Kubo を初期化・起動し、その上で mirror-agent を動かします。�
 ./target/release/swing service install
 ```
 
-Linux では systemd のユーザーユニット、macOS では launchd の LaunchAgent、Windows ではタスクスケジューラに登録します（Linux はログアウト後も動かし続けるために `loginctl enable-linger` を試み、失敗すれば案内を表示します）。Windows と macOS では、`swing` と同じフォルダに `swing-tray.exe`（macOS は `SWING.app`）があれば、タスクトレイのアイコン（下記「ダッシュボード」）もログイン時に起動するよう登録し、その場で起動します。トレイが要らなければ `--no-tray` を付けてください。Linux で systemd のシステムユニットにしたいときは `sudo swing service install --system` とします。サービスは `sudo` を実行したユーザーの権限で動きます（root では動かしません。別のユーザーで動かすなら `--run-as <user>`）。状態確認は `swing service status`、起動は `swing service start`、停止は `swing service stop`、削除は `swing service uninstall` です。詳しくは [`docs/architecture/up.md`](docs/architecture/up.md) と [`docs/architecture/service.md`](docs/architecture/service.md) を参照してください。
+Linux では systemd のユーザーユニット、macOS では launchd の LaunchAgent、Windows ではタスクスケジューラに登録します（Linux はログアウト後も動かし続けるために `loginctl enable-linger` を試み、失敗すれば案内を表示します）。Windows と macOS では、`swing` と同じフォルダに `swing-tray.exe`（macOS は `SWING.app`）があれば、タスクトレイのアイコン（下記「ダッシュボード」）もログイン時に起動するよう登録し、その場で起動します。トレイが要らなければ `--no-tray` を付けてください。設定ファイルがまだ無いときに（`--config` も `SWING_CONFIG` も付けず、カレントディレクトリに `swing.toml` も無い状態で）実行すると、ユーザーごとの既定の場所に空の `swing.toml` を作ってから登録するので、サービスはセットアップモードで起動します。Linux で systemd のシステムユニットにしたいときは `sudo swing service install --system` とします（設定ファイルは先に用意しておきます）。サービスは `sudo` を実行したユーザーの権限で動きます（root では動かしません。別のユーザーで動かすなら `--run-as <user>`）。状態確認は `swing service status`、起動は `swing service start`、停止は `swing service stop`、削除は `swing service uninstall` です。詳しくは [`docs/architecture/up.md`](docs/architecture/up.md) と [`docs/architecture/service.md`](docs/architecture/service.md) を参照してください。
 
 ### Docker Compose で動かす
 
@@ -475,7 +475,7 @@ SWING は、常時起動のサーバでも、普段使いの PC でも動かせ�
 
 ## 設定一覧
 
-TOML の設定ファイル（`swing.toml`）を使う場合と、環境変数だけで動かす場合のどちらにも対応しています。優先順位は環境変数 > TOML > 既定値。キーごとの環境変数名・既定値・説明は [`swing.example.toml`](swing.example.toml) にすべて載っています（`swing config example` で生成、Docker Compose 用の `.env` は [`.env.example`](.env.example)、`swing config env-example` で生成）。設定ファイルの探索順や、容量・時間の書式（`"100GiB"` や `"10m"` のような文字列）は [`docs/architecture/config.md`](docs/architecture/config.md) を参照してください。ダッシュボードから編集できるのはそのうちの一部（ホワイトリスト、[`docs/architecture/config.md`](docs/architecture/config.md#編集できるキー)）で、環境変数で設定した項目は編集できません。
+TOML の設定ファイル（`swing.toml`）を使う場合と、環境変数だけで動かす場合のどちらにも対応しています。優先順位は環境変数 > TOML > 既定値。キーごとの環境変数名・既定値・説明は [`swing.example.toml`](swing.example.toml) にすべて載っています（`swing config example` で生成、Docker Compose 用の `.env` は [`.env.example`](.env.example)、`swing config env-example` で生成）。設定ファイルは `--config`、`SWING_CONFIG`、カレントディレクトリの `swing.toml`（あれば）、ユーザーごとの既定の場所（Linux は `~/.local/share/swing`（`XDG_DATA_HOME` があれば `$XDG_DATA_HOME/swing`）、macOS は `~/Library/Application Support/swing`、Windows は `%LOCALAPPDATA%\swing`）の `swing.toml` の順に探します。探索順の詳細や、容量・時間の書式（`"100GiB"` や `"10m"` のような文字列）は [`docs/architecture/config.md`](docs/architecture/config.md) を参照してください。ダッシュボードから編集できるのはそのうちの一部（ホワイトリスト、[`docs/architecture/config.md`](docs/architecture/config.md#編集できるキー)）で、環境変数で設定した項目は編集できません。
 
 ## プライバシーと注意点
 

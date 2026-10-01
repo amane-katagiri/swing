@@ -280,15 +280,17 @@ fn is_config_writable(config: &config::Config) -> bool {
             .open(&config.config_path)
             .is_ok();
     }
-    let Some(parent) = config
+    let Some(existing) = config
         .config_path
-        .parent()
+        .ancestors()
+        .skip(1)
         .filter(|p| !p.as_os_str().is_empty())
+        .find(|p| p.exists())
     else {
         return true;
     };
-    match std::fs::metadata(parent) {
-        Ok(meta) => !meta.permissions().readonly(),
+    match std::fs::metadata(existing) {
+        Ok(meta) => meta.is_dir() && !meta.permissions().readonly(),
         Err(_) => false,
     }
 }
@@ -344,11 +346,18 @@ mod tests {
     }
 
     #[test]
-    fn missing_config_with_a_missing_parent_directory_is_not_writable() {
-        let cfg = test_config_at(
-            PathBuf::from("/nonexistent-swing-test-dir-xyz/swing.toml"),
-            false,
-        );
+    fn missing_config_under_missing_directories_is_writable_when_the_nearest_one_is() {
+        let dir = tempfile::tempdir().unwrap();
+        let cfg = test_config_at(dir.path().join("a").join("b").join("swing.toml"), false);
+        assert!(is_config_writable(&cfg));
+    }
+
+    #[test]
+    fn missing_config_under_a_file_is_not_writable() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("file");
+        std::fs::write(&file, "").unwrap();
+        let cfg = test_config_at(file.join("swing.toml"), false);
         assert!(!is_config_writable(&cfg));
     }
 

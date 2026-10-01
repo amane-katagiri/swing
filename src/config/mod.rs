@@ -358,30 +358,98 @@ pub struct Config {
     pub sources: BTreeMap<String, Source>,
 }
 
-pub fn resolve_config_path(cli_path: Option<&Path>) -> PathBuf {
-    if let Some(p) = cli_path {
-        return p.to_path_buf();
-    }
-    if let Some(p) = env_var("SWING_CONFIG") {
-        return PathBuf::from(p);
-    }
-    let cwd = env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-    cwd.join("swing.toml")
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConfigOrigin {
+    Explicit,
+    Cwd,
+    UserDefault,
 }
 
-fn load_file(cli_path: Option<&Path>) -> Result<(ConfigFile, PathBuf, bool)> {
-    let path = resolve_config_path(cli_path);
+pub fn resolve_config_path(cli_path: Option<&Path>) -> PathBuf {
+    locate_config(cli_path).0
+}
+
+pub fn locate_config(cli_path: Option<&Path>) -> (PathBuf, ConfigOrigin) {
+    let cwd = env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    locate_config_with(cli_path, &cwd, env_var, |p| p.is_file(), |p| p.is_dir())
+}
+
+fn locate_config_with(
+    cli_path: Option<&Path>,
+    cwd: &Path,
+    env: impl Fn(&str) -> Option<String>,
+    is_file: impl Fn(&Path) -> bool,
+    is_dir: impl Fn(&Path) -> bool,
+) -> (PathBuf, ConfigOrigin) {
+    if let Some(p) = cli_path {
+        return (p.to_path_buf(), ConfigOrigin::Explicit);
+    }
+    if let Some(p) = env("SWING_CONFIG") {
+        return (PathBuf::from(p), ConfigOrigin::Explicit);
+    }
+    let in_cwd = cwd.join(CONFIG_FILE_NAME);
+    if is_file(&in_cwd) {
+        return (in_cwd, ConfigOrigin::Cwd);
+    }
+    match default_config_dir(env, is_dir) {
+        Some(dir) => (dir.join(CONFIG_FILE_NAME), ConfigOrigin::UserDefault),
+        None => (in_cwd, ConfigOrigin::Cwd),
+    }
+}
+
+pub const CONFIG_FILE_NAME: &str = "swing.toml";
+
+fn absolute_env(env: &impl Fn(&str) -> Option<String>, name: &str) -> Option<PathBuf> {
+    env(name).map(PathBuf::from).filter(|p| p.is_absolute())
+}
+
+#[cfg(windows)]
+fn default_config_dir(
+    env: impl Fn(&str) -> Option<String>,
+    is_dir: impl Fn(&Path) -> bool,
+) -> Option<PathBuf> {
+    let base = absolute_env(&env, "LOCALAPPDATA").filter(|p| is_dir(p))?;
+    Some(base.join("swing"))
+}
+
+#[cfg(target_os = "macos")]
+fn default_config_dir(
+    env: impl Fn(&str) -> Option<String>,
+    is_dir: impl Fn(&Path) -> bool,
+) -> Option<PathBuf> {
+    let home = absolute_env(&env, "HOME").filter(|p| is_dir(p))?;
+    Some(
+        home.join("Library")
+            .join("Application Support")
+            .join("swing"),
+    )
+}
+
+#[cfg(not(any(windows, target_os = "macos")))]
+fn default_config_dir(
+    env: impl Fn(&str) -> Option<String>,
+    is_dir: impl Fn(&Path) -> bool,
+) -> Option<PathBuf> {
+    if let Some(data_home) = absolute_env(&env, "XDG_DATA_HOME") {
+        return Some(data_home.join("swing"));
+    }
+    let home = absolute_env(&env, "HOME").filter(|p| is_dir(p))?;
+    Some(home.join(".local").join("share").join("swing"))
+}
+
+fn load_file(cli_path: Option<&Path>) -> Result<(ConfigFile, PathBuf, bool, ConfigOrigin)> {
+    let (path, origin) = locate_config(cli_path);
     if !path.exists() {
-        if cli_path.is_some() || env_var("SWING_CONFIG").is_some() {
+        if origin == ConfigOrigin::Explicit {
             bail!("config file not found: {}", path.display());
         }
-        return Ok((ConfigFile::default(), path, false));
+        return Ok((ConfigFile::default(), path, false, origin));
     }
     let text = std::fs::read_to_string(&path)
         .with_context(|| format!("reading config file {}", path.display()))?;
     let file = parse_config_file(&text)
         .with_context(|| format!("parsing config file {}", path.display()))?;
-    Ok((file, path, true))
+    Ok((file, path, true, origin))
 }
 
 fn parse_config_file(text: &str) -> Result<ConfigFile> {
@@ -536,8 +604,8 @@ impl Config {
     }
 
     pub fn load(cli_path: Option<&Path>) -> Result<Self> {
-        let (file, config_path, config_exists) = load_file(cli_path)?;
-        let base = if config_exists {
+        let (file, config_path, config_exists, origin) = load_file(cli_path)?;
+        let base = if config_exists || origin == ConfigOrigin::UserDefault {
             let absolute = std::path::absolute(&config_path)
                 .with_context(|| format!("resolving config file path {}", config_path.display()))?;
             absolute.parent().map(Path::to_path_buf)
@@ -742,25 +810,92 @@ mod tests {
         assert_eq!(resolve_config_path(Some(&cli)), cli);
     }
 
-    #[test]
-    fn resolve_config_path_defaults_to_swing_toml_in_cwd_even_when_absent() {
-        let path = resolve_config_path(None);
-        assert!(path.is_absolute());
-        assert_eq!(path.file_name().unwrap(), "swing.toml");
+    fn env_of<'a>(vars: &'a [(&'a str, &'a str)]) -> impl Fn(&str) -> Option<String> + 'a {
+        move |name| {
+            vars.iter()
+                .find(|(k, _)| *k == name)
+                .map(|(_, v)| v.to_string())
+        }
+    }
+
+    #[cfg(windows)]
+    const HOME_VARS: &[(&str, &str)] = &[("LOCALAPPDATA", r"C:\Users\u\AppData\Local")];
+    #[cfg(windows)]
+    const HOME_DIR: &str = r"C:\Users\u\AppData\Local";
+    #[cfg(not(windows))]
+    const HOME_VARS: &[(&str, &str)] = &[("HOME", "/home/u")];
+    #[cfg(not(windows))]
+    const HOME_DIR: &str = "/home/u";
+
+    fn expected_default() -> PathBuf {
+        let base = PathBuf::from(HOME_DIR);
+        if cfg!(windows) {
+            base.join("swing").join("swing.toml")
+        } else if cfg!(target_os = "macos") {
+            base.join("Library/Application Support/swing/swing.toml")
+        } else {
+            base.join(".local/share/swing/swing.toml")
+        }
+    }
+
+    fn cwd() -> PathBuf {
+        PathBuf::from(if cfg!(windows) { r"D:\work" } else { "/work" })
     }
 
     #[test]
-    fn missing_config_file_without_explicit_path_is_not_an_error() {
-        let dir = tempfile::tempdir().unwrap();
-        let orig = env::current_dir().unwrap();
-        env::set_current_dir(dir.path()).unwrap();
-        let cwd = env::current_dir().unwrap();
-        let result = load_file(None);
-        env::set_current_dir(orig).unwrap();
-        let (file, path, exists) = result.unwrap();
-        assert!(!exists);
-        assert_eq!(path, cwd.join("swing.toml"));
-        assert!(file.nostr.secret_key.is_none());
+    fn locate_config_uses_the_cwd_file_only_when_it_exists() {
+        let cwd = cwd();
+        let in_cwd = cwd.join("swing.toml");
+        let found = locate_config_with(None, &cwd, env_of(HOME_VARS), |p| p == in_cwd, |_| true);
+        assert_eq!(found, (in_cwd, ConfigOrigin::Cwd));
+        let found = locate_config_with(None, &cwd, env_of(HOME_VARS), |_| false, |_| true);
+        assert_eq!(found, (expected_default(), ConfigOrigin::UserDefault));
+    }
+
+    #[test]
+    fn locate_config_prefers_cli_and_env_over_cwd_and_default() {
+        let cwd = cwd();
+        let mut vars = HOME_VARS.to_vec();
+        vars.push(("SWING_CONFIG", "/etc/from-env.toml"));
+        let cli = PathBuf::from("/tmp/from-cli.toml");
+        let found = locate_config_with(Some(&cli), &cwd, env_of(&vars), |_| true, |_| true);
+        assert_eq!(found, (cli, ConfigOrigin::Explicit));
+        let found = locate_config_with(None, &cwd, env_of(&vars), |_| true, |_| true);
+        assert_eq!(
+            found,
+            (PathBuf::from("/etc/from-env.toml"), ConfigOrigin::Explicit)
+        );
+    }
+
+    #[test]
+    fn locate_config_falls_back_to_cwd_without_a_usable_home() {
+        let cwd = cwd();
+        let in_cwd = cwd.join("swing.toml");
+        let found = locate_config_with(None, &cwd, env_of(&[]), |_| false, |_| true);
+        assert_eq!(found, (in_cwd.clone(), ConfigOrigin::Cwd));
+        let found = locate_config_with(None, &cwd, env_of(HOME_VARS), |_| false, |_| false);
+        assert_eq!(found, (in_cwd.clone(), ConfigOrigin::Cwd));
+        let relative = [(HOME_VARS[0].0, "relative")];
+        let found = locate_config_with(None, &cwd, env_of(&relative), |_| false, |_| true);
+        assert_eq!(found, (in_cwd, ConfigOrigin::Cwd));
+    }
+
+    #[cfg(not(any(windows, target_os = "macos")))]
+    #[test]
+    fn locate_config_honors_xdg_data_home() {
+        let cwd = cwd();
+        let vars = [("HOME", "/home/u"), ("XDG_DATA_HOME", "/srv/xdg")];
+        let found = locate_config_with(None, &cwd, env_of(&vars), |_| false, |_| false);
+        assert_eq!(
+            found,
+            (
+                PathBuf::from("/srv/xdg/swing/swing.toml"),
+                ConfigOrigin::UserDefault
+            )
+        );
+        let vars = [("HOME", "/home/u"), ("XDG_DATA_HOME", "xdg")];
+        let found = locate_config_with(None, &cwd, env_of(&vars), |_| false, |_| true);
+        assert_eq!(found, (expected_default(), ConfigOrigin::UserDefault));
     }
 
     #[test]

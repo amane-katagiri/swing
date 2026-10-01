@@ -4,13 +4,25 @@
 
 ## 設定ファイルの場所
 
-次の順で 1 つのパスに決まる（`config::resolve_config_path`）。
+次の順で 1 つのパスに決まる（`config::locate_config`。パスだけが要る呼び出し元は `config::resolve_config_path`）。
 
 1. `--config <path>`
 2. 環境変数 `SWING_CONFIG`
-3. `<カレントディレクトリ>/swing.toml`
+3. `<カレントディレクトリ>/swing.toml`（ファイルがあるときだけ）
+4. ユーザーごとの既定の場所の `swing.toml`（無くても使う）
+5. 4 の場所を決められないときは `<カレントディレクトリ>/swing.toml`（無くても使う）
 
-1 か 2 で指したファイルが無ければエラー終了。3 は無くてもエラーにせず、既定値と環境変数だけで組み立てる（`Config.config_exists = false`）。ダッシュボードのセットアップ・設定編集はこのパスに新規作成・上書きする。
+4 の場所（`default_config_dir`）は OS で決まる。
+
+| OS | 場所 | 決められないとき |
+|---|---|---|
+| Linux ほか（macOS・Windows 以外） | `$XDG_DATA_HOME/swing`。`XDG_DATA_HOME` が無いか絶対パスでなければ `$HOME/.local/share/swing` | `XDG_DATA_HOME` が使えず、`HOME` が無い・絶対パスでない・既存のディレクトリでない |
+| macOS | `$HOME/Library/Application Support/swing` | `HOME` が無い・絶対パスでない・既存のディレクトリでない |
+| Windows | `%LOCALAPPDATA%\swing` | `LOCALAPPDATA` が無い・絶対パスでない・既存のディレクトリでない |
+
+どれも設定ファイルの隣に置く `data`（状態ファイルと Kubo のリポジトリ）ごと入る場所なので、Linux は `~/.config` ではなくデータ用のディレクトリ、Windows は移動プロファイルに載る `APPDATA` ではなく `LOCALAPPDATA` を使う。ホームディレクトリの無いユーザー（Docker イメージのユーザーなど。[`docker.md`](docker.md)）は 5 になる。空文字の環境変数は未設定として扱う（下記）。
+
+1 か 2 で指したファイルが無ければエラー終了。3〜5 で決まったファイルが無ければエラーにせず、既定値と環境変数だけで組み立てる（`Config.config_exists = false`）。ダッシュボードのセットアップ・設定編集はこのパスに新規作成・上書きし、親ディレクトリが無ければ作る（Unix では `0700`。`settings::write_atomic`）。
 
 TOML の構文や型のエラーは `line <行>, column <桁>: <理由>` の形で報告し、該当行を引用しない。
 
@@ -36,8 +48,8 @@ TOML の構文や型のエラーは `line <行>, column <桁>: <理由>` の形�
 
 カタログの種類が `Path` のもの（`[agent].state_dir`・`[kubo].binary`・`[kubo].repo`・`[dashboard].custom_css`・`desktop_page`・`desktop_page_css`・`desktop_banner`・`mascots_dir`）の相対パスは、値の出どころで起点が変わる。
 
-- 設定ファイルに書いた値と既定値（`state_dir` の `./data`）: 設定ファイルがあれば、そのディレクトリを起点に `build_config` が絶対パスにする。
-- 環境変数で渡した値と、設定ファイルが無いときの既定値: そのまま残り、カレントディレクトリが起点になる。
+- 設定ファイルに書いた値と既定値（`state_dir` の `./data`）: 設定ファイルがあるか、パスがユーザーごとの既定の場所（上記の 4）なら、そのディレクトリを起点に `build_config` が絶対パスにする。
+- 環境変数で渡した値と、それ以外で設定ファイルが無いときの既定値: そのまま残り、カレントディレクトリが起点になる。
 - 他の値から導く既定値（`[kubo].repo` の `<state_dir>/kubo`）は解決後の `state_dir` に従う。
 
 設定ファイルの書き換え（下記）は TOML の文書を直接編集するので、解決後の絶対パスがファイルに書き戻されることはない。

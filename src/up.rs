@@ -318,6 +318,7 @@ pub async fn run(config: Config, token: CancellationToken, port_shift: bool) -> 
 
     let result = if setup_mode {
         info!(
+            config = %config.config_path.display(),
             "no Nostr key or signer app configured; running in setup mode (dashboard only, waiting for setup)"
         );
         token.cancelled().await;

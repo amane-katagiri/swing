@@ -24,7 +24,7 @@
 - `POST /api/setup`（[`dashboard/http-api/config.md#post-apisetup`](dashboard/http-api/config.md#post-apisetup)）: 鍵（または署名アプリの接続情報）と初期設定を書き込んだ後、プロセス内再起動（[下記](#終了要求と-exit-codeshutdownexitrequest-shutdownexit)）をスケジュールする。
 - `swing signer pair`（[`cli.md#signer-pair`](cli.md#signer-pair)）: `remote-signer.json` だけを書く。次に `up::run` が始まったとき（`swing stop --restart` などによる再起動）に `Signer::load` がそれを読んでセットアップモードを抜ける。
 
-`swing up` は鍵が無くても、`swing.toml` が無くても起動できる（設定ファイルの探索順は [`config.md`](config.md)）。
+`swing up` は鍵が無くても、`swing.toml` が無くても起動できる（設定ファイルの探索順は [`config.md`](config.md#設定ファイルの場所)）。セットアップモードに入るときのログ（`running in setup mode`）に、書き込み先の設定ファイルのパスを `config` として出す。
 
 ### セットアップモードでのポートの調整
 

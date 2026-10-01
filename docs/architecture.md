@@ -119,7 +119,7 @@ swing-tray [--config <path>]
 
 ## 設定と環境変数
 
-設定ファイル（`--config` → `SWING_CONFIG` → `./swing.toml`）の値を `SWING_` 環境変数が上書きする。すべてのキーは `src/settings/mod.rs` の `SETTINGS` にカタログとしてまとまり、`swing.example.toml` と `.env.example` はそこから生成する。探し方・検証・値の形式・書き換えの規則は [`architecture/config.md`](architecture/config.md)。
+設定ファイル（`--config` → `SWING_CONFIG` → あれば `./swing.toml` → ユーザーごとの既定の場所の `swing.toml`）の値を `SWING_` 環境変数が上書きする。すべてのキーは `src/settings/mod.rs` の `SETTINGS` にカタログとしてまとまり、`swing.example.toml` と `.env.example` はそこから生成する。探し方・検証・値の形式・書き換えの規則は [`architecture/config.md`](architecture/config.md)。
 
 ## テスト
 

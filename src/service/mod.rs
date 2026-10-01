@@ -3,7 +3,7 @@ use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
 
-use crate::config::resolve_config_path;
+use crate::config::{ConfigOrigin, locate_config};
 
 mod process;
 mod templates;
@@ -46,12 +46,19 @@ pub struct InstallOptions<'a> {
     pub no_tray: bool,
 }
 
-fn resolve_service_paths(config_path: Option<&Path>) -> Result<(PathBuf, PathBuf, PathBuf)> {
-    let config = resolve_config_path(config_path);
+fn resolve_service_paths(
+    config_path: Option<&Path>,
+    system: bool,
+) -> Result<(PathBuf, PathBuf, PathBuf)> {
+    let (config, origin) = locate_config(config_path);
     if !config.exists() {
-        bail!(
-            "service install needs a config file (swing.toml): pass --config or set SWING_CONFIG"
-        );
+        match origin {
+            ConfigOrigin::UserDefault if !system => create_empty_config(&config)?,
+            ConfigOrigin::Explicit => bail!("config file not found: {}", config.display()),
+            ConfigOrigin::Cwd | ConfigOrigin::UserDefault => bail!(
+                "service install needs a config file (swing.toml): pass --config or set SWING_CONFIG"
+            ),
+        }
     }
     let config = config
         .canonicalize()
@@ -64,6 +71,20 @@ fn resolve_service_paths(config_path: Option<&Path>) -> Result<(PathBuf, PathBuf
         .and_then(|p| p.canonicalize())
         .context("resolving current executable path")?;
     Ok((config, workdir, exe))
+}
+
+fn create_empty_config(path: &Path) -> Result<()> {
+    if let Some(dir) = path.parent() {
+        crate::auth::create_private_dir_all(dir)?;
+    }
+    match crate::auth::private_file_options().open(path) {
+        Ok(_) => {
+            println!("Created an empty config file at {}", path.display());
+            Ok(())
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => Ok(()),
+        Err(e) => Err(anyhow::Error::new(e).context(format!("creating {}", path.display()))),
+    }
 }
 
 fn require_system_supported(system: bool) -> Result<()> {
@@ -125,7 +146,7 @@ pub fn install(config_path: Option<&Path>, opts: &InstallOptions<'_>) -> Result<
     if opts.run_as.is_some() && !opts.system {
         bail!("--run-as is only valid with --system");
     }
-    let (config, workdir, exe) = resolve_service_paths(config_path)?;
+    let (config, workdir, exe) = resolve_service_paths(config_path, opts.system)?;
     platform::install(&exe, &config, &workdir, opts)
 }
 
@@ -166,6 +187,25 @@ mod tests {
         std::fs::create_dir_all(tray.parent().unwrap()).unwrap();
         std::fs::write(&tray, b"").unwrap();
         assert_eq!(tray_exe_path(&exe), Some(tray));
+    }
+
+    #[test]
+    fn empty_config_is_created_with_its_directories_and_kept_if_present() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("a").join("swing").join("swing.toml");
+        create_empty_config(&path).unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "");
+        assert!(crate::config::Config::load(Some(&path)).is_ok());
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = |p: &Path| std::fs::metadata(p).unwrap().permissions().mode() & 0o777;
+            assert_eq!(mode(&path), 0o600);
+            assert_eq!(mode(path.parent().unwrap()), 0o700);
+        }
+        std::fs::write(&path, "[nostr]\n").unwrap();
+        create_empty_config(&path).unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "[nostr]\n");
     }
 
     #[test]

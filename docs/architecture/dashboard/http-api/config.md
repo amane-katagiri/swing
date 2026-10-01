@@ -14,7 +14,7 @@
 ```
 
 - `config_path`: 設定ファイルのパス（ファイルが無くても入る。決め方は [`../../config.md`](../../config.md)）。`config_exists` はそこに実際にファイルがあるかどうか。
-- `writable`: ファイルがあればそれを追記で開けるか、無ければ親ディレクトリが読み取り専用でないか。
+- `writable`: ファイルがあればそれを追記で開けるか、無ければ祖先のうち存在する最も近いもの（無い親ディレクトリは書き込み時に作る）がディレクトリで、読み取り専用でないか。
 - `restart_required`: 設定を書き換えてから、まだ再起動していないか（立つ条件は [`../../config.md#ダッシュボードでの直列化と反映`](../../config.md#ダッシュボードでの直列化と反映)）。
 - `sections`: `nostr`/`ipfs`/`policy`/`agent`/`publish`/`dashboard`/`kubo`/`gateway` の順で、設定のカタログ（`settings::SETTINGS`）の全項目を宣言順に並べる。
 - 各 `items[]`:

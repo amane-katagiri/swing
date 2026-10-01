@@ -7,7 +7,7 @@
 - builder に `Cargo.toml`・`Cargo.lock`・`build.rs`・`assets/`・`src/`・`tray/`・`web/` を COPY し、`cargo build --release --locked` で `swing` だけをビルドする（`tray/` は workspace のメンバーなので入れるがビルドしない）。
 - builder `rust:1.97-slim-trixie`、runtime `debian:trixie-slim`。
 - runtime には `/usr/local/bin/swing` だけを置き、ユーザー `swing`（uid/gid 1000）で実行する。`/data` はそのユーザー所有の `VOLUME`。
-- `WORKDIR /data`。`--config`／`SWING_CONFIG` のどちらも無いときに `resolve_config_path` が返す `<cwd>/swing.toml`（[`config.md`](config.md)）がこの `/data`（volume の中）になる。
+- `WORKDIR /data`。ユーザー `swing` はホームディレクトリを作らずに作る（`HOME` は存在しない `/home/swing` になる）ので、ユーザーごとの既定の場所は決まらず、`--config`／`SWING_CONFIG` のどちらも無いときに `resolve_config_path` が返すのは `<cwd>/swing.toml`（[`config.md`](config.md#設定ファイルの場所)）、つまり `/data/swing.toml`（volume の中）になる。ファイルが無くてもこのパスを使い、セットアップモードはここに書く。
 - `ENTRYPOINT ["swing"]`、`CMD ["up"]`（[`up.md`](up.md)）。
 - `ENV SWING_NO_PORT_SHIFT=true`。セットアップモードでもダッシュボードと Kubo の gateway のポートをずらさない（[`up.md#セットアップモードでのポートの調整`](up.md#セットアップモードでのポートの調整)）。`CMD` を上書きしても効く。
 - `docker/release.Dockerfile` は release ワークフローが ghcr.io に push するイメージ用。1 ステージで、ビルド済みの musl バイナリを `<TARGETARCH>/swing` から入れる。それ以外はこの Dockerfile の runtime と同じ（[`release.md`](release.md)）。`compose.yaml` はこれを使わずルートの `Dockerfile` からビルドする。

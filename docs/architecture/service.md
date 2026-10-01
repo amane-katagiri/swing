@@ -5,7 +5,11 @@
 ## 共通
 
 - 登録する `swing` のコマンドは `<exe> up --config <config>`（`<exe>` は `current_exe()` の絶対パス。Windows ではこれを `conhost.exe` で包み、引数を足す。[下記](#windowsタスクスケジューラ)）。
-- 設定ファイルは `config::resolve_config_path` で決め、そのパスにファイルが無ければ「service install needs a config file (swing.toml): pass --config or set SWING_CONFIG」でエラー（環境変数だけで動かす構成は非対応）。パスは `canonicalize` して絶対パスにする。
+- 設定ファイルは `config::locate_config` で決める（[`config.md`](config.md#設定ファイルの場所)）。そのパスにファイルが無いときは決まり方で分かれる。
+  - `--config`／`SWING_CONFIG` で指した: 「config file not found: <path>」でエラー。
+  - ユーザーごとの既定の場所（`--system` でないとき）: ディレクトリ（Unix では `0700`）と空の設定ファイル（Unix では `0600`）を作り、`Created an empty config file at <path>` と表示してそのまま登録する。インストーラーが何も用意していないマシンで `swing service install --no-start` を実行しておけば、次に起動したサービスはセットアップモード（[`up.md`](up.md#セットアップモード鍵未設定)）で動く。
+  - それ以外（`--system` での既定の場所、既定の場所を決められずカレントディレクトリになった）: 「service install needs a config file (swing.toml): pass --config or set SWING_CONFIG」でエラー（環境変数だけで動かす構成は非対応）。`--system` で作らないのは、`sudo` 下の既定の場所が root のホームになり、サービスを動かすユーザーが書けないため。
+- パスは `canonicalize` して絶対パスにする。
 - 作業ディレクトリは設定ファイルの親ディレクトリ。設定ファイルに書いた相対パスと既定値は作業ディレクトリに関係なく設定ファイルのディレクトリから解決される（[`config.md`](config.md)）。
 - `--system` は Linux でのみ有効で、他 OS で指定すると「--system is only supported on Linux」でエラー。`--run-as <user>` は `install --system` でだけ使える（CLI では `--system` なしの指定を clap が拒む。`service::install` を直接呼んだときは「--run-as is only valid with --system」でエラー）。launchd・タスクスケジューラへの登録はどれもログインユーザーのもので、システム全体への登録は無い。
 - 生成する unit / plist / タスク XML / トレイの登録内容は `service/templates.rs` の関数（`systemd_unit`・`launchd_plist`・`launchd_tray_plist`・`schtasks_xml`・`tray_run_command`）が正本で、以下の表は動作に効く値だけを挙げる。埋め込むパス（実行ファイル・設定ファイル・作業ディレクトリ・ログ・トレイ）とユーザー名に制御文字（`char::is_control`）が入っていれば「<何> contains a control character and cannot be written into a service definition: ...」、パスが UTF-8 でなければ「<何> is not valid UTF-8 and cannot be written into a service definition: ...」でエラーにし、何も書き出さない。
@@ -107,7 +111,7 @@ unit に埋め込むパスとユーザー名は、systemd の指定子（`%`）�
 - `install`: XML を一時ファイルに書き、`schtasks /Create /TN swing /XML <tmpfile> /F` で登録してから一時ファイルを削除する。`--no-start` でなければ `schtasks /Run /TN swing` で即時起動する。
 - `start`: `schtasks /Run /TN swing`。
 - `uninstall`: トレイの登録を消した後、`stop`（下記）と同じグレースフルな停止を試みる。失敗しても `stop` と同じ `Warning: …` を出して続ける。続けて `schtasks /End /TN swing`（失敗は無視）→ `schtasks /Delete /TN swing /F`。
-- `stop`: 設定ファイルを `resolve_config_path(None)`（`--config` は取らない。`SWING_CONFIG`、無ければカレントディレクトリの `swing.toml`）で探して `Config::load` し、`stop::run`（[`cli.md#stop`](cli.md#stop)）を 60 秒（`service::GRACEFUL_STOP_TIMEOUT`）のタイムアウトで呼ぶ。次のときは `Warning: …` を標準出力に出して `schtasks /End /TN swing` にフォールバックする（`/End` で `conhost.exe` が終わり、`swing` は `--exit-with-parent` でグレースフルに止まる）。
+- `stop`: 設定ファイルを `resolve_config_path(None)`（`--config` は取らない。`SWING_CONFIG`、カレントディレクトリの `swing.toml`、ユーザーごとの既定の場所の順。[`config.md`](config.md#設定ファイルの場所)）で探して `Config::load` し、`stop::run`（[`cli.md#stop`](cli.md#stop)）を 60 秒（`service::GRACEFUL_STOP_TIMEOUT`）のタイムアウトで呼ぶ。次のときは `Warning: …` を標準出力に出して `schtasks /End /TN swing` にフォールバックする（`/End` で `conhost.exe` が終わり、`swing` は `--exit-with-parent` でグレースフルに止まる）。
   - 設定ファイルが無い: `` Warning: could not find the config file (swing.toml) at <path> to stop swing through its dashboard; set SWING_CONFIG or run this from the directory containing swing.toml. Falling back to `schtasks /End`. ``
   - 設定ファイルを読めない: `` Warning: could not read the config file <path> to stop swing through its dashboard (<error>). Falling back to `schtasks /End`. ``
   - `stop::run` が失敗した: `` Warning: graceful stop failed (...); falling back to `schtasks /End`. ``
