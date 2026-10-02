@@ -311,6 +311,7 @@ enum ServiceCommand {
         #[arg(
             long,
             value_name = "DIR",
+            hide = true,
             help = "Only remove registrations whose swing executable is under DIR; leave the others as they are"
         )]
         only_from: Option<PathBuf>,
@@ -341,6 +342,7 @@ enum ServiceCommand {
         #[arg(
             long,
             value_name = "DIR",
+            hide = true,
             help = "Instead of the status, tell whether the registrations run swing from under DIR: exit 0 if all do, 3 if nothing is registered, 4 otherwise"
         )]
         points_into: Option<PathBuf>,

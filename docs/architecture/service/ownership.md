@@ -2,7 +2,7 @@
 
 [`../service.md`](../service.md) の一部。インストーラーからの使い方は [`../installer-windows.md`](../installer-windows.md) と [`../install-sh.md`](../install-sh.md)。
 
-`uninstall --only-from <dir>` と `status --points-into <dir>`（[`cli.md`](../cli.md#service-install--uninstall--start--stop--status)）は、今の登録を読み、それぞれが起動する実行ファイルが `<dir>` の下にあるかを判定する（`src/service/ownership.rs`）。インストーラーが、自分が入れたフォルダー以外から登録された `swing` を消したり登録し直したりしないために使う。
+`uninstall --only-from <dir>` と `status --points-into <dir>`（`--help` に出さない隠しオプション。[`cli.md`](../cli.md#service-install--uninstall--start--stop--status)）は、今の登録を読み、それぞれが起動する実行ファイルが `<dir>` の下にあるかを判定する（`src/service/ownership.rs`）。インストーラーが、自分が入れたフォルダー以外から登録された `swing` を消したり登録し直したりしないために使う。
 
 | OS | 登録（`Part`） | 実行ファイルを読む場所 |
 |---|---|---|
