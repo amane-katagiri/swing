@@ -582,7 +582,7 @@ Nostr の秘密鍵は、Docker Compose で動かす場合は `.env` に、バイ
 - 高度なアクセス制御
 - 決済
 - 独自の Nostr Relay
-- 配布用のインストーラー・パッケージ（Homebrew tap、install.sh、winget など）。今のところ GitHub のリリースのアーカイブを展開するか、`cargo build --release` で自分でビルドしてください（詳しくは [`docs/todo.md`](docs/todo.md)）
+- winget・AUR・nixpkgs での配布と、Homebrew の tap（`amane-katagiri/homebrew-swing`）の公開（詳しくは [`docs/todo.md`](docs/todo.md)）
 - Windows と macOS での動作確認。Windows は `swing up` の直接起動とタスクスケジューラへのサービス登録（起動・停止）を実機で確かめました。macOS は GitHub の macOS ランナーで、launchd への登録、タスクトレイのメニュー、日本語の表示、確認のダイアログ、「ダッシュボードを開く」を確かめました。ログインし直したときの自動起動はまだ確かめていません。確認済みの範囲は [`docs/todo.md`](docs/todo.md) を参照してください
 
 今後の拡張として、private mode（IP アドレスを隠したい参加者向けの別モード）などを検討しています。残タスクの一覧は [`docs/todo.md`](docs/todo.md)、新しい kind や `d` タグの命名規約は [`docs/extensions.md`](docs/extensions.md) を参照してください。
