@@ -3,6 +3,7 @@ use std::path::Path;
 use anyhow::{Result, bail};
 
 use super::InstallOptions;
+use super::ownership::Registration;
 
 pub fn install(
     _exe: &Path,
@@ -13,7 +14,11 @@ pub fn install(
     bail!("service management is not supported on this OS")
 }
 
-pub async fn uninstall(_system: bool) -> Result<()> {
+pub fn registrations(_system: bool) -> Result<Vec<Registration>> {
+    bail!("service management is not supported on this OS")
+}
+
+pub async fn uninstall_parts(_system: bool, _service: bool, _tray: bool) -> Result<()> {
     bail!("service management is not supported on this OS")
 }
 

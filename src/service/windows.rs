@@ -3,14 +3,18 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
 use anyhow::{Context, Result, bail};
-use windows_sys::Win32::Foundation::{CloseHandle, ERROR_FILE_NOT_FOUND, ERROR_SUCCESS, FALSE};
+use windows_sys::Win32::Foundation::{
+    CloseHandle, ERROR_FILE_NOT_FOUND, ERROR_MORE_DATA, ERROR_SUCCESS, FALSE,
+};
 use windows_sys::Win32::System::Registry::{
-    HKEY_CURRENT_USER, REG_SZ, RegDeleteKeyValueW, RegSetKeyValueW,
+    HKEY_CURRENT_USER, REG_SZ, RRF_RT_REG_EXPAND_SZ, RRF_RT_REG_SZ, RegDeleteKeyValueW,
+    RegGetValueW, RegSetKeyValueW,
 };
 use windows_sys::Win32::System::Threading::{
     CREATE_NO_WINDOW, CreateProcessW, PROCESS_INFORMATION, STARTUPINFOW,
 };
 
+use super::ownership::{Part, Registration, exe_from_run_command, exe_from_task_xml};
 use super::process::{decode_output, output_with_timeout, run_command, task_listed};
 use super::templates::{schtasks_xml, strip_verbatim, tray_run_command};
 use super::{GRACEFUL_STOP_TIMEOUT, InstallOptions, install_tray};
@@ -246,8 +250,103 @@ pub async fn stop(_system: bool) -> Result<()> {
     Ok(())
 }
 
-pub async fn uninstall(_system: bool) -> Result<()> {
-    unregister_tray()?;
+fn read_tray_value() -> Result<Option<String>> {
+    let key = wide(RUN_KEY);
+    let value = wide(RUN_VALUE);
+    let flags = RRF_RT_REG_SZ | RRF_RT_REG_EXPAND_SZ;
+    loop {
+        let mut len: u32 = 0;
+        let status = unsafe {
+            RegGetValueW(
+                HKEY_CURRENT_USER,
+                key.as_ptr(),
+                value.as_ptr(),
+                flags,
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                &mut len,
+            )
+        };
+        match status {
+            ERROR_SUCCESS => {}
+            ERROR_FILE_NOT_FOUND => return Ok(None),
+            other => bail!("reading HKCU\\{RUN_KEY}\\{RUN_VALUE} failed (error {other})"),
+        }
+        let mut buf = vec![0u16; (len as usize).div_ceil(2)];
+        let mut got = len;
+        let status = unsafe {
+            RegGetValueW(
+                HKEY_CURRENT_USER,
+                key.as_ptr(),
+                value.as_ptr(),
+                flags,
+                std::ptr::null_mut(),
+                buf.as_mut_ptr().cast(),
+                &mut got,
+            )
+        };
+        match status {
+            ERROR_SUCCESS => {
+                buf.truncate((got as usize) / 2);
+                while buf.last() == Some(&0) {
+                    buf.pop();
+                }
+                return Ok(Some(String::from_utf16_lossy(&buf)));
+            }
+            ERROR_MORE_DATA => continue,
+            ERROR_FILE_NOT_FOUND => return Ok(None),
+            other => bail!("reading HKCU\\{RUN_KEY}\\{RUN_VALUE} failed (error {other})"),
+        }
+    }
+}
+
+fn decode_task_xml(bytes: &[u8]) -> String {
+    if let Some(rest) = bytes.strip_prefix(&[0xff, 0xfe]) {
+        let units: Vec<u16> = rest
+            .chunks_exact(2)
+            .map(|c| u16::from_le_bytes([c[0], c[1]]))
+            .collect();
+        return String::from_utf16_lossy(&units);
+    }
+    decode_output(bytes)
+}
+
+pub fn registrations(_system: bool) -> Result<Vec<Registration>> {
+    let mut out = Vec::new();
+    if query_installed().context("checking whether swing is registered with Task Scheduler")? {
+        let xml = output_with_timeout(
+            &mut schtasks_command(&["/Query", "/TN", TASK_NAME, "/XML"]),
+            SCHTASKS_TIMEOUT,
+        )?;
+        if !xml.status.success() {
+            bail!(
+                "`schtasks /Query /TN {TASK_NAME} /XML` failed: {}",
+                decode_output(&xml.stderr).trim()
+            );
+        }
+        out.push(Registration {
+            part: Part::Service,
+            what: format!("The Task Scheduler task \"{TASK_NAME}\""),
+            exe: exe_from_task_xml(&decode_task_xml(&xml.stdout)),
+        });
+    }
+    if let Some(command_line) = read_tray_value()? {
+        out.push(Registration {
+            part: Part::Tray,
+            what: format!("The login item HKCU\\{RUN_KEY}\\{RUN_VALUE}"),
+            exe: exe_from_run_command(&command_line),
+        });
+    }
+    Ok(out)
+}
+
+pub async fn uninstall_parts(_system: bool, service: bool, tray: bool) -> Result<()> {
+    if tray {
+        unregister_tray()?;
+    }
+    if !service {
+        return Ok(());
+    }
     stop_gracefully().await;
     let _ = schtasks_command(&["/End", "/TN", TASK_NAME]).output();
     schtasks(&["/Delete", "/TN", TASK_NAME, "/F"])?;

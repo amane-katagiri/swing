@@ -35,6 +35,10 @@ check() {
   if "$@"; then pass "$desc"; else fail "$desc"; fi
 }
 absent() { [ ! -e "$1" ] && [ ! -L "$1" ]; }
+unit_for() {
+  mkdir -p "$(dirname "$1")"
+  printf '[Service]\nExecStart="%s" up --config "%s/swing.toml"\n' "$2" "$H" >"$1"
+}
 contains() { grep -qF -- "$2" "$1"; }
 no_dotfiles() {
   for f in "$1"/.*; do
@@ -56,13 +60,34 @@ make_swing_release() {
   cat >"$stage/swing" <<EOF
 #!/bin/sh
 echo "swing \$*" >>"\$FAKE_LOG"
+echo "$tag \$*" >>"\$FAKE_STATE/ran"
+unit=\$HOME/.config/systemd/user/swing.service
+case " \$* " in
+  *" --system "*) unit=\${SWING_INSTALL_SYSTEM_UNIT:-/nonexistent} ;;
+esac
+dir=
+for a; do dir=\$a; done
 case "\$1" in
   --version) echo "swing ${tag#v}" ;;
   service)
     case "\$2" in
       stop) rm -f "\$FAKE_STATE/active" ;;
       start | install) touch "\$FAKE_STATE/active" ;;
-      uninstall) rm -f "\$FAKE_STATE/active" "\$HOME/.config/systemd/user/swing.service" ;;
+      status)
+        [ -f "\$unit" ] || exit 3
+        grep -qF "ExecStart=\"\$dir/" "\$unit" || { echo "runs another swing"; exit 4; }
+        ;;
+      uninstall)
+        case " \$* " in
+          *" --only-from "*)
+            if ! grep -qF "ExecStart=\"\$dir/" "\$unit"; then
+              echo "left it as is"
+              exit 0
+            fi
+            ;;
+        esac
+        rm -f "\$FAKE_STATE/active" "\$unit"
+        ;;
     esac
     ;;
 esac
@@ -152,13 +177,13 @@ check "mentions the data directory" sh -c "printf '%s' \"\$1\" | grep -qF '$H/.l
 
 echo "--- upgrade restarts a running service"
 touch "$FAKE_STATE/active"
-mkdir -p "$H/.config/systemd/user"
-touch "$H/.config/systemd/user/swing.service"
+unit_for "$H/.config/systemd/user/swing.service" "$lib/swing"
 : >"$FAKE_LOG"
 out=$(REL=v0.2.0 run sh "$INSTALL" 2>&1) || fail "upgrade exits 0"
 check "binary replaced" [ "$(run "$lib/swing" --version)" = "swing 0.2.0" ]
 check "service stopped then started" sh -c "grep -n 'service' '$FAKE_LOG' | grep -A1 'service stop' | grep -q 'service start'"
 check "service is active again" [ -f "$FAKE_STATE/active" ]
+check "ownership checked with the new binary" contains "$FAKE_STATE/ran" "v0.2.0 service status --points-into $lib"
 check "kubo download skipped when the version matches" sh -c "! printf '%s' \"\$1\" | grep -q 'downloading Kubo'" _ "$out"
 
 echo "--- upgrade leaves a stopped service stopped"
@@ -166,6 +191,20 @@ rm -f "$FAKE_STATE/active"
 : >"$FAKE_LOG"
 REL=v0.1.0 run sh "$INSTALL" >/dev/null 2>&1 || fail "second upgrade exits 0"
 check "no service start" lacks "$FAKE_LOG" "service start"
+
+echo "--- upgrade leaves a running service of another swing alone"
+touch "$FAKE_STATE/active"
+unit_for "$H/.config/systemd/user/swing.service" "$H/elsewhere/swing"
+: >"$FAKE_LOG"
+out=$(REL=v0.2.0 run sh "$INSTALL" 2>&1) || fail "upgrade with a foreign service exits 0"
+check "ownership checked against lib" contains "$FAKE_LOG" "service status --points-into $lib"
+check "foreign service not stopped" lacks "$FAKE_LOG" "service stop"
+check "foreign service not started" lacks "$FAKE_LOG" "service start"
+check "foreign service still active" [ -f "$FAKE_STATE/active" ]
+check "foreign service reported" sh -c "printf '%s' \"\$1\" | grep -q 'leaving the swing service as is'" _ "$out"
+check "binary still replaced" [ "$(run "$lib/swing" --version)" = "swing 0.2.0" ]
+check "no check binary left behind" no_dotfiles "$lib"
+rm -f "$FAKE_STATE/active" "$H/.config/systemd/user/swing.service"
 
 echo "--- --version"
 new_env pinned
@@ -237,16 +276,26 @@ new_env un
 run sh "$INSTALL" >/dev/null 2>&1
 mkdir -p "$H/.local/share/swing/data"
 echo secret >"$H/.local/share/swing/swing.toml"
-mkdir -p "$H/.config/systemd/user"
-touch "$H/.config/systemd/user/swing.service"
+unit_for "$H/.config/systemd/user/swing.service" "$H/.local/lib/swing/swing"
 touch "$H/.local/bin/other"
 out=$(run "$H/.local/lib/swing/swing-uninstall.sh" 2>&1) || fail "uninstall exits 0"
-check "service uninstalled first" contains "$FAKE_LOG" "swing service uninstall"
+check "service uninstalled first" contains "$FAKE_LOG" "swing service uninstall --only-from $H/.local/lib/swing"
+check "own unit removed" absent "$H/.config/systemd/user/swing.service"
 check "lib dir removed" absent "$H/.local/lib/swing"
 check "symlink removed" absent "$H/.local/bin/swing"
 check "unrelated file kept" [ -f "$H/.local/bin/other" ]
 check "config kept" [ -f "$H/.local/share/swing/swing.toml" ]
 check "data location printed" sh -c "printf '%s' \"\$1\" | grep -qF '$H/.local/share/swing'" _ "$out"
+
+echo "--- uninstall keeps a service of another swing"
+new_env unforeign
+run sh "$INSTALL" >/dev/null 2>&1
+unit_for "$H/.config/systemd/user/swing.service" "$H/elsewhere/swing"
+out=$(run sh "$INSTALL" --uninstall 2>&1) || fail "uninstall with a foreign service exits 0"
+check "uninstall asked only for our registration" contains "$FAKE_LOG" "swing service uninstall --only-from $H/.local/lib/swing"
+check "foreign unit kept" [ -f "$H/.config/systemd/user/swing.service" ]
+check "files still removed" absent "$H/.local/lib/swing"
+check "kept registration reported" sh -c "printf '%s' \"\$1\" | grep -q 'left it as is'" _ "$out"
 
 echo "--- uninstall through install.sh --uninstall --purge --yes"
 new_env purge
@@ -273,7 +322,7 @@ check "install kept" [ -x "$H/.local/lib/swing/swing" ]
 echo "--- uninstall refuses with a system service"
 new_env sys
 run sh "$INSTALL" >/dev/null 2>&1
-touch "$H/system-swing.service"
+unit_for "$H/system-swing.service" "$H/.local/lib/swing/swing"
 if run env SWING_INSTALL_SYSTEM_UNIT="$H/system-swing.service" sh "$INSTALL" --uninstall >"$H/out" 2>&1; then
   fail "uninstall is refused while a system service exists"
 else
@@ -283,6 +332,14 @@ check "refusal names the system uninstall" contains "$H/out" "service uninstall 
 check "install kept" [ -x "$H/.local/lib/swing/swing" ]
 run env SWING_INSTALL_SYSTEM_UNIT="$H/system-swing.service" sh "$INSTALL" --uninstall --force >/dev/null 2>&1 || fail "--force uninstall exits 0"
 check "--force uninstalls" absent "$H/.local/lib/swing"
+
+echo "--- a system service of another swing does not block the uninstall"
+new_env sysforeign
+run sh "$INSTALL" >/dev/null 2>&1
+unit_for "$H/system-swing.service" /usr/bin/swing
+run env SWING_INSTALL_SYSTEM_UNIT="$H/system-swing.service" sh "$INSTALL" --uninstall >"$H/out" 2>&1 || fail "uninstall with a foreign system service exits 0"
+check "uninstalled" absent "$H/.local/lib/swing"
+check "foreign system unit kept" [ -f "$H/system-swing.service" ]
 
 echo "--- XDG_DATA_HOME is honoured"
 new_env xdg

@@ -4,6 +4,7 @@ use std::process::{Command, Output, Stdio};
 
 use anyhow::{Context, Result, bail};
 
+use super::ownership::{Part, Registration, exe_from_systemd_unit};
 use super::process::run_command;
 use super::templates::{SystemdScope, systemd_unit};
 use super::{InstallOptions, ensure_parent_dir, write_service_file};
@@ -196,7 +197,26 @@ pub async fn stop(system: bool) -> Result<()> {
     Ok(())
 }
 
-pub async fn uninstall(system: bool) -> Result<()> {
+pub fn registrations(system: bool) -> Result<Vec<Registration>> {
+    let path = unit_path(system)?;
+    let unit = match std::fs::read_to_string(&path) {
+        Ok(unit) => unit,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(e) => {
+            return Err(anyhow::Error::new(e).context(format!("reading {}", path.display())));
+        }
+    };
+    Ok(vec![Registration {
+        part: Part::Service,
+        what: format!("The systemd unit {}", path.display()),
+        exe: exe_from_systemd_unit(&unit),
+    }])
+}
+
+pub async fn uninstall_parts(system: bool, service: bool, _tray: bool) -> Result<()> {
+    if !service {
+        return Ok(());
+    }
     let path = unit_path(system)?;
     if let Ok(out) = systemctl_command(system, &["disable", "--now", "swing"]).output()
         && !out.status.success()

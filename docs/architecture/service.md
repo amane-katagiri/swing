@@ -27,13 +27,17 @@
 - どちらの OS でも、見つからなければ「<そのパス> was not found next to ...」と出して、トレイの登録だけ飛ばす。
 - `--no-start` でなければ、登録した直後にトレイも起動する。
 - `--no-tray` を付けると登録せず、既に登録があれば消す。
-- `uninstall` は、先にトレイの登録を消してから（無ければ何もしない）本体を停止・削除する。
+- `uninstall` は、先にトレイの登録を消してから（無ければ何もしない）本体を停止・削除する。`--only-from` を付けたときは、トレイと本体を別々に判定して `<dir>` の下のものだけを消す（[`service/ownership.md`](service/ownership.md)）。
 - Linux ではトレイを扱わず、`--no-tray` は何もしない。
 
 | OS | 登録先 | 直後の起動 | 登録を消すとき |
 |---|---|---|---|
 | Windows | `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` の値 `swing-tray`。中身は `"<swing-tray.exe>" --config "<config>"`（`canonicalize` が付ける `\\?\` は外し、`\\?\UNC\` は `\\` に戻す） | `CreateProcessW` でハンドルを継承させずに起動し、待たない | 値を消す（無ければ何もしない）。動いているトレイには触らない（トレイが閉じる条件は [`tray.md`](tray.md#サービスの登録が消えたら終了する)） |
 | macOS | `~/Library/LaunchAgents/jp.ne.ama.swing-tray.plist`。`ProgramArguments` は `SWING.app` の中の `swing-tray` を直接指す。`RunAtLoad = true`・`LimitLoadToSessionType = Aqua`・`ProcessType = Interactive`・`AssociatedBundleIdentifiers = [jp.ne.ama.swing]`、`KeepAlive` は無し | 先に `launchctl bootout gui/<uid>/jp.ne.ama.swing-tray`（失敗は無視）してから `launchctl bootstrap gui/<uid> <plist>` | plist があれば `bootout`（失敗は無視）して plist を消す。動いているトレイも止まる |
+
+## 登録の持ち主の判定
+
+`uninstall --only-from <dir>` と `status --points-into <dir>` は、今の登録（本体と、Windows・macOS ではトレイ）を読み、それぞれが起動する実行ファイルが `<dir>` の下にあるかを判定する。インストーラーが、自分のインストール先以外から登録された `swing` を消したり登録し直したりしないために使う。登録ごとに読む場所・パスの比べ方・出力と終了コードは [`service/ownership.md`](service/ownership.md)。
 
 ## Linux（systemd）
 

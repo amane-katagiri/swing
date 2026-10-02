@@ -64,6 +64,11 @@ jobs:
         timeout-minutes: 8
         run: packaging\windows\check-installer.ps1 -Phase uninstall -Setup (Resolve-Path installer\*-setup.exe).Path -OutDir $env:OUT
 
+      - name: Registrations of another copy survive the upgrade and the uninstall
+        if: always()
+        timeout-minutes: 8
+        run: packaging\windows\check-installer.ps1 -Phase foreign -Setup (Resolve-Path installer\*-setup.exe).Path -OutDir $env:OUT
+
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         if: always()
         with:

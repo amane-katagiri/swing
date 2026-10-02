@@ -56,6 +56,8 @@ ja.UninstalledMost=%1 をアンインストールしましたが、削除でき�
 en.StartSwing=Start SWING and open the dashboard
 ja.StartSwing=SWING を起動してダッシュボードを開く
 en.ServiceInstallFailed=SWING was installed, but registering it to start at sign-in failed (exit code %1).%n%nRun "swing service install" in a terminal to try again.
+en.KeptRegistrations=These sign-in registrations start SWING from another folder, so they were left as they are:%n%n%1%nIf you no longer use that copy, run "swing service uninstall" from it.
+ja.KeptRegistrations=次のサインイン時の起動の登録は別のフォルダーの SWING を起動するものなので、そのまま残しました。%n%n%1%nそのコピーを使っていなければ、そちらの「swing service uninstall」で登録を消してください。
 ja.ServiceInstallFailed=SWING をインストールしましたが、サインイン時に起動する登録に失敗しました（終了コード %1）。%n%nターミナルで「swing service install」を実行してやり直してください。
 
 [Files]
@@ -84,10 +86,12 @@ const
 var
   IsUpgrade: Boolean;
   WasTaskRegistered: Boolean;
+  WasTaskOurs: Boolean;
   WasTrayRegistered: Boolean;
   WasSwingUp: Boolean;
   WasTrayRunning: Boolean;
   ServiceRegistered: Boolean;
+  KeptRegistrations: String;
 
 function AppPath(const Name: String): String;
 begin
@@ -137,18 +141,48 @@ begin
   end;
 end;
 
-function RunSwingCaptured(const Params: String; var Output: TExecOutput): Integer;
+function RunCaptured(const Exe, Params: String; var Output: TExecOutput): Integer;
 begin
   try
-    if not ExecAndCaptureOutput(AppPath('swing.exe'), Params, ExpandConstant('{app}'), SW_SHOWNORMAL, ewWaitUntilTerminated, Result, Output) then
+    if not ExecAndCaptureOutput(Exe, Params, ExpandConstant('{app}'), SW_SHOWNORMAL, ewWaitUntilTerminated, Result, Output) then
     begin
-      Log('Could not run swing.exe ' + Params + ': ' + SysErrorMessage(Result));
+      Log('Could not run ' + Exe + ' ' + Params + ': ' + SysErrorMessage(Result));
       Result := -1;
     end;
   except
-    Log('Could not run swing.exe ' + Params + ': ' + GetExceptionMessage);
+    Log('Could not run ' + Exe + ' ' + Params + ': ' + GetExceptionMessage);
     Result := -1;
   end;
+end;
+
+function RunSwingCaptured(const Params: String; var Output: TExecOutput): Integer;
+begin
+  Result := RunCaptured(AppPath('swing.exe'), Params, Output);
+end;
+
+function AppDirArg: String;
+begin
+  Result := '"' + ExpandConstant('{app}') + '"';
+end;
+
+function CheckRegistrations(const Exe: String; var Outside: String): Integer;
+var
+  Output: TExecOutput;
+  Params: String;
+  I: Integer;
+begin
+  Params := 'service status --points-into ' + AppDirArg;
+  Result := RunCaptured(Exe, Params, Output);
+  Log(Exe + ' ' + Params + ' exited with ' + IntToStr(Result));
+  Outside := '';
+  for I := 0 to GetArrayLength(Output.StdOut) - 1 do
+  begin
+    Log(Output.StdOut[I]);
+    if (Result = 4) and (Pos('which is under', Output.StdOut[I]) = 0) then
+      Outside := Outside + Output.StdOut[I] + #13#10;
+  end;
+  for I := 0 to GetArrayLength(Output.StdErr) - 1 do
+    Log(Output.StdErr[I]);
 end;
 
 function RunSwingLogged(const Params: String): Integer;
@@ -362,17 +396,28 @@ begin
 end;
 
 function PrepareToInstall(var NeedsRestart: Boolean): String;
+var
+  Outside: String;
 begin
   Result := '';
   IsUpgrade := FileExists(AppPath('swing.exe'));
   if not IsUpgrade then
     Exit;
   WasTaskRegistered := TaskRegistered;
+  WasTaskOurs := False;
+  if WasTaskRegistered then
+  begin
+    ExtractTemporaryFile('swing.exe');
+    WasTaskOurs := CheckRegistrations(ExpandConstant('{tmp}\swing.exe'), Outside) = 0;
+  end;
   WasTrayRegistered := RegValueExists(HKEY_CURRENT_USER, RunKey, 'swing-tray');
   WasSwingUp := WasTaskRegistered and (CountProcesses(AppPath('swing.exe'), ' AND (CommandLine LIKE ''% up %'' OR CommandLine LIKE ''% up'')') > 0);
   WasTrayRunning := TrayRunning;
-  Log(Format('Upgrading: task registered=%d, tray registered=%d, swing up running=%d, tray running=%d', [Ord(WasTaskRegistered), Ord(WasTrayRegistered), Ord(WasSwingUp), Ord(WasTrayRunning)]));
-  StopEverything('service stop', 0);
+  Log(Format('Upgrading: task registered=%d, tray registered=%d, swing up running=%d, tray running=%d, registrations point here=%d', [Ord(WasTaskRegistered), Ord(WasTrayRegistered), Ord(WasSwingUp), Ord(WasTrayRunning), Ord(WasTaskOurs)]));
+  if WasTaskRegistered and not WasTaskOurs then
+    StopEverything('stop', 0)
+  else
+    StopEverything('service stop', 0);
 end;
 
 procedure CurStepChanged(CurStep: TSetupStep);
@@ -382,6 +427,8 @@ begin
   AddToPath(ExpandConstant('{app}'));
   if IsUpgrade and not WasTaskRegistered then
     Log('The service was not registered before the upgrade; leaving it unregistered')
+  else if IsUpgrade and not WasTaskOurs then
+    Log('The registrations do not all start swing from ' + ExpandConstant('{app}') + '; leaving them as they are')
   else
     RegisterService(IsUpgrade and not WasTrayRegistered);
   if ServiceRegistered and WasSwingUp then
@@ -393,12 +440,24 @@ begin
 end;
 
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
+var
+  Outside: String;
 begin
   if CurUninstallStep = usUninstall then
   begin
+    KeptRegistrations := '';
     if FileExists(AppPath('swing.exe')) then
-      RunSwingLogged('service uninstall');
-    StopEverything('service stop', 30);
+    begin
+      if CheckRegistrations(AppPath('swing.exe'), Outside) = 4 then
+        KeptRegistrations := Outside;
+      RunSwingLogged('service uninstall --only-from ' + AppDirArg);
+    end;
+    if KeptRegistrations <> '' then
+      StopEverything('stop', 0)
+    else
+      StopEverything('service stop', 30);
     RemoveFromPath(ExpandConstant('{app}'));
-  end;
+  end
+  else if (CurUninstallStep = usPostUninstall) and (KeptRegistrations <> '') and not UninstallSilent then
+    MsgBox(FmtMessage(CustomMessage('KeptRegistrations'), [KeptRegistrations]), mbInformation, MB_OK);
 end;

@@ -3,6 +3,7 @@ use std::process::{Command, Output, Stdio};
 
 use anyhow::{Context, Result, bail};
 
+use super::ownership::{Part, Registration, exe_from_launchd_plist};
 use super::process::run_command;
 use super::templates::{launchd_plist, launchd_tray_plist};
 use super::{
@@ -153,8 +154,35 @@ pub async fn stop(_system: bool) -> Result<()> {
     Ok(())
 }
 
-pub async fn uninstall(_system: bool) -> Result<()> {
-    unregister_tray()?;
+pub fn registrations(_system: bool) -> Result<Vec<Registration>> {
+    let mut out = Vec::new();
+    for (part, label) in [(Part::Service, MACOS_LABEL), (Part::Tray, MACOS_TRAY_LABEL)] {
+        let path = agent_plist_path(label)?;
+        let plist = match std::fs::read(&path) {
+            Ok(plist) => plist,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(e) => {
+                return Err(anyhow::Error::new(e).context(format!("reading {}", path.display())));
+            }
+        };
+        out.push(Registration {
+            part,
+            what: format!("The launch agent {}", path.display()),
+            exe: std::str::from_utf8(&plist)
+                .ok()
+                .and_then(exe_from_launchd_plist),
+        });
+    }
+    Ok(out)
+}
+
+pub async fn uninstall_parts(_system: bool, service: bool, tray: bool) -> Result<()> {
+    if tray {
+        unregister_tray()?;
+    }
+    if !service {
+        return Ok(());
+    }
     let path = plist_path()?;
     bootout(MACOS_LABEL);
     if path.exists() {

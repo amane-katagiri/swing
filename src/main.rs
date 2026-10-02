@@ -308,6 +308,12 @@ enum ServiceCommand {
             help = "Target the systemd system unit instead of the user unit (Linux only)"
         )]
         system: bool,
+        #[arg(
+            long,
+            value_name = "DIR",
+            help = "Only remove registrations whose swing executable is under DIR; leave the others as they are"
+        )]
+        only_from: Option<PathBuf>,
     },
     #[command(about = "Start the registered service")]
     Start {
@@ -332,6 +338,12 @@ enum ServiceCommand {
             help = "Target the systemd system unit instead of the user unit (Linux only)"
         )]
         system: bool,
+        #[arg(
+            long,
+            value_name = "DIR",
+            help = "Instead of the status, tell whether the registrations run swing from under DIR: exit 0 if all do, 3 if nothing is registered, 4 otherwise"
+        )]
+        points_into: Option<PathBuf>,
     },
 }
 
@@ -467,10 +479,25 @@ async fn run_other(command: Command) -> Result<()> {
                     no_tray,
                 },
             ),
-            ServiceCommand::Uninstall { system } => service::uninstall(system).await,
+            ServiceCommand::Uninstall { system, only_from } => {
+                service::uninstall(system, only_from.as_deref()).await
+            }
             ServiceCommand::Start { system } => service::start(system),
             ServiceCommand::Stop { system } => service::stop(system).await,
-            ServiceCommand::Status { system } => service::status(system),
+            ServiceCommand::Status {
+                system,
+                points_into: None,
+            } => service::status(system),
+            ServiceCommand::Status {
+                system,
+                points_into: Some(dir),
+            } => {
+                let code = service::placement(system, &dir)?.exit_code();
+                if code != 0 {
+                    std::process::exit(code);
+                }
+                Ok(())
+            }
         },
         Command::Dashboard { action } => match action {
             DashboardCommand::Open { config, no_browser } => {

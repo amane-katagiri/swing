@@ -16,7 +16,7 @@
 | [`architecture/up.md`](architecture/up.md) | `swing up`（supervisor）: 起動順、セットアップモード、終了要求・シグナル、停止の時間予算、多重起動の防止 |
 | [`architecture/stats.md`](architecture/stats.md) | リソース使用量の記録（`stats.rs`） |
 | [`architecture/gateway.md`](architecture/gateway.md) | 内蔵 gateway（`gateway.rs`）: Host 振り分けと Kubo gateway へのプロキシ |
-| [`architecture/service.md`](architecture/service.md) | `swing service`（systemd / launchd / タスクスケジューラ） |
+| [`architecture/service.md`](architecture/service.md) | `swing service`（systemd / launchd / タスクスケジューラ）。子ページは登録の持ち主の判定（`--only-from`・`--points-into`）の [`service/ownership.md`](architecture/service/ownership.md) |
 | [`architecture/tray.md`](architecture/tray.md) | タスクトレイ（`swing-tray`、Windows と macOS） |
 | [`architecture/docker.md`](architecture/docker.md) | Dockerfile、compose、外部 Kubo コンテナの設定 |
 | [`architecture/dashboard.md`](architecture/dashboard.md) | Web ダッシュボード兼制御 API（`dashboard/`）: 起動と終了、設定、タイムアウト、静的ファイル。子ページの一覧もここ |
@@ -67,7 +67,7 @@
 | `stop.rs` | `swing stop`。[cli.md](architecture/cli.md#stop) |
 | `stats.rs`・`stats/process.rs` | リソース使用量の記録と `stats`、OS ごとのプロセスの CPU とメモリ。[stats.md](architecture/stats.md) |
 | `proc.rs` | Linux の `/proc/<pid>/stat` の読み取り（`kubo.rs` と `stats/process.rs` が共有） |
-| `service/` | `swing service`（`templates.rs`: unit・plist・タスク XML、`process.rs`: 外部コマンド、`linux.rs`・`macos.rs`・`windows.rs`、ほかの OS は `unsupported.rs`）。[service.md](architecture/service.md) |
+| `service/` | `swing service`（`templates.rs`: unit・plist・タスク XML、`process.rs`: 外部コマンド、`ownership.rs`: 登録が指す実行ファイルの読み取りと判定、`linux.rs`・`macos.rs`・`windows.rs`、ほかの OS は `unsupported.rs`）。[service.md](architecture/service.md)、登録の持ち主の判定は [service/ownership.md](architecture/service/ownership.md) |
 | `gateway.rs`・`host.rs` | 内蔵 gateway・Host ヘッダのパーサ（ダッシュボードのガードと共有）。[gateway.md](architecture/gateway.md) |
 | `dashboard/` | Web ダッシュボードと制御 API（`mod.rs`・`guard.rs`・`api.rs`・`session.rs`・`setup.rs`・`upload.rs`・`dto.rs`・`config_dto.rs`・`assets.rs`・`mascots/`・`test_support.rs`）。[dashboard.md](architecture/dashboard.md) |
 | `auth.rs`・`api_client.rs`・`login.rs` | トークン・セッション・ログインコード、CLI のダッシュボード API クライアント、`swing dashboard open`/`rotate-token`。[dashboard/security.md](architecture/dashboard/security.md) |
@@ -98,10 +98,10 @@
 swing up      [--config <path>] [--log-file <path>] [--no-port-shift]
 swing stop    [--config <path>] [--restart] [--timeout <secs>]
 swing service install   [--config <path>] [--system [--run-as <user>]] [--no-start] [--no-tray]
-swing service uninstall [--system]
+swing service uninstall [--system] [--only-from <dir>]
 swing service start     [--system]
 swing service stop      [--system]
-swing service status    [--system]
+swing service status    [--system] [--points-into <dir>]
 swing dashboard open         [--config <path>] [--no-browser]
 swing dashboard rotate-token [--config <path>]
 swing publish [--config <path>] --site <d-tag> [--url <URL>] [--nip05 <off|warn|require>] [--check-dotfiles <off|warn|require>] [--check-size <off|warn|require>] [--check-unchanged <off|warn|require>] [--title <TEXT>] [-m, --message <TEXT>] [-y, --yes] <DIR>

@@ -94,8 +94,9 @@ GUI のときだけ完了画面にチェックボックスを出す（既定は�
 
 `{app}\swing.exe` があれば上書きとして扱い、ファイルを置く前（Inno Setup の `PrepareToInstall`）に次を行う。
 
-1. 前の状態を覚える: タスク `swing` が登録済みか（`schtasks /Query /TN swing` の終了コード）、Run キーに値 `swing-tray` があるか、`{app}\swing.exe` の `up` が動いているか（タスクが登録済みのときだけ数える。コマンドラインが ` up ` を含むか ` up` で終わる）、`{app}\swing-tray.exe` が動いているか。ログに `Upgrading: task registered=…, tray registered=…, swing up running=…, tray running=…` と出す。
-2. `{app}` の `swing.exe` か `ipfs.exe` が動いていれば、`swing service stop`（ダッシュボード経由のグレースフルな停止。失敗したら `schtasks /End` で conhost を終わらせ、`--exit-with-parent` でグレースフルに止まる。[`service.md`](service.md#windowsタスクスケジューラ)）を実行し、`{app}` の `swing.exe`・`ipfs.exe` が無くなるまで最大 60 秒待つ。残っていれば強制終了し（ログに `Terminating a process of <path>`）、さらに最大 10 秒待つ。`swing publish` など `up` 以外の `swing.exe` も、この時点で残っていれば強制終了になる。
+1. 前の状態を覚える: タスク `swing` が登録済みか（`schtasks /Query /TN swing` の終了コード）、Run キーに値 `swing-tray` があるか、`{app}\swing.exe` の `up` が動いているか（タスクが登録済みのときだけ数える。コマンドラインが ` up ` を含むか ` up` で終わる）、`{app}\swing-tray.exe` が動いているか。タスクが登録済みなら、登録が `{app}` のものか（下記）。ログに `Upgrading: task registered=…, tray registered=…, swing up running=…, tray running=…, registrations point here=…` と出す。
+   - 登録が `{app}` のものかは、これから入れる新しい `swing.exe` を `ExtractTemporaryFile` で一時ディレクトリ（`{tmp}`）に取り出し、`{tmp}\swing.exe service status --points-into "{app}"` の終了コードが 0 かどうかで決める（[`service/ownership.md`](service/ownership.md)。タスクとトレイの登録のどちらか一方でも別の場所を指していれば 0 にならない）。`{app}` にある古い `swing.exe` はこのオプションを知らないことがあるので使わない。出力はログに書く。
+2. `{app}` の `swing.exe` か `ipfs.exe` が動いていれば、`swing service stop`（登録が `{app}` のものでないときは `swing stop`。下記）（ダッシュボード経由のグレースフルな停止。失敗したら `schtasks /End` で conhost を終わらせ、`--exit-with-parent` でグレースフルに止まる。[`service.md`](service.md#windowsタスクスケジューラ)）を実行し、`{app}` の `swing.exe`・`ipfs.exe` が無くなるまで最大 60 秒待つ。残っていれば強制終了し（ログに `Terminating a process of <path>`）、さらに最大 10 秒待つ。`swing publish` など `up` 以外の `swing.exe` も、この時点で残っていれば強制終了になる。登録が別の場所のものなら、`schtasks /End` に落ちて別のコピーのタスクを止めてしまわないよう、ダッシュボード経由でだけ止める `swing stop`（[`cli.md#stop`](cli.md#stop)）を使う。止めるのはどちらも `{app}` のプロセスが動いているときだけ。
 3. `{app}` の `swing-tray.exe` を強制終了する（API のクライアントでしかないので、止め方による害は無い）。
 
 ファイルを置いた後は、新規と同じく `Path` を確かめてから、前の状態で分ける。
@@ -103,6 +104,7 @@ GUI のときだけ完了画面にチェックボックスを出す（既定は�
 | 前の状態 | すること |
 |---|---|
 | タスクが未登録 | `service install` を実行しない（利用者が `swing service uninstall` した状態を保つ）。完了画面のチェックボックスも出ない |
+| タスクが登録済みだが、登録が `{app}` のものでない | 何もしない（別の場所から登録した `swing` を `{app}` に付け替えない）。完了画面のチェックボックスも出ず、起動し直しもしない |
 | タスクが登録済み、Run キーの値あり | `swing service install --no-start` |
 | タスクが登録済み、Run キーの値なし | `swing service install --no-start --no-tray`（`--no-tray` で登録した状態を保つ） |
 
@@ -112,22 +114,23 @@ GUI のときだけ完了画面にチェックボックスを出す（既定は�
 
 ファイルを消す前（`usUninstall`）に次を行う。サイレントアンインストール（`unins000.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART`）でも同じで、確認は出ない。
 
-1. `swing service uninstall`。トレイの Run キーの値を消し、`swing up` をグレースフルに止め、タスクを削除する（[`service.md`](service.md#windowsタスクスケジューラ)）。登録されたタスクのパスが `{app}` かどうかは見ない。
-2. `{app}` の `swing.exe`・`ipfs.exe` が残っていれば、上書きの 2 と同じく止める。
-3. `{app}` の `swing-tray.exe` は、タスクの削除を見て自分で閉じる（[`tray.md`](tray.md#サービスの登録が消えたら終了する)）のを最大 30 秒待ち、残っていれば強制終了する。
+1. `swing service status --points-into "{app}"` で登録を確かめ（出力はログに書く）、続けて `swing service uninstall --only-from "{app}"` を実行する。`{app}` の下を指す登録だけ（タスクと Run キーの値を別々に判定する）を消し、タスクを消すときは `swing up` をグレースフルに止めてから消す。別の場所を指す登録は残す（[`service/ownership.md`](service/ownership.md)）。
+2. `{app}` の `swing.exe`・`ipfs.exe` が残っていれば、上書きの 2 と同じく止める（1 で残した登録があれば `swing stop`）。
+3. `{app}` の `swing-tray.exe` は、タスクの削除を見て自分で閉じる（[`tray.md`](tray.md#サービスの登録が消えたら終了する)）のを最大 30 秒待ち、残っていれば強制終了する。1 で残した登録があればタスクが消えないこともあるので、待たずに強制終了する。
 4. `Path` から `{app}` の項目を（大文字小文字と末尾の `\` を無視して）すべて取り除く。ほかの項目は順序を保ち、空の項目は落とす。残りが空なら値ごと消す。Inno Setup の環境変数の通知はファイルを消す処理の中で行われるので、`Path` の書き換えはその前のこの段階で行う。
 
-その後、Inno Setup がインストールしたファイル・スタートメニューの項目・「アプリと機能」の項目を消す。`%LOCALAPPDATA%\swing`（設定ファイル・鍵・状態ファイル・Kubo のリポジトリ・`swing.log`）は消さず、完了のメッセージ（`UninstalledAll`・`UninstalledMost`）でその場所（ユーザーフォルダーの `AppData\Local\swing`）を伝える。
+その後、Inno Setup がインストールしたファイル・スタートメニューの項目・「アプリと機能」の項目を消す。1 で残した登録があれば、GUI のときだけ（`UninstallSilent` でないとき）完了のメッセージの前に、残した登録の行（`swing service status` の出力のうち `{app}` の下でないもの）と、そのコピーの `swing service uninstall` で消せることを伝えるメッセージ（`KeptRegistrations`）を出す。`%LOCALAPPDATA%\swing`（設定ファイル・鍵・状態ファイル・Kubo のリポジトリ・`swing.log`）は消さず、完了のメッセージ（`UninstalledAll`・`UninstalledMost`）でその場所（ユーザーフォルダーの `AppData\Local\swing`）を伝える。
 
 ## 動作確認の CI（`.github/workflows/windows-installer-check.yml`）
 
-手動実行（`workflow_dispatch`）でだけ動く。`windows-latest` のランナーでブランチを release ビルドし、release と同じ形の zip（ref は `check`）を作り、`build.ps1` でインストーラーを作って、`check-installer.ps1` を 3 段階で実行する。手順と判定の正本は `check-installer.ps1`。
+手動実行（`workflow_dispatch`）でだけ動く。`windows-latest` のランナーでブランチを release ビルドし、release と同じ形の zip（ref は `check`）を作り、`build.ps1` でインストーラーを作って、`check-installer.ps1` を 4 段階で実行する。手順と判定の正本は `check-installer.ps1`。
 
 | 段階 | 確かめること |
 |---|---|
 | `install` | 事前に何も無いこと。サイレントインストールの終了コードが 0、上記のファイルがすべてあること、`Path` に `{app}` が 1 つだけあること、タスクの登録、Run キーの値が `{app}\swing-tray.exe` を指すこと、既定の場所に空の `swing.toml` ができること、スタートメニューの項目と「アプリと機能」の項目、5 秒待っても `{app}` のプロセスが何も動いていないこと |
-| `upgrade` | `swing service start` とトレイを起動して動いている状態で、同じインストーラーをもう一度サイレントで実行する。終了コードが 0、ログで前の状態を正しく判定したこと、`swing.exe` を強制終了していないこと、`swing up` が別のプロセスとして動き直してダッシュボードが応答すること、トレイが動き直すこと、タスク・Run キーの値・`Path`（1 つだけ）が残ること |
+| `upgrade` | `swing service start` とトレイを起動して動いている状態で、同じインストーラーをもう一度サイレントで実行する。終了コードが 0、ログで前の状態（登録が `{app}` のものであることを含む）を正しく判定したこと、`swing.exe` を強制終了していないこと、`swing up` が別のプロセスとして動き直してダッシュボードが応答すること、トレイが動き直すこと、タスク・Run キーの値・`Path`（1 つだけ）が残ること |
 | `uninstall` | 前の段階が失敗しても行う。サイレントアンインストールの終了コードが 0、アンインストーラーの本体（一時ディレクトリの `_iu*.tmp`）が終わり「アプリと機能」の項目が消えること、`swing.exe` を強制終了していないこと、タスク・Run キーの値・`Path` の項目・ファイル・スタートメニューの項目が消えること、`{app}` のプロセスが残っていないこと、`swing.toml` が残ること。トレイを強制終了したかどうかは記録するだけで判定しない |
+| `foreign` | 前の段階が失敗しても行う。新規にインストールしてから、`swing.exe` と `swing-tray.exe` を `{app}` の外（`%LOCALAPPDATA%\swing-check-other-copy`）に写し、そこから `swing service install --no-start` してタスクと Run キーの値をそちらに向ける。同じインストーラーでの上書きが登録を `{app}` のものでないと判定して（ログの `registrations point here=0`）タスクと Run キーの値を変えないこと、サイレントアンインストールが残した登録をログに出し、タスクと Run キーの値がそのコピーを指したまま残り、ファイルは消えること。最後にそのコピーの `swing service uninstall` で登録を消してコピーを削除し、消えたことを確かめる |
 
 各段階のインストーラーのログ（`/LOG`）、プロセス・Run キー・`Path`・タスクの様子、`swing.log` と、作ったインストーラーは artifact `windows-installer-check` に残る。入力 `ssh` は `windows-check` と同じ。
 

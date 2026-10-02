@@ -5,6 +5,7 @@ use anyhow::{Context, Result, bail};
 
 use crate::config::{ConfigOrigin, locate_config};
 
+mod ownership;
 mod process;
 mod templates;
 
@@ -26,6 +27,7 @@ use unsupported as platform;
 #[cfg(windows)]
 use windows as platform;
 
+pub use ownership::{Part, Placement, Registration};
 pub use templates::{
     SystemdScope, launchd_plist, launchd_tray_plist, schtasks_xml, systemd_unit, tray_run_command,
 };
@@ -154,9 +156,87 @@ pub fn install(config_path: Option<&Path>, opts: &InstallOptions<'_>) -> Result<
     platform::install(&exe, &config, &workdir, opts)
 }
 
-pub async fn uninstall(system: bool) -> Result<()> {
+pub async fn uninstall(system: bool, only_from: Option<&Path>) -> Result<()> {
     require_system_supported(system)?;
-    platform::uninstall(system).await
+    let Some(dir) = only_from else {
+        return platform::uninstall_parts(system, true, true).await;
+    };
+    let dir = absolute_dir(dir)?;
+    let registrations = platform::registrations(system)?;
+    if registrations.is_empty() {
+        println!("swing is not registered; nothing to uninstall.");
+        return Ok(());
+    }
+    let mut service = false;
+    let mut tray = false;
+    for registration in &registrations {
+        if registration_points_into(registration, &dir) {
+            match registration.part {
+                Part::Service => service = true,
+                Part::Tray => tray = true,
+            }
+        } else {
+            println!("{}; left it as is.", describe_outside(registration, &dir));
+        }
+    }
+    if service || tray {
+        platform::uninstall_parts(system, service, tray).await?;
+    }
+    Ok(())
+}
+
+pub fn placement(system: bool, dir: &Path) -> Result<Placement> {
+    require_system_supported(system)?;
+    let dir = absolute_dir(dir)?;
+    let registrations = platform::registrations(system)?;
+    if registrations.is_empty() {
+        println!("not installed");
+    }
+    let inside: Vec<bool> = registrations
+        .iter()
+        .map(|registration| {
+            let inside = registration_points_into(registration, &dir);
+            if inside {
+                println!(
+                    "{} runs {}, which is under {}.",
+                    registration.what,
+                    registration.exe.as_deref().unwrap_or_default(),
+                    dir.display()
+                );
+            } else {
+                println!("{}.", describe_outside(registration, &dir));
+            }
+            inside
+        })
+        .collect();
+    Ok(ownership::summarize(&inside))
+}
+
+fn absolute_dir(dir: &Path) -> Result<PathBuf> {
+    std::path::absolute(dir).with_context(|| format!("resolving {}", dir.display()))
+}
+
+fn registration_points_into(registration: &Registration, dir: &Path) -> bool {
+    registration
+        .exe
+        .as_deref()
+        .is_some_and(|exe| ownership::exe_points_into(exe, dir))
+}
+
+fn describe_outside(registration: &Registration, dir: &Path) -> String {
+    match &registration.exe {
+        Some(exe) => format!(
+            "{} runs {}, which is not under {}",
+            registration.what,
+            exe,
+            dir.display()
+        ),
+        None => format!(
+            "{} could not be read to tell which swing it runs, so it is treated as not under {}",
+            registration.what,
+            dir.display()
+        ),
+    }
 }
 
 pub async fn stop(system: bool) -> Result<()> {

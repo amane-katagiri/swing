@@ -161,11 +161,34 @@ put() {
   mv -f "$tmp" "$LIB/$2"
 }
 
+service_is_ours() {
+  check=$LIB/.swing-check.$$
+  if [ ! -x "$check" ]; then
+    cp "$src/swing" "$check"
+    chmod 755 "$check"
+  fi
+  code=0
+  "$check" service status "$@" --points-into "$LIB" >"$TMP/owner" 2>&1 || code=$?
+  case $code in
+    0) return 0 ;;
+    3 | 4)
+      info "leaving the swing service as is; it does not run swing from $LIB:"
+      cat "$TMP/owner" >&2
+      return 1
+      ;;
+    *)
+      cat "$TMP/owner" >&2
+      die "could not check whether the swing service runs swing from $LIB; nothing was changed"
+      ;;
+  esac
+}
+
 stop_service() {
   if ! have systemctl; then
     return 0
   fi
   if [ -f "$(user_unit)" ] && systemctl --user is-active --quiet swing 2>/dev/null; then
+    service_is_ours || return 0
     info "stopping the swing service"
     if [ -x "$LIB/swing" ]; then
       "$LIB/swing" service stop || die "could not stop the swing service; nothing was changed"
@@ -174,6 +197,7 @@ stop_service() {
     fi
     STOPPED=user
   elif [ -f "$SYSTEM_UNIT" ] && systemctl is-active --quiet swing 2>/dev/null; then
+    service_is_ours --system || return 0
     if [ "$(id -u)" -eq 0 ]; then
       info "stopping the swing system service"
       systemctl stop swing || die "could not stop the swing system service; nothing was changed"
@@ -287,6 +311,7 @@ do_install() {
   mkdir -p "$LIB" "$BIN" || die "cannot create $LIB and $BIN (permission denied? try sudo with --prefix)"
 
   stop_service
+  rm -f "$LIB/.swing-check.$$"
 
   info "installing into $LIB"
   put "$src/swing" swing 755
@@ -387,14 +412,21 @@ do_uninstall() {
   fi
 
   if [ -f "$SYSTEM_UNIT" ] && [ -z "$FORCE" ]; then
-    die "a system service exists; run 'sudo $LIB/swing service uninstall --system' first, or use --force"
+    code=0
+    if [ -x "$LIB/swing" ]; then
+      "$LIB/swing" service status --system --points-into "$LIB" >/dev/null 2>&1 || code=$?
+    fi
+    if [ "$code" -ne 4 ]; then
+      die "a system service exists; run 'sudo $LIB/swing service uninstall --system' first, or use --force"
+    fi
+    info "leaving the swing system service as is; it does not run swing from $LIB"
   fi
 
   unit=$(user_unit)
   if [ -f "$unit" ]; then
-    info "removing the swing service"
+    info "removing the swing service if it runs swing from $LIB"
     if [ -x "$LIB/swing" ]; then
-      "$LIB/swing" service uninstall || die "swing service uninstall failed; nothing was removed"
+      "$LIB/swing" service uninstall --only-from "$LIB" || die "swing service uninstall failed; nothing was removed"
     else
       warn "$unit exists but $LIB/swing is missing; remove the service by hand"
     fi

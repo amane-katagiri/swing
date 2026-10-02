@@ -88,7 +88,7 @@ curl -fsSL https://github.com/amane-katagiri/swing/releases/latest/download/inst
 - `--prefix DIR` で入れる場所を変えられます（`DIR/lib/swing` と `DIR/bin`）。システム全体に入れるなら `curl -fsSL .../install.sh | sudo sh -s -- --prefix /usr/local` とします。
 - 設定ファイルとデータは `~/.local/share/swing`（`XDG_DATA_HOME` があれば `$XDG_DATA_HOME/swing`）に置かれます。
 
-削除は `~/.local/lib/swing/swing-uninstall.sh` です（`--prefix` で入れたときは、その `lib/swing` の中の同名のスクリプト）。サービスの登録と入れたファイルだけを消し、設定ファイルとデータは残します。それも消すときは `--purge` を付けます（確認を求められます。`--yes` で省けます）。詳しい動作は [`docs/architecture/install-sh.md`](docs/architecture/install-sh.md) を参照してください。
+削除は `~/.local/lib/swing/swing-uninstall.sh` です（`--prefix` で入れたときは、その `lib/swing` の中の同名のスクリプト）。サービスの登録（`lib/swing` の `swing` を起動するものだけ。別の場所から登録したものは残します）と入れたファイルだけを消し、設定ファイルとデータは残します。それも消すときは `--purge` を付けます（確認を求められます。`--yes` で省けます）。詳しい動作は [`docs/architecture/install-sh.md`](docs/architecture/install-sh.md) を参照してください。
 
 ### Windows のインストーラーで入れる
 
@@ -98,8 +98,8 @@ Windows では、GitHub のリリースにある `swing-<版>-x86_64-pc-windows-
 - `%LOCALAPPDATA%\Programs\SWING` に入り、ターミナルから `swing` で実行できるよう、ユーザーの環境変数 `Path` にこのフォルダーを足します（開いていたターミナルには反映されないので、開き直してください）。
 - サインイン時に SWING とタスクトレイのアイコンが起動するよう登録します（`swing service install --no-start` と同じ）。インストールの最後に「SWING を起動してダッシュボードを開く」を選ぶと、その場で起動してダッシュボードが開き、セットアップ画面から始められます。選ばなければ次のサインインで起動します。
 - 設定ファイル・鍵・保存したデータは `%LOCALAPPDATA%\swing` に置かれます（`swing.toml` と、その下の `data`）。
-- 新しい版のインストーラーをそのまま実行すれば上書きで更新できます。動いていた SWING はいったん止めて、更新後に起動し直します。
-- 削除は「設定」→「アプリ」→「インストールされているアプリ」の SWING から行います。サインイン時の起動の登録も消えますが、`%LOCALAPPDATA%\swing` の設定とデータは残すので、不要ならこのフォルダーを手で削除してください。
+- 新しい版のインストーラーをそのまま実行すれば上書きで更新できます。動いていた SWING はいったん止めて、更新後に起動し直します。サインイン時の起動の登録を zip から展開した別の `swing.exe` で登録し直していた場合は、その登録には触れません。
+- 削除は「設定」→「アプリ」→「インストールされているアプリ」の SWING から行います。サインイン時の起動の登録も消えます（このフォルダーの SWING を起動する登録だけで、別の場所から登録したものは残し、そのことを最後に知らせます）が、`%LOCALAPPDATA%\swing` の設定とデータは残すので、不要ならこのフォルダーを手で削除してください。
 - コマンドラインでは `/VERYSILENT /SUPPRESSMSGBOXES /NORESTART` で確認なしにインストールでき（この場合は SWING を起動しません）、アンインストールも `"%LOCALAPPDATA%\Programs\SWING\unins000.exe" /VERYSILENT /SUPPRESSMSGBOXES /NORESTART` で行えます。
 - winget での配布は準備中です。
 

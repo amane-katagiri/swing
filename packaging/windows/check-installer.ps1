@@ -1,5 +1,5 @@
 param(
-  [Parameter(Mandatory)] [ValidateSet('install', 'upgrade', 'uninstall')] [string] $Phase,
+  [Parameter(Mandatory)] [ValidateSet('install', 'upgrade', 'uninstall', 'foreign')] [string] $Phase,
   [Parameter(Mandatory)] [string] $Setup,
   [Parameter(Mandatory)] [string] $OutDir
 )
@@ -8,6 +8,7 @@ $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
 $App = Join-Path $env:LOCALAPPDATA 'Programs\SWING'
+$Other = Join-Path $env:LOCALAPPDATA 'swing-check-other-copy'
 $Data = Join-Path $env:LOCALAPPDATA 'swing'
 $Config = Join-Path $Data 'swing.toml'
 $RunKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
@@ -40,6 +41,22 @@ function AppPathEntries {
 function TaskRegistered {
   & schtasks.exe /Query /TN swing *> $null
   $LASTEXITCODE -eq 0
+}
+
+function TaskXml {
+  (& schtasks.exe /Query /TN swing /XML 2>$null) -join "`n"
+}
+
+function Mentions([string] $Text, [string] $Path) {
+  $null -ne $Text -and $Text.IndexOf($Path, [StringComparison]::OrdinalIgnoreCase) -ge 0
+}
+
+function WaitUninstalled {
+  for ($i = 0; $i -lt 180; $i++) {
+    $second = @(Get-CimInstance Win32_Process -Filter "Name LIKE '[_]iu%.tmp'")
+    if (-not (Test-Path $UninstallKey) -and $second.Count -eq 0) { break }
+    Start-Sleep 1
+  }
 }
 
 function RunValue {
@@ -112,7 +129,7 @@ try {
       $code = RunSetup $Setup $log
       Check ($code -eq 0) "silent upgrade exits with 0 (got $code)"
       $text = Get-Content -Raw $log
-      Check ($text -match 'Upgrading: task registered=1, tray registered=1, swing up running=1, tray running=1') 'the upgrade sees the running service and tray'
+      Check ($text -match 'Upgrading: task registered=1, tray registered=1, swing up running=1, tray running=1, registrations point here=1') 'the upgrade sees the running service and tray as its own'
       Check ($text -notmatch 'Terminating a process of .*\\swing\.exe') 'swing stopped without being terminated'
       Check (WaitDashboard) 'swing up runs again after the upgrade'
       $after = @(Ours 'swing.exe' | ForEach-Object { $_.ProcessId })
@@ -127,11 +144,7 @@ try {
       $log = Join-Path $OutDir 'uninstall.log'
       $code = RunSetup (Join-Path $App 'unins000.exe') $log
       Check ($code -eq 0) "silent uninstall exits with 0 (got $code)"
-      for ($i = 0; $i -lt 180; $i++) {
-        $second = @(Get-CimInstance Win32_Process -Filter "Name LIKE '[_]iu%.tmp'")
-        if (-not (Test-Path $UninstallKey) -and $second.Count -eq 0) { break }
-        Start-Sleep 1
-      }
+      WaitUninstalled
       Check (-not (Test-Path $UninstallKey)) 'the uninstall entry is removed'
       $text = Get-Content -Raw $log
       Check ($text -notmatch 'Terminating a process of .*\\swing\.exe') 'swing stopped without being terminated'
@@ -143,6 +156,48 @@ try {
       Check (-not (Test-Path $Shortcut)) 'the Start menu shortcut is removed'
       Check ((Running).Count -eq 0) 'nothing from the install directory runs after the uninstall'
       Check (Test-Path $Config) 'swing.toml in the data directory is kept'
+    }
+    'foreign' {
+      Check (-not (Test-Path (Join-Path $App 'swing.exe'))) 'nothing is installed before the check'
+      try {
+        $code = RunSetup $Setup (Join-Path $OutDir 'foreign-install.log')
+        Check ($code -eq 0) "silent install exits with 0 (got $code)"
+        New-Item -ItemType Directory -Force -Path $Other | Out-Null
+        Copy-Item (Join-Path $App 'swing.exe'), (Join-Path $App 'swing-tray.exe') $Other
+        $out = & (Join-Path $Other 'swing.exe') service install --no-start 2>&1 | ForEach-Object { "$_" }
+        Save other-install $out
+        Check ($LASTEXITCODE -eq 0) 'swing service install from another copy succeeds'
+        Check (Mentions (TaskXml) "$Other\swing.exe") 'the task now starts the other copy'
+        Check (Mentions (RunValue) "$Other\swing-tray.exe") 'the tray Run value now starts the other copy'
+
+        $log = Join-Path $OutDir 'foreign-upgrade.log'
+        $code = RunSetup $Setup $log
+        Check ($code -eq 0) "silent upgrade exits with 0 (got $code)"
+        $text = Get-Content -Raw $log
+        Check ($text -match 'registrations point here=0') 'the upgrade sees that the registrations are not its own'
+        Check (Mentions (TaskXml) "$Other\swing.exe") 'the upgrade leaves the task of the other copy'
+        Check (Mentions (RunValue) "$Other\swing-tray.exe") 'the upgrade leaves the tray Run value of the other copy'
+
+        $log = Join-Path $OutDir 'foreign-uninstall.log'
+        $code = RunSetup (Join-Path $App 'unins000.exe') $log
+        Check ($code -eq 0) "silent uninstall exits with 0 (got $code)"
+        WaitUninstalled
+        Check (-not (Test-Path $UninstallKey)) 'the uninstall entry is removed'
+        $text = Get-Content -Raw $log
+        Check ($text -match 'left it as is') 'the uninstaller reports the registrations it kept'
+        Check (TaskRegistered) 'the task of the other copy is kept'
+        Check (Mentions (TaskXml) "$Other\swing.exe") 'the kept task still starts the other copy'
+        Check (Mentions (RunValue) "$Other\swing-tray.exe") 'the tray Run value of the other copy is kept'
+        foreach ($f in $Files) { Check (-not (Test-Path (Join-Path $App $f))) "$f is removed" }
+        Check ((Running).Count -eq 0) 'nothing from the install directory runs after the uninstall'
+      } finally {
+        if (Test-Path (Join-Path $Other 'swing.exe')) {
+          Save other-uninstall (& (Join-Path $Other 'swing.exe') service uninstall 2>&1 | ForEach-Object { "$_" })
+        }
+        Remove-Item -Recurse -Force $Other -ErrorAction SilentlyContinue
+      }
+      Check (-not (TaskRegistered)) 'the task of the other copy is cleaned up'
+      Check ($null -eq (RunValue)) 'the tray Run value of the other copy is cleaned up'
     }
   }
 } finally {

@@ -57,7 +57,10 @@ Windows の `swing service stop` もこの `stop::run` を使う（失敗した�
 `swing up` を OS のサービス（systemd user unit・launchd LaunchAgent・Windows タスクスケジューラ）として登録・操作する。OS ごとの実体は [`service.md`](service.md)。
 
 - `install` のオプション: `--config`（決め方は [`service.md#共通`](service.md#共通)）・`--system`（Linux のみ）・`--run-as <user>`（`--system` と一緒にだけ使える）・`--no-start`（登録だけで起動しない）・`--no-tray`（Windows と macOS で `swing-tray` の自動起動を登録しない）。
-- `start`/`stop`/`status`/`uninstall` は `--system` だけを取る。`stop` は登録を残してプロセスだけを止め、`uninstall` は止めてから登録を消す。
+- `start`/`stop`/`status`/`uninstall` は `--system` を取る。`stop` は登録を残してプロセスだけを止め、`uninstall` は止めてから登録を消す。
+- `uninstall --only-from <dir>`: 登録のうち、起動する実行ファイルが `<dir>` の下にあるものだけを消し、ほかは残して 1 行ずつ知らせる。終了コードは 0。インストーラーのアンインストールが、別の場所から登録された `swing` を消さないために使う。
+- `status --points-into <dir>`: 状態の代わりに、登録ごとに起動する実行ファイルと `<dir>` の下かどうかを 1 行ずつ出し、終了コードで答える。0 は登録があってすべて `<dir>` の下、3 は何も登録されていない、4 は `<dir>` の下でないもの（読み取れないものを含む）がある。それ以外（1 など）は判定できなかった。インストーラーの上書きが、登録し直してよいかを決めるのに使う。
+- 判定の規則と OS ごとに読む場所は [`service/ownership.md`](service/ownership.md)。
 - どれもサービス機構を通す。Windows の `service stop` だけは [stop](#stop) を使う。
 
 ## publish
