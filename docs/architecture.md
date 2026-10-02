@@ -20,8 +20,9 @@
 | [`architecture/tray.md`](architecture/tray.md) | タスクトレイ（`swing-tray`、Windows と macOS） |
 | [`architecture/docker.md`](architecture/docker.md) | Dockerfile、compose、外部 Kubo コンテナの設定 |
 | [`architecture/dashboard.md`](architecture/dashboard.md) | Web ダッシュボード兼制御 API（`dashboard/`）: 起動と終了、設定、タイムアウト、静的ファイル。子ページの一覧もここ |
-| [`architecture/release.md`](architecture/release.md) | ビルドとリリース、macOS と Windows の動作確認の CI |
+| [`architecture/release.md`](architecture/release.md) | ビルドとリリース、macOS・Homebrew・Windows の動作確認の CI |
 | [`architecture/install-sh.md`](architecture/install-sh.md) | Linux 向けのインストールスクリプト（`packaging/linux/install.sh`）: 入れる物と場所、更新、アンインストール、テスト |
+| [`architecture/homebrew.md`](architecture/homebrew.md) | macOS 向けの Homebrew の formula（`packaging/homebrew/`）: 入れる場所、`brew upgrade` とサービス、tap への公開 |
 
 ## 構成要素
 
@@ -83,7 +84,8 @@
 | `Dockerfile`・`compose.yaml`・`docker/` | コンテナと compose（`kubo-init.d/`: 外部 Kubo の設定、`release.Dockerfile`: 配布イメージ、`demo/`: デモ環境）。[docker.md](architecture/docker.md)・[docker/demo/README.md](../docker/demo/README.md) |
 | `swing.example.toml`・`.env.example` | 設定例（カタログから生成） |
 | `packaging/linux/` | Linux 向けの `install.sh` とそのテスト（`test-install.sh`）。[install-sh.md](architecture/install-sh.md) |
-| `.github/workflows/` | `release.yml`・`macos-check.yml`・`windows-check.yml`。[release.md](architecture/release.md) |
+| `packaging/homebrew/` | Homebrew の formula のひな形と書き出しスクリプト。[homebrew.md](architecture/homebrew.md) |
+| `.github/workflows/` | `release.yml`・`macos-check.yml`・`homebrew-check.yml`・`windows-check.yml`。[release.md](architecture/release.md) |
 | `docs/` | 役割は AGENTS.md |
 
 `mirror/`・`health.rs`・`replicas.rs`・`webring/` は、relay・Kubo から値を集める関数（`collect_mirror_list`・`collect_sites`・`collect_status`・`replicas::collect`・`webring::collect`）と表示する関数に分かれ、ダッシュボードの API は前者を呼んで DTO にする。`publish.rs` の段階ごとの関数は CLI とダッシュボードで共有する。サブコマンドごとに relay・Kubo へ直接つなぐか `swing up` のダッシュボード API を経由するかは [`architecture/cli.md#共通`](architecture/cli.md#共通)。
@@ -148,4 +150,4 @@ SWING_TEST_KUBO_BIN=/path/to/ipfs cargo test --lib kubo::tests -- --ignored
 SWING_TEST_KUBO_BIN=/path/to/ipfs cargo test --test mfs_kubo_integration -- --ignored
 ```
 
-ビルドとリリース、macOS と Windows の動作確認は [`architecture/release.md`](architecture/release.md)。
+ビルドとリリース、macOS・Homebrew・Windows の動作確認は [`architecture/release.md`](architecture/release.md)。

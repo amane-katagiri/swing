@@ -20,6 +20,7 @@
 - `release` ジョブは、`packaging/linux/install.sh`（[`install-sh.md`](install-sh.md)）を `install.sh` としてアーカイブと並べてリリースに添える。`SHA256SUMS` はこれを含めて作る。
 - タグの ref で動いたとき（タグの push と、タグを選んだ手動実行）は、タグ名と `Cargo.toml` の `version` が一致しないと失敗する（`v0.1.0` と `0.1.0`）。全 target が通ると `SHA256SUMS` を付けた**ドラフト**のリリースを作る。公開は GitHub 上で手動で行う。
 - ブランチで手動実行したときはリリースを作らず、バイナリは Actions の artifact に残す。イメージは下記のとおり push する。
+- `homebrew` ジョブが macOS の 2 つのアーカイブから Homebrew の formula（`swing.rb`）を書き出し、artifact `homebrew` に置く。タグの ref ではリリースにも添付する（[`homebrew.md`](homebrew.md#tap-への公開)）。ブランチの ref ではアーカイブ名にブランチ名が入るので、バージョンを読み取れない formula になる（中身の確認用）。
 - `image` ジョブが `ghcr.io/<owner>/<repo>`（小文字）のコンテナイメージを `linux/amd64`・`linux/arm64` で作る。中身は `build` ジョブの `x86_64-unknown-linux-musl`・`aarch64-unknown-linux-musl` の `swing` を `docker/release.Dockerfile`（[`docker.md`](docker.md#dockerfile)）に入れたもの。QEMU は `RUN`（ユーザー作成）にだけ使う。
 - イメージのタグは、タグの ref なら `v` を除いたバージョン（`0.1.0`）と `latest`（バージョンに `-` を含む `0.2.0-rc.1` などでは `latest` を付けない）。タグのイメージは、ドラフトのリリースを公開する前に push される。ブランチの ref ならブランチ名（`main` など）のタグだけを付けて push する。ブランチ名に `/` があると `image` ジョブが失敗する。ブランチ名が `latest` か数字で始まるときは push せずに失敗する。`org.opencontainers.image.source` ラベルでパッケージをこのリポジトリに紐づけ、パッケージの公開範囲はリポジトリに合わせる。
 
@@ -32,7 +33,7 @@
 | `taiki-e/install-action` | `cargo-zigbuild` をビルド済みバイナリからインストール |
 | ziglang（PyPI、`pip3 install`） | `cargo zigbuild` が使う Zig 本体 |
 | `docker/setup-qemu-action`・`docker/setup-buildx-action`・`docker/login-action`・`docker/build-push-action` | マルチアーキテクチャのイメージのビルドと ghcr.io への push |
-| `mxschmitt/action-tmate` | `macos-check`・`windows-check` の最後に、ランナーへ SSH で入れる tmate のセッションを開く（下記） |
+| `mxschmitt/action-tmate` | `macos-check`・`homebrew-check`・`windows-check` の最後に、ランナーへ SSH で入れる tmate のセッションを開く（下記） |
 
 サードパーティおよび `actions/*`（`actions/checkout`・`actions/upload-artifact`・`actions/download-artifact`）の action はフルコミット SHA に固定し、末尾に `# vN` コメントでタグ相当のバージョンを添えている。ziglang は pip の `==` でバージョンを固定する。Rust ツールチェインのバージョン自体はこれらのピン留めとは別で、ワークフローの `toolchain:` 入力（環境変数 `RUST_TOOLCHAIN`）で決まる。選定理由と信頼性の評価は [2026-09-25 の log](../log/2026-09-25-release-actions-rationale.md) を参照。
 
@@ -54,6 +55,20 @@
 - 各段階の画面（全体とメニューバー）・保存したテキスト・`~/Library/Logs/swing*.log`・TCC の許可の一覧は artifact `macos-check` に残る。
 - 入力 `ssh` を true にすると、最後に `mxschmitt/action-tmate` で実行した本人だけが入れる tmate のセッションを開く。
 - ログインし直したときの自動起動と、Retina での表示は、ランナーでは確かめられない。
+
+## Homebrew の動作確認（`.github/workflows/homebrew-check.yml`）
+
+手動実行（`workflow_dispatch`）でだけ動く。`macos-latest`（Apple Silicon）で `--workspace` を release ビルドし、release と同じ形の `aarch64-apple-darwin` のアーカイブを、`Cargo.toml` のバージョン `<v>` とそれに `.1` を付けた `<v>.1` の 2 つの名前で作る（中身は同じ）。formula は `render.sh` で `file://` の URL にして、`brew tap-new --no-git` で作ったローカルの tap に置く（Homebrew は tap の外の formula ファイルを受け付けない）。鍵の無いセットアップモードで動かし、Kubo も relay も使わない。手順の正本は [`homebrew-check.yml`](../../.github/workflows/homebrew-check.yml)。
+
+確かめること（失敗するとジョブが止まる）:
+
+- `brew install` と `brew test` が通り、`<prefix>/bin/swing` が `opt` のパスを exec するスクリプトであること。
+- `libexec` の `swing` と `SWING.app` が `codesign --verify --strict` を通ること（署名の詳細と quarantine 属性は記録だけ）。
+- `swing service install`（設定ファイルの無いホームディレクトリで実行し、既定の場所に空の設定ファイルを作る）で、2 つの plist の `ProgramArguments` の先頭が `<prefix>/opt/swing/libexec/swing` と `<prefix>/opt/swing/libexec/SWING.app/Contents/MacOS/swing-tray` になり、`Cellar` を含まないこと。本体とトレイが動き、本体の実行ファイルの実体が `<v>` の keg にあること（`lsof`）。
+- `<v>.1` の formula での `brew upgrade` の後、古い keg が消え、plist の指す先が残り、本体の pid が変わらないこと。`swing service install` をやり直すと、本体とトレイの実体が `<v>.1` の keg に移ること。
+- 最後に（前の段階が失敗しても）`swing service uninstall`・`brew uninstall`・`brew untap` を行い、LaunchAgent が残らないこと。
+
+記録したファイルとログは artifact `homebrew-check` に残る。入力 `ssh` は `macos-check` と同じ。Intel の Mac と、tap のリポジトリからの実際のダウンロードは確かめていない。
 
 ## Windows の動作確認（`.github/workflows/windows-check.yml`）
 

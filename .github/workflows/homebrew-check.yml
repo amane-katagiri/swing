@@ -1,0 +1,162 @@
+name: homebrew-check
+
+on:
+  workflow_dispatch:
+    inputs:
+      ssh:
+        description: Open a tmate session at the end
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_TOOLCHAIN: "1.97"
+  HOMEBREW_NO_AUTO_UPDATE: "1"
+  HOMEBREW_NO_ANALYTICS: "1"
+  HOMEBREW_NO_ENV_HINTS: "1"
+
+jobs:
+  formula:
+    runs-on: macos-latest
+    timeout-minutes: 45
+    env:
+      W: ${{ github.workspace }}/check
+      OUT: ${{ github.workspace }}/check/out
+      TAP: swing-check/local
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # v1
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+
+      - uses: Swatinem/rust-cache@49a0bdc70d2e1b713ca9e2869b211fcce03d3c1c # v2
+        with:
+          key: homebrew-check
+
+      - name: Build
+        run: cargo build --release --locked --workspace
+
+      - name: Package two versions
+        run: |
+          version=$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | select(.name == "swing") | .version')
+          mkdir -p "$W/dist" "$OUT"
+          for tag in "v$version" "v$version.1"; do
+            name="swing-$tag-aarch64-apple-darwin"
+            mkdir -p "$W/dist/$name"
+            cp LICENSE swing.example.toml web/fonts/LICENSE-PixelMplus.txt "$W/dist/$name/"
+            cp docs/release/README.md "$W/dist/$name/README.md"
+            cp target/release/swing "$W/dist/$name/"
+            tray/macos/bundle.sh target/release/swing-tray "$W/dist/$name"
+            tar -C "$W/dist" -czf "$W/dist/$name.tar.gz" "$name"
+            rm -r "$W/dist/$name"
+            (cd "$W/dist" && shasum -a 256 -- "$name.tar.gz" >> SHA256SUMS)
+            printf '%064d  %s\n' 0 "swing-$tag-x86_64-apple-darwin.tar.gz" >> "$W/dist/SHA256SUMS"
+          done
+          {
+            echo "V1=$version"
+            echo "V2=$version.1"
+          } >> "$GITHUB_ENV"
+          cat > "$W/lib.sh" <<'EOF'
+          set -euo pipefail
+          prefix=$(brew --prefix)
+          formula() { packaging/homebrew/render.sh "v$1" "$W/dist/SHA256SUMS" "$(brew --repository "$TAP")/Formula/swing.rb" "file://$W/dist"; }
+          agent() { echo "$HOME/Library/LaunchAgents/jp.ne.ama.$1.plist"; }
+          program() { plutil -extract ProgramArguments.0 raw -o - "$(agent "$1")"; }
+          pid() { launchctl print "gui/$(id -u)/jp.ne.ama.$1" 2>/dev/null | awk '$1 == "pid" { print $3 }'; }
+          wait_pid() { for _ in $(seq 30); do [ -n "$(pid "$1")" ] && return 0; sleep 1; done; echo "jp.ne.ama.$1 is not running"; return 1; }
+          mapped() { lsof -a -p "$1" -d txt -Fn | awk 'sub(/^n/, "") { print; exit }'; }
+          EOF
+
+      - name: Install the formula
+        run: |
+          . "$W/lib.sh"
+          brew tap-new --no-git "$TAP"
+          formula "$V1"
+          cp "$(brew --repository "$TAP")/Formula/swing.rb" "$OUT/swing-$V1.rb"
+          brew install --formula "$TAP/swing"
+          brew info --formula "$TAP/swing" | tee "$OUT/brew-info.txt"
+          brew test "$TAP/swing"
+          command -v swing | tee "$OUT/which.txt"
+          tee "$OUT/bin-swing.txt" < "$prefix/bin/swing"
+          swing --version
+          ipfs version | tee "$OUT/ipfs-version.txt"
+          { readlink "$prefix/opt/swing"; find "$prefix/opt/swing/" -maxdepth 2; } | tee "$OUT/opt.txt"
+
+      - name: Signatures
+        run: |
+          . "$W/lib.sh"
+          {
+            codesign -dv --verbose=2 "$prefix/opt/swing/libexec/swing" 2>&1 || true
+            codesign -dv --verbose=2 "$prefix/opt/swing/libexec/SWING.app" 2>&1 || true
+            xattr -l "$prefix/opt/swing/libexec/swing" || true
+          } | tee "$OUT/codesign.txt"
+          codesign --verify --strict "$prefix/opt/swing/libexec/swing"
+          codesign --verify --strict "$prefix/opt/swing/libexec/SWING.app"
+
+      - name: Register the service
+        run: |
+          . "$W/lib.sh"
+          cd "$HOME"
+          swing service install | tee "$OUT/service-install.txt"
+          cp "$(agent swing)" "$(agent swing-tray)" "$OUT/"
+          test "$(program swing)" = "$prefix/opt/swing/libexec/swing"
+          test "$(program swing-tray)" = "$prefix/opt/swing/libexec/SWING.app/Contents/MacOS/swing-tray"
+          if grep -n Cellar "$(agent swing)" "$(agent swing-tray)"; then exit 1; fi
+          find "$HOME/Library/Application Support/swing" | tee "$OUT/data-dir.txt"
+          wait_pid swing
+          wait_pid swing-tray
+          mapped "$(pid swing)" | tee "$OUT/mapped-before.txt"
+          grep -q "/Cellar/swing/$V1/libexec/swing$" "$OUT/mapped-before.txt"
+
+      - name: Upgrade
+        run: |
+          . "$W/lib.sh"
+          formula "$V2"
+          cp "$(brew --repository "$TAP")/Formula/swing.rb" "$OUT/swing-$V2.rb"
+          before=$(pid swing)
+          brew upgrade --formula "$TAP/swing" | tee "$OUT/brew-upgrade.txt"
+          find "$prefix/Cellar/swing" -mindepth 1 -maxdepth 1 | tee "$OUT/kegs.txt"
+          test ! -e "$prefix/Cellar/swing/$V1"
+          test -x "$(program swing)"
+          test -x "$(program swing-tray)"
+          test "$(pid swing)" = "$before"
+          cd "$HOME"
+          swing service install | tee "$OUT/service-reinstall.txt"
+          wait_pid swing
+          wait_pid swing-tray
+          test "$(program swing)" = "$prefix/opt/swing/libexec/swing"
+          mapped "$(pid swing)" | tee "$OUT/mapped-after.txt"
+          grep -q "/Cellar/swing/$V2/libexec/swing$" "$OUT/mapped-after.txt"
+          mapped "$(pid swing-tray)" | tee "$OUT/mapped-tray-after.txt"
+          grep -q "/Cellar/swing/$V2/libexec/SWING.app/" "$OUT/mapped-tray-after.txt"
+
+      - name: Uninstall
+        if: always()
+        run: |
+          . "$W/lib.sh"
+          if command -v swing > /dev/null; then swing service uninstall | tee "$OUT/service-uninstall.txt"; fi
+          brew uninstall --formula "$TAP/swing" || true
+          brew untap "$TAP" || true
+          find "$HOME/Library/LaunchAgents" -name 'jp.ne.ama.swing*' | tee "$OUT/launchagents-after.txt"
+          test ! -s "$OUT/launchagents-after.txt"
+          pgrep -fl swing | tee "$OUT/pgrep-after.txt" || true
+
+      - name: Collect logs
+        if: always()
+        run: cp ~/Library/Logs/swing*.log "$OUT/" 2>/dev/null || true
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        if: always()
+        with:
+          name: homebrew-check
+          path: check/out
+          if-no-files-found: error
+
+      - uses: mxschmitt/action-tmate@35b54afac29c97fb54faba5b513f8fbd1882f113 # v3.24
+        if: always() && inputs.ssh
+        with:
+          limit-access-to-actor: true

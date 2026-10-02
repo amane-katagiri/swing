@@ -136,6 +136,24 @@ Kubo を初期化・起動し、その上で mirror-agent を動かします。�
 
 Linux では systemd のユーザーユニット、macOS では launchd の LaunchAgent、Windows ではタスクスケジューラに登録します（Linux はログアウト後も動かし続けるために `loginctl enable-linger` を試み、失敗すれば案内を表示します）。Windows と macOS では、`swing` と同じフォルダに `swing-tray.exe`（macOS は `SWING.app`）があれば、タスクトレイのアイコン（下記「ダッシュボード」）もログイン時に起動するよう登録し、その場で起動します。トレイが要らなければ `--no-tray` を付けてください。設定ファイルがまだ無いときに（`--config` も `SWING_CONFIG` も付けず、カレントディレクトリに `swing.toml` も無い状態で）実行すると、ユーザーごとの既定の場所に空の `swing.toml` を作ってから登録するので、サービスはセットアップモードで起動します。Linux で systemd のシステムユニットにしたいときは `sudo swing service install --system` とします（設定ファイルは先に用意しておきます）。サービスは `sudo` を実行したユーザーの権限で動きます（root では動かしません。別のユーザーで動かすなら `--run-as <user>`）。状態確認は `swing service status`、起動は `swing service start`、停止は `swing service stop`、削除は `swing service uninstall` です。詳しくは [`docs/architecture/up.md`](docs/architecture/up.md) と [`docs/architecture/service.md`](docs/architecture/service.md) を参照してください。
 
+### macOS で Homebrew から入れる
+
+macOS では Homebrew で `swing` と Kubo（`kubo`）をまとめて入れられます。
+
+```bash
+brew install amane-katagiri/swing/swing
+swing service install
+swing dashboard open
+```
+
+`swing service install` は、設定ファイルがまだ無ければ `~/Library/Application Support/swing` に空の `swing.toml` を作り、`swing` とメニューバーのアイコン（`SWING.app`）をログイン時に起動するよう登録して、その場で起動します。`swing.toml` のあるディレクトリで実行するとその設定ファイルが使われるので、ホームディレクトリなどで実行してください。最初はセットアップモードで動くので、`swing dashboard open`（またはメニューバーのアイコンの「ダッシュボードを開く」）で開いたセットアップ画面で鍵と設定を入力します。ログは `~/Library/Logs/swing.log` です。
+
+- `brew upgrade` の後も、動いている `swing` は古いバージョンのままです。`swing service install` をもう一度実行すると新しいバージョンで起動し直します（`swing stop --restart` では入れ替わりません）。
+- アンインストールするときは、先に `swing service uninstall` で登録を消してから `brew uninstall swing` します。設定とデータ（`~/Library/Application Support/swing`）は残るので、要らなければ手で消してください。
+- Homebrew の Kubo のバージョンが `swing` の想定（v0.43.1）と違うときは、起動時に警告が出ますがそのまま動きます。
+
+入る場所と `brew upgrade` での振る舞いは [`docs/architecture/homebrew.md`](docs/architecture/homebrew.md) を参照してください。
+
 ### Docker Compose で動かす
 
 `.env` ファイルを作り、必要な項目を設定します。

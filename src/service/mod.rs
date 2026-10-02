@@ -67,8 +67,9 @@ fn resolve_service_paths(
         .parent()
         .map(Path::to_path_buf)
         .context("config file has no parent directory")?;
+    // Not canonicalized: resolving Homebrew's opt symlink would pin the service to a keg that `brew upgrade` removes.
     let exe = std::env::current_exe()
-        .and_then(|p| p.canonicalize())
+        .and_then(std::path::absolute)
         .context("resolving current executable path")?;
     Ok((config, workdir, exe))
 }
@@ -117,8 +118,11 @@ const TRAY_RELATIVE_PATH: &str = if cfg!(windows) {
 };
 
 pub fn tray_exe_path(exe: &Path) -> Option<PathBuf> {
-    let path = exe.parent()?.join(TRAY_RELATIVE_PATH);
-    path.is_file().then_some(path)
+    let next_to = |exe: &Path| {
+        let path = exe.parent()?.join(TRAY_RELATIVE_PATH);
+        path.is_file().then_some(path)
+    };
+    next_to(exe).or_else(|| next_to(&exe.canonicalize().ok()?))
 }
 
 #[cfg(any(windows, target_os = "macos"))]
@@ -187,6 +191,32 @@ mod tests {
         std::fs::create_dir_all(tray.parent().unwrap()).unwrap();
         std::fs::write(&tray, b"").unwrap();
         assert_eq!(tray_exe_path(&exe), Some(tray));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn tray_exe_is_found_next_to_the_symlink_before_its_target() {
+        let dir = tempfile::tempdir().unwrap();
+        let real = dir.path().join("real");
+        let link = dir.path().join("link");
+        std::fs::create_dir_all(&real).unwrap();
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+        std::fs::write(real.join("swing"), b"").unwrap();
+        let tray = real.join(TRAY_RELATIVE_PATH);
+        std::fs::create_dir_all(tray.parent().unwrap()).unwrap();
+        std::fs::write(&tray, b"").unwrap();
+        assert_eq!(
+            tray_exe_path(&link.join("swing")),
+            Some(link.join(TRAY_RELATIVE_PATH))
+        );
+
+        let bin = dir.path().join("bin");
+        std::fs::create_dir_all(&bin).unwrap();
+        std::os::unix::fs::symlink(real.join("swing"), bin.join("swing")).unwrap();
+        assert_eq!(
+            tray_exe_path(&bin.join("swing")),
+            Some(std::fs::canonicalize(&tray).unwrap())
+        );
     }
 
     #[test]
