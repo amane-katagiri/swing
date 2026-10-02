@@ -74,12 +74,40 @@ pub fn validate_relative_path(path: &str) -> Result<(), String> {
 // Reserved on Windows regardless of extension (e.g. `nul.txt`); rejected on every platform so a
 // site published from Linux still mirrors cleanly onto a Windows checkout.
 const WINDOWS_RESERVED_NAMES: &[&str] = &[
-    "CON", "PRN", "AUX", "NUL", "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8",
-    "COM9", "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
+    "CON",
+    "PRN",
+    "AUX",
+    "NUL",
+    "CONIN$",
+    "CONOUT$",
+    "COM1",
+    "COM2",
+    "COM3",
+    "COM4",
+    "COM5",
+    "COM6",
+    "COM7",
+    "COM8",
+    "COM9",
+    "COM\u{b9}",
+    "COM\u{b2}",
+    "COM\u{b3}",
+    "LPT1",
+    "LPT2",
+    "LPT3",
+    "LPT4",
+    "LPT5",
+    "LPT6",
+    "LPT7",
+    "LPT8",
+    "LPT9",
+    "LPT\u{b9}",
+    "LPT\u{b2}",
+    "LPT\u{b3}",
 ];
 
 fn is_windows_reserved_segment(segment: &str) -> bool {
-    let base = segment.split('.').next().unwrap_or(segment);
+    let base = segment.split('.').next().unwrap_or(segment).trim_end();
     WINDOWS_RESERVED_NAMES
         .iter()
         .any(|name| base.eq_ignore_ascii_case(name))
@@ -270,9 +298,11 @@ async fn receive_upload(multipart: &mut Multipart, dest: &Path) -> Result<Parsed
                         .await
                         .map_err(|e| path_conflict_or_internal(&filename, e))?;
                 }
-                let mut out = create_private_file(&target)
-                    .await
-                    .map_err(|e| path_conflict_or_internal(&filename, e))?;
+                let mut out = match create_private_file(&target).await {
+                    Ok(out) => out,
+                    Err(_) if target.is_dir() => return Err(path_conflict(&filename)),
+                    Err(e) => return Err(path_conflict_or_internal(&filename, e)),
+                };
                 let mut field = field;
                 loop {
                     match field.chunk().await {
@@ -384,6 +414,24 @@ mod tests {
         assert!(validate_relative_path("a\u{0}b").is_err());
         assert!(validate_relative_path(".").is_err());
         assert!(validate_relative_path("..").is_err());
+    }
+
+    #[test]
+    fn validate_relative_path_rejects_every_windows_device_name() {
+        for name in [
+            "nul",
+            "a/NUL.txt",
+            "nul .txt",
+            "com\u{b9}",
+            "LPT\u{b3}.html",
+            "conin$",
+            "CONOUT$.log",
+        ] {
+            assert!(validate_relative_path(name).is_err(), "{name}");
+        }
+        for name in ["null", "com10", "lpt0.txt", "console.txt"] {
+            assert!(validate_relative_path(name).is_ok(), "{name}");
+        }
     }
 
     #[test]
