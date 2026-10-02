@@ -1455,6 +1455,15 @@ mod tests {
     }
 
     #[test]
+    fn windows_installer_pins_the_same_kubo_version() {
+        let pinned = include_str!("../packaging/windows/kubo.sha512");
+        let fields: Vec<&str> = pinned.split_whitespace().collect();
+        assert_eq!(fields.len(), 2, "{pinned}");
+        assert_eq!(fields[0].len(), 128, "{pinned}");
+        assert_eq!(fields[1], format!("kubo_v{KUBO_VERSION}_windows-amd64.zip"));
+    }
+
+    #[test]
     fn pick_free_port_returns_bindable_port() {
         let port = pick_free_port().unwrap();
         assert!(port > 0);

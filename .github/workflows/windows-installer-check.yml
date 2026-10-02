@@ -1,0 +1,79 @@
+name: windows-installer-check
+
+on:
+  workflow_dispatch:
+    inputs:
+      ssh:
+        description: Open a tmate session at the end
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_TOOLCHAIN: "1.97"
+
+defaults:
+  run:
+    shell: pwsh
+
+jobs:
+  installer:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    env:
+      OUT: ${{ github.workspace }}\check-out
+      ARCHIVE: swing-check-x86_64-pc-windows-msvc
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # v1
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+
+      - uses: Swatinem/rust-cache@49a0bdc70d2e1b713ca9e2869b211fcce03d3c1c # v2
+        with:
+          key: windows-installer-check
+
+      - name: Build
+        run: cargo build --release --locked --workspace
+
+      - name: Package
+        run: |
+          New-Item -ItemType Directory -Force "dist\$env:ARCHIVE", $env:OUT | Out-Null
+          Copy-Item LICENSE, swing.example.toml, web\fonts\LICENSE-PixelMplus.txt "dist\$env:ARCHIVE\"
+          Copy-Item docs\release\README.md "dist\$env:ARCHIVE\README.md"
+          Copy-Item target\release\swing.exe, target\release\swing-tray.exe "dist\$env:ARCHIVE\"
+          Compress-Archive -Path "dist\$env:ARCHIVE" -DestinationPath "dist\$env:ARCHIVE.zip"
+
+      - name: Build the installer
+        run: packaging\windows\build.ps1 -Archive "dist\$env:ARCHIVE.zip" -OutDir installer -RefName check
+
+      - name: Silent install
+        timeout-minutes: 5
+        run: packaging\windows\check-installer.ps1 -Phase install -Setup (Resolve-Path installer\*-setup.exe).Path -OutDir $env:OUT
+
+      - name: Upgrade while running
+        timeout-minutes: 8
+        run: packaging\windows\check-installer.ps1 -Phase upgrade -Setup (Resolve-Path installer\*-setup.exe).Path -OutDir $env:OUT
+
+      - name: Silent uninstall
+        if: always()
+        timeout-minutes: 8
+        run: packaging\windows\check-installer.ps1 -Phase uninstall -Setup (Resolve-Path installer\*-setup.exe).Path -OutDir $env:OUT
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        if: always()
+        with:
+          name: windows-installer-check
+          path: |
+            check-out
+            installer/*-setup.exe
+          if-no-files-found: error
+
+      - uses: mxschmitt/action-tmate@35b54afac29c97fb54faba5b513f8fbd1882f113 # v3.24
+        if: always() && inputs.ssh
+        with:
+          limit-access-to-actor: true

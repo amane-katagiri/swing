@@ -123,9 +123,30 @@ jobs:
           path: formula/swing.rb
           if-no-files-found: error
 
+  windows-installer:
+    needs: build
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: x86_64-pc-windows-msvc
+          path: dist
+
+      - name: Build the installer
+        shell: pwsh
+        run: packaging/windows/build.ps1 -Archive "dist/swing-$env:GITHUB_REF_NAME-x86_64-pc-windows-msvc.zip" -OutDir installer -RefName $env:GITHUB_REF_NAME
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: x86_64-pc-windows-msvc-setup
+          path: installer/*-setup.exe
+          if-no-files-found: error
+
   release:
     if: startsWith(github.ref, 'refs/tags/')
-    needs: [build, homebrew]
+    needs: [build, homebrew, windows-installer]
     runs-on: ubuntu-latest
     permissions:
       contents: write

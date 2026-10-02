@@ -23,6 +23,7 @@
 | [`architecture/release.md`](architecture/release.md) | ビルドとリリース、macOS・Homebrew・Windows の動作確認の CI |
 | [`architecture/install-sh.md`](architecture/install-sh.md) | Linux 向けのインストールスクリプト（`packaging/linux/install.sh`）: 入れる物と場所、更新、アンインストール、テスト |
 | [`architecture/homebrew.md`](architecture/homebrew.md) | macOS 向けの Homebrew の formula（`packaging/homebrew/`）: 入れる場所、`brew upgrade` とサービス、tap への公開 |
+| [`architecture/installer-windows.md`](architecture/installer-windows.md) | Windows のインストーラー（Inno Setup、`packaging/windows/`）: 中身、インストール・上書き・アンインストールの動作、その確認の CI |
 
 ## 構成要素
 
@@ -85,7 +86,8 @@
 | `swing.example.toml`・`.env.example` | 設定例（カタログから生成） |
 | `packaging/linux/` | Linux 向けの `install.sh` とそのテスト（`test-install.sh`）。[install-sh.md](architecture/install-sh.md) |
 | `packaging/homebrew/` | Homebrew の formula のひな形と書き出しスクリプト。[homebrew.md](architecture/homebrew.md) |
-| `.github/workflows/` | `release.yml`・`macos-check.yml`・`homebrew-check.yml`・`windows-check.yml`。[release.md](architecture/release.md) |
+| `packaging/windows/` | Windows のインストーラーの Inno Setup スクリプト（`swing.iss`）、それを組み立てる `build.ps1`、同梱する Kubo の固定したチェックサム（`kubo.sha512`）、動作確認の `check-installer.ps1`。[installer-windows.md](architecture/installer-windows.md) |
+| `.github/workflows/` | `release.yml`・`macos-check.yml`・`homebrew-check.yml`・`windows-check.yml`・`windows-installer-check.yml`。[release.md](architecture/release.md)・[installer-windows.md](architecture/installer-windows.md) |
 | `docs/` | 役割は AGENTS.md |
 
 `mirror/`・`health.rs`・`replicas.rs`・`webring/` は、relay・Kubo から値を集める関数（`collect_mirror_list`・`collect_sites`・`collect_status`・`replicas::collect`・`webring::collect`）と表示する関数に分かれ、ダッシュボードの API は前者を呼んで DTO にする。`publish.rs` の段階ごとの関数は CLI とダッシュボードで共有する。サブコマンドごとに relay・Kubo へ直接つなぐか `swing up` のダッシュボード API を経由するかは [`architecture/cli.md#共通`](architecture/cli.md#共通)。

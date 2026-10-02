@@ -13,7 +13,7 @@ SWING (Static-site Webring by IPFS and Nostr Generator) は、個人サイトの
 - `swing.example.toml`: 設定ファイルの見本。すべての設定項目・対応する環境変数・既定値が載っています
 - `LICENSE`・`LICENSE-PixelMplus.txt`: ライセンス
 
-IPFS ノードの Kubo は同梱していません。
+IPFS ノードの Kubo は同梱していません。Windows のインストーラー（`-setup.exe`）で入れた場合は、`ipfs.exe` と Kubo のライセンス（`LICENSE-Kubo*.txt`）も同じフォルダーに入っていて、下記の Kubo の用意とサービスの登録は済んでいます。
 
 ## 必要なもの
 
