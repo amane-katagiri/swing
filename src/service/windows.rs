@@ -4,11 +4,11 @@ use std::process::{Command, Output};
 
 use anyhow::{Context, Result, bail};
 use windows_sys::Win32::Foundation::{
-    CloseHandle, ERROR_FILE_NOT_FOUND, ERROR_MORE_DATA, ERROR_SUCCESS, FALSE,
+    CloseHandle, ERROR_FILE_NOT_FOUND, ERROR_MORE_DATA, ERROR_SUCCESS, ERROR_UNSUPPORTED_TYPE,
+    FALSE,
 };
 use windows_sys::Win32::System::Registry::{
-    HKEY_CURRENT_USER, REG_SZ, RRF_RT_REG_EXPAND_SZ, RRF_RT_REG_SZ, RegDeleteKeyValueW,
-    RegGetValueW, RegSetKeyValueW,
+    HKEY_CURRENT_USER, REG_SZ, RRF_RT_REG_SZ, RegDeleteKeyValueW, RegGetValueW, RegSetKeyValueW,
 };
 use windows_sys::Win32::System::Threading::{
     CREATE_NO_WINDOW, CreateProcessW, PROCESS_INFORMATION, STARTUPINFOW,
@@ -250,51 +250,41 @@ pub async fn stop(_system: bool) -> Result<()> {
     Ok(())
 }
 
+// RRF_RT_REG_EXPAND_SZ without RRF_NOEXPAND is rejected as an invalid parameter; RRF_RT_REG_SZ alone still accepts an expanded REG_EXPAND_SZ.
 fn read_tray_value() -> Result<Option<String>> {
     let key = wide(RUN_KEY);
     let value = wide(RUN_VALUE);
-    let flags = RRF_RT_REG_SZ | RRF_RT_REG_EXPAND_SZ;
+    let mut buf: Vec<u16> = Vec::new();
     loop {
-        let mut len: u32 = 0;
+        let mut len =
+            u32::try_from(buf.len() * 2).context("swing-tray command line is too long")?;
+        let data = if buf.is_empty() {
+            std::ptr::null_mut()
+        } else {
+            buf.as_mut_ptr().cast()
+        };
         let status = unsafe {
             RegGetValueW(
                 HKEY_CURRENT_USER,
                 key.as_ptr(),
                 value.as_ptr(),
-                flags,
+                RRF_RT_REG_SZ,
                 std::ptr::null_mut(),
-                std::ptr::null_mut(),
+                data,
                 &mut len,
             )
         };
         match status {
-            ERROR_SUCCESS => {}
-            ERROR_FILE_NOT_FOUND => return Ok(None),
-            other => bail!("reading HKCU\\{RUN_KEY}\\{RUN_VALUE} failed (error {other})"),
-        }
-        let mut buf = vec![0u16; (len as usize).div_ceil(2)];
-        let mut got = len;
-        let status = unsafe {
-            RegGetValueW(
-                HKEY_CURRENT_USER,
-                key.as_ptr(),
-                value.as_ptr(),
-                flags,
-                std::ptr::null_mut(),
-                buf.as_mut_ptr().cast(),
-                &mut got,
-            )
-        };
-        match status {
-            ERROR_SUCCESS => {
-                buf.truncate((got as usize) / 2);
+            ERROR_SUCCESS if !buf.is_empty() => {
+                buf.truncate((len as usize) / 2);
                 while buf.last() == Some(&0) {
                     buf.pop();
                 }
                 return Ok(Some(String::from_utf16_lossy(&buf)));
             }
-            ERROR_MORE_DATA => continue,
+            ERROR_SUCCESS | ERROR_MORE_DATA => buf = vec![0u16; (len as usize).div_ceil(2).max(1)],
             ERROR_FILE_NOT_FOUND => return Ok(None),
+            ERROR_UNSUPPORTED_TYPE => return Ok(Some(String::new())),
             other => bail!("reading HKCU\\{RUN_KEY}\\{RUN_VALUE} failed (error {other})"),
         }
     }

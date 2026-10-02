@@ -41,33 +41,41 @@ pub(super) fn summarize(inside: &[bool]) -> Placement {
 }
 
 fn components(path: &str, windows: bool) -> Option<Vec<String>> {
-    let (path, absolute) = if windows {
-        let path = super::templates::strip_verbatim(&path.replace('/', "\\"));
+    let (path, root_len) = if windows {
+        let path = super::templates::strip_verbatim(&path.replace('/', "\\")).to_lowercase();
         let bytes = path.as_bytes();
-        let drive = bytes.len() >= 3
+        let root_len = if bytes.len() >= 3
             && bytes[0].is_ascii_alphabetic()
             && bytes[1] == b':'
-            && bytes[2] == b'\\';
-        let absolute = drive || path.starts_with(r"\\");
-        (path.to_lowercase(), absolute)
+            && bytes[2] == b'\\'
+        {
+            1
+        } else if path.starts_with(r"\\") {
+            2
+        } else {
+            return None;
+        };
+        (path, root_len)
+    } else if path.starts_with('/') {
+        (path.to_owned(), 0)
     } else {
-        (path.to_owned(), path.starts_with('/'))
-    };
-    if !absolute {
         return None;
-    }
+    };
     let sep = if windows { '\\' } else { '/' };
     let mut out: Vec<String> = Vec::new();
     for part in path.split(sep) {
         match part {
             "" | "." => {}
+            ".." if out.len() < root_len => return None,
             ".." => {
-                out.pop();
+                if out.len() > root_len {
+                    out.pop();
+                }
             }
             other => out.push(other.to_owned()),
         }
     }
-    Some(out)
+    (out.len() >= root_len).then_some(out)
 }
 
 pub(super) fn path_is_under(path: &str, dir: &str, windows: bool) -> bool {
@@ -281,6 +289,17 @@ mod tests {
             assert!(!path_is_under(exe, app, true), "{exe}");
         }
         assert!(path_is_under(
+            r"C:\..\..\Users\a\AppData\Local\Programs\SWING\swing.exe",
+            app,
+            true
+        ));
+        for exe in [
+            r"\\other\..\c:\Users\a\AppData\Local\Programs\SWING\swing.exe",
+            r"\\server\share\..\..\C:\Users\a\AppData\Local\Programs\SWING\swing.exe",
+        ] {
+            assert!(!path_is_under(exe, app, true), "{exe}");
+        }
+        assert!(path_is_under(
             r"\\?\UNC\server\share\SWING\swing.exe",
             r"\\server\share\swing",
             true
@@ -305,6 +324,11 @@ mod tests {
         assert!(!path_is_under("/home/u/swing/swing", lib, false));
         assert!(!path_is_under("swing", lib, false));
         assert!(!path_is_under(lib, lib, false));
+        assert!(path_is_under(
+            "/../../home/u/.local/lib/swing/swing",
+            lib,
+            false
+        ));
     }
 
     #[cfg(unix)]
