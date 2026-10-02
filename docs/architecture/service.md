@@ -1,20 +1,20 @@
 # swing service（service/）
 
-[`../architecture.md`](../architecture.md) の一部。`swing up` そのものは [`up.md`](up.md)。サブコマンドとオプションは [`cli.md#service-install--uninstall--start--stop--status`](cli.md#service-install--uninstall--start--stop--status)。
+[`../architecture.md`](../architecture.md) の一部。`swing up` そのものは [`up.md`](up.md)。サブコマンドとオプションは [`cli.md#service-install--uninstall--start--stop--status`](cli.md#service-install--uninstall--start--stop--status)。登録の持ち主の判定（`uninstall --only-from`・`status --points-into`）は子ページの [`service/ownership.md`](service/ownership.md)。
 
 ## 共通
 
 - 登録する `swing` のコマンドは `<exe> up --config <config>`（`<exe>` は `current_exe()` を `std::path::absolute` で絶対パスにしたもの。シンボリックリンクは解決しない。Windows ではこれを `conhost.exe` で包み、引数を足す。[下記](#windowsタスクスケジューラ)）。
 - 設定ファイルは `config::locate_config` で決める（[`config.md`](config.md#設定ファイルの場所)）。そのパスにファイルが無いときは決まり方で分かれる。
   - `--config`／`SWING_CONFIG` で指した: 「config file not found: <path>」でエラー。
-  - ユーザーごとの既定の場所（`--system` でないとき）: ディレクトリ（Unix では `0700`）と空の設定ファイル（Unix では `0600`）を作り、`Created an empty config file at <path>` と表示してそのまま登録する。インストーラーが何も用意していないマシンで `swing service install --no-start` を実行しておけば、次に起動したサービスはセットアップモード（[`up.md`](up.md#セットアップモード鍵未設定)）で動く。
-  - それ以外（`--system` での既定の場所、既定の場所を決められずカレントディレクトリになった）: 「service install needs a config file (swing.toml): pass --config or set SWING_CONFIG」でエラー（環境変数だけで動かす構成は非対応）。`--system` で作らないのは、`sudo` 下の既定の場所が root のホームになり、サービスを動かすユーザーが書けないため。
-- 設定ファイルのパスは `canonicalize` して絶対パスにする。実行ファイルのパスだけは `canonicalize` しない。macOS の `current_exe()` は exec に渡されたパスをそのまま返す（`_NSGetExecutablePath`）ので、Homebrew の `opt` のようなシンボリックリンク経由で起動すれば、バージョンをまたいで変わらないそのパスが登録される（[`homebrew.md`](homebrew.md)）。Linux の `current_exe()`（`/proc/self/exe`）はもともと解決済みのパスを返す。
+  - ユーザーごとの既定の場所（`--system` でないとき）: ディレクトリ（Unix では `0700`）と空の設定ファイル（Unix では `0600`）を作り、`Created an empty config file at <path>` と表示して登録する。サービスはセットアップモード（[`up.md`](up.md#セットアップモード鍵未設定)）で起動する。
+  - それ以外（`--system` での既定の場所、既定の場所を決められずカレントディレクトリになった）: 「service install needs a config file (swing.toml): pass --config or set SWING_CONFIG」でエラー。環境変数だけで動かす構成は非対応。
+- 設定ファイルのパスは `canonicalize` する。実行ファイルのパスは `canonicalize` しないので、macOS で Homebrew の `opt` のようなシンボリックリンク経由で起動すると、そのパスが登録される（[`homebrew.md`](homebrew.md#パスと-brew-upgrade)）。Linux の `current_exe()` は解決済みのパスを返す。
 - 作業ディレクトリは設定ファイルの親ディレクトリ。設定ファイルに書いた相対パスと既定値は作業ディレクトリに関係なく設定ファイルのディレクトリから解決される（[`config.md`](config.md)）。
-- `--system` は Linux でのみ有効で、他 OS で指定すると「--system is only supported on Linux」でエラー。`--run-as <user>` は `install --system` でだけ使える（CLI では `--system` なしの指定を clap が拒む。`service::install` を直接呼んだときは「--run-as is only valid with --system」でエラー）。launchd・タスクスケジューラへの登録はどれもログインユーザーのもので、システム全体への登録は無い。
-- 生成する unit / plist / タスク XML / トレイの登録内容は `service/templates.rs` の関数（`systemd_unit`・`launchd_plist`・`launchd_tray_plist`・`schtasks_xml`・`tray_run_command`）が正本で、以下の表は動作に効く値だけを挙げる。埋め込むパス（実行ファイル・設定ファイル・作業ディレクトリ・ログ・トレイ）とユーザー名に制御文字（`char::is_control`）が入っていれば「<何> contains a control character and cannot be written into a service definition: ...」、パスが UTF-8 でなければ「<何> is not valid UTF-8 and cannot be written into a service definition: ...」でエラーにし、何も書き出さない。
+- `--system` は Linux でのみ有効で、他 OS で指定すると「--system is only supported on Linux」でエラー。`--run-as <user>` は `install --system` でだけ使える。launchd・タスクスケジューラへの登録はどれもログインユーザーのもので、システム全体への登録は無い。
+- 生成する unit / plist / タスク XML / トレイの登録内容は `service/templates.rs` の関数（`systemd_unit`・`launchd_plist`・`launchd_tray_plist`・`schtasks_xml`・`tray_run_command`）が正本で、以下の表は動作に効く値だけを挙げる。埋め込むパス（実行ファイル・設定ファイル・作業ディレクトリ・ログ・トレイ）とユーザー名に制御文字（`char::is_control`）があるか、パスが UTF-8 でなければエラーにし、何も書き出さない。
 - OS ごとの実行部分は `service/linux.rs`・`macos.rs`・`windows.rs`、外部コマンドの実行は `service/process.rs`。対象 3 OS 以外では `unsupported.rs` が選ばれ、`is_installed` 以外の操作は「service management is not supported on this OS」でエラーになる（`is_installed` は未登録を返す）。
-- `service::is_installed(system)` は `swing` 本体が登録済みかどうかを `Option<bool>` で返す（`None` は分からない）。Linux は unit ファイル、macOS は plist の有無で決まり、`None` は返さない。Windows は下記「Windows」の判定。CLI からは使わず、`swing-tray` が使う（[`tray.md`](tray.md)）。
+- `service::is_installed(system)` は本体が登録済みかを `Option<bool>`（`None` は分からない）で返す。Linux は unit ファイル、macOS は plist の有無。Windows は[下記](#windowsタスクスケジューラ)。`swing-tray` が使う（[`tray.md`](tray.md)）。
 - 停止にかけるサービスマネージャの上限（`service::STOP_TIMEOUT`、90 秒）と `swing up` の停止の時間予算の関係は [`up.md#停止の時間予算`](up.md#停止の時間予算)。
 - `swing stop --restart` やダッシュボードの再起動は、プロセスを終了させずに同じプロセス内で `swing up` をやり直す（[`up.md#終了要求と-exit-codeshutdownexitrequest-shutdownexit`](up.md#終了要求と-exit-codeshutdownexitrequest-shutdownexit)）ので、サービスマネージャの再起動ポリシーは関わらない。
 
@@ -22,7 +22,7 @@
 
 `install` は、`swing` 実行ファイルと同じディレクトリにトレイ（Windows は `swing-tray.exe`、macOS は `SWING.app/Contents/MacOS/swing-tray`。`tray_exe_path`）があれば、ログイン時に `swing-tray --config <config>` を起動するよう登録する（[`tray.md`](tray.md)）。
 
-- 探す順は、`<exe>` の隣、`<exe>` を `canonicalize` した先の隣。前者が見つかれば登録するパスもシンボリックリンクを解決しないままにする。`swing` だけをシンボリックリンクで PATH の通った場所に置いた構成では後者で見つかる。
+- 探す順は、`<exe>` の隣、`<exe>` を `canonicalize` した先の隣（`swing` だけをシンボリックリンクで PATH に置いた構成）。見つけたパスをそのまま登録する。
 - macOS では `SWING.app` の外にある素の `swing-tray` は見ない。
 - どちらの OS でも、見つからなければ「<そのパス> was not found next to ...」と出して、トレイの登録だけ飛ばす。
 - `--no-start` でなければ、登録した直後にトレイも起動する。
@@ -34,10 +34,6 @@
 |---|---|---|---|
 | Windows | `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` の値 `swing-tray`。中身は `"<swing-tray.exe>" --config "<config>"`（`canonicalize` が付ける `\\?\` は外し、`\\?\UNC\` は `\\` に戻す） | `CreateProcessW` でハンドルを継承させずに起動し、待たない | 値を消す（無ければ何もしない）。動いているトレイには触らない（トレイが閉じる条件は [`tray.md`](tray.md#サービスの登録が消えたら終了する)） |
 | macOS | `~/Library/LaunchAgents/jp.ne.ama.swing-tray.plist`。`ProgramArguments` は `SWING.app` の中の `swing-tray` を直接指す。`RunAtLoad = true`・`LimitLoadToSessionType = Aqua`・`ProcessType = Interactive`・`AssociatedBundleIdentifiers = [jp.ne.ama.swing]`、`KeepAlive` は無し | 先に `launchctl bootout gui/<uid>/jp.ne.ama.swing-tray`（失敗は無視）してから `launchctl bootstrap gui/<uid> <plist>` | plist があれば `bootout`（失敗は無視）して plist を消す。動いているトレイも止まる |
-
-## 登録の持ち主の判定
-
-`uninstall --only-from <dir>` と `status --points-into <dir>` は、今の登録（本体と、Windows・macOS ではトレイ）を読み、それぞれが起動する実行ファイルが `<dir>` の下にあるかを判定する。インストーラーが、自分のインストール先以外から登録された `swing` を消したり登録し直したりしないために使う。登録ごとに読む場所・パスの比べ方・出力と終了コードは [`service/ownership.md`](service/ownership.md)。
 
 ## Linux（systemd）
 
@@ -116,12 +112,7 @@ unit に埋め込むパスとユーザー名は、systemd の指定子（`%`）�
 - `install`: XML を一時ファイルに書き、`schtasks /Create /TN swing /XML <tmpfile> /F` で登録してから一時ファイルを削除する。`--no-start` でなければ `schtasks /Run /TN swing` で即時起動する。
 - `start`: `schtasks /Run /TN swing`。
 - `uninstall`: トレイの登録を消した後、`stop`（下記）と同じグレースフルな停止を試みる。失敗しても `stop` と同じ `Warning: …` を出して続ける。続けて `schtasks /End /TN swing`（失敗は無視）→ `schtasks /Delete /TN swing /F`。
-- `stop`: 設定ファイルを `resolve_config_path(None)`（`--config` は取らない。`SWING_CONFIG`、カレントディレクトリの `swing.toml`、ユーザーごとの既定の場所の順。[`config.md`](config.md#設定ファイルの場所)）で探して `Config::load` し、`stop::run`（[`cli.md#stop`](cli.md#stop)）を 60 秒（`service::GRACEFUL_STOP_TIMEOUT`）のタイムアウトで呼ぶ。次のときは `Warning: …` を標準出力に出して `schtasks /End /TN swing` にフォールバックする（`/End` で `conhost.exe` が終わり、`swing` は `--exit-with-parent` でグレースフルに止まる）。
-  - 設定ファイルが無い: `` Warning: could not find the config file (swing.toml) at <path> to stop swing through its dashboard; set SWING_CONFIG or run this from the directory containing swing.toml. Falling back to `schtasks /End`. ``
-  - 設定ファイルを読めない: `` Warning: could not read the config file <path> to stop swing through its dashboard (<error>). Falling back to `schtasks /End`. ``
-  - `stop::run` が失敗した: `` Warning: graceful stop failed (...); falling back to `schtasks /End`. ``
-
-  タスクの登録自体は残り、次のログオン時トリガーまで再起動しない。
+- `stop`: 設定ファイルを `resolve_config_path(None)`（`--config` は取らない。`SWING_CONFIG`、カレントディレクトリの `swing.toml`、ユーザーごとの既定の場所の順。[`config.md`](config.md#設定ファイルの場所)）で探して `Config::load` し、`stop::run`（[`cli.md#stop`](cli.md#stop)）を 60 秒（`service::GRACEFUL_STOP_TIMEOUT`）のタイムアウトで呼ぶ。設定ファイルが無い・読めない・`stop::run` が失敗したときは、理由を `Warning: …` として標準出力に出し、`schtasks /End /TN swing` にフォールバックする（`conhost.exe` が終わり、`swing` は `--exit-with-parent` でグレースフルに止まる）。タスクの登録は残り、次のログオンまで起動しない。
 - 登録の判定（`is_installed` と `status`）: `schtasks /Query /TN swing` が成功すれば登録済み。失敗したら `schtasks /Query /FO CSV /NH` で全タスクを列挙し、その一覧取得が成功して先頭列に `"\swing"`（大文字小文字は区別しない。サブフォルダのタスクは含めない）が無いときだけ未登録とする。起動の失敗、一覧取得の失敗、10 秒のタイムアウト（超えたら `schtasks` を kill する）はすべて「分からない」（`None`）。
 - `status`: 上の判定で未登録なら `not installed`、分からなければエラー終了する。登録済みなら `schtasks /Query /TN swing /FO LIST /V`（10 秒のタイムアウト付き）の標準出力をそのまま表示し、失敗したらエラー終了する。
 - `schtasks` はすべて `CREATE_NO_WINDOW` を付けて起動する。出力（失敗時の標準エラーと `status` の標準出力）は UTF-8 として読めなければ OEM コードページとして変換して表示する。

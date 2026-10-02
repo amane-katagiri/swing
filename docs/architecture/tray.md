@@ -113,7 +113,7 @@ OS ごとに 1 枚の PNG をバイナリに埋め込み、停止中とエラー
 
 ## macOS のアプリバンドル（`SWING.app`）
 
-`tray/macos/bundle.sh <swing-tray> <出力先ディレクトリ>` が `<出力先>/SWING.app` を作る（あれば作り直す）。release と `macos-check` のワークフローがこれを使う。`cargo build` だけでは作られないので、手元でビルドした `swing-tray` を `service install` に登録させるときも、このスクリプトで `swing` の隣に `SWING.app` を置く。
+`tray/macos/bundle.sh <swing-tray> <出力先ディレクトリ>` が `<出力先>/SWING.app` を作る（あれば作り直す）。release・`macos-check`・`homebrew-check` のワークフローがこれを使う。`cargo build` だけでは作られないので、手元でビルドした `swing-tray` を `service install` に登録させるときも、このスクリプトで `swing` の隣に `SWING.app` を置く。
 
 ```
 SWING.app/Contents/

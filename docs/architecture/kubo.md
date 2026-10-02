@@ -156,8 +156,10 @@ unmanaged（`[ipfs].api`）の Kubo には秘密を送らず、認証は SWING �
 
 - `compose.yaml` の `ipfs` サービスのイメージタグ（`ipfs/kubo:v0.43.1`）
 - `kubo::KUBO_VERSION`（`src/kubo.rs`）
-- `packaging/linux/install.sh` の `KUBO_VERSION`（[`install-sh.md`](install-sh.md)）
-- Windows のインストーラーに同梱する Kubo のチェックサム `packaging/windows/kubo.sha512`（<https://dist.ipfs.tech/kubo/> の `kubo_v<版>_windows-amd64.zip.sha512` をそのまま置く。ファイル名が `KUBO_VERSION` と合っていることを `kubo::tests` が確かめる。[`installer-windows.md`](installer-windows.md#kubo-の取得と検証)）
+- `packaging/linux/install.sh` の `KUBO_VERSION` と `KUBO_SHA512_AMD64`・`KUBO_SHA512_ARM64`（<https://dist.ipfs.tech/kubo/> の `kubo_v<版>_linux-<amd64|arm64>.tar.gz.sha512` の値。[`install-sh.md`](install-sh.md)）
+- `packaging/windows/kubo.sha512`（`kubo_v<版>_windows-amd64.zip.sha512` をそのまま置く。[`installer-windows.md`](installer-windows.md#kubo-の取得と検証)）
+
+`kubo::tests` の `install_sh_pins_the_same_kubo_version`（版の一致と固定値が 128 桁の 16 進であること）と `windows_installer_pins_the_same_kubo_version`（ファイル名の版の一致）が、2 つのインストーラーの更新漏れを検出する。
 - README と docs の版表記（`v0.43.1` で検索できる）
 
 次の Kubo の挙動に依存しているので、上げると壊れうる。

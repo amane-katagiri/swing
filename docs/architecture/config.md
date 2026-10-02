@@ -20,7 +20,7 @@
 | macOS | `$HOME/Library/Application Support/swing` | `HOME` が無い・絶対パスでない・既存のディレクトリでない |
 | Windows | `%LOCALAPPDATA%\swing` | `LOCALAPPDATA` が無い・絶対パスでない・既存のディレクトリでない |
 
-どれも設定ファイルの隣に置く `data`（状態ファイルと Kubo のリポジトリ）ごと入る場所なので、Linux は `~/.config` ではなくデータ用のディレクトリ、Windows は移動プロファイルに載る `APPDATA` ではなく `LOCALAPPDATA` を使う。ホームディレクトリの無いユーザー（Docker イメージのユーザーなど。[`docker.md`](docker.md)）は 5 になる。空文字の環境変数は未設定として扱う（下記）。
+設定ファイルの隣の `data`（状態ファイルと Kubo のリポジトリ）もこの下に入る。ホームディレクトリの無いユーザー（Docker イメージのユーザーなど。[`docker.md`](docker.md)）は 5 になる。空文字の環境変数は未設定として扱う（下記）。
 
 1 か 2 で指したファイルが無ければエラー終了。3〜5 で決まったファイルが無ければエラーにせず、既定値と環境変数だけで組み立てる（`Config.config_exists = false`）。ダッシュボードのセットアップ・設定編集はこのパスに新規作成・上書きし、親ディレクトリが無ければ作る（Unix では `0700`。`settings::write_atomic`）。
 

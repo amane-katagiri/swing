@@ -18,8 +18,8 @@
 - macOS の `swing` は素の実行ファイルで、ファイルアイコンは付かない。`swing-tray` は `tray/macos/bundle.sh` で `SWING.app` にまとめ、アイコンと名前はバンドルが持つ（[`tray.md`](tray.md#macos-のアプリバンドルswingapp)）。
 - 成果物は `swing-<ref>-<target>.tar.gz`（Windows は `.zip`）で、中身は `swing`（`swing.exe`）・`LICENSE`・`web/fonts/LICENSE-PixelMplus.txt`・`swing.example.toml` と、`docs/release/README.md` を `README.md` に改名したもの。Windows には `swing-tray.exe`、macOS には `SWING.app` も入れる。Kubo は同梱しない。
 - `release` ジョブは、`packaging/linux/install.sh`（[`install-sh.md`](install-sh.md)）を `install.sh` としてアーカイブと並べてリリースに添える。`SHA256SUMS` はこれを含めて作る。
-- `windows-installer` ジョブ（windows-latest）が `build` の後に、`x86_64-pc-windows-msvc` の zip と Kubo の `ipfs.exe` から Inno Setup のインストーラー `swing-<ref>-x86_64-pc-windows-msvc-setup.exe` を作り、artifact `x86_64-pc-windows-msvc-setup` に置く。Kubo はここで取得し、リポジトリに固定したチェックサムで検証する。中身・動作・組み立ては [`installer-windows.md`](installer-windows.md)。
-- `homebrew` ジョブが macOS の 2 つのアーカイブから Homebrew の formula（`swing.rb`）を書き出し、artifact `homebrew` に置く。タグの ref ではリリースにも添付する（[`homebrew.md`](homebrew.md#tap-への公開)）。ブランチの ref ではアーカイブ名にブランチ名が入るので、バージョンを読み取れない formula になる（中身の確認用）。
+- `windows-installer` ジョブ（windows-latest）が `build` の後に、`x86_64-pc-windows-msvc` の zip と Kubo から `packaging/windows/build.ps1` でインストーラー `swing-<ref>-x86_64-pc-windows-msvc-setup.exe` を作り、artifact `x86_64-pc-windows-msvc-setup` に置く（[`installer-windows.md`](installer-windows.md#組み立てbuildps1)）。
+- `homebrew` ジョブが macOS の 2 つのアーカイブから Homebrew の formula（`swing.rb`）を書き出し、artifact `homebrew` に置く（[`homebrew.md`](homebrew.md#tap-への公開)）。
 - タグの ref で動いたとき（タグの push と、タグを選んだ手動実行）は、タグ名と `Cargo.toml` の `version` が一致しないと失敗する（`v0.1.0` と `0.1.0`）。全 target と `windows-installer`・`homebrew` が通ると、すべての artifact（インストーラーを含む）に `SHA256SUMS` を付けた**ドラフト**のリリースを作る。公開は GitHub 上で手動で行う。
 - ブランチで手動実行したときはリリースを作らず、バイナリとインストーラーは Actions の artifact に残す。イメージは下記のとおり push する。
 - `image` ジョブが `ghcr.io/<owner>/<repo>`（小文字）のコンテナイメージを `linux/amd64`・`linux/arm64` で作る。中身は `build` ジョブの `x86_64-unknown-linux-musl`・`aarch64-unknown-linux-musl` の `swing` を `docker/release.Dockerfile`（[`docker.md`](docker.md#dockerfile)）に入れたもの。QEMU は `RUN`（ユーザー作成）にだけ使う。
@@ -37,7 +37,7 @@
 | `mxschmitt/action-tmate` | `macos-check`・`homebrew-check`・`windows-check`・`windows-installer-check` の最後に、ランナーへ SSH で入れる tmate のセッションを開く（下記） |
 | Inno Setup（`jrsoftware/issrc` のリリース） | Windows のインストーラーのコンパイラ（`packaging/windows/build.ps1` が取得する） |
 
-サードパーティおよび `actions/*`（`actions/checkout`・`actions/upload-artifact`・`actions/download-artifact`）の action はフルコミット SHA に固定し、末尾に `# vN` コメントでタグ相当のバージョンを添えている。ziglang は pip の `==` でバージョンを固定する。Inno Setup は `build.ps1` にバージョンとインストーラーの SHA-256 を固定する。Rust ツールチェインのバージョン自体はこれらのピン留めとは別で、ワークフローの `toolchain:` 入力（環境変数 `RUST_TOOLCHAIN`）で決まる。選定理由と信頼性の評価は [2026-09-25 の log](../log/2026-09-25-release-actions-rationale.md) を参照。
+サードパーティおよび `actions/*`（`actions/checkout`・`actions/upload-artifact`・`actions/download-artifact`）の action はフルコミット SHA に固定し、末尾に `# vN` コメントでタグ相当のバージョンを添える。ziglang は pip の `==` で、Inno Setup は `build.ps1` にバージョンとインストーラーの SHA-256 で固定する。Rust ツールチェインのバージョンはワークフローの `toolchain:` 入力（環境変数 `RUST_TOOLCHAIN`）で決まる。選定理由は [2026-09-25 の log](../log/2026-09-25-release-actions-rationale.md)。
 
 ## macOS の動作確認（`.github/workflows/macos-check.yml`）
 
@@ -60,7 +60,7 @@
 
 ## Homebrew の動作確認（`.github/workflows/homebrew-check.yml`）
 
-手動実行（`workflow_dispatch`）でだけ動く。`macos-latest`（Apple Silicon）で `--workspace` を release ビルドし、release と同じ形の `aarch64-apple-darwin` のアーカイブを、`Cargo.toml` のバージョン `<v>` とそれに `.1` を付けた `<v>.1` の 2 つの名前で作る（中身は同じ）。formula は `render.sh` で `file://` の URL にして、`brew tap-new --no-git` で作ったローカルの tap に置く（Homebrew は tap の外の formula ファイルを受け付けない）。鍵の無いセットアップモードで動かし、Kubo も relay も使わない。手順の正本は [`homebrew-check.yml`](../../.github/workflows/homebrew-check.yml)。
+手動実行（`workflow_dispatch`）でだけ動く。`macos-latest`（Apple Silicon）で `--workspace` を release ビルドし、release と同じ形の `aarch64-apple-darwin` のアーカイブを、`Cargo.toml` のバージョン `<v>` とそれに `.1` を付けた `<v>.1` の 2 つの名前で作る（中身は同じ）。formula は `render.sh` で `file://` の URL にして、`brew tap-new --no-git` で作ったローカルの tap に置く。鍵の無いセットアップモードで動かし、Kubo も relay も使わない。手順の正本は [`homebrew-check.yml`](../../.github/workflows/homebrew-check.yml)。
 
 確かめること（失敗するとジョブが止まる）:
 
@@ -91,7 +91,7 @@
 
 ## Windows のインストーラーの動作確認（`.github/workflows/windows-installer-check.yml`）
 
-手動実行でだけ動き、ブランチからインストーラーを作って、サイレントインストール・動作中の上書き・サイレントアンインストールを確かめる。内容は [`installer-windows.md`](installer-windows.md#動作確認の-cigithubworkflowswindows-installer-checkyml)。
+手動実行でだけ動き、ブランチからインストーラーを作って、サイレントインストール・動作中の上書き・サイレントアンインストール・別の場所からの登録の扱いを確かめる。内容は [`installer-windows.md`](installer-windows.md#動作確認の-cigithubworkflowswindows-installer-checkyml)。
 
 ## ローカルでのクロスビルド
 

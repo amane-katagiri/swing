@@ -1,15 +1,15 @@
 # Windows のインストーラー（`packaging/windows/`）
 
-[`../architecture.md`](../architecture.md) の一部。登録するサービスとトレイは [`service.md`](service.md) と [`tray.md`](tray.md)、リリースのワークフロー全体は [`release.md`](release.md)。
+[`../architecture.md`](../architecture.md) の一部。登録するサービスとトレイは [`service.md`](service.md) と [`tray.md`](tray.md)、インストーラーを作る `windows-installer` ジョブは [`release.md`](release.md)。
 
-Inno Setup で作るインストーラー 1 つを、ブラウザで落として使う GUI のインストーラーと、winget の `InstallerType: inno` のインストーラーの両方に使う。コード署名はしていない。
+Inno Setup で作るインストーラー 1 つを、GUI のインストーラーと winget の `InstallerType: inno` の両方に使う。コード署名はしていない。
 
 | ファイル | 役割 |
 |---|---|
 | `swing.iss` | Inno Setup のスクリプト。英語と日本語、`UTF-8`（BOM 付き） |
 | `build.ps1` | release の zip と Kubo を集めて `swing.iss` をコンパイルする |
-| `kubo.sha512` | 同梱する Kubo の zip の SHA-512。dist.ipfs.tech の `.sha512` と同じ `<hash>  <ファイル名>` の 1 行 |
-| `check-installer.ps1` | `windows-installer-check` ワークフローの確認手順（下記） |
+| `kubo.sha512` | 同梱する Kubo の zip の SHA-512。`<hash>  <ファイル名>` の 1 行 |
+| `check-installer.ps1` | `windows-installer-check` ワークフローの確認手順（[下記](#動作確認の-cigithubworkflowswindows-installer-checkyml)） |
 
 ## 組み立て（`build.ps1`）
 
@@ -18,120 +18,126 @@ build.ps1 -Archive <swing-<ref>-x86_64-pc-windows-msvc.zip> -OutDir <dir> -RefNa
 ```
 
 1. `Cargo.toml` の最初の `version = "..."` を版、`src/kubo.rs` の `KUBO_VERSION` を Kubo の版として読む。
-2. Kubo の zip を取得して検証する（下記）。`ipfs.exe` と、`LICENSE`・`LICENSE-APACHE`・`LICENSE-MIT` を `LICENSE-Kubo.txt`・`LICENSE-Kubo-APACHE.txt`・`LICENSE-Kubo-MIT.txt` に改名して作業ディレクトリ（既定は一時ディレクトリの `swing-installer`、毎回作り直す）の `stage` に置く。
-3. `-Archive` の zip を展開し、中のただ 1 つのディレクトリの中身を `stage` に足す。
-4. `-Iscc` が無ければ Inno Setup 6.7.3 のインストーラーを GitHub の `jrsoftware/issrc` のリリースから取得し、スクリプトに固定した SHA-256 と照らしてから、作業ディレクトリの `inno` に portable モード（`/PORTABLE=1 /CURRENTUSER`）で入れる。レジストリやスタートメニューには何も残さない。
-5. `ISCC.exe /DAppVersion=<版> /DRefName=<ref> /DStageDir=<stage> /O<OutDir> swing.iss` でコンパイルする。出力は `swing-<ref>-x86_64-pc-windows-msvc-setup.exe`。
+2. Kubo の zip を取得して検証し（下記）、`ipfs.exe` と Kubo のライセンス（`LICENSE`・`LICENSE-APACHE`・`LICENSE-MIT` を `LICENSE-Kubo.txt`・`LICENSE-Kubo-APACHE.txt`・`LICENSE-Kubo-MIT.txt` に改名）を作業ディレクトリ（既定は一時ディレクトリの `swing-installer`。毎回作り直す）の `stage` に置く。
+3. `-Archive` の zip の中のただ 1 つのディレクトリの中身を `stage` に足す。
+4. `-Iscc` が無ければ、Inno Setup 6.7.3 のインストーラーを `jrsoftware/issrc` のリリースから取得し、固定した SHA-256 と照らしてから作業ディレクトリの `inno` に portable モード（`/PORTABLE=1 /CURRENTUSER`）で入れる。
+5. `ISCC.exe /DAppVersion=<版> /DRefName=<ref> /DStageDir=<stage> /O<OutDir> swing.iss` で `swing-<ref>-x86_64-pc-windows-msvc-setup.exe` を作る。
 
-`swing.iss` は `AppVersion`・`StageDir` が無いとコンパイルエラーにする。`RefName` は省略すると `v<AppVersion>`。ファイルのバージョン情報（`VersionInfoVersion`）には `AppVersion` の `-` より前（`0.2.0-rc.1` なら `0.2.0`）を使う。
+`swing.iss` は `AppVersion`・`StageDir` が無いとコンパイルエラー。`RefName` の既定は `v<AppVersion>`。`VersionInfoVersion` は `AppVersion` の `-` より前（`0.2.0-rc.1` なら `0.2.0`）。
 
 ### Kubo の取得と検証
 
-`https://dist.ipfs.tech/kubo/v<版>/kubo_v<版>_windows-amd64.zip` と、隣の `.sha512` を取得し、次のどれかに当たれば失敗にする。
+`https://dist.ipfs.tech/kubo/v<版>/kubo_v<版>_windows-amd64.zip` と隣の `.sha512` を取得し、次のどれかなら失敗する。
 
-- `kubo.sha512` のファイル名が `kubo_v<KUBO_VERSION>_windows-amd64.zip` でない（`kubo::tests` の `windows_installer_pins_the_same_kubo_version` も同じことを確かめる）
+- `kubo.sha512` のファイル名が `kubo_v<KUBO_VERSION>_windows-amd64.zip` でない
 - 配布元の `.sha512` の中身が `kubo.sha512` と違う
-- 取得した zip の SHA-512 が `kubo.sha512` と違う
+- zip の SHA-512 が `kubo.sha512` と違う
 
-インストール時に外から何かを取得することは無い。
+Kubo の版を上げるときの手順は [`kubo.md#kubo-のバージョン`](kubo.md#kubo-のバージョン)。インストール時には何も取得しない。
 
 ## インストーラーの設定
 
 | 項目 | 値 |
 |---|---|
-| `AppId` | `{E8A9B45D-3A72-492B-905A-51911FD534C2}`（変えると別のアプリとして扱われ、上書きにならない） |
+| `AppId` | `{E8A9B45D-3A72-492B-905A-51911FD534C2}`（変えると上書きにならず別のアプリになる） |
 | 名前・発行元 | `SWING`・`Amane Katagiri` |
-| 権限 | `PrivilegesRequired=lowest`。UAC を出さず、常にユーザー単位のインストールになる |
-| インストール先 | `{autopf}\SWING`。ユーザー単位なので `%LOCALAPPDATA%\Programs\SWING`。上書きのときは前回の場所。`;` か `%` を含むフォルダーは選べない（`Path` に足すため。フォルダーを選ぶ画面の「次へ」と、サイレントの `/DIR=` でも準備の段階で `InvalidAppDir` のメッセージを出して止める） |
-| アーキテクチャ | `x64compatible`（64 ビットモード） |
-| 対応 OS | Windows 10 1903（`10.0.18362`）以降。タスクが使う `conhost.exe --headless` がそれより前に無いため |
-| 言語 | 英語（`Default.isl`）と日本語（`Japanese.isl`）。OS の表示言語で選ばれ、選ぶ画面は合わないときだけ出る |
-| アイコン | `assets/swing.ico`。「アプリと機能」のアイコンは `{app}\swing.exe` |
-| 使用中のファイル | `CloseApplications=no`（Restart Manager は使わない。止め方は下記） |
-| 環境変数 | `ChangesEnvironment=yes`。インストールとアンインストールの最後に環境変数の変更を通知する |
+| 権限 | `PrivilegesRequired=lowest`。常にユーザー単位で、UAC を出さない |
+| インストール先（`{app}`） | `{autopf}\SWING`＝`%LOCALAPPDATA%\Programs\SWING`。上書きでは前回の場所。`;` か `%` を含むフォルダーは、選ぶ画面の「次へ」とサイレントの `/DIR=` の準備段階で `InvalidAppDir` を出して拒む |
+| アーキテクチャ | `x64compatible` |
+| 対応 OS | Windows 10 1903（`10.0.18362`）以降（タスクが使う `conhost.exe --headless` の要件） |
+| 言語 | 英語（`Default.isl`）と日本語（`Japanese.isl`）。OS の表示言語で選ばれ、合わないときだけ選ぶ画面が出る |
+| アイコン | `assets/swing.ico`。「アプリと機能」は `{app}\swing.exe` |
+| 使用中のファイル | `CloseApplications=no`（止め方は下記） |
+| 環境変数 | `ChangesEnvironment=yes` |
 
 ## 入るもの
 
-`{app}`（インストール先）に次を置く。release の zip の中身に `ipfs.exe` と Kubo のライセンスを足したもの。
+`{app}` に release の zip の中身と Kubo を置く。
 
-- `swing.exe`・`swing-tray.exe`・`ipfs.exe`（`kubo::locate_binary` が `swing.exe` の隣に見つける。[`kubo.md`](kubo.md)）
+- `swing.exe`・`swing-tray.exe`・`ipfs.exe`（`ipfs.exe` は `swing.exe` の隣で見つかる。[`kubo.md`](kubo.md#バイナリの検出kubolocate_binary)）
 - `swing.example.toml`・`README.md`（`docs/release/README.md`）
 - `LICENSE`・`LICENSE-PixelMplus.txt`・`LICENSE-Kubo.txt`・`LICENSE-Kubo-APACHE.txt`・`LICENSE-Kubo-MIT.txt`
-- `unins000.exe`・`unins000.dat`（Inno Setup のアンインストーラー）
+- `unins000.exe`・`unins000.dat`
 
-ほかに次を作る。
+ほかに作るもの:
 
-- スタートメニュー（ユーザーの `Programs`）の `SWING`: `{app}\swing-tray.exe` を作業ディレクトリ `{app}` で起動する。トレイは起動時に、登録済みで止まっている `swing up` を起動する（[`tray.md`](tray.md#起動したときの自動起動)）
-- ユーザーの環境変数 `Path`（`HKCU\Environment`）の末尾に `{app}`。既にあれば（大文字小文字と末尾の `\` を無視して比べる）足さない。値は `REG_EXPAND_SZ` で書く
+- スタートメニュー（ユーザーの `Programs`）の `SWING`: `{app}\swing-tray.exe` を作業ディレクトリ `{app}` で起動する（トレイは登録済みで止まっている `swing up` を起動する。[`tray.md`](tray.md#起動したときの自動起動)）
+- ユーザーの `Path`（`HKCU\Environment`、`REG_EXPAND_SZ`）の末尾に `{app}`。既にあれば（大文字小文字と末尾の `\` を無視）足さない
 - 「アプリと機能」の項目（`HKCU\...\Uninstall\{E8A9B45D-...}_is1`）
 
 ## swing.exe の呼び出し方
 
-インストーラーが実行する `swing.exe` は、どれも作業ディレクトリを `{app}` にし、ウィンドウを出さず、終わるまで待つ（`dashboard open` 以外は出力をインストーラーのログに書く）。`--config` は付けないので、設定ファイルは `SWING_CONFIG` → `{app}\swing.toml`（あれば）→ ユーザーごとの既定の場所（`%LOCALAPPDATA%\swing\swing.toml`）の順で決まる（[`config.md`](config.md#設定ファイルの場所)）。
+インストーラーが実行する `swing.exe` は、作業ディレクトリ `{app}`・ウィンドウなし・終了待ちで、`dashboard open` 以外は出力をインストーラーのログに書く。`--config` は付けない（設定ファイルは通常どおり [`config.md`](config.md#設定ファイルの場所) の順で決まり、普通は `%LOCALAPPDATA%\swing\swing.toml`）。
 
-`{app}` の `swing.exe`・`swing-tray.exe`・`ipfs.exe` のプロセスは WMI（`Win32_Process` の `ExecutablePath` が一致するもの）で探す。同じ名前でも別の場所の実行ファイルは数えず、止めない。
+`{app}` の `swing.exe`・`swing-tray.exe`・`ipfs.exe` のプロセスは WMI（`Win32_Process` の `ExecutablePath` の一致）で探し、別の場所の同名の実行ファイルは数えない。
+
+### プロセスの止め方
+
+上書きとアンインストールで共通。
+
+1. `{app}` の `swing.exe` か `ipfs.exe` が動いていれば、`swing service stop`（[`service.md`](service.md#windowsタスクスケジューラ)。グレースフルに止まらなければ `schtasks /End`）を実行する。登録が `{app}` のものでないとき（下記）は、ダッシュボード経由でだけ止める `swing stop`（[`cli.md#stop`](cli.md#stop)）にする。
+2. それらが無くなるまで最大 60 秒待ち、残っていれば強制終了して（ログに `Terminating a process of <path>`）さらに最大 10 秒待つ。`up` 以外の `swing.exe`（`swing publish` など）もここで強制終了になる。
+3. `{app}` の `swing-tray.exe` は、指定の秒数だけ自分で閉じるのを待ってから強制終了する。
 
 ## 新規インストール
 
-`{app}\swing.exe` が無ければ新規として扱う。
+`{app}\swing.exe` が無ければ新規。
 
-1. ファイルを置く。
-2. `Path` に `{app}` を足す。
-3. `swing service install --no-start` を実行する。設定ファイルが既定の場所に決まり、まだ無ければ空の `swing.toml` を作り（[`service.md`](service.md#共通)）、タスク `swing` とトレイの Run キーの値を登録する。何も起動しないので、Kubo が 4001 で待ち受けてファイアウォールのダイアログが出ることもない。失敗したら「サインイン時に起動する登録に失敗した」旨と終了コードを出し（`/SUPPRESSMSGBOXES` なら出さない）、インストール自体は成功で終える。
-4. 次のサインインでタスクとトレイが起動し、空の設定ファイルなのでセットアップモード（[`up.md`](up.md#セットアップモード鍵未設定)）で動く。
+1. ファイルを置き、`Path` に `{app}` を足す。
+2. `swing service install --no-start` を実行する。既定の場所に空の `swing.toml` ができ（[`service.md`](service.md#共通)）、タスク `swing` とトレイの Run キーの値が登録される。何も起動しない。失敗したら終了コードを添えたメッセージを出し（`/SUPPRESSMSGBOXES` なら出さない）、インストールは成功で終える。
+3. 次のサインインで、セットアップモード（[`up.md`](up.md#セットアップモード鍵未設定)）で起動する。
 
-サイレントインストール（`/VERYSILENT /SUPPRESSMSGBOXES /NORESTART`）でも同じで、ダイアログは出ない。
+サイレント（`/VERYSILENT /SUPPRESSMSGBOXES /NORESTART`）でも同じで、ダイアログは出ない。
 
-## 完了画面の「SWING を起動してダッシュボードを開く」
+### 完了画面の「SWING を起動してダッシュボードを開く」
 
-GUI のときだけ完了画面にチェックボックスを出す（既定はオン。サイレントでは出さず、何もしない）。上の 3 が成功したときだけ出す（上書きで登録しなかったときは出ない）。オンで完了すると次を行う。
+GUI で、`service install` が成功したときだけ出す（既定はオン）。オンで完了すると:
 
-1. `swing service start`（タスクの即時起動）。
-2. トレイを起動する。Run キーの値 `swing-tray` の先頭の引用符で囲んだパスが `{app}\swing-tray.exe` と一致すれば、その後ろの引数（`--config "<config>"`）も付ける。一致しない・値が無いときは引数なしで起動する。同じ `state_dir` のトレイが既に動いていれば、新しいほうはすぐ終わる（[`tray.md`](tray.md#多重起動の防止)）。
-3. `swing dashboard open --no-browser` を 1 秒おきに最大 60 回試し、成功したら出力の 1 行目（ログインリンク。`http://` か `https://` で始まるときだけ）を既定のブラウザで開く。リンクにはログインコードが入るので、この出力はログに書かない。60 回とも失敗したら何もしない。
+1. `swing service start`。
+2. トレイを起動する。Run キーの値 `swing-tray` の先頭の引用符付きパスが `{app}\swing-tray.exe` なら、後ろの引数（`--config "<config>"`）も付ける。そうでなければ引数なし。トレイが既に動いていれば新しいほうはすぐ終わる（[`tray.md`](tray.md#多重起動の防止)）。
+3. `swing dashboard open --no-browser` を 1 秒おきに最大 60 回試し、出力の 1 行目が `http://` か `https://` で始まればそれを既定のブラウザで開く。ログインコードを含むので、この出力はログに書かない。
 
 ## 上書き（アップグレード）
 
-`{app}\swing.exe` があれば上書きとして扱い、ファイルを置く前（Inno Setup の `PrepareToInstall`）に次を行う。
+`{app}\swing.exe` があれば上書き。ファイルを置く前（`PrepareToInstall`）に:
 
-1. 前の状態を覚える: タスク `swing` が登録済みか（`schtasks /Query /TN swing` の終了コード）、Run キーに値 `swing-tray` があるか、`{app}\swing.exe` の `up` が動いているか（タスクが登録済みのときだけ数える。コマンドラインが ` up ` を含むか ` up` で終わる）、`{app}\swing-tray.exe` が動いているか。タスクが登録済みなら、登録が `{app}` のものか（下記）。ログに `Upgrading: task registered=…, tray registered=…, swing up running=…, tray running=…, registrations point here=…` と出す。
-   - 登録が `{app}` のものかは、これから入れる新しい `swing.exe` を `ExtractTemporaryFile` で一時ディレクトリ（`{tmp}`）に取り出し、`{tmp}\swing.exe service status --points-into "{app}"` の終了コードが 0 かどうかで決める（[`service/ownership.md`](service/ownership.md)。タスクとトレイの登録のどちらか一方でも別の場所を指していれば 0 にならない）。`{app}` にある古い `swing.exe` はこのオプションを知らないことがあるので使わない。出力はログに書く。
-2. `{app}` の `swing.exe` か `ipfs.exe` が動いていれば、`swing service stop`（登録が `{app}` のものでないときは `swing stop`。下記）（ダッシュボード経由のグレースフルな停止。失敗したら `schtasks /End` で conhost を終わらせ、`--exit-with-parent` でグレースフルに止まる。[`service.md`](service.md#windowsタスクスケジューラ)）を実行し、`{app}` の `swing.exe`・`ipfs.exe` が無くなるまで最大 60 秒待つ。残っていれば強制終了し（ログに `Terminating a process of <path>`）、さらに最大 10 秒待つ。`swing publish` など `up` 以外の `swing.exe` も、この時点で残っていれば強制終了になる。登録が別の場所のものなら、`schtasks /End` に落ちて別のコピーのタスクを止めてしまわないよう、ダッシュボード経由でだけ止める `swing stop`（[`cli.md#stop`](cli.md#stop)）を使う。止めるのはどちらも `{app}` のプロセスが動いているときだけ。
-3. `{app}` の `swing-tray.exe` を強制終了する（API のクライアントでしかないので、止め方による害は無い）。
+1. 前の状態を調べてログに出す（`Upgrading: task registered=…, tray registered=…, swing up running=…, tray running=…, registrations point here=…`）。
+   - タスク `swing` が登録済みか（`schtasks /Query /TN swing`）、Run キーの値 `swing-tray` があるか、`{app}` のトレイが動いているか。
+   - タスクが登録済みのときだけ: `{app}` の `swing.exe up` が動いているか（コマンドラインが ` up ` を含むか ` up` で終わる）と、登録が `{app}` のものか。後者は新しい `swing.exe` を `{tmp}` に取り出して `swing service status --points-into "{app}"` の終了コードが 0 かで決める（[`service/ownership.md`](service/ownership.md)。本体とトレイのどちらかが別の場所なら 0 にならない）。
+2. [プロセスの止め方](#プロセスの止め方)で止める（トレイは待たずに強制終了）。
 
-ファイルを置いた後は、新規と同じく `Path` を確かめてから、前の状態で分ける。
+ファイルを置き `Path` を確かめた後、前の状態で分ける。
 
 | 前の状態 | すること |
 |---|---|
-| タスクが未登録 | `service install` を実行しない（利用者が `swing service uninstall` した状態を保つ）。完了画面のチェックボックスも出ない |
-| タスクが登録済みだが、登録が `{app}` のものでない | 何もしない（別の場所から登録した `swing` を `{app}` に付け替えない）。完了画面のチェックボックスも出ず、起動し直しもしない |
-| タスクが登録済み、Run キーの値あり | `swing service install --no-start` |
-| タスクが登録済み、Run キーの値なし | `swing service install --no-start --no-tray`（`--no-tray` で登録した状態を保つ） |
+| タスクが未登録 | 何も登録しない |
+| 登録が `{app}` のものでない | 何も登録せず、起動し直さない |
+| 登録済み、Run キーの値あり | `swing service install --no-start` |
+| 登録済み、Run キーの値なし | `swing service install --no-start --no-tray` |
 
-登録できて、しかも 1 で `swing up` が動いていたなら、`swing service start` で起動し直し、トレイも動いていたならトレイも上記と同じ方法で起動し直す（サイレントでも行う）。動いていなかったものは起動しない。
+上の 2 行では完了画面のチェックボックスも出ない。登録し直して、前に `swing up` が動いていたなら `swing service start` で起動し、トレイも動いていたなら完了画面と同じ方法で起動する（サイレントでも行う）。
 
 ## アンインストール
 
-ファイルを消す前（`usUninstall`）に次を行う。サイレントアンインストール（`unins000.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART`）でも同じで、確認は出ない。
+ファイルを消す前（`usUninstall`）に次を行う。サイレント（`unins000.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART`）でも同じ。
 
-1. `swing service status --points-into "{app}"` で登録を確かめ（出力はログに書く）、続けて `swing service uninstall --only-from "{app}"` を実行する。`{app}` の下を指す登録だけ（タスクと Run キーの値を別々に判定する）を消し、タスクを消すときは `swing up` をグレースフルに止めてから消す。別の場所を指す登録は残す（[`service/ownership.md`](service/ownership.md)）。
-2. `{app}` の `swing.exe`・`ipfs.exe` が残っていれば、上書きの 2 と同じく止める（1 で残した登録があれば `swing stop`）。
-3. `{app}` の `swing-tray.exe` は、タスクの削除を見て自分で閉じる（[`tray.md`](tray.md#サービスの登録が消えたら終了する)）のを最大 30 秒待ち、残っていれば強制終了する。1 で残した登録があればタスクが消えないこともあるので、待たずに強制終了する。
-4. `Path` から `{app}` の項目を（大文字小文字と末尾の `\` を無視して）すべて取り除く。ほかの項目は順序を保ち、空の項目は落とす。残りが空なら値ごと消す。Inno Setup の環境変数の通知はファイルを消す処理の中で行われるので、`Path` の書き換えはその前のこの段階で行う。
+1. `swing service status --points-into "{app}"`（出力はログへ）の後、`swing service uninstall --only-from "{app}"` で `{app}` を指す登録だけを消す（[`service/ownership.md`](service/ownership.md)）。
+2. [プロセスの止め方](#プロセスの止め方)で止める。トレイは、タスクの削除を見て自分で閉じる（[`tray.md`](tray.md#サービスの登録が消えたら終了する)）のを最大 30 秒待つ。1 で別の場所を指す登録を残したときは、`swing stop` を使い、トレイは待たずに強制終了する。
+3. `Path` から `{app}` の項目を（大文字小文字と末尾の `\` を無視して）すべて除く。ほかは順序を保ち、空の項目は落とし、残りが空なら値ごと消す。
 
-その後、Inno Setup がインストールしたファイル・スタートメニューの項目・「アプリと機能」の項目を消す。1 で残した登録があれば、GUI のときだけ（`UninstallSilent` でないとき）完了のメッセージの前に、残した登録の行（`swing service status` の出力のうち `{app}` の下でないもの）と、そのコピーの `swing service uninstall` で消せることを伝えるメッセージ（`KeptRegistrations`）を出す。`%LOCALAPPDATA%\swing`（設定ファイル・鍵・状態ファイル・Kubo のリポジトリ・`swing.log`）は消さず、完了のメッセージ（`UninstalledAll`・`UninstalledMost`）でその場所（ユーザーフォルダーの `AppData\Local\swing`）を伝える。
+その後 Inno Setup がファイル・スタートメニュー・「アプリと機能」の項目を消す。GUI では、1 で残した登録があれば、その行（`status` の出力のうち `{app}` の下でないもの）とそのコピーの `swing service uninstall` で消せることをメッセージ（`KeptRegistrations`）で伝える。`%LOCALAPPDATA%\swing`（設定・鍵・状態・Kubo のリポジトリ・`swing.log`）は消さず、完了のメッセージ（`UninstalledAll`・`UninstalledMost`）で場所を伝える。
 
 ## 動作確認の CI（`.github/workflows/windows-installer-check.yml`）
 
-手動実行（`workflow_dispatch`）でだけ動く。`windows-latest` のランナーでブランチを release ビルドし、release と同じ形の zip（ref は `check`）を作り、`build.ps1` でインストーラーを作って、`check-installer.ps1` を 4 段階で実行する。手順と判定の正本は `check-installer.ps1`。
+手動実行（`workflow_dispatch`）だけ。`windows-latest` でブランチを release ビルドし、release と同じ形の zip（ref は `check`）から `build.ps1` でインストーラーを作り、`check-installer.ps1` を 4 段階で実行する。判定の正本は `check-installer.ps1`。
 
 | 段階 | 確かめること |
 |---|---|
-| `install` | 事前に何も無いこと。サイレントインストールの終了コードが 0、上記のファイルがすべてあること、`Path` に `{app}` が 1 つだけあること、タスクの登録、Run キーの値が `{app}\swing-tray.exe` を指すこと、既定の場所に空の `swing.toml` ができること、スタートメニューの項目と「アプリと機能」の項目、5 秒待っても `{app}` のプロセスが何も動いていないこと |
-| `upgrade` | `swing service start` とトレイを起動して動いている状態で、同じインストーラーをもう一度サイレントで実行する。終了コードが 0、ログで前の状態（登録が `{app}` のものであることを含む）を正しく判定したこと、`swing.exe` を強制終了していないこと、`swing up` が別のプロセスとして動き直してダッシュボードが応答すること、トレイが動き直すこと、タスク・Run キーの値・`Path`（1 つだけ）が残ること |
-| `uninstall` | 前の段階が失敗しても行う。サイレントアンインストールの終了コードが 0、アンインストーラーの本体（一時ディレクトリの `_iu*.tmp`）が終わり「アプリと機能」の項目が消えること、`swing.exe` を強制終了していないこと、タスク・Run キーの値・`Path` の項目・ファイル・スタートメニューの項目が消えること、`{app}` のプロセスが残っていないこと、`swing.toml` が残ること。トレイを強制終了したかどうかは記録するだけで判定しない |
-| `foreign` | 前の段階が失敗しても行う。新規にインストールしてから、`swing.exe` と `swing-tray.exe` を `{app}` の外（`%LOCALAPPDATA%\swing-check-other-copy`）に写し、そこから `swing service install --no-start` してタスクと Run キーの値をそちらに向ける。同じインストーラーでの上書きが登録を `{app}` のものでないと判定して（ログの `registrations point here=0`）タスクと Run キーの値を変えないこと、サイレントアンインストールが残した登録をログに出し、タスクと Run キーの値がそのコピーを指したまま残り、ファイルは消えること。最後にそのコピーの `swing service uninstall` で登録を消してコピーを削除し、消えたことを確かめる |
+| `install` | サイレントインストールが 0 で終わり、ファイル・`Path`（1 つだけ）・タスク・Run キーの値・空の `swing.toml`・スタートメニュー・「アプリと機能」がそろい、5 秒後も `{app}` のプロセスが無い |
+| `upgrade` | `swing up` とトレイが動いている状態でのサイレントの上書きが 0 で終わり、ログの前の状態が正しく、`swing.exe` を強制終了せず、`swing up`（ダッシュボードの応答）とトレイが動き直し、登録と `Path` が残る |
+| `uninstall` | （前が失敗しても行う）サイレントアンインストールが 0 で終わり、アンインストーラー（`_iu*.tmp`）が終わり、`swing.exe` を強制終了せず、登録・`Path` の項目・ファイル・スタートメニュー・プロセスが消え、`swing.toml` が残る。トレイの強制終了は記録だけ |
+| `foreign` | （前が失敗しても行う）新規インストール後に `{app}` の外のコピー（`%LOCALAPPDATA%\swing-check-other-copy`）から `swing service install --no-start` する。上書きが `registrations point here=0` と判定して登録を変えず、アンインストールが残した登録をログに出してファイルだけ消す。最後にコピーの `swing service uninstall` で片付ける |
 
-各段階のインストーラーのログ（`/LOG`）、プロセス・Run キー・`Path`・タスクの様子、`swing.log` と、作ったインストーラーは artifact `windows-installer-check` に残る。入力 `ssh` は `windows-check` と同じ。
+インストーラーのログ（`/LOG`）・プロセス・Run キー・`Path`・タスクの様子・`swing.log`・作ったインストーラーは artifact `windows-installer-check` に残る。入力 `ssh` は [`windows-check`](release.md#windows-の動作確認githubworkflowswindows-checkyml) と同じ。
 
-鍵の無いセットアップモードで動かすので Kubo は起動せず、上書きで `ipfs.exe` が使用中のときの扱いはこの CI では確かめていない。GUI（完了画面の起動とブラウザでダッシュボードが開くこと、日本語の表示）とサインインし直したときの自動起動も、ランナーでは確かめない。
+確かめていないこと: 鍵の無いセットアップモードで動かすので、`ipfs.exe` が使用中のときの上書き。GUI（完了画面・ブラウザ・日本語）と、サインインし直したときの自動起動。
