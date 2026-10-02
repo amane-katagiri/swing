@@ -65,3 +65,4 @@
 - `windows-installer-check` で、Windows のランナーから dist.ipfs.tech への接続が 2 回続けてタイムアウトした（やり直しを入れても同じ）。`build.ps1` の Kubo の取得元を、同じファイルを置いている Kubo の GitHub のリリースに変えた。中身はリポジトリに固定した SHA-512 で照らすので、取得元を変えても検証の強さは変わらない。`install.sh` は利用者の環境で動くので dist.ipfs.tech のまま。
 - `homebrew-check` で、`brew upgrade` の後に古い keg が残った。ランナーで自動の後片付けが動かなかったので、確認の手順に `brew cleanup` を足した。
 - `windows-check` の「Start from the tray」で、メニューの「Start」が見つからずに 1 回失敗した。直前の段階ではメニューに有効な「Start」が出ており、やり直しでは通ったので、メニューが開ききる前に探したものとみなして手を入れていない。
+- タグでの `release` で、`image` ジョブの `docker/build-push-action` が残すビルドの記録（`.dockerbuild`）の artifact を、`release` ジョブがほかの artifact と一緒にリリースへ添え、`SHA256SUMS` にも載せた。`image` が `release` より先に終わったときだけ起きる。`DOCKER_BUILD_RECORD_UPLOAD: false` で記録を残さないようにした。

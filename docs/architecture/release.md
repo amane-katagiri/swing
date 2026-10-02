@@ -22,7 +22,7 @@
 - `homebrew` ジョブが macOS の 2 つのアーカイブから Homebrew の formula（`swing.rb`）を書き出し、artifact `homebrew` に置く（[`homebrew.md`](homebrew.md#tap-への公開)）。
 - タグの ref で動いたとき（タグの push と、タグを選んだ手動実行）は、タグ名と `Cargo.toml` の `version` が一致しないと失敗する（`v0.1.0` と `0.1.0`）。全 target と `windows-installer`・`homebrew` が通ると、すべての artifact（インストーラーを含む）に `SHA256SUMS` を付けた**ドラフト**のリリースを作る。公開は GitHub 上で手動で行う。
 - ブランチで手動実行したときはリリースを作らず、バイナリとインストーラーは Actions の artifact に残す。イメージは下記のとおり push する。
-- `image` ジョブが `ghcr.io/<owner>/<repo>`（小文字）のコンテナイメージを `linux/amd64`・`linux/arm64` で作る。中身は `build` ジョブの `x86_64-unknown-linux-musl`・`aarch64-unknown-linux-musl` の `swing` を `docker/release.Dockerfile`（[`docker.md`](docker.md#dockerfile)）に入れたもの。QEMU は `RUN`（ユーザー作成）にだけ使う。
+- `image` ジョブが `ghcr.io/<owner>/<repo>`（小文字）のコンテナイメージを `linux/amd64`・`linux/arm64` で作る。中身は `build` ジョブの `x86_64-unknown-linux-musl`・`aarch64-unknown-linux-musl` の `swing` を `docker/release.Dockerfile`（[`docker.md`](docker.md#dockerfile)）に入れたもの。QEMU は `RUN`（ユーザー作成）にだけ使う。ビルドの記録（`.dockerbuild`）は artifact に残さない（`release` ジョブがすべての artifact をリリースに添えるため）。
 - イメージのタグは、タグの ref なら `v` を除いたバージョン（`0.1.0`）と `latest`（バージョンに `-` を含む `0.2.0-rc.1` などでは `latest` を付けない）。タグのイメージは、ドラフトのリリースを公開する前に push される。ブランチの ref ならブランチ名（`main` など）のタグだけを付けて push する。ブランチ名に `/` があると `image` ジョブが失敗する。ブランチ名が `latest` か数字で始まるときは push せずに失敗する。`org.opencontainers.image.source` ラベルでパッケージをこのリポジトリに紐づけ、パッケージの公開範囲はリポジトリに合わせる。
 
 サードパーティの action・ツール:
