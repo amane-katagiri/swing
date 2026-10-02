@@ -42,7 +42,7 @@ build.ps1 -Archive <swing-<ref>-x86_64-pc-windows-msvc.zip> -OutDir <dir> -RefNa
 | `AppId` | `{E8A9B45D-3A72-492B-905A-51911FD534C2}`（変えると別のアプリとして扱われ、上書きにならない） |
 | 名前・発行元 | `SWING`・`Amane Katagiri` |
 | 権限 | `PrivilegesRequired=lowest`。UAC を出さず、常にユーザー単位のインストールになる |
-| インストール先 | `{autopf}\SWING`。ユーザー単位なので `%LOCALAPPDATA%\Programs\SWING`。上書きのときは前回の場所 |
+| インストール先 | `{autopf}\SWING`。ユーザー単位なので `%LOCALAPPDATA%\Programs\SWING`。上書きのときは前回の場所。`;` か `%` を含むフォルダーは選べない（`Path` に足すため。フォルダーを選ぶ画面の「次へ」と、サイレントの `/DIR=` でも準備の段階で `InvalidAppDir` のメッセージを出して止める） |
 | アーキテクチャ | `x64compatible`（64 ビットモード） |
 | 対応 OS | Windows 10 1903（`10.0.18362`）以降。タスクが使う `conhost.exe --headless` がそれより前に無いため |
 | 言語 | 英語（`Default.isl`）と日本語（`Japanese.isl`）。OS の表示言語で選ばれ、選ぶ画面は合わないときだけ出る |

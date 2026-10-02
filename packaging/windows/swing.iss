@@ -56,9 +56,11 @@ ja.UninstalledMost=%1 をアンインストールしましたが、削除でき�
 en.StartSwing=Start SWING and open the dashboard
 ja.StartSwing=SWING を起動してダッシュボードを開く
 en.ServiceInstallFailed=SWING was installed, but registering it to start at sign-in failed (exit code %1).%n%nRun "swing service install" in a terminal to try again.
+ja.ServiceInstallFailed=SWING をインストールしましたが、サインイン時に起動する登録に失敗しました（終了コード %1）。%n%nターミナルで「swing service install」を実行してやり直してください。
 en.KeptRegistrations=These sign-in registrations start SWING from another folder, so they were left as they are:%n%n%1%nIf you no longer use that copy, run "swing service uninstall" from it.
 ja.KeptRegistrations=次のサインイン時の起動の登録は別のフォルダーの SWING を起動するものなので、そのまま残しました。%n%n%1%nそのコピーを使っていなければ、そちらの「swing service uninstall」で登録を消してください。
-ja.ServiceInstallFailed=SWING をインストールしましたが、サインイン時に起動する登録に失敗しました（終了コード %1）。%n%nターミナルで「swing service install」を実行してやり直してください。
+en.InvalidAppDir=The installation folder must not contain ";" or "%1", because it is added to PATH. Choose another folder.
+ja.InvalidAppDir=インストール先のフォルダーは PATH に加えるため、「;」や「%1」を含められません。別のフォルダーを選んでください。
 
 [Files]
 Source: "{#StageDir}\swing.exe"; DestDir: "{app}"; Flags: ignoreversion
@@ -213,36 +215,28 @@ begin
   Result := CountProcesses(AppPath('swing-tray.exe'), '') > 0;
 end;
 
-function WaitForSwingExit(const Seconds: Integer): Boolean;
-var
-  I: Integer;
+function Running(const Tray: Boolean): Boolean;
 begin
-  for I := 1 to Seconds * 2 do
-  begin
-    if not SwingRunning then
-    begin
-      Result := True;
-      Exit;
-    end;
-    Sleep(500);
-  end;
-  Result := not SwingRunning;
+  if Tray then
+    Result := TrayRunning
+  else
+    Result := SwingRunning;
 end;
 
-function WaitForTrayExit(const Seconds: Integer): Boolean;
+function WaitForExit(const Tray: Boolean; const Seconds: Integer): Boolean;
 var
   I: Integer;
 begin
   for I := 1 to Seconds * 2 do
   begin
-    if not TrayRunning then
+    if not Running(Tray) then
     begin
       Result := True;
       Exit;
     end;
     Sleep(500);
   end;
-  Result := not TrayRunning;
+  Result := not Running(Tray);
 end;
 
 procedure StopEverything(const SwingCommand: String; const TraySeconds: Integer);
@@ -250,17 +244,17 @@ begin
   if SwingRunning then
   begin
     RunSwingLogged(SwingCommand);
-    if not WaitForSwingExit(60) then
+    if not WaitForExit(False, 60) then
     begin
       TerminateProcesses(AppPath('swing.exe'));
       TerminateProcesses(AppPath('ipfs.exe'));
-      WaitForSwingExit(10);
+      WaitForExit(False, 10);
     end;
   end;
-  if TrayRunning and not WaitForTrayExit(TraySeconds) then
+  if TrayRunning and not WaitForExit(True, TraySeconds) then
   begin
     TerminateProcesses(AppPath('swing-tray.exe'));
-    WaitForTrayExit(10);
+    WaitForExit(True, 10);
   end;
 end;
 
@@ -381,6 +375,27 @@ begin
     Log('Could not remove ' + Dir + ' from the user PATH');
 end;
 
+function InvalidAppDir(const Dir: String): String;
+begin
+  Result := '';
+  if (Pos(';', Dir) > 0) or (Pos('%', Dir) > 0) then
+    Result := FmtMessage(CustomMessage('InvalidAppDir'), ['%']);
+end;
+
+function NextButtonClick(CurPageID: Integer): Boolean;
+var
+  Error: String;
+begin
+  Result := True;
+  if CurPageID = wpSelectDir then
+  begin
+    Error := InvalidAppDir(WizardDirValue);
+    Result := Error = '';
+    if not Result then
+      MsgBox(Error, mbError, MB_OK);
+  end;
+end;
+
 procedure RegisterService(const NoTray: Boolean);
 var
   Params: String;
@@ -399,7 +414,9 @@ function PrepareToInstall(var NeedsRestart: Boolean): String;
 var
   Outside: String;
 begin
-  Result := '';
+  Result := InvalidAppDir(ExpandConstant('{app}'));
+  if Result <> '' then
+    Exit;
   IsUpgrade := FileExists(AppPath('swing.exe'));
   if not IsUpgrade then
     Exit;
