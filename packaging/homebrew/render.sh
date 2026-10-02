@@ -12,6 +12,19 @@ out=$3
 base=${4:-https://github.com/amane-katagiri/swing/releases/download/$tag}
 here=$(cd "$(dirname "$0")" && pwd)
 
+case $tag in
+  '' | *[!0-9A-Za-z._/+-]*)
+    echo "invalid tag: $tag" >&2
+    exit 1
+    ;;
+esac
+case $base in
+  *[\"\\#[:space:]]*)
+    echo "invalid download url base: $base" >&2
+    exit 1
+    ;;
+esac
+
 sha() {
   file="swing-$tag-$1-apple-darwin.tar.gz"
   hash=$(awk -v f="$file" '{ n = $2; sub(/^\*/, "", n) } n == f { print $1; exit }' "$sums")
@@ -24,7 +37,7 @@ sha() {
 }
 
 escape() {
-  printf '%s' "$1" | sed 's/[|&\\]/\\&/g'
+  printf '%s' "$1" | sed 's/[|&]/\\&/g'
 }
 
 arm=$(sha aarch64)

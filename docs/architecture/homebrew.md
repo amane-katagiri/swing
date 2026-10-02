@@ -15,6 +15,7 @@ macOS 向けに、tap `amane-katagiri/swing`（リポジトリ `amane-katagiri/h
 
 - `SHA256SUMS`（`sha256sum`／`shasum -a 256` の形式。バイナリモードの `*` 付きの名前も読む）から `swing-<tag>-aarch64-apple-darwin.tar.gz` と `swing-<tag>-x86_64-apple-darwin.tar.gz` の SHA-256 を取る。どちらかが無い、または 64 桁の 16 進でなければ「no SHA-256 for <file> in <SHA256SUMS>」で終了コード 1。
 - URL の基点の既定は `https://github.com/amane-katagiri/swing/releases/download/<tag>`。末尾の `/` は落とす。
+- タグが空か英数字と `.`・`_`・`/`・`+`・`-` 以外を含む、または URL の基点が `"`・`\`・`#`・空白を含むなら、formula の Ruby の文字列を壊さないよう終了コード 1。
 - 置き換え後に `@…@` が残っていれば終了コード 1。
 
 ## formula の中身
