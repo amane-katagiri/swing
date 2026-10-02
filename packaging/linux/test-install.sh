@@ -2,23 +2,25 @@
 set -eu
 
 here=$(cd "$(dirname "$0")" && pwd -P)
-INSTALL=$here/install.sh
+SOURCE=$here/install.sh
 
 case $(uname -m) in
   x86_64 | amd64)
     TARGET=x86_64-unknown-linux-musl
     KUBO_ARCH=amd64
+    KUBO_PIN=KUBO_SHA512_AMD64
     ;;
   aarch64 | arm64)
     TARGET=aarch64-unknown-linux-musl
     KUBO_ARCH=arm64
+    KUBO_PIN=KUBO_SHA512_ARM64
     ;;
   *)
     echo "unsupported architecture for this test" >&2
     exit 1
     ;;
 esac
-KUBO_VERSION=$(sed -n 's/^KUBO_VERSION=//p' "$INSTALL")
+KUBO_VERSION=$(sed -n 's/^KUBO_VERSION=//p' "$SOURCE")
 
 ROOT=$(mktemp -d)
 trap 'rm -rf "$ROOT"' EXIT
@@ -52,9 +54,28 @@ lacks() { ! grep -qF -- "$2" "$1"; }
 
 sha256() { sha256sum "$1" | cut -d ' ' -f 1; }
 
+# shellcheck disable=SC2016
+make_script() {
+  out=$1
+  kubo=$2
+  mkdir -p "$(dirname "$out")"
+  sed \
+    -e "s|^RELEASES_URL=.*|RELEASES_URL=file://$ROOT/releases|" \
+    -e "s|^KUBO_BASE_URL=.*|KUBO_BASE_URL=file://$kubo|" \
+    -e 's|^SYSTEM_UNIT=.*|SYSTEM_UNIT=$HOME/system-swing.service|' \
+    -e "s|^$KUBO_PIN=.*|$KUBO_PIN=$(sha512sum "$ROOT/kubo/kubo_v${KUBO_VERSION}_linux-$KUBO_ARCH.tar.gz" | cut -d ' ' -f 1)|" \
+    "$SOURCE" >"$out"
+  for line in "RELEASES_URL=file://" "KUBO_BASE_URL=file://" 'SYSTEM_UNIT=$HOME/' "$KUBO_PIN="; do
+    grep -q "^$line" "$out" || {
+      echo "could not rewrite $line in the copy of install.sh" >&2
+      exit 1
+    }
+  done
+}
+
 make_swing_release() {
   tag=$1
-  dir=$ROOT/release-$tag
+  dir=$ROOT/releases/download/$tag
   stage=$ROOT/stage-$tag/swing-$tag-$TARGET
   mkdir -p "$dir" "$stage"
   cat >"$stage/swing" <<EOF
@@ -63,7 +84,7 @@ echo "swing \$*" >>"\$FAKE_LOG"
 echo "$tag \$*" >>"\$FAKE_STATE/ran"
 unit=\$HOME/.config/systemd/user/swing.service
 case " \$* " in
-  *" --system "*) unit=\${SWING_INSTALL_SYSTEM_UNIT:-/nonexistent} ;;
+  *" --system "*) unit=\$HOME/system-swing.service ;;
 esac
 dir=
 for a; do dir=\$a; done
@@ -117,12 +138,14 @@ EOF
   echo mit >"$stage/LICENSE-MIT"
   name=kubo_v${KUBO_VERSION}_linux-$KUBO_ARCH.tar.gz
   tar -C "$ROOT/kubo-stage" -czf "$dir/$name" kubo
-  (cd "$dir" && sha512sum "$name" >"$name.sha512")
 }
 
+make_kubo_dist
+INSTALL=$ROOT/script/install.sh
+make_script "$INSTALL" "$ROOT/kubo"
 make_swing_release v0.1.0
 make_swing_release v0.2.0
-make_kubo_dist
+mkdir -p "$ROOT/releases/latest"
 
 FAKEBIN=$ROOT/fakebin
 mkdir -p "$FAKEBIN"
@@ -147,11 +170,10 @@ new_env() {
 }
 
 run() {
+  ln -sfn "$ROOT/releases/download/${REL:-v0.1.0}" "$ROOT/releases/latest/download"
   env -u XDG_DATA_HOME -u XDG_CONFIG_HOME \
     HOME="$H" PATH="$FAKEBIN:$PATH" \
     FAKE_LOG="$FAKE_LOG" FAKE_STATE="$FAKE_STATE" \
-    SWING_INSTALL_BASE_URL="file://$ROOT/release-${REL:-v0.1.0}" \
-    SWING_INSTALL_KUBO_BASE_URL="file://$ROOT/kubo" \
     "$@"
 }
 
@@ -219,9 +241,9 @@ check "dashboard hint printed" sh -c "printf '%s' \"\$1\" | grep -q 'swing dashb
 
 echo "--- checksum mismatch"
 new_env bad
-bad=$ROOT/release-bad
+bad=$ROOT/releases/download/bad
 rm -rf "$bad"
-cp -r "$ROOT/release-v0.1.0" "$bad"
+cp -r "$ROOT/releases/download/v0.1.0" "$bad"
 echo tamper >>"$bad/swing-v0.1.0-$TARGET.tar.gz"
 if REL=bad run sh "$INSTALL" >"$H/out" 2>&1; then
   fail "tampered archive is rejected"
@@ -236,11 +258,13 @@ badk=$ROOT/kubo-bad
 rm -rf "$badk"
 cp -r "$ROOT/kubo" "$badk"
 echo tamper >>"$badk/kubo_v${KUBO_VERSION}_linux-$KUBO_ARCH.tar.gz"
-if run env SWING_INSTALL_KUBO_BASE_URL="file://$badk" sh "$INSTALL" >"$H/out" 2>&1; then
+make_script "$ROOT/script-badkubo/install.sh" "$badk"
+if run sh "$ROOT/script-badkubo/install.sh" >"$H/out" 2>&1; then
   fail "tampered kubo is rejected"
 else
   pass "tampered kubo is rejected"
 fi
+check "kubo mismatch reported" contains "$H/out" "checksum mismatch for kubo_v"
 check "nothing installed after the kubo mismatch" absent "$H/.local/lib/swing"
 
 echo "--- existing swing in bin"
@@ -323,21 +347,21 @@ echo "--- uninstall refuses with a system service"
 new_env sys
 run sh "$INSTALL" >/dev/null 2>&1
 unit_for "$H/system-swing.service" "$H/.local/lib/swing/swing"
-if run env SWING_INSTALL_SYSTEM_UNIT="$H/system-swing.service" sh "$INSTALL" --uninstall >"$H/out" 2>&1; then
+if run sh "$INSTALL" --uninstall >"$H/out" 2>&1; then
   fail "uninstall is refused while a system service exists"
 else
   pass "uninstall is refused while a system service exists"
 fi
 check "refusal names the system uninstall" contains "$H/out" "service uninstall --system"
 check "install kept" [ -x "$H/.local/lib/swing/swing" ]
-run env SWING_INSTALL_SYSTEM_UNIT="$H/system-swing.service" sh "$INSTALL" --uninstall --force >/dev/null 2>&1 || fail "--force uninstall exits 0"
+run sh "$INSTALL" --uninstall --force >/dev/null 2>&1 || fail "--force uninstall exits 0"
 check "--force uninstalls" absent "$H/.local/lib/swing"
 
 echo "--- a system service of another swing does not block the uninstall"
 new_env sysforeign
 run sh "$INSTALL" >/dev/null 2>&1
 unit_for "$H/system-swing.service" /usr/bin/swing
-run env SWING_INSTALL_SYSTEM_UNIT="$H/system-swing.service" sh "$INSTALL" --uninstall >"$H/out" 2>&1 || fail "uninstall with a foreign system service exits 0"
+run sh "$INSTALL" --uninstall >"$H/out" 2>&1 || fail "uninstall with a foreign system service exits 0"
 check "uninstalled" absent "$H/.local/lib/swing"
 check "foreign system unit kept" [ -f "$H/system-swing.service" ]
 
@@ -361,11 +385,53 @@ check "prefix lib removed" absent "$PFX/lib/swing"
 check "prefix symlink removed" absent "$PFX/bin/swing"
 PFX=
 
+echo "--- uninstall removes only plain file names from the manifest"
+new_env manifest
+run sh "$INSTALL" >/dev/null 2>&1
+lib=$H/.local/lib/swing
+echo victim >"$H/.local/lib/victim"
+mkdir "$lib/keepdir"
+printf '../victim\n.hidden\nkeepdir\n' >>"$lib/manifest"
+echo hidden >"$lib/.hidden"
+out=$(run sh "$INSTALL" --uninstall 2>&1) || {
+  echo "$out"
+  fail "uninstall with a tampered manifest exits 0"
+}
+check "file outside lib kept" [ -f "$H/.local/lib/victim" ]
+check "dot file kept" [ -f "$lib/.hidden" ]
+check "directory kept" [ -d "$lib/keepdir" ]
+check "installed files removed" absent "$lib/swing"
+
+echo "--- directories writable by other users are refused"
+new_env shared
+mkdir "$H/shared"
+chmod 777 "$H/shared"
+if run sh "$INSTALL" --prefix "$H/shared/p" >"$H/out" 2>&1; then
+  fail "a world-writable parent is refused"
+else
+  pass "a world-writable parent is refused"
+fi
+check "refusal names the directory" contains "$H/out" "$H/shared is writable by other users"
+check "nothing created under it" absent "$H/shared/p"
+mkdir "$H/sticky"
+chmod 1777 "$H/sticky"
+run sh "$INSTALL" --prefix "$H/sticky/p" >"$H/out" 2>&1 || fail "a sticky world-writable parent is accepted"
+check "installed under a sticky parent" [ -x "$H/sticky/p/lib/swing/swing" ]
+chmod 1777 "$H/sticky/p/lib/swing"
+if run sh "$INSTALL" --prefix "$H/sticky/p" >"$H/out" 2>&1; then
+  fail "a world-writable lib/swing is refused"
+else
+  pass "a world-writable lib/swing is refused"
+fi
+chmod 755 "$H/sticky/p/lib/swing"
+
 echo "--- bad usage"
 new_env usage
 check "unknown option fails" sh -c "! env HOME='$H' sh '$INSTALL' --nope >/dev/null 2>&1"
 check "relative prefix fails" sh -c "! env HOME='$H' sh '$INSTALL' --prefix rel >/dev/null 2>&1"
 check "purge without uninstall fails" sh -c "! env HOME='$H' sh '$INSTALL' --purge >/dev/null 2>&1"
+check "a version with a slash fails" sh -c "! env HOME='$H' sh '$INSTALL' --version 1/../2 >/dev/null 2>&1"
+check "a relative HOME fails" sh -c "! env HOME=rel sh '$INSTALL' --prefix '$H/p' >/dev/null 2>&1"
 
 echo
 if [ "$FAILED" -ne 0 ]; then

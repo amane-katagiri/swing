@@ -1464,6 +1464,25 @@ mod tests {
     }
 
     #[test]
+    fn install_sh_pins_the_same_kubo_version() {
+        let script = include_str!("../packaging/linux/install.sh");
+        let value = |name: &str| {
+            script
+                .lines()
+                .find_map(|line| line.strip_prefix(name)?.strip_prefix('='))
+                .unwrap_or_else(|| panic!("{name} is not set in install.sh"))
+        };
+        assert_eq!(value("KUBO_VERSION"), KUBO_VERSION);
+        for name in ["KUBO_SHA512_AMD64", "KUBO_SHA512_ARM64"] {
+            let hash = value(name);
+            assert!(
+                hash.len() == 128 && hash.bytes().all(|b| b.is_ascii_hexdigit()),
+                "{name}={hash}"
+            );
+        }
+    }
+
+    #[test]
     fn pick_free_port_returns_bindable_port() {
         let port = pick_free_port().unwrap();
         assert!(port > 0);

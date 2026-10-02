@@ -2,9 +2,13 @@
 set -eu
 
 KUBO_VERSION=0.43.1
+KUBO_SHA512_AMD64=ff53b2428794fc8cca39505d28c15b4cceaef4b90a09284f291f611fcdc8c06399690575fc89cbd4d85ef71f3652581296c6f2e710386f887c8edf36b6e89d71
+KUBO_SHA512_ARM64=70f082584651ef78fb5b07448be53bb0adf141aadcb7eea15ffa59bd9ca78fed46781c2cf5915b3528c591052f97486067fedb0a7a1415abd5bfd44942921501
 
 REPO_URL=https://github.com/amane-katagiri/swing
-KUBO_BASE_URL=${SWING_INSTALL_KUBO_BASE_URL:-https://dist.ipfs.tech/kubo/v$KUBO_VERSION}
+RELEASES_URL=$REPO_URL/releases
+KUBO_BASE_URL=https://dist.ipfs.tech/kubo/v$KUBO_VERSION
+SYSTEM_UNIT=/etc/systemd/system/swing.service
 
 TMP=
 STOPPED=
@@ -116,10 +120,12 @@ detect_platform() {
     x86_64 | amd64)
       TARGET=x86_64-unknown-linux-musl
       KUBO_ARCH=amd64
+      KUBO_SHA512=$KUBO_SHA512_AMD64
       ;;
     aarch64 | arm64)
       TARGET=aarch64-unknown-linux-musl
       KUBO_ARCH=arm64
+      KUBO_SHA512=$KUBO_SHA512_ARM64
       ;;
     *) die "unsupported architecture: $arch (only x86_64 and aarch64 are supported)" ;;
   esac
@@ -152,7 +158,53 @@ user_unit() {
   esac
 }
 
-SYSTEM_UNIT=${SWING_INSTALL_SYSTEM_UNIT:-/etc/systemd/system/swing.service}
+check_dir() {
+  target=$1
+  me=$(id -u)
+  d=$target
+  while [ ! -e "$d" ] && [ ! -L "$d" ]; do
+    d=$(dirname -- "$d")
+  done
+  real=$(cd -P -- "$d" 2>/dev/null && pwd -P) || die "$d is not a directory"
+  for p in "$d" "$real"; do
+    leaf=
+    if [ "$d" = "$target" ]; then
+      leaf=1
+    fi
+    while :; do
+      if [ ! -L "$p" ]; then
+        # shellcheck disable=SC2046
+        set -- $(ls -ldn -- "$p")
+        [ "$3" = 0 ] || [ "$3" = "$me" ] || die "refusing to use $target: $p is owned by another user"
+        case $1 in
+          ????????w*)
+            sticky=
+            case $1 in
+              ?????????[tT]*) sticky=1 ;;
+            esac
+            if [ -n "$leaf" ] || [ -z "$sticky" ]; then
+              die "refusing to use $target: $p is writable by other users"
+            fi
+            ;;
+        esac
+      fi
+      leaf=
+      [ "$p" = / ] && break
+      p=$(dirname -- "$p")
+    done
+  done
+}
+
+manifest_entries() {
+  while IFS= read -r f; do
+    case $f in
+      '' | manifest | .* | *[!A-Za-z0-9._-]*) continue ;;
+    esac
+    if [ -f "$LIB/$f" ] || [ -L "$LIB/$f" ]; then
+      printf '%s\n' "$f"
+    fi
+  done <"$LIB/manifest"
+}
 
 put() {
   tmp=$LIB/.$2.$$
@@ -248,12 +300,10 @@ do_install() {
 
   TMP=$(mktemp -d)
 
-  if [ -n "${SWING_INSTALL_BASE_URL:-}" ]; then
-    BASE_URL=$SWING_INSTALL_BASE_URL
-  elif [ -n "$VERSION" ]; then
-    BASE_URL=$REPO_URL/releases/download/$VERSION
+  if [ -n "$VERSION" ]; then
+    BASE_URL=$RELEASES_URL/download/$VERSION
   else
-    BASE_URL=$REPO_URL/releases/latest/download
+    BASE_URL=$RELEASES_URL/latest/download
   fi
 
   info "fetching the release checksums"
@@ -266,7 +316,9 @@ do_install() {
       { f = $2; sub(/^\*/, "", f) }
       f ~ /^swing-/ && substr(f, length(f) - length(t) + 1) == t { print f; exit }
     ' "$TMP/SHA256SUMS")
-    [ -n "$archive" ] || die "the release has no archive for $TARGET"
+    case $archive in
+      '' | */*) die "the release has no archive for $TARGET" ;;
+    esac
   fi
   want=$(listed_hash "$TMP/SHA256SUMS" "$archive")
   [ -n "$want" ] || die "$archive is not listed in the release checksums"
@@ -281,6 +333,9 @@ do_install() {
 
   obtain_self
 
+  check_dir "$LIB"
+  check_dir "$BIN"
+
   need_kubo=1
   if [ -x "$LIB/ipfs" ] && [ "$("$LIB/ipfs" version --number 2>/dev/null || true)" = "$KUBO_VERSION" ]; then
     need_kubo=0
@@ -289,10 +344,7 @@ do_install() {
     kubo_archive=kubo_v${KUBO_VERSION}_linux-$KUBO_ARCH.tar.gz
     info "downloading Kubo v$KUBO_VERSION"
     fetch "$KUBO_BASE_URL/$kubo_archive" "$TMP/$kubo_archive"
-    fetch "$KUBO_BASE_URL/$kubo_archive.sha512" "$TMP/$kubo_archive.sha512"
-    want=$(awk 'NR == 1 { print $1 }' "$TMP/$kubo_archive.sha512")
-    [ -n "$want" ] || die "empty checksum file for $kubo_archive"
-    verify 512 "$TMP/$kubo_archive" "$want" "$kubo_archive"
+    verify 512 "$TMP/$kubo_archive" "$KUBO_SHA512" "$kubo_archive"
     mkdir "$TMP/kubo"
     tar -xzf "$TMP/$kubo_archive" -C "$TMP/kubo"
     [ -f "$TMP/kubo/kubo/ipfs" ] || die "$kubo_archive does not contain ipfs"
@@ -309,6 +361,8 @@ do_install() {
   fi
 
   mkdir -p "$LIB" "$BIN" || die "cannot create $LIB and $BIN (permission denied? try sudo with --prefix)"
+  check_dir "$LIB"
+  check_dir "$BIN"
 
   stop_service
   rm -f "$LIB/.swing-check.$$"
@@ -341,14 +395,11 @@ do_install() {
     done
   )
   if [ -f "$LIB/manifest" ]; then
-    while IFS= read -r old; do
-      case $old in
-        '' | */* | manifest) continue ;;
-      esac
+    manifest_entries | while IFS= read -r old; do
       if ! printf '%s\n' "$new_files" | grep -qxF -- "$old"; then
         rm -f "$LIB/$old"
       fi
-    done <"$LIB/manifest"
+    done
   fi
   printf '%s\n' "$new_files" >"$LIB/manifest.$$"
   mv -f "$LIB/manifest.$$" "$LIB/manifest"
@@ -401,6 +452,8 @@ confirm_purge() {
 
 do_uninstall() {
   [ -f "$LIB/manifest" ] || die "no installation found in $LIB"
+  check_dir "$LIB"
+  check_dir "$BIN"
 
   data=$(data_dir)
   if [ -n "$PURGE" ]; then
@@ -433,12 +486,9 @@ do_uninstall() {
   fi
 
   info "removing files from $LIB"
-  while IFS= read -r f; do
-    case $f in
-      '' | */* | manifest) continue ;;
-    esac
+  manifest_entries | while IFS= read -r f; do
     rm -f "$LIB/$f"
-  done <"$LIB/manifest"
+  done
   rm -f "$LIB/manifest"
   link=$BIN/swing
   if [ -L "$link" ] && [ "$(readlink "$link")" = "$LIB/swing" ]; then
@@ -478,9 +528,9 @@ main() {
     case $1 in
       --version)
         [ $# -ge 2 ] || die "--version needs a value"
-        case $2 in
-          v*) VERSION=$2 ;;
-          *) VERSION=v$2 ;;
+        VERSION=v${2#v}
+        case ${VERSION#v} in
+          '' | *[!0-9A-Za-z.+-]*) die "invalid version: $2" ;;
         esac
         shift
         ;;
@@ -503,8 +553,11 @@ main() {
     shift
   done
 
+  case ${HOME:-} in
+    /*) ;;
+    *) die "HOME must be set to an absolute path" ;;
+  esac
   if [ -z "$PREFIX" ]; then
-    [ -n "${HOME:-}" ] || die "HOME is not set; pass --prefix"
     PREFIX=$HOME/.local
   fi
   case $PREFIX in
@@ -514,7 +567,6 @@ main() {
   PREFIX=${PREFIX%/}
   LIB=$PREFIX/lib/swing
   BIN=$PREFIX/bin
-  [ -n "${HOME:-}" ] || die "HOME is not set"
 
   if [ -n "$PURGE" ] && [ -z "$UNINSTALL" ]; then
     die "--purge only works with --uninstall"
