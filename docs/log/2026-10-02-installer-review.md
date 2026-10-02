@@ -59,3 +59,9 @@
 - `actionlint` が 3 つのワークフローで指摘なし。
 - `swing.iss` を Wine 上の Inno Setup 6 の ISCC で、中身の無いファイルを置いた `stage` でコンパイルし、`AppVersion` が `0.2.0` と `0.2.0-rc.1` のどちらでも警告もエラーも無く通ることを確かめた。`InvalidAppDir` の表示は実機で確かめていない（残タスクの「インストーラの実機での確認」に含まれる）。
 - 固定した Kubo の SHA-512（Linux の 2 つと Windows の 1 つ）が dist.ipfs.tech の `.sha512` と一致することを確かめた。
+
+## 追記: ワークフローでの確認
+
+- `windows-installer-check` で、Windows のランナーから dist.ipfs.tech への接続が 2 回続けてタイムアウトした（やり直しを入れても同じ）。`build.ps1` の Kubo の取得元を、同じファイルを置いている Kubo の GitHub のリリースに変えた。中身はリポジトリに固定した SHA-512 で照らすので、取得元を変えても検証の強さは変わらない。`install.sh` は利用者の環境で動くので dist.ipfs.tech のまま。
+- `homebrew-check` で、`brew upgrade` の後に古い keg が残った。ランナーで自動の後片付けが動かなかったので、確認の手順に `brew cleanup` を足した。
+- `windows-check` の「Start from the tray」で、メニューの「Start」が見つからずに 1 回失敗した。直前の段階ではメニューに有効な「Start」が出ており、やり直しでは通ったので、メニューが開ききる前に探したものとみなして手を入れていない。

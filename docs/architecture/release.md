@@ -67,7 +67,7 @@
 - `brew install` と `brew test` が通り、`<prefix>/bin/swing` が `opt` のパスを exec するスクリプトであること。
 - `libexec` の `swing` と `SWING.app` が `codesign --verify --strict` を通ること（署名の詳細と quarantine 属性は記録だけ）。
 - `swing service install`（設定ファイルの無いホームディレクトリで実行し、既定の場所に空の設定ファイルを作る）で、2 つの plist の `ProgramArguments` の先頭が `<prefix>/opt/swing/libexec/swing` と `<prefix>/opt/swing/libexec/SWING.app/Contents/MacOS/swing-tray` になり、`Cellar` を含まないこと。本体とトレイが動き、本体の実行ファイルの実体が `<v>` の keg にあること（`lsof`）。
-- `<v>.1` の formula での `brew upgrade` の後、古い keg が消え、plist の指す先が残り、本体の pid が変わらないこと。`swing service install` をやり直すと、本体とトレイの実体が `<v>.1` の keg に移ること。
+- `<v>.1` の formula での `brew upgrade` と `brew cleanup` の後、古い keg が消え、plist の指す先が残り、本体の pid が変わらないこと。`swing service install` をやり直すと、本体とトレイの実体が `<v>.1` の keg に移ること。
 - 最後に（前の段階が失敗しても）`swing service uninstall`・`brew uninstall`・`brew untap` を行い、LaunchAgent が残らないこと。
 
 記録したファイルとログは artifact `homebrew-check` に残る。入力 `ssh` は `macos-check` と同じ。Intel の Mac と、tap のリポジトリからの実際のダウンロードは確かめていない。

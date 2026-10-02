@@ -39,7 +39,7 @@ macOS 向けに、tap `amane-katagiri/swing`（リポジトリ `amane-katagiri/h
 | `<prefix>/opt/swing` | `<prefix>/Cellar/swing/<version>` へのシンボリックリンク | 変わらない（指す先が新しい版になる） |
 | `<prefix>/opt/swing/libexec/swing` | 本体 | 変わらない |
 | `<prefix>/opt/swing/libexec/SWING.app` | トレイ | 変わらない |
-| `<prefix>/Cellar/swing/<version>/…` | 実体 | `brew upgrade` の後片付け（既定で有効）で古い版は消える |
+| `<prefix>/Cellar/swing/<version>/…` | 実体 | `brew upgrade` の後片付け（既定で有効。`HOMEBREW_NO_INSTALL_CLEANUP` があれば `brew cleanup` まで残る）で古い版は消える |
 
 - `swing` を PATH から実行すると、スクリプトが `opt` のパスで本体を exec し、`current_exe()` はそのパスを返す。`swing service install` はこれをシンボリックリンクを解決せずに登録し、トレイもその隣の `SWING.app` で見つける（[`service.md`](service.md#共通)）ので、どちらの plist にも `Cellar` のパスは入らない。
 - `brew upgrade` は動いている `swing up` とトレイを止めない。両方とも古い版のまま動き続け、`swing stop --restart`（プロセス内の再起動）でも入れ替わらない。`swing service install` をもう一度実行すると、両方の LaunchAgent を `bootout` して `bootstrap` し直すので、新しい版で起動し直す。次のログインでも新しい版で起動する。`swing up` が落ちて launchd が起動し直したときも新しい版になる。

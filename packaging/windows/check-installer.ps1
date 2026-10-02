@@ -53,8 +53,8 @@ function Mentions([string] $Text, [string] $Path) {
 
 function WaitUninstalled {
   for ($i = 0; $i -lt 180; $i++) {
-    $second = @(Get-CimInstance Win32_Process -Filter "Name LIKE '[_]iu%.tmp'")
-    if (-not (Test-Path $UninstallKey) -and $second.Count -eq 0) { break }
+    $second = @(Get-CimInstance Win32_Process -Filter "Name LIKE '[_]iu%.tmp' OR Name = '_unins.tmp'")
+    if (-not (Test-Path $UninstallKey) -and @($second).Count -eq 0 -and -not (Test-Path (Join-Path $App 'unins000.exe'))) { break }
     Start-Sleep 1
   }
 }
@@ -84,7 +84,9 @@ function WaitDashboard {
 }
 
 function RunSetup([string] $Exe, [string] $Log) {
-  $p = Start-Process -FilePath $Exe -ArgumentList ($Silent + "/LOG=`"$Log`"") -Wait -PassThru
+  $p = Start-Process -FilePath $Exe -ArgumentList ($Silent + "/LOG=`"$Log`"") -PassThru
+  # Start-Process -Wait also waits for swing and the tray that an upgrade starts again.
+  $p.WaitForExit()
   $p.ExitCode
 }
 
@@ -105,7 +107,7 @@ try {
       $code = RunSetup $Setup (Join-Path $OutDir 'install.log')
       Check ($code -eq 0) "silent install exits with 0 (got $code)"
       foreach ($f in $Files) { Check (Test-Path (Join-Path $App $f)) "$f is installed" }
-      Check ((AppPathEntries).Count -eq 1) 'the install directory is on the user PATH once'
+      Check (@(AppPathEntries).Count -eq 1) 'the install directory is on the user PATH once'
       Check (TaskRegistered) 'the swing task is registered'
       $run = RunValue
       Check ($null -ne $run -and $run.IndexOf("$App\swing-tray.exe", [StringComparison]::OrdinalIgnoreCase) -ge 0) 'the tray Run value points to the installed swing-tray.exe'
@@ -114,7 +116,7 @@ try {
       Check (Test-Path $Shortcut) 'the Start menu shortcut exists'
       Check (Test-Path $UninstallKey) 'the uninstall entry exists'
       Start-Sleep 5
-      Check ((Running).Count -eq 0) 'nothing from the install directory runs after a silent install'
+      Check (@(Running).Count -eq 0) 'nothing from the install directory runs after a silent install'
     }
     'upgrade' {
       $null = Swing service start
@@ -122,7 +124,7 @@ try {
       Check (WaitDashboard) 'swing up answers before the upgrade'
       Start-Process -FilePath (Join-Path $App 'swing-tray.exe') -WorkingDirectory $App
       Start-Sleep 8
-      Check ((Ours 'swing-tray.exe').Count -gt 0) 'swing-tray runs before the upgrade'
+      Check (@(Ours 'swing-tray.exe').Count -gt 0) 'swing-tray runs before the upgrade'
       $before = @(Ours 'swing.exe' | ForEach-Object { $_.ProcessId })
       Snapshot
       $log = Join-Path $OutDir 'upgrade.log'
@@ -135,10 +137,10 @@ try {
       $after = @(Ours 'swing.exe' | ForEach-Object { $_.ProcessId })
       Check (@($after | Where-Object { $before -contains $_ }).Count -eq 0) 'swing up was restarted by the upgrade'
       Start-Sleep 5
-      Check ((Ours 'swing-tray.exe').Count -gt 0) 'swing-tray runs again after the upgrade'
+      Check (@(Ours 'swing-tray.exe').Count -gt 0) 'swing-tray runs again after the upgrade'
       Check (TaskRegistered) 'the swing task is still registered'
       Check ($null -ne (RunValue)) 'the tray Run value is still there'
-      Check ((AppPathEntries).Count -eq 1) 'the install directory is still on the user PATH once'
+      Check (@(AppPathEntries).Count -eq 1) 'the install directory is still on the user PATH once'
     }
     'uninstall' {
       $log = Join-Path $OutDir 'uninstall.log'
@@ -151,10 +153,10 @@ try {
       Save tray-terminated ([bool]($text -match 'Terminating a process of .*\\swing-tray\.exe'))
       Check (-not (TaskRegistered)) 'the swing task is removed'
       Check ($null -eq (RunValue)) 'the tray Run value is removed'
-      Check ((AppPathEntries).Count -eq 0) 'the install directory is removed from the user PATH'
+      Check (@(AppPathEntries).Count -eq 0) 'the install directory is removed from the user PATH'
       foreach ($f in $Files) { Check (-not (Test-Path (Join-Path $App $f))) "$f is removed" }
       Check (-not (Test-Path $Shortcut)) 'the Start menu shortcut is removed'
-      Check ((Running).Count -eq 0) 'nothing from the install directory runs after the uninstall'
+      Check (@(Running).Count -eq 0) 'nothing from the install directory runs after the uninstall'
       Check (Test-Path $Config) 'swing.toml in the data directory is kept'
     }
     'foreign' {
@@ -189,7 +191,7 @@ try {
         Check (Mentions (TaskXml) "$Other\swing.exe") 'the kept task still starts the other copy'
         Check (Mentions (RunValue) "$Other\swing-tray.exe") 'the tray Run value of the other copy is kept'
         foreach ($f in $Files) { Check (-not (Test-Path (Join-Path $App $f))) "$f is removed" }
-        Check ((Running).Count -eq 0) 'nothing from the install directory runs after the uninstall'
+        Check (@(Running).Count -eq 0) 'nothing from the install directory runs after the uninstall'
       } finally {
         if (Test-Path (Join-Path $Other 'swing.exe')) {
           Save other-uninstall (& (Join-Path $Other 'swing.exe') service uninstall 2>&1 | ForEach-Object { "$_" })
@@ -203,3 +205,5 @@ try {
 } finally {
   Snapshot
 }
+# Otherwise the runner exits with the code of the last native command, such as an expected schtasks failure.
+exit 0

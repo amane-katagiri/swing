@@ -43,10 +43,10 @@ $download = New-Item -ItemType Directory -Path (Join-Path $WorkDir 'download')
 $stage = New-Item -ItemType Directory -Path (Join-Path $WorkDir 'stage')
 New-Item -ItemType Directory -Force -Path $OutDir | Out-Null
 
-$kuboBase = "https://dist.ipfs.tech/kubo/v$kuboVersion"
+$kuboBase = "https://github.com/ipfs/kubo/releases/download/v$kuboVersion"
 $kuboPath = Join-Path $download $kuboZip
-Invoke-WebRequest -Uri "$kuboBase/$kuboZip" -OutFile $kuboPath
-Invoke-WebRequest -Uri "$kuboBase/$kuboZip.sha512" -OutFile "$kuboPath.sha512"
+Invoke-WebRequest -MaximumRetryCount 5 -RetryIntervalSec 10 -Uri "$kuboBase/$kuboZip" -OutFile $kuboPath
+Invoke-WebRequest -MaximumRetryCount 5 -RetryIntervalSec 10 -Uri "$kuboBase/$kuboZip.sha512" -OutFile "$kuboPath.sha512"
 $published = Read-Checksum "$kuboPath.sha512"
 if ($published[0] -ne $pinned[0] -or $published[1] -ne $kuboZip) { throw "the checksum published at $kuboBase differs from packaging/windows/kubo.sha512" }
 Assert-Hash $kuboPath 'SHA512' $pinned[0]
@@ -67,7 +67,7 @@ Copy-Item (Join-Path $inner[0].FullName '*') $stage
 if (-not $Iscc) {
   $installer = Join-Path $download "innosetup-$InnoVersion.exe"
   $tag = 'is-' + ($InnoVersion -replace '\.', '_')
-  Invoke-WebRequest -Uri "https://github.com/jrsoftware/issrc/releases/download/$tag/innosetup-$InnoVersion.exe" -OutFile $installer
+  Invoke-WebRequest -MaximumRetryCount 5 -RetryIntervalSec 10 -Uri "https://github.com/jrsoftware/issrc/releases/download/$tag/innosetup-$InnoVersion.exe" -OutFile $installer
   Assert-Hash $installer 'SHA256' $InnoSha256
   $innoDir = Join-Path $WorkDir 'inno'
   $p = Start-Process -FilePath $installer -Wait -PassThru -ArgumentList @(

@@ -27,7 +27,7 @@ build.ps1 -Archive <swing-<ref>-x86_64-pc-windows-msvc.zip> -OutDir <dir> -RefNa
 
 ### Kubo の取得と検証
 
-`https://dist.ipfs.tech/kubo/v<版>/kubo_v<版>_windows-amd64.zip` と隣の `.sha512` を取得し、次のどれかなら失敗する。
+Kubo の GitHub のリリース（`https://github.com/ipfs/kubo/releases/download/v<版>/`）から `kubo_v<版>_windows-amd64.zip` と隣の `.sha512` を取得し（Inno Setup の取得と同じく、つながらなければ 10 秒おきに 5 回までやり直す）、次のどれかなら失敗する。
 
 - `kubo.sha512` のファイル名が `kubo_v<KUBO_VERSION>_windows-amd64.zip` でない
 - 配布元の `.sha512` の中身が `kubo.sha512` と違う

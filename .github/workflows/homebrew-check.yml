@@ -119,6 +119,7 @@ jobs:
           cp "$(brew --repository "$TAP")/Formula/swing.rb" "$OUT/swing-$V2.rb"
           before=$(pid swing)
           brew upgrade --formula "$TAP/swing" | tee "$OUT/brew-upgrade.txt"
+          brew cleanup "$TAP/swing" | tee "$OUT/brew-cleanup.txt"
           find "$prefix/Cellar/swing" -mindepth 1 -maxdepth 1 | tee "$OUT/kegs.txt"
           test ! -e "$prefix/Cellar/swing/$V1"
           test -x "$(program swing)"
