@@ -29,6 +29,10 @@ SWING（Nostr + IPFS 個人サイト相互ミラー）のリポジトリで作�
 
 画面や動作を見せるときは `docker/demo/demo.sh up --seed` で外部ネットワークに出ないデモ環境を、サンプルのサイトとフォロー関係（深さ 5 まで）入りで上げる（ダッシュボードは <http://127.0.0.1:18082/>）。実 relay・実鍵・リポジトリ直下の `.env` は使わない。構成と外に出る経路は [`docker/demo/README.md`](docker/demo/README.md)。
 
+## CI での確認
+
+GitHub Actions のワークフロー（`macos-check`・`windows-check`・`windows-installer-check`・`homebrew-check` など）で試すときは、作業ブランチを push して、そのブランチで手動実行する。動くまでの試行錯誤のコミットを main に積まない。通ったら、試行のコミットを意味のある単位にまとめてから main に入れる。ブランチ名に `/` を使わない（`release` の `image` ジョブが失敗する）。`release` をブランチで手動実行すると、ブランチ名のタグでイメージが push される（[`docs/architecture/release.md`](docs/architecture/release.md)）。
+
 ## コーディング規則
 
 - コメントは原則書かない。書くなら「自然な実装を避けた理由」を 1 行だけ。
