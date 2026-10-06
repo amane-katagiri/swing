@@ -202,6 +202,8 @@ login=$("$root/docker/demo/demo.sh" exec -T mirror swing dashboard open --no-bro
 ab open --init-script "$work/init.js"
 ab set viewport 1280 800
 ab open "$login"
+ab eval "document.getElementById('login-form').requestSubmit()"
+ab wait --fn "document.body.dataset.view && document.body.dataset.view !== 'login'"
 ab open "$base/#/desktop"
 ab mouse move 700 450
 sleep 4
