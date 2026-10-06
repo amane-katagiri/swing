@@ -21,7 +21,7 @@
 
 環境変数・ポート・volume の値は [`../../compose.yaml`](../../compose.yaml) が正本。2 サービスとも `restart: unless-stopped`。内蔵 gateway（[`gateway.md`](gateway.md)）は `mirror` コンテナの中で動き、`SWING_GATEWAY_UPSTREAM=http://ipfs:8080` で `ipfs` の Kubo の Gateway にプロキシする。
 
-コンテナ内の待ち受け（`SWING_DASHBOARD_LISTEN`・`SWING_GATEWAY_LISTEN`）とホスト側の公開アドレス（`SWING_DASHBOARD_BIND`・`SWING_GATEWAY_BIND`・`SWING_KUBO_GATEWAY_BIND`。それぞれ `mirror` の 8082・`mirror` の 8081・`ipfs` の 8080 をホストに出す）は別々に決める。`*_BIND` は compose の変数展開だけに使い、`swing` は読まない。ホスト側のポートは `[gateway].listen` に関わらず常にマッピングされる。compose での `SWING_GATEWAY_LISTEN` の既定は `off`（有効にする手順は README の「[自分のサイトをゲートウェイで配信する](../../README.md#自分のサイトをゲートウェイで配信する)」）。
+コンテナ内の待ち受け（`SWING_DASHBOARD_LISTEN`・`SWING_GATEWAY_LISTEN`）とホスト側の公開アドレス（`SWING_DASHBOARD_BIND`・`SWING_GATEWAY_BIND`・`SWING_KUBO_GATEWAY_BIND`。それぞれ `mirror` の 8082・`mirror` の 8081・`ipfs` の 8080 をホストに出す）は別々に決める。`*_BIND` は compose の変数展開だけに使い、`swing` は読まない。ホスト側のポートは `[gateway].listen` に関わらず常にマッピングされる。compose での `SWING_GATEWAY_LISTEN` の既定は `off`（有効にする手順は [`guide/publish.md`](../guide/publish.md#自分のサイトをゲートウェイで配信する)）。
 
 外部ネットワークに出ないデモ用の重ね合わせ（`docker/demo/`）は [`../../docker/demo/README.md`](../../docker/demo/README.md) を参照。`.env` は mirror の `env_file` と、compose の変数展開の両方に使われる。`.env`（と compose が固定で渡す環境変数）で設定したキーはすべて `Source::Env` になるので、ダッシュボードの Settings／Setup 画面ではロック表示（編集不可）になる（[`config.md`](config.md)）。
 
@@ -29,9 +29,9 @@
 
 `SWING_DASHBOARD_LISTEN` に `off` は無い（値の形式は [`dashboard.md`](dashboard.md#設定dashboard)。UI を止めるなら `ui = false`）。
 
-コンテナ内で `swing dashboard open` が出す URL は、`public_url` が無ければコンテナ内の待ち受け（既定 8082）から組み立てる。compose は `SWING_DASHBOARD_BIND` から `SWING_DASHBOARD_PUBLIC_URL` を作らない。トークンは `swing-data` volume の `/data/dashboard.token` に置かれる。ログインの手順は README の「[ダッシュボード](../../README.md#ダッシュボード)」。
+コンテナ内で `swing dashboard open` が出す URL は、`public_url` が無ければコンテナ内の待ち受け（既定 8082）から組み立てる。compose は `SWING_DASHBOARD_BIND` から `SWING_DASHBOARD_PUBLIC_URL` を作らない。トークンは `swing-data` volume の `/data/dashboard.token` に置かれる。ログインの手順は [`guide/usage.md`](../guide/usage.md#ダッシュボード)。
 
-ダッシュボードの Publish 画面はブラウザからフォルダをアップロードする（`POST /api/publish/upload`。上限は `SWING_DASHBOARD_MAX_UPLOAD`、既定 2 GiB）ので、`mirror` コンテナにサイトの volume は要らない（[`dashboard/http-api/publish.md`](dashboard/http-api/publish.md#post-apipublishupload)）。CLI の `swing publish` をコンテナで使う手順は README の「[自分のサイトを公開する](../../README.md#自分のサイトを公開する)」。
+ダッシュボードの Publish 画面はブラウザからフォルダをアップロードする（`POST /api/publish/upload`。上限は `SWING_DASHBOARD_MAX_UPLOAD`、既定 2 GiB）ので、`mirror` コンテナにサイトの volume は要らない（[`dashboard/http-api/publish.md`](dashboard/http-api/publish.md#post-apipublishupload)）。CLI の `swing publish` をコンテナで使う手順は [`guide/publish.md`](../guide/publish.md)。
 
 ## Kubo の設定
 
@@ -51,4 +51,4 @@
 
 ## compose から `swing up` への移行
 
-volume をホストにコピーしてバイナリの `swing up` に移る手順は README の「[Docker Compose からバイナリの `swing up` に移る](../../README.md#docker-compose-からバイナリの-swing-up-に移る)」を参照。
+volume をホストにコピーしてバイナリの `swing up` に移る手順は [`guide/docker.md`](../guide/docker.md#docker-compose-からバイナリの-swing-up-に移る)を参照。

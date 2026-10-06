@@ -43,7 +43,7 @@ SWING が出すイベント（サイトイベント・Follow Set・レプリカ�
 ```
 
 - `app_secret_key` は SWING が作った使い捨ての鍵で、署名アプリとの暗号化にだけ使う。ユーザーとして署名する力は無く、署名アプリが許可した範囲のリクエストしか通らない。`RemoteSignerFile` の `Debug` はこの値を出さない。メモリ上では `zeroize::Zeroizing` に入れ、読み書きに使う JSON の文字列とともに解放時に消す。署名アプリ用の relay 接続が受け取る大きさの上限は [`nostr.md#検証`](nostr.md#検証)。ペアリングの secret は保存しない。
-- ファイルを書くのはセットアップ（`POST /api/setup`）と、署名アプリとのつなぎ直し（`POST /api/signer/reconnect`）と、`swing signer pair`（[`cli.md#signer-pair`](cli.md#signer-pair)）だけ。つなぎ直しは、今と同じ Nostr アカウント（公開鍵）で署名する署名アプリでなければ受け付けない。秘密鍵に戻す手順は README の「[署名アプリ（NIP-46）で署名する](../../README.md#署名アプリnip-46で署名する)」。
+- ファイルを書くのはセットアップ（`POST /api/setup`）と、署名アプリとのつなぎ直し（`POST /api/signer/reconnect`）と、`swing signer pair`（[`cli.md#signer-pair`](cli.md#signer-pair)）だけ。つなぎ直しは、今と同じ Nostr アカウント（公開鍵）で署名する署名アプリでなければ受け付けない。秘密鍵に戻す手順は [`guide/security.md`](../guide/security.md#署名アプリnip-46で署名する)。
 
 ## ペアリング（`Pairing`）
 
