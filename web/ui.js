@@ -48,6 +48,12 @@ export function renderRelayResults(container, relays) {
   container.append(wrap);
 }
 
+export const MAX_MIRROR_KEYS = 100;
+
+export function parseMirrorKeys(value) {
+  return value.split(/[\s,]+/).map((s) => s.trim()).filter(Boolean);
+}
+
 export function renderMirrorOpResult(container, result, kind) {
   container.hidden = false;
   container.replaceChildren();

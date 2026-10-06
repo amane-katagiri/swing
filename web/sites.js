@@ -19,9 +19,7 @@ import {
   wireSortSwitch,
   createLoadGuard,
 } from './util.js';
-import { copyButton, storedBadge, appendLinksAndMessage, renderMirrorOpResult, renderOpError, buildRemoveControl, buildSiteNameRow } from './ui.js';
-
-const MAX_MIRROR_KEYS = 100;
+import { copyButton, storedBadge, appendLinksAndMessage, renderMirrorOpResult, renderOpError, buildRemoveControl, buildSiteNameRow, parseMirrorKeys, MAX_MIRROR_KEYS } from './ui.js';
 
 const SITE_FIELD_DEFAULTS = { url: null, title: null, message: null, nip05: null, replicas: null, unverified_replicas: null, stored: null, stored_size: null, gateway_url: null };
 
@@ -257,7 +255,7 @@ export const SitesView = {
     sitesEls.mirrorAddForm.addEventListener('submit', async (ev) => {
       ev.preventDefault();
       const input = mirrorKeysInput;
-      const keys = input.value.split(/[\s,]+/).map((s) => s.trim()).filter(Boolean);
+      const keys = parseMirrorKeys(input.value);
       if (keys.length === 0) {
         input.focus();
         renderOpError(sitesEls.mirrorAddResult, { message: t('mirrorKeysRequired') });

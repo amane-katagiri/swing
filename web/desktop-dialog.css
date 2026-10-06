@@ -263,3 +263,77 @@
   color: var(--desk-shadow);
   text-shadow: 1px 1px 0 var(--desk-highlight);
 }
+
+.desk-text-input {
+  display: block;
+  box-sizing: border-box;
+  width: 100%;
+  margin: 0;
+  padding: 3px 4px;
+  font: inherit;
+  font-size: 12px;
+  background: #ffffff;
+  color: var(--desk-text);
+  border: 0;
+  border-radius: 0;
+  box-shadow:
+    inset 1px 1px 0 var(--desk-shadow),
+    inset -1px -1px 0 var(--desk-highlight),
+    inset 2px 2px 0 var(--desk-dark-shadow),
+    inset -2px -2px 0 var(--desk-face-light);
+}
+
+.desk-text-input:focus {
+  outline: none;
+}
+
+.desk-text-input::placeholder {
+  color: var(--desk-shadow);
+}
+
+.desk-text-input:read-only {
+  background: var(--desk-face-light);
+}
+
+.desk-mirror-add {
+  width: min(360px, calc(100% - 24px));
+}
+
+.desk-mirror-add .desk-dialog-body {
+  margin: 0;
+  padding-bottom: 4px;
+  box-shadow: none;
+}
+
+.desk-mirror-add-intro {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.desk-mirror-add-intro p {
+  margin: 0;
+  line-height: 1.5;
+}
+
+.desk-mirror-add-icon {
+  width: 32px;
+  height: 32px;
+  flex: none;
+  image-rendering: pixelated;
+}
+
+.desk-mirror-add-label {
+  display: block;
+  margin-bottom: 4px;
+}
+
+.desk-mirror-add-status {
+  margin: 8px 0 0;
+  line-height: 1.5;
+}
+
+.desk-mirror-add-status[data-kind="error"] {
+  color: #800000;
+}

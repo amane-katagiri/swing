@@ -63,7 +63,7 @@ docker compose exec mirror swing dashboard open --no-browser
 
 Windows と macOS では、`swing-tray` を起動するとタスクトレイ（macOS はメニューバー）にアイコンが出ます。そこからダッシュボードを開く（ログイン済みで開きます）・再起動・停止ができます。サービスとして登録してあれば、トレイを起動したときに `swing up` が止まっていれば起動し、メニューから起動することもできます。トレイを終了するときは、SWING も止めるかどうかを選べます。`swing service install` で登録すると、ログイン時に自動で起動します。手で起動するときは、`swing up` と同じ設定ファイルを読むように `swing-tray --config <swing.toml のパス>`（macOS は `SWING.app/Contents/MacOS/swing-tray --config <swing.toml のパス>`）と指定してください（詳しくは [`docs/architecture/tray.md`](../architecture/tray.md)）。
 
-- **Desktop**: 保存中のサイトを、懐かしい Windows 風デスクトップ上のブラウザウィンドウに表示される「リンク集」ページ風に眺められます。
+- **Desktop**: 保存中のサイトを、懐かしい Windows 風デスクトップ上のブラウザウィンドウに表示される「リンク集」ページ風に眺められます。ウィンドウのツールバーの「ミラー」（星のアイコン）から、Sites 画面と同じようにミラーするアカウントを追加できます。
 - **Sites**: `swing sites` と同じ内容を一覧表示し、そのまま「mirror に追加」「mirror から外す」を操作できます。ボタンひとつで `swing status` 相当のストレージチェックも実行できます。
 - **Webring**: `swing webring` のグラフを、ドラッグ・パン・ズームできる図として表示します。ノードを選ぶとレプリカ数の詳細が見られ、そこから mirror への追加もできます。
 - **Publish**: これまでに公開したサイトの一覧（「My sites」）から選び直したり、新しく publish したりできます。ブラウザから直接フォルダを選んでアップロードする方式なので、**Docker Compose でも volume のマウントは不要**です（既定の上限は 2GiB、`SWING_DASHBOARD_MAX_UPLOAD` で変更可）。

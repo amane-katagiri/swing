@@ -195,6 +195,7 @@
             <span class="desk-toolbtn" aria-hidden="true"><svg class="desk-toolbtn-icon" aria-hidden="true"><use href="/desktop-icons.svg#icon-desk-tb-forward"></use></svg>進む</span>
             <span class="desk-toolbtn" aria-hidden="true"><svg class="desk-toolbtn-icon" aria-hidden="true"><use href="/desktop-icons.svg#icon-desk-tb-stop"></use></svg>中止</span>
             <button type="button" class="desk-toolbtn desk-toolbtn-reload" id="desk-reload" aria-label="更新" title="更新"><svg class="desk-toolbtn-icon" aria-hidden="true"><use href="/desktop-icons.svg#icon-desk-tb-reload"></use></svg>更新</button>
+            <button type="button" class="desk-toolbtn" id="desk-mirror-add" aria-label="ミラーに追加" title="ミラーに追加"><svg class="desk-toolbtn-icon" aria-hidden="true"><use href="/desktop-icons.svg#icon-desk-tb-mirror"></use></svg>ミラー</button>
             <span class="desk-toolbtn" aria-hidden="true"><svg class="desk-toolbtn-icon" aria-hidden="true"><use href="/desktop-icons.svg#icon-desk-tb-home"></use></svg>ホーム</span>
           </div>
           <div class="desk-address-row" aria-hidden="true">
@@ -488,6 +489,36 @@
             <button type="button" class="desk-dialog-btn" id="desk-dialog-ok" data-dialog-action="ok">OK</button>
             <button type="button" class="desk-dialog-btn" id="desk-dialog-cancel" data-dialog-action="cancel">キャンセル</button>
             <button type="button" class="desk-dialog-btn" id="desk-dialog-apply" data-dialog-action="apply" disabled>適用</button>
+          </div>
+        </div>
+        <div class="desk-window desk-dialog desk-mirror-add" id="desk-dialog-mirror-add" role="dialog" aria-modal="true" aria-labelledby="desk-mirror-add-title" tabindex="-1" hidden>
+          <div class="desk-titlebar desk-dialog-titlebar">
+            <svg class="desk-titlebar-icon" aria-hidden="true"><use href="/desktop-icons.svg#icon-desk-tb-mirror"></use></svg>
+            <span class="desk-titlebar-text" id="desk-mirror-add-title">ミラーに追加</span>
+            <div class="desk-titlebar-btns">
+              <button type="button" class="desk-tbtn desk-tbtn-close" data-dialog-action="close" aria-label="閉じる" title="閉じる"><svg class="desk-glyph desk-glyph-close" width="8" height="7" viewBox="0 0 8 7" shape-rendering="crispEdges" aria-hidden="true">
+                <rect x="0" y="0" width="2" height="1"></rect><rect x="6" y="0" width="2" height="1"></rect>
+                <rect x="1" y="1" width="2" height="1"></rect><rect x="5" y="1" width="2" height="1"></rect>
+                <rect x="2" y="2" width="2" height="1"></rect><rect x="4" y="2" width="2" height="1"></rect>
+                <rect x="3" y="3" width="2" height="1"></rect>
+                <rect x="2" y="4" width="2" height="1"></rect><rect x="4" y="4" width="2" height="1"></rect>
+                <rect x="1" y="5" width="2" height="1"></rect><rect x="5" y="5" width="2" height="1"></rect>
+                <rect x="0" y="6" width="2" height="1"></rect><rect x="6" y="6" width="2" height="1"></rect>
+              </svg></button>
+            </div>
+          </div>
+          <div class="desk-dialog-body">
+            <div class="desk-mirror-add-intro">
+              <svg class="desk-mirror-add-icon" aria-hidden="true"><use href="/desktop-icons.svg#icon-desk-mirror-add"></use></svg>
+              <p>ミラーしたい人の公開鍵を入力してください。この人が新しいサイトをSWINGに公開すると、このコンピュータに保存されます。</p>
+            </div>
+            <label class="desk-mirror-add-label" for="desk-mirror-add-keys">公開鍵(K):</label>
+            <input type="text" class="desk-text-input" id="desk-mirror-add-keys" placeholder="npub1…、hex、nprofile1…（空白・カンマ区切り）" autocomplete="off" spellcheck="false">
+            <p class="desk-mirror-add-status" id="desk-mirror-add-status" aria-live="polite" hidden></p>
+          </div>
+          <div class="desk-dialog-buttons">
+            <button type="button" class="desk-dialog-btn" data-dialog-action="ok" disabled>OK</button>
+            <button type="button" class="desk-dialog-btn" data-dialog-action="cancel">キャンセル</button>
           </div>
         </div>
       </div>

@@ -2,6 +2,7 @@ import { storage } from './storage.js';
 import { cache, el, apiFetch, describeError, createLoadGuard, setBusy, sanitizeMessage, sanitizeDisplayText, maybeLink } from './util.js';
 import { DesktopWindow } from './desktop-window.js';
 import { DesktopSettings } from './desktop-settings.js';
+import { DesktopMirrorAdd } from './desktop-mirror-add.js';
 import { initDeskScale } from './desktop-scale.js';
 import { tabAcrossEdge, focusableIn, isModalOpen, scheduleActiveSync } from './desktop-focus.js';
 import { createUpdateWatcher } from './desktop-updates.js';
@@ -401,6 +402,12 @@ export const DesktopView = {
         DesktopWindow.focusWindow();
       });
     }
+    DesktopMirrorAdd.init({
+      added: async (message) => {
+        await this.load(true);
+        if (deskEls.statusText && cache.sites) deskEls.statusText.textContent = message;
+      },
+    });
     bumpVisitCounter();
     updateClock();
     setInterval(updateClock, 30000);

@@ -100,6 +100,7 @@ const STATIC_ASSETS: &[StaticAsset] = &[
     text_asset!(JS, "desktop-notify.js"),
     text_asset!(JS, "desktop-notify-settings.js"),
     text_asset!(JS, "desktop-system-settings.js"),
+    text_asset!(JS, "desktop-mirror-add.js"),
     text_asset!("image/svg+xml", "desktop-icons.svg"),
     bytes_asset!("font/woff2", "fonts/pixelmplus12-regular.woff2"),
     bytes_asset!("font/woff2", "fonts/pixelmplus12-bold.woff2"),
