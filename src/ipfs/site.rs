@@ -289,7 +289,7 @@ fn multipart_body(
                             })
                     }
                 })
-                .map_ok(tokio_util::io::ReaderStream::new)
+                .map_ok(|file| tokio_util::io::ReaderStream::with_capacity(file, 256 * 1024))
                 .try_flatten();
             stream::once(std::future::ready(Ok(header)))
                 .chain(content)
