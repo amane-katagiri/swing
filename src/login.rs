@@ -9,7 +9,7 @@ use crate::dashboard::dto::LoginCodeDto;
 
 fn browser_command(url: &str) -> Command {
     if cfg!(windows) {
-        let mut cmd = Command::new("rundll32");
+        let mut cmd = Command::new(crate::service::windows_system_tool("rundll32.exe"));
         cmd.args(["url.dll,FileProtocolHandler", url]);
         cmd
     } else if cfg!(target_os = "macos") {

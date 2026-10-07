@@ -68,7 +68,12 @@ fn pick_service_user(
     )
 }
 
-fn passwd_name(user: &ServiceUser) -> Result<String> {
+struct Account {
+    name: String,
+    uid: u32,
+}
+
+fn passwd_entry(user: &ServiceUser) -> Result<Account> {
     let entry = match user {
         ServiceUser::Name(name) => {
             let c_name = CString::new(name.as_str())
@@ -83,16 +88,117 @@ fn passwd_name(user: &ServiceUser) -> Result<String> {
             ServiceUser::Uid(uid) => bail!("no user with uid {uid}"),
         }
     }
-    let name = unsafe { CStr::from_ptr((*entry).pw_name) };
-    name.to_str()
+    let (name, uid) = unsafe { (CStr::from_ptr((*entry).pw_name), (*entry).pw_uid) };
+    let name = name
+        .to_str()
         .map(str::to_owned)
-        .context("the user name is not valid UTF-8")
+        .context("the user name is not valid UTF-8")?;
+    Ok(Account { name, uid })
 }
 
-fn service_user(run_as: Option<&str>) -> Result<String> {
+fn service_user(run_as: Option<&str>, allow_root: bool) -> Result<Account> {
     let sudo_uid = std::env::var("SUDO_UID").ok();
     let uid = unsafe { libc::getuid() };
-    passwd_name(&pick_service_user(run_as, sudo_uid.as_deref(), uid)?)
+    let account = passwd_entry(&pick_service_user(run_as, sudo_uid.as_deref(), uid)?)?;
+    if account.uid == 0 && !allow_root {
+        bail!(
+            "refusing to register a system service that runs swing as {} (uid 0); pass --allow-root if that is intended",
+            account.name
+        );
+    }
+    Ok(account)
+}
+
+fn is_private_group(owner: u32, gid: u32) -> bool {
+    unsafe {
+        let user = libc::getpwuid(owner);
+        let group = libc::getgrgid(gid);
+        if user.is_null() || group.is_null() {
+            return false;
+        }
+        let name = CStr::from_ptr((*user).pw_name);
+        if CStr::from_ptr((*group).gr_name) != name {
+            return false;
+        }
+        let mut member = (*group).gr_mem;
+        while !(*member).is_null() {
+            if CStr::from_ptr(*member) != name {
+                return false;
+            }
+            member = member.add(1);
+        }
+        true
+    }
+}
+
+fn entry_problem(
+    owner: u32,
+    mode: u32,
+    trusted: u32,
+    ancestor: bool,
+    private_group: impl FnOnce() -> bool,
+) -> Option<String> {
+    let kind = mode & libc::S_IFMT;
+    if ancestor && kind == libc::S_IFDIR && mode & libc::S_ISVTX != 0 && owner == 0 {
+        return None;
+    }
+    if owner != 0 && owner != trusted {
+        return Some(format!("is owned by uid {owner}"));
+    }
+    let loose = match mode & 0o022 {
+        0 => false,
+        0o020 => !private_group(),
+        _ => true,
+    };
+    if kind != libc::S_IFLNK && loose {
+        return Some(format!(
+            "is writable by its group or others (mode {:o})",
+            mode & 0o7777
+        ));
+    }
+    None
+}
+
+fn path_problems(path: &Path, trusted: u32) -> Vec<String> {
+    use std::os::unix::fs::MetadataExt;
+    let mut chains = vec![path.to_path_buf()];
+    if let Ok(real) = path.canonicalize()
+        && real != path
+    {
+        chains.push(real);
+    }
+    let mut problems = Vec::new();
+    for chain in &chains {
+        for (i, entry) in chain.ancestors().enumerate() {
+            let problem = match std::fs::symlink_metadata(entry) {
+                Ok(meta) => entry_problem(meta.uid(), meta.mode(), trusted, i > 0, || {
+                    is_private_group(meta.uid(), meta.gid())
+                }),
+                Err(e) => Some(format!("cannot be inspected ({e})")),
+            };
+            if let Some(problem) = problem {
+                problems.push(format!("{} {problem}", entry.display()));
+            }
+        }
+    }
+    problems
+}
+
+fn require_protected(paths: &[&Path], user: &Account) -> Result<()> {
+    let mut problems: Vec<String> = Vec::new();
+    for problem in paths.iter().flat_map(|path| path_problems(path, user.uid)) {
+        if !problems.contains(&problem) {
+            problems.push(problem);
+        }
+    }
+    if problems.is_empty() {
+        return Ok(());
+    }
+    bail!(
+        "refusing to register a system service that runs as {name}: only root and {name} may be able to change what it runs, but\n  {}\nInstall swing into a root-owned directory (install.sh --prefix /usr/local) and keep the config in a directory such as /etc/swing.",
+        problems.join("\n  "),
+        name = user.name,
+    )
 }
 
 pub fn start(system: bool) -> Result<()> {
@@ -105,37 +211,60 @@ pub fn is_installed(system: bool) -> Option<bool> {
     Some(unit_path(system).is_ok_and(|p| p.exists()))
 }
 
-fn writable_paths(config: &Path) -> Vec<PathBuf> {
-    match crate::config::Config::load(Some(config)) {
-        Ok(config) => [config.agent.state_dir, config.kubo.repo]
-            .into_iter()
-            .filter(|p| p.is_absolute())
-            .collect(),
+fn load_config(path: &Path) -> Option<crate::config::Config> {
+    match crate::config::Config::load(Some(path)) {
+        Ok(config) => Some(config),
         Err(e) => {
             println!(
                 "Warning: could not read {} ({e:#}); the unit only lets swing write under the config file's directory, so keep [agent].state_dir and [kubo].repo there.",
-                config.display()
+                path.display()
             );
-            Vec::new()
+            None
         }
+    }
+}
+
+fn writable_paths(config: Option<&crate::config::Config>) -> Vec<PathBuf> {
+    config
+        .map(|config| {
+            [&config.agent.state_dir, &config.kubo.repo]
+                .into_iter()
+                .filter(|p| p.is_absolute())
+                .cloned()
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn kubo_binary(config: Option<&crate::config::Config>) -> Option<PathBuf> {
+    let kubo = &config?.kubo;
+    if !kubo.managed {
+        return None;
+    }
+    match &kubo.binary {
+        Some(path) => Some(path.clone()),
+        None => crate::kubo::locate_binary(None).ok(),
     }
 }
 
 pub fn install(exe: &Path, config: &Path, workdir: &Path, opts: &InstallOptions<'_>) -> Result<()> {
     let system = opts.system;
     let user = if system {
-        Some(service_user(opts.run_as)?)
+        Some(service_user(opts.run_as, opts.allow_root)?)
     } else {
         None
     };
-    let writable = if system {
-        writable_paths(config)
-    } else {
-        Vec::new()
-    };
+    let loaded = if system { load_config(config) } else { None };
+    if let Some(user) = &user {
+        let kubo = kubo_binary(loaded.as_ref());
+        let mut paths = vec![exe, config, workdir];
+        paths.extend(kubo.as_deref());
+        require_protected(&paths, user)?;
+    }
+    let writable = writable_paths(loaded.as_ref());
     let scope = match &user {
         Some(user) => SystemdScope::System {
-            user,
+            user: &user.name,
             writable: &writable,
         },
         None => SystemdScope::User,
@@ -146,7 +275,7 @@ pub fn install(exe: &Path, config: &Path, workdir: &Path, opts: &InstallOptions<
     write_service_file(&path, unit)?;
     println!("Wrote systemd unit to {}.", path.display());
     if let Some(user) = &user {
-        println!("The service runs as user {user}.");
+        println!("The service runs as user {}.", user.name);
     }
 
     systemctl(system, &["daemon-reload"])?;
@@ -288,13 +417,79 @@ mod tests {
     }
 
     #[test]
-    fn passwd_name_resolves_existing_users_only() {
-        assert_eq!(passwd_name(&ServiceUser::Uid(0)).unwrap(), "root");
+    fn passwd_entry_resolves_existing_users_only() {
+        assert_eq!(passwd_entry(&ServiceUser::Uid(0)).unwrap().name, "root");
         assert_eq!(
-            passwd_name(&ServiceUser::Name("root".into())).unwrap(),
-            "root"
+            passwd_entry(&ServiceUser::Name("root".into())).unwrap().uid,
+            0
         );
-        assert!(passwd_name(&ServiceUser::Name("swing-no-such-user-x".into())).is_err());
-        assert!(passwd_name(&ServiceUser::Name("a\0b".into())).is_err());
+        assert!(passwd_entry(&ServiceUser::Name("swing-no-such-user-x".into())).is_err());
+        assert!(passwd_entry(&ServiceUser::Name("a\0b".into())).is_err());
+    }
+
+    #[test]
+    fn running_as_root_needs_allow_root() {
+        for run_as in ["root", "0"] {
+            let err = service_user(Some(run_as), false).err().unwrap();
+            assert!(err.to_string().contains("--allow-root"), "{err:#}");
+        }
+        assert_eq!(service_user(Some("root"), true).unwrap().uid, 0);
+    }
+
+    #[test]
+    fn entries_must_belong_to_root_or_the_user_and_not_be_shared_writable() {
+        let dir = libc::S_IFDIR;
+        let file = libc::S_IFREG;
+        let check = |owner, mode, ancestor, private| {
+            entry_problem(owner, mode, 1000, ancestor, || private).is_none()
+        };
+        assert!(check(0, file | 0o755, false, false));
+        assert!(check(1000, file | 0o700, false, false));
+        assert!(check(1000, dir | 0o755, true, false));
+        assert!(check(0, dir | 0o1777, true, false));
+        assert!(check(1000, libc::S_IFLNK | 0o777, false, false));
+        assert!(check(1000, file | 0o775, false, true));
+        assert!(check(1000, dir | 0o2775, true, true));
+        assert!(!check(1001, file | 0o755, false, false));
+        assert!(!check(1000, file | 0o775, false, false));
+        assert!(!check(1000, file | 0o757, false, true));
+        assert!(!check(0, dir | 0o757, true, false));
+        assert!(!check(0, dir | 0o2775, true, false));
+        assert!(!check(0, dir | 0o1777, false, false));
+        assert!(!check(1001, dir | 0o1777, true, false));
+    }
+
+    #[test]
+    fn path_problems_follow_symlinks_and_name_loose_parents() {
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
+        let tmp = tempfile::tempdir().unwrap();
+        let me = std::fs::metadata(tmp.path()).unwrap().uid();
+        let dir = tmp.path().join("lib");
+        let exe = dir.join("swing");
+        std::fs::create_dir(&dir).unwrap();
+        std::fs::write(&exe, b"").unwrap();
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o755)).unwrap();
+        std::fs::set_permissions(&exe, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let link = tmp.path().join("link");
+        std::os::unix::fs::symlink(&exe, &link).unwrap();
+        let mentions = |problems: Vec<String>, path: &Path| {
+            let prefix = format!("{} ", path.display());
+            problems.iter().any(|p| p.starts_with(&prefix))
+        };
+        assert!(!mentions(path_problems(&link, me), &dir));
+
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o757)).unwrap();
+        assert!(mentions(path_problems(&link, me), &dir));
+        assert!(path_problems(&exe, me).contains(&format!(
+            "{} is writable by its group or others (mode 757)",
+            dir.display()
+        )));
+        if me != 0 {
+            assert!(mentions(path_problems(&exe, me + 1), &exe));
+        }
+        assert!(mentions(
+            path_problems(&dir.join("missing"), me),
+            &dir.join("missing")
+        ));
     }
 }

@@ -44,6 +44,7 @@ const MACOS_TRAY_LABEL: &str = "jp.ne.ama.swing-tray";
 pub struct InstallOptions<'a> {
     pub system: bool,
     pub run_as: Option<&'a str>,
+    pub allow_root: bool,
     pub no_start: bool,
     pub no_tray: bool,
 }
@@ -95,6 +96,12 @@ fn require_system_supported(system: bool) -> Result<()> {
         bail!("--system is only supported on Linux");
     }
     Ok(())
+}
+
+// Command::new searches the application directory before System32.
+pub(crate) fn windows_system_tool(name: &str) -> PathBuf {
+    let root = std::env::var_os("SystemRoot").unwrap_or_else(|| r"C:\Windows".into());
+    PathBuf::from(root).join("System32").join(name)
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]

@@ -103,6 +103,10 @@ pub(crate) fn private_file_options() -> std::fs::OpenOptions {
 }
 
 pub(crate) fn write_private_file(path: &Path, contents: &str) -> Result<()> {
+    write_private_bytes(path, contents.as_bytes())
+}
+
+pub(crate) fn write_private_bytes(path: &Path, contents: &[u8]) -> Result<()> {
     let mut tmp = path.as_os_str().to_owned();
     tmp.push(format!(".{}.tmp", random_hex(8)));
     let tmp = PathBuf::from(tmp);
@@ -110,7 +114,7 @@ pub(crate) fn write_private_file(path: &Path, contents: &str) -> Result<()> {
         .open(&tmp)
         .with_context(|| format!("creating {}", tmp.display()))?;
     let written = file
-        .write_all(contents.as_bytes())
+        .write_all(contents)
         .and_then(|()| file.sync_all())
         .with_context(|| format!("writing {}", tmp.display()));
     drop(file);

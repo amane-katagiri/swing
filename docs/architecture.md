@@ -97,7 +97,7 @@
 ```
 swing up      [--config <path>] [--log-file <path>] [--no-port-shift]
 swing stop    [--config <path>] [--restart] [--timeout <secs>]
-swing service install   [--config <path>] [--system [--run-as <user>]] [--no-start] [--no-tray]
+swing service install   [--config <path>] [--system [--run-as <user>] [--allow-root]] [--no-start] [--no-tray]
 swing service uninstall [--system] [--only-from <dir>]
 swing service start     [--system]
 swing service stop      [--system]

@@ -293,6 +293,12 @@ enum ServiceCommand {
             help = "User (name or uid) the system unit runs as; defaults to the sudo caller (Linux only)"
         )]
         run_as: Option<String>,
+        #[arg(
+            long,
+            requires = "system",
+            help = "Allow the system unit to run as root (Linux only)"
+        )]
+        allow_root: bool,
         #[arg(long, help = "Register without starting it now")]
         no_start: bool,
         #[arg(
@@ -470,6 +476,7 @@ async fn run_other(command: Command) -> Result<()> {
                 config,
                 system,
                 run_as,
+                allow_root,
                 no_start,
                 no_tray,
             } => service::install(
@@ -477,6 +484,7 @@ async fn run_other(command: Command) -> Result<()> {
                 &service::InstallOptions {
                     system,
                     run_as: run_as.as_deref(),
+                    allow_root,
                     no_start,
                     no_tray,
                 },

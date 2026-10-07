@@ -122,30 +122,42 @@ fn xml_text(what: &str, path: &Path) -> Result<String> {
     Ok(xml_escape(&text(what, path)?))
 }
 
-pub fn launchd_plist(exe: &Path, config: &Path, workdir: &Path, log: &Path) -> Result<String> {
-    let exe = xml_text("executable path", exe)?;
-    let config = xml_text("config path", config)?;
-    let workdir = xml_text("working directory", workdir)?;
-    let log = xml_text("log path", log)?;
-    Ok(format!(
+fn launchd_plist_for(label: &str, args: &[&str], workdir: &str, keys: &str) -> String {
+    let args: String = args
+        .iter()
+        .map(|arg| format!("        <string>{arg}</string>\n"))
+        .collect();
+    format!(
         r#"<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
     <key>Label</key>
-    <string>{MACOS_LABEL}</string>
+    <string>{label}</string>
     <key>ProgramArguments</key>
     <array>
-        <string>{exe}</string>
-        <string>up</string>
-        <string>--config</string>
-        <string>{config}</string>
-    </array>
+{args}    </array>
     <key>WorkingDirectory</key>
     <string>{workdir}</string>
     <key>RunAtLoad</key>
     <true/>
-    <key>KeepAlive</key>
+{keys}    <key>AssociatedBundleIdentifiers</key>
+    <array>
+        <string>{MACOS_BUNDLE_ID}</string>
+    </array>
+</dict>
+</plist>
+"#
+    )
+}
+
+pub fn launchd_plist(exe: &Path, config: &Path, workdir: &Path, log: &Path) -> Result<String> {
+    let exe = xml_text("executable path", exe)?;
+    let config = xml_text("config path", config)?;
+    let workdir = xml_text("working directory", workdir)?;
+    let log = xml_text("log path", log)?;
+    let keys = format!(
+        r#"    <key>KeepAlive</key>
     <dict>
         <key>SuccessfulExit</key>
         <false/>
@@ -161,14 +173,14 @@ pub fn launchd_plist(exe: &Path, config: &Path, workdir: &Path, log: &Path) -> R
         <key>PATH</key>
         <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
     </dict>
-    <key>AssociatedBundleIdentifiers</key>
-    <array>
-        <string>{MACOS_BUNDLE_ID}</string>
-    </array>
-</dict>
-</plist>
 "#,
         exit_timeout = STOP_TIMEOUT.as_secs(),
+    );
+    Ok(launchd_plist_for(
+        MACOS_LABEL,
+        &[&exe, "up", "--config", &config],
+        &workdir,
+        &keys,
     ))
 }
 
@@ -176,34 +188,16 @@ pub fn launchd_tray_plist(tray: &Path, config: &Path, workdir: &Path) -> Result<
     let tray = xml_text("swing-tray path", tray)?;
     let config = xml_text("config path", config)?;
     let workdir = xml_text("working directory", workdir)?;
-    Ok(format!(
-        r#"<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>Label</key>
-    <string>{MACOS_TRAY_LABEL}</string>
-    <key>ProgramArguments</key>
-    <array>
-        <string>{tray}</string>
-        <string>--config</string>
-        <string>{config}</string>
-    </array>
-    <key>WorkingDirectory</key>
-    <string>{workdir}</string>
-    <key>RunAtLoad</key>
-    <true/>
-    <key>LimitLoadToSessionType</key>
+    let keys = r#"    <key>LimitLoadToSessionType</key>
     <string>Aqua</string>
     <key>ProcessType</key>
     <string>Interactive</string>
-    <key>AssociatedBundleIdentifiers</key>
-    <array>
-        <string>{MACOS_BUNDLE_ID}</string>
-    </array>
-</dict>
-</plist>
-"#
+"#;
+    Ok(launchd_plist_for(
+        MACOS_TRAY_LABEL,
+        &[&tray, "--config", &config],
+        &workdir,
+        keys,
     ))
 }
 
@@ -284,9 +278,37 @@ pub fn schtasks_xml(
     ))
 }
 
+#[cfg(any(windows, test))]
+pub(super) fn task_xml_bytes(xml: &str) -> Vec<u8> {
+    [0xff, 0xfe]
+        .into_iter()
+        .chain(xml.encode_utf16().flat_map(u16::to_le_bytes))
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn task_xml_is_utf16le_with_a_bom_to_match_its_declaration() {
+        let xml = schtasks_xml(
+            Path::new(r"C:\Users\片桐\AppData\Local\Programs\SWING\swing.exe"),
+            Path::new(r"C:\Users\片桐\swing.toml"),
+            Path::new(r"C:\Users\片桐"),
+            Path::new(r"C:\Users\片桐\swing.log"),
+            "片桐",
+        )
+        .unwrap();
+        assert!(xml.starts_with(r#"<?xml version="1.0" encoding="UTF-16"?>"#));
+        let bytes = task_xml_bytes(&xml);
+        assert_eq!(&bytes[..4], &[0xff, 0xfe, b'<', 0]);
+        let units: Vec<u16> = bytes[2..]
+            .chunks_exact(2)
+            .map(|c| u16::from_le_bytes([c[0], c[1]]))
+            .collect();
+        assert_eq!(String::from_utf16(&units).unwrap(), xml);
+    }
 
     const SYSTEM: SystemdScope<'static> = SystemdScope::System {
         user: "swing",

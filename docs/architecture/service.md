@@ -11,7 +11,7 @@
   - それ以外（`--system` での既定の場所、既定の場所を決められずカレントディレクトリになった）: 「service install needs a config file (swing.toml): pass --config or set SWING_CONFIG」でエラー。環境変数だけで動かす構成は非対応。
 - 設定ファイルのパスは `canonicalize` する。実行ファイルのパスは `canonicalize` しないので、macOS で Homebrew の `opt` のようなシンボリックリンク経由で起動すると、そのパスが登録される（[`homebrew.md`](homebrew.md#パスと-brew-upgrade)）。Linux の `current_exe()` は解決済みのパスを返す。
 - 作業ディレクトリは設定ファイルの親ディレクトリ。設定ファイルに書いた相対パスと既定値は作業ディレクトリに関係なく設定ファイルのディレクトリから解決される（[`config.md`](config.md)）。
-- `--system` は Linux でのみ有効で、他 OS で指定すると「--system is only supported on Linux」でエラー。`--run-as <user>` は `install --system` でだけ使える。launchd・タスクスケジューラへの登録はどれもログインユーザーのもので、システム全体への登録は無い。
+- `--system` は Linux でのみ有効で、他 OS で指定すると「--system is only supported on Linux」でエラー。`--run-as <user>` と `--allow-root` は `install --system` でだけ使える。launchd・タスクスケジューラへの登録はどれもログインユーザーのもので、システム全体への登録は無い。
 - 生成する unit / plist / タスク XML / トレイの登録内容は `service/templates.rs` の関数（`systemd_unit`・`launchd_plist`・`launchd_tray_plist`・`schtasks_xml`・`tray_run_command`）が正本で、以下の表は動作に効く値だけを挙げる。埋め込むパス（実行ファイル・設定ファイル・作業ディレクトリ・ログ・トレイ）とユーザー名に制御文字（`char::is_control`）があるか、パスが UTF-8 でなければエラーにし、何も書き出さない。
 - OS ごとの実行部分は `service/linux.rs`・`macos.rs`・`windows.rs`、外部コマンドの実行は `service/process.rs`。対象 3 OS 以外では `unsupported.rs` が選ばれ、`is_installed` 以外の操作は「service management is not supported on this OS」でエラーになる（`is_installed` は未登録を返す）。
 - `service::is_installed(system)` は本体が登録済みかを `Option<bool>`（`None` は分からない）で返す。Linux は unit ファイル、macOS は plist の有無。Windows は[下記](#windowsタスクスケジューラ)。`swing-tray` が使う（[`tray.md`](tray.md)）。
@@ -62,10 +62,17 @@ unit に埋め込むパスとユーザー名は、systemd の指定子（`%`）�
 
 `--system` の unit は root では動かさない。`install --system` は次の順に実行ユーザーを決め、passwd（`getpwnam`・`getpwuid`）で引いた名前を `User=` に書く。引けなければ「no such user: <name>」「no user with uid <uid>」でエラー。
 
-1. `--run-as <user>`（名前か数字の uid）。明示すれば `root` も指定できる。
+1. `--run-as <user>`（名前か数字の uid）。引いた uid が 0（`root` など）なら、`--allow-root` も付けないと「refusing to register a system service that runs swing as <name> (uid 0); pass --allow-root ...」でエラーにする。
 2. 環境変数 `SUDO_UID`。`0` のときは使わない。数字でなければエラー。
 3. 実行している uid（root でなければ）。
 4. どれでもなければ「refusing to register a system service that runs swing as root: ...」でエラーにし、unit を書かない。
+
+続けて、実行ユーザー以外が unit の動かすものを差し替えられないことを確かめる。対象は実行ファイル（登録するパスと、シンボリックリンクを解決したパス）・設定ファイル・作業ディレクトリと、設定を読めて `[kubo].managed` が true なら Kubo のバイナリ（`[kubo].binary` があればそのパス、無ければ `kubo::locate_binary` が見つけたもの。見つからなければ確かめない）。それぞれ自身と祖先のディレクトリすべて（シンボリックリンクそのものは所有者だけを見る）が次をみたさなければ、問題のあるパスを並べた「refusing to register a system service that runs as <name>: ...」でエラーにし、unit を書かない。
+
+- 所有者が root か実行ユーザー。
+- その他のユーザーが書き込めない。グループが書き込めるのは、そのグループが所有者の個人グループ（名前が所有者のユーザー名と同じで、ほかのメンバーがいない）のときだけ許す。
+- 祖先のディレクトリは、root が持つ sticky ビット付き（`/tmp` など）なら上の 2 つを問わない。確かめる対象そのものには当てはめない。
+- 調べられない（存在しないなど）ものもエラーに含める。
 
 決めたユーザーは `The service runs as user <name>.` と表示する。`swing up` はそのユーザー（`HOME` もそのユーザーのもの）で設定ファイルと `state_dir` を読み書きし、Kubo のバイナリを実行するので、設定ファイルと `state_dir` はそのユーザーが書ける場所に置く。
 
@@ -109,10 +116,10 @@ unit に埋め込むパスとユーザー名は、systemd の指定子（`%`）�
 | ログ | `<workdir>/swing.log`（`up --log-file <path>` で渡す。Linux・macOS ではこのオプションを付けない） |
 | OS のシャットダウン・ログオフ | タスクのプロセスに通知されず、`swing up` はグレースフルな停止を経ずに（Job Object に割り当てた Kubo ごと。[`kubo.md`](kubo.md#デーモンの起動kubodaemonspawn)）kill される |
 
-- `install`: XML を一時ファイルに書き、`schtasks /Create /TN swing /XML <tmpfile> /F` で登録してから一時ファイルを削除する。`--no-start` でなければ `schtasks /Run /TN swing` で即時起動する。
+- `install`: XML を UTF-16LE（BOM 付き。XML 宣言の `encoding="UTF-16"` に合わせる）で一時ディレクトリの `swing-task-<乱数>.xml` に本人だけが読める形で書き（`auth::write_private_bytes`）、`schtasks /Create /TN swing /XML <tmpfile> /F` で登録してから一時ファイルを削除する。`--no-start` でなければ `schtasks /Run /TN swing` で即時起動する。
 - `start`: `schtasks /Run /TN swing`。
 - `uninstall`: トレイの登録を消した後、`stop`（下記）と同じグレースフルな停止を試みる。失敗しても `stop` と同じ `Warning: …` を出して続ける。続けて `schtasks /End /TN swing`（失敗は無視）→ `schtasks /Delete /TN swing /F`。
 - `stop`: 設定ファイルを `resolve_config_path(None)`（`--config` は取らない。`SWING_CONFIG`、カレントディレクトリの `swing.toml`、ユーザーごとの既定の場所の順。[`config.md`](config.md#設定ファイルの場所)）で探して `Config::load` し、`stop::run`（[`cli.md#stop`](cli.md#stop)）を 60 秒（`service::GRACEFUL_STOP_TIMEOUT`）のタイムアウトで呼ぶ。設定ファイルが無い・読めない・`stop::run` が失敗したときは、理由を `Warning: …` として標準出力に出し、`schtasks /End /TN swing` にフォールバックする（`conhost.exe` が終わり、`swing` は `--exit-with-parent` でグレースフルに止まる）。タスクの登録は残り、次のログオンまで起動しない。
 - 登録の判定（`is_installed` と `status`）: `schtasks /Query /TN swing` が成功すれば登録済み。失敗したら `schtasks /Query /FO CSV /NH` で全タスクを列挙し、その一覧取得が成功して先頭列に `"\swing"`（大文字小文字は区別しない。サブフォルダのタスクは含めない）が無いときだけ未登録とする。起動の失敗、一覧取得の失敗、10 秒のタイムアウト（超えたら `schtasks` を kill する）はすべて「分からない」（`None`）。
 - `status`: 上の判定で未登録なら `not installed`、分からなければエラー終了する。登録済みなら `schtasks /Query /TN swing /FO LIST /V`（10 秒のタイムアウト付き）の標準出力をそのまま表示し、失敗したらエラー終了する。
-- `schtasks` はすべて `CREATE_NO_WINDOW` を付けて起動する。出力（失敗時の標準エラーと `status` の標準出力）は UTF-8 として読めなければ OEM コードページとして変換して表示する。
+- `schtasks` はすべて `%SystemRoot%\System32\schtasks.exe` を絶対パスで（`SystemRoot` が無ければ `C:\Windows`）、`CREATE_NO_WINDOW` を付けて起動する。登録の判定・`status`・`uninstall` の `/End` は 10 秒、`/Create`・`/Run`・`/End`・`/Delete` は 60 秒のタイムアウトで、超えたら kill してエラーにする（`uninstall` の `/End` は失敗を無視する）。出力（失敗時の標準エラーと `status` の標準出力）は UTF-8 として読めなければ OEM コードページとして変換して表示する。

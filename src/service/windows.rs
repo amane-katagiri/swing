@@ -15,13 +15,14 @@ use windows_sys::Win32::System::Threading::{
 };
 
 use super::ownership::{Part, Registration, exe_from_run_command, exe_from_task_xml};
-use super::process::{decode_output, output_with_timeout, run_command, task_listed};
-use super::templates::{schtasks_xml, strip_verbatim, tray_run_command};
-use super::{GRACEFUL_STOP_TIMEOUT, InstallOptions, install_tray};
+use super::process::{decode_output, output_with_timeout, run_command_with_timeout, task_listed};
+use super::templates::{schtasks_xml, strip_verbatim, task_xml_bytes, tray_run_command};
+use super::{GRACEFUL_STOP_TIMEOUT, InstallOptions, install_tray, windows_system_tool};
 use crate::config::resolve_config_path;
 
 const TASK_NAME: &str = "swing";
 const SCHTASKS_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+const SCHTASKS_CHANGE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
 const RUN_KEY: &str = r"Software\Microsoft\Windows\CurrentVersion\Run";
 const RUN_VALUE: &str = "swing-tray";
 
@@ -106,14 +107,14 @@ pub fn unregister_tray() -> Result<()> {
 
 // swing-tray is a GUI-subsystem process; without this each schtasks call flashes a console window.
 fn schtasks_command(args: &[&str]) -> Command {
-    let mut cmd = Command::new("schtasks");
+    let mut cmd = Command::new(windows_system_tool("schtasks.exe"));
     cmd.creation_flags(CREATE_NO_WINDOW);
     cmd.args(args);
     cmd
 }
 
 fn schtasks(args: &[&str]) -> Result<Output> {
-    run_command(schtasks_command(args))
+    run_command_with_timeout(schtasks_command(args), SCHTASKS_CHANGE_TIMEOUT)
 }
 
 fn current_user() -> Result<String> {
@@ -130,25 +131,15 @@ fn log_path(workdir: &Path) -> PathBuf {
     workdir.join("swing.log")
 }
 
-// A predictable name in a shared temp dir lets another local user pre-create or symlink the
-// path; create_new() with a random suffix closes that race.
-fn write_service_file_new(path: &Path, content: impl AsRef<[u8]>) -> Result<()> {
-    use std::io::Write;
-    let mut file = crate::auth::private_file_options()
-        .open(path)
-        .with_context(|| format!("creating {}", path.display()))?;
-    file.write_all(content.as_ref())
-        .with_context(|| format!("writing {}", path.display()))
-}
-
 pub fn install(exe: &Path, config: &Path, workdir: &Path, opts: &InstallOptions<'_>) -> Result<()> {
     let user = current_user()?;
     let log = log_path(workdir);
     let xml = schtasks_xml(exe, config, workdir, &log, &user)?;
 
+    // schtasks only reads the task from a file; a random name keeps other users from pre-creating it in the shared temp dir.
     let tmp_path =
         std::env::temp_dir().join(format!("swing-task-{}.xml", crate::auth::random_hex(8)));
-    write_service_file_new(&tmp_path, xml)?;
+    crate::auth::write_private_bytes(&tmp_path, &task_xml_bytes(&xml))?;
 
     let result = schtasks(&[
         "/Create",
@@ -338,7 +329,10 @@ pub async fn uninstall_parts(_system: bool, service: bool, tray: bool) -> Result
         return Ok(());
     }
     stop_gracefully().await;
-    let _ = schtasks_command(&["/End", "/TN", TASK_NAME]).output();
+    let _ = output_with_timeout(
+        &mut schtasks_command(&["/End", "/TN", TASK_NAME]),
+        SCHTASKS_TIMEOUT,
+    );
     schtasks(&["/Delete", "/TN", TASK_NAME, "/F"])?;
     println!("Uninstalled swing from Task Scheduler.");
     Ok(())

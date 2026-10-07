@@ -232,22 +232,17 @@ pub(super) fn exe_from_systemd_unit(unit: &str) -> Option<String> {
 
 #[cfg(any(target_os = "macos", test))]
 pub(super) fn exe_from_launchd_plist(plist: &str) -> Option<String> {
-    let string_after = |key: &str| -> Option<String> {
-        let after = &plist[plist.find(key)? + key.len()..];
-        let start = after.find("<string>")? + "<string>".len();
-        let end = after[start..].find("</string>")? + start;
-        xml_unescape(&after[start..end])
+    let after = |key: &str| plist.find(key).map(|i| &plist[i + key.len()..]);
+    let first_string = |s: &str| -> Option<String> {
+        let start = s.find("<string>")? + "<string>".len();
+        let end = s[start..].find("</string>")? + start;
+        xml_unescape(&s[start..end])
     };
-    if plist.contains("<key>Program</key>") {
-        return string_after("<key>Program</key>");
+    if let Some(rest) = after("<key>Program</key>") {
+        return first_string(rest);
     }
-    let key = "<key>ProgramArguments</key>";
-    let after = &plist[plist.find(key)? + key.len()..];
-    let array_end = after.find("</array>")?;
-    let array = &after[..array_end];
-    let start = array.find("<string>")? + "<string>".len();
-    let end = array[start..].find("</string>")? + start;
-    xml_unescape(&array[start..end])
+    let rest = after("<key>ProgramArguments</key>")?;
+    first_string(&rest[..rest.find("</array>")?])
 }
 
 #[cfg(test)]

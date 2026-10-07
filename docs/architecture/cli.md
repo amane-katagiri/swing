@@ -47,7 +47,7 @@ Windows の `swing service stop` もこの `stop::run` を使う（失敗した�
 実装は `src/login.rs`（`swing-tray` と共通。[`tray.md`](tray.md)）。認証の仕組みは [`dashboard/security.md`](dashboard/security.md#認証)。
 
 - `dashboard open [--config] [--no-browser]`: `POST /api/login-code` で使い捨てのログインコードをもらい、`<[dashboard].public_url>/login?code=<code>`（`public_url` 未設定時の URL の決め方は [`dashboard.md#設定dashboard`](dashboard.md#設定dashboard)）とコード（`login code (single use, valid for 5 minutes): ...`）を標準出力に出す。
-  - `--no-browser` が無ければ続けて OS の既定ブラウザで URL を開く（Linux は `xdg-open`、macOS は `open`、Windows は `rundll32 url.dll,FileProtocolHandler`）。開けなければ標準エラーに案内を出して正常終了する。
+  - `--no-browser` が無ければ続けて OS の既定ブラウザで URL を開く（Linux は `xdg-open`、macOS は `open`、Windows は `%SystemRoot%\System32\rundll32.exe url.dll,FileProtocolHandler`）。開けなければ標準エラーに案内を出して正常終了する。
   - `[dashboard].ui = false` ならエラー終了する。
   - 返ってきたコードが小文字の hex 32 文字でなければ、URL もコードも出さず、ブラウザも開かずに `the dashboard at <addr> returned a malformed login code` でエラー終了する。
 - `dashboard rotate-token [--config]`: `POST /api/token/rotate` でトークンを作り直す（ブラウザのセッションはすべて無効になる）。`swing up` が動いていなければ `<state_dir>/dashboard.token` を直接書き換える。
@@ -56,7 +56,7 @@ Windows の `swing service stop` もこの `stop::run` を使う（失敗した�
 
 `swing up` を OS のサービス（systemd user unit・launchd LaunchAgent・Windows タスクスケジューラ）として登録・操作する。OS ごとの実体は [`service.md`](service.md)。
 
-- `install` のオプション: `--config`（決め方は [`service.md#共通`](service.md#共通)）・`--system`（Linux のみ）・`--run-as <user>`（`--system` と一緒にだけ使える）・`--no-start`（登録だけで起動しない）・`--no-tray`（Windows と macOS で `swing-tray` の自動起動を登録しない）。
+- `install` のオプション: `--config`（決め方は [`service.md#共通`](service.md#共通)）・`--system`（Linux のみ）・`--run-as <user>`・`--allow-root`（実行ユーザーが root でも登録する。どちらも `--system` と一緒にだけ使える。[`service.md#system-unit-の実行ユーザー`](service.md#system-unit-の実行ユーザー)）・`--no-start`（登録だけで起動しない）・`--no-tray`（Windows と macOS で `swing-tray` の自動起動を登録しない）。
 - `start`/`stop`/`status`/`uninstall` は `--system` を取る。`stop` は登録を残してプロセスだけを止め、`uninstall` は止めてから登録を消す。
 - `uninstall --only-from <dir>` と `status --points-into <dir>`（どちらも `--help` に出さない）は、インストーラー向けに、起動する実行ファイルが `<dir>` の下にある登録だけを消す・その有無を終了コードで答える。規則・出力・終了コードは [`service/ownership.md`](service/ownership.md)。
 - どれもサービス機構を通す。Windows の `service stop` だけは [stop](#stop) を使う。

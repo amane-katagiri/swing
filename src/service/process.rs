@@ -91,11 +91,25 @@ pub(super) fn task_listed(csv: &str, name: &str) -> bool {
     })
 }
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 pub(super) fn run_command(mut cmd: std::process::Command) -> Result<std::process::Output> {
     let display = format!("{cmd:?}");
     let output = cmd
         .output()
         .with_context(|| format!("running command: {display}"))?;
+    require_success(&display, output)
+}
+
+#[cfg(windows)]
+pub(super) fn run_command_with_timeout(
+    mut cmd: std::process::Command,
+    timeout: std::time::Duration,
+) -> Result<std::process::Output> {
+    let display = format!("{cmd:?}");
+    require_success(&display, output_with_timeout(&mut cmd, timeout)?)
+}
+
+fn require_success(display: &str, output: std::process::Output) -> Result<std::process::Output> {
     if !output.status.success() {
         bail!(
             "command failed: {display}\nstderr: {}",
