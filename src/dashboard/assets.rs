@@ -12,33 +12,18 @@ use axum::routing::get;
 use super::AppState;
 use crate::config::DashboardConfig;
 
-enum AssetBody {
-    Text(&'static str),
-    Bytes(&'static [u8]),
-}
-
 struct StaticAsset {
     path: &'static str,
     content_type: &'static str,
-    body: AssetBody,
+    body: &'static [u8],
 }
 
-macro_rules! text_asset {
+macro_rules! asset {
     ($content_type:expr, $file:literal) => {
         StaticAsset {
             path: concat!("/", $file),
             content_type: $content_type,
-            body: AssetBody::Text(include_str!(concat!("../../web/", $file))),
-        }
-    };
-}
-
-macro_rules! bytes_asset {
-    ($content_type:expr, $file:literal) => {
-        StaticAsset {
-            path: concat!("/", $file),
-            content_type: $content_type,
-            body: AssetBody::Bytes(include_bytes!(concat!("../../web/", $file))),
+            body: include_bytes!(concat!("../../web/", $file)),
         }
     };
 }
@@ -50,71 +35,64 @@ const STATIC_ASSETS: &[StaticAsset] = &[
     StaticAsset {
         path: "/",
         content_type: "text/html; charset=utf-8",
-        body: AssetBody::Text(include_str!("../../web/index.html")),
+        body: include_bytes!("../../web/index.html"),
     },
-    text_asset!("image/svg+xml", "favicon.svg"),
-    bytes_asset!("image/png", "favicon-32.png"),
-    bytes_asset!("image/png", "apple-touch-icon.png"),
-    text_asset!(CSS, "style.css"),
-    text_asset!(CSS, "desktop.css"),
-    text_asset!(CSS, "desktop-dialog.css"),
-    text_asset!(CSS, "desktop-wallpaper.css"),
-    text_asset!(CSS, "desktop-mascot-settings.css"),
-    text_asset!(CSS, "desktop-system-settings.css"),
-    text_asset!(CSS, "desktop-frame.css"),
-    text_asset!(CSS, "desktop-mascot.css"),
-    text_asset!(JS, "boot.js"),
-    text_asset!(JS, "app.js"),
-    text_asset!(JS, "graph.js"),
-    text_asset!(JS, "storage.js"),
-    text_asset!(JS, "i18n.js"),
-    text_asset!(JS, "util.js"),
-    text_asset!(JS, "ui.js"),
-    text_asset!(JS, "sites.js"),
-    text_asset!(JS, "webring.js"),
-    text_asset!(JS, "publish.js"),
-    text_asset!(JS, "settings.js"),
-    text_asset!(JS, "settings-notify.js"),
-    text_asset!(JS, "notify-settings.js"),
-    text_asset!(JS, "stats.js"),
-    text_asset!(JS, "setup.js"),
-    text_asset!(JS, "pairing.js"),
-    text_asset!(JS, "login.js"),
-    text_asset!(JS, "desktop.js"),
-    text_asset!(JS, "desktop-window.js"),
-    text_asset!(JS, "desktop-settings.js"),
-    text_asset!(JS, "desktop-updates.js"),
-    text_asset!(JS, "desktop-dialog.js"),
-    text_asset!(JS, "desktop-wallpaper.js"),
-    text_asset!(JS, "desktop-wallpaper-image.js"),
-    text_asset!(JS, "desktop-combobox.js"),
-    text_asset!(JS, "desktop-focus.js"),
-    text_asset!(JS, "desktop-drag.js"),
-    text_asset!(JS, "desktop-scale.js"),
-    text_asset!(JS, "desktop-mascot.js"),
-    text_asset!(JS, "desktop-mascot-pack.js"),
-    text_asset!(JS, "desktop-mascot-sprite.js"),
-    text_asset!(JS, "desktop-mascot-behavior.js"),
-    text_asset!(JS, "desktop-mascot-balloon.js"),
-    text_asset!(JS, "desktop-mascot-settings.js"),
-    text_asset!(JS, "desktop-notify.js"),
-    text_asset!(JS, "desktop-notify-settings.js"),
-    text_asset!(JS, "desktop-system-settings.js"),
-    text_asset!(JS, "desktop-mirror-add.js"),
-    text_asset!("image/svg+xml", "desktop-icons.svg"),
-    bytes_asset!("font/woff2", "fonts/pixelmplus12-regular.woff2"),
-    bytes_asset!("font/woff2", "fonts/pixelmplus12-bold.woff2"),
+    asset!("image/svg+xml", "favicon.svg"),
+    asset!("image/png", "favicon-32.png"),
+    asset!("image/png", "apple-touch-icon.png"),
+    asset!(CSS, "style.css"),
+    asset!(CSS, "desktop.css"),
+    asset!(CSS, "desktop-dialog.css"),
+    asset!(CSS, "desktop-wallpaper.css"),
+    asset!(CSS, "desktop-mascot-settings.css"),
+    asset!(CSS, "desktop-system-settings.css"),
+    asset!(CSS, "desktop-frame.css"),
+    asset!(CSS, "desktop-mascot.css"),
+    asset!(JS, "boot.js"),
+    asset!(JS, "app.js"),
+    asset!(JS, "graph.js"),
+    asset!(JS, "storage.js"),
+    asset!(JS, "i18n.js"),
+    asset!(JS, "util.js"),
+    asset!(JS, "ui.js"),
+    asset!(JS, "sites.js"),
+    asset!(JS, "webring.js"),
+    asset!(JS, "publish.js"),
+    asset!(JS, "settings.js"),
+    asset!(JS, "settings-notify.js"),
+    asset!(JS, "notify-settings.js"),
+    asset!(JS, "stats.js"),
+    asset!(JS, "setup.js"),
+    asset!(JS, "pairing.js"),
+    asset!(JS, "login.js"),
+    asset!(JS, "desktop.js"),
+    asset!(JS, "desktop-window.js"),
+    asset!(JS, "desktop-settings.js"),
+    asset!(JS, "desktop-updates.js"),
+    asset!(JS, "desktop-dialog.js"),
+    asset!(JS, "desktop-wallpaper.js"),
+    asset!(JS, "desktop-wallpaper-image.js"),
+    asset!(JS, "desktop-combobox.js"),
+    asset!(JS, "desktop-focus.js"),
+    asset!(JS, "desktop-drag.js"),
+    asset!(JS, "desktop-scale.js"),
+    asset!(JS, "desktop-mascot.js"),
+    asset!(JS, "desktop-mascot-pack.js"),
+    asset!(JS, "desktop-mascot-sprite.js"),
+    asset!(JS, "desktop-mascot-behavior.js"),
+    asset!(JS, "desktop-mascot-balloon.js"),
+    asset!(JS, "desktop-mascot-settings.js"),
+    asset!(JS, "desktop-notify.js"),
+    asset!(JS, "desktop-notify-settings.js"),
+    asset!(JS, "desktop-system-settings.js"),
+    asset!(JS, "desktop-mirror-add.js"),
+    asset!("image/svg+xml", "desktop-icons.svg"),
+    asset!("font/woff2", "fonts/pixelmplus12-regular.woff2"),
+    asset!("font/woff2", "fonts/pixelmplus12-bold.woff2"),
 ];
 
 fn serve_static(asset: &'static StaticAsset) -> Response {
-    match asset.body {
-        AssetBody::Text(body) => {
-            ([(header::CONTENT_TYPE, asset.content_type)], body).into_response()
-        }
-        AssetBody::Bytes(body) => {
-            ([(header::CONTENT_TYPE, asset.content_type)], body).into_response()
-        }
-    }
+    ([(header::CONTENT_TYPE, asset.content_type)], asset.body).into_response()
 }
 
 pub(super) fn register(router: Router<Arc<AppState>>) -> Router<Arc<AppState>> {
