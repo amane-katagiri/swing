@@ -192,19 +192,28 @@ pub(super) async fn gather(
     Ok(out)
 }
 
+pub struct Paged {
+    pub events: Vec<Event>,
+    pub complete: bool,
+}
+
 pub(super) async fn walk_pages(
     relay: Relay,
     filter: Filter,
     page: usize,
     cap: FetchCap,
     deadline: tokio::time::Instant,
-) -> Option<Vec<Event>> {
+) -> Option<Paged> {
     let mut seen: HashSet<EventId> = HashSet::new();
     let mut out = Vec::new();
     let mut bytes = 0usize;
     let mut until: Option<Timestamp> = None;
+    let mut widest = 0usize;
     let mut answered = false;
-    while tokio::time::Instant::now() < deadline {
+    let complete = 'walk: loop {
+        if tokio::time::Instant::now() >= deadline {
+            break false;
+        }
         let mut request = filter.clone().limit(page);
         if let Some(until) = until {
             request = request.until(until);
@@ -214,9 +223,11 @@ pub(super) async fn walk_pages(
             .take_until(tokio::time::sleep_until(deadline));
         let collected = collect_newest(std::pin::pin!(stream), FetchCap::PER_REQ).await;
         if collected.completed == 0 {
-            break;
+            break false;
         }
         answered = true;
+        let len = collected.events.len();
+        widest = widest.max(len);
         let oldest = collected.events.iter().map(|m| m.event.created_at).min();
         let before = out.len();
         for Measured { event, bytes: size } in collected.events {
@@ -225,15 +236,34 @@ pub(super) async fn walk_pages(
             }
             if out.len() >= cap.events || bytes.saturating_add(size) > cap.bytes {
                 tracing::warn!(relay = %relay.url(), "relay answers exceed the fetch budget; keeping what fits");
-                return Some(out);
+                break 'walk true;
             }
             bytes += size;
             out.push(event);
         }
-        match oldest {
-            Some(oldest) if out.len() > before => until = Some(oldest),
-            _ => break,
+        let Some(oldest) = oldest else {
+            break true;
+        };
+        if out.len() > before {
+            until = Some(oldest);
+            continue;
         }
-    }
-    answered.then_some(out)
+        // A relay may cap `limit` below `page`, so its longest answer so far stands in for a full page.
+        if len < page.min(widest) {
+            break true;
+        }
+        tracing::debug!(
+            relay = %relay.url(),
+            created_at = oldest.as_secs(),
+            "more events share one second than a page holds; skipping the rest of that second"
+        );
+        match oldest.as_secs().checked_sub(1) {
+            Some(prev) => until = Some(Timestamp::from_secs(prev)),
+            None => break true,
+        }
+    };
+    answered.then_some(Paged {
+        events: out,
+        complete,
+    })
 }

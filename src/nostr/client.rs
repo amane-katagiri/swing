@@ -15,6 +15,7 @@ mod fetch;
 mod report_relay;
 mod send;
 
+pub use fetch::Paged;
 use fetch::{
     FETCH_DEADLINE, FETCH_TIMEOUT, FetchCap, Measured, capped_limit, collect_newest, gather,
     relay_stream, walk_pages,
@@ -151,7 +152,7 @@ impl RelayClient {
         filter: Filter,
         page: usize,
         context: &'static str,
-    ) -> Result<Vec<Event>> {
+    ) -> Result<Paged> {
         let relays = self
             .client
             .relays()
@@ -170,13 +171,15 @@ impl RelayClient {
         if walked.iter().all(Option::is_none) {
             anyhow::bail!("{context}: no relay answered");
         }
+        let complete = walked.iter().flatten().any(|walk| walk.complete);
         let mut seen: HashSet<EventId> = HashSet::new();
-        Ok(walked
+        let events = walked
             .into_iter()
             .flatten()
-            .flatten()
+            .flat_map(|walk| walk.events)
             .filter(|e| seen.insert(e.id))
-            .collect())
+            .collect();
+        Ok(Paged { events, complete })
     }
 
     async fn fetch_all(&self, reqs: Vec<Vec<Filter>>, context: &'static str) -> Result<Vec<Event>> {

@@ -23,10 +23,13 @@
 
 自分のレプリカ報告（`fetch_own_reports`）は、持っているサイトの数だけあり得るので、1 回の `limit` に収めずにページに分けて全部読む。
 
-- 読み取りの relay ごとに別々にたどる（`walk_pages`）。各 relay に `limit` 500（`OWN_REPORTS_PAGE`）の REQ を出し、返ったうちの最も古い `created_at` を次の REQ の `until` にする。relay が自分の上限で `limit` より少なく返すことがあるので、新しい `id` が 1 件も増えなかったら、その relay は読み終えたものとする。
+- 読み取りの relay ごとに別々にたどる（`walk_pages`）。各 relay に `limit` 500（`OWN_REPORTS_PAGE`）の REQ を出し、返ったうちの最も古い `created_at` を次の REQ の `until` にする。`until` は境界の秒を含むので、新しい `id` が 1 件も増えなかったページは次のように扱う。
+  - そのページが満杯でなければ、その relay は読み終えたものとする。満杯とは、件数が `limit` とその relay がそれまでに返した最も多い件数の小さい方以上であること（relay が自分の上限で `limit` より少なく返すことがあるため）。
+  - 満杯なら、同じ秒に 1 ページより多くのイベントがあるので、`until` をその秒の 1 秒前にして続ける（debug を出す）。その秒のページに入らなかった分は取れない。
 - 1 ページは「1 回の REQ」と同じく 30 秒で打ち切り、答えなかったらその relay はそこまでの分で止める。全体の期限は 120 秒（`FETCH_DEADLINE`）。
 - relay 1 台あたりの件数と JSON の合計は、`MAX_FETCH_TOTAL_EVENTS`・`MAX_FETCH_TOTAL_BYTES` を relay の数で割った値まで。超えたら warn を出してそこまでの分を返す。
 - 最初のページにどの relay も答えなければ `no relay answered` のエラー。各 relay の結果は `id` で重複を除いて合わせる。
+- 結果（`Paged`）の `complete` は、最後まで（終わりのページか件数・大きさの上限まで）たどれた relay が 1 つでもあれば true。期限切れか途中のページに答えなかった relay だけなら false。自分の報告はどの relay にも同じものを送るので、1 つ読み終えれば足りるとする。
 
 ## 定数
 

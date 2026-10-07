@@ -10,7 +10,7 @@ mod report;
 mod site;
 
 pub use client::{
-    RelayClient, RelaySendResult, ReportRelay, bounded_client, print_relay_line,
+    Paged, RelayClient, RelaySendResult, ReportRelay, bounded_client, print_relay_line,
     print_relay_send_result_lines, relay_send_results,
 };
 pub use follow::{

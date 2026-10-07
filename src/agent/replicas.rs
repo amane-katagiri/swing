@@ -155,14 +155,14 @@ impl<C: KuboStore, N: Nip05Verify, R: ReportRelay> Agent<C, N, R> {
             return;
         }
         let kind = self.config.nostr.replica_event_kind;
-        let events = match self.reporter.fetch_own_reports(kind).await {
-            Ok(events) => events,
+        let paged = match self.reporter.fetch_own_reports(kind).await {
+            Ok(paged) => paged,
             Err(e) => {
                 warn!(error = %e, "fetching own replica reports failed; stale reports are withdrawn after a later fetch succeeds");
                 return;
             }
         };
-        let own = events.into_iter().filter(|e| e.pubkey == self.own);
+        let own = paged.events.into_iter().filter(|e| e.pubkey == self.own);
         for event in nostr::newest_by_address(own, now_secs()) {
             let report = match nostr::parse_replica_report(
                 &event,
@@ -190,6 +190,10 @@ impl<C: KuboStore, N: Nip05Verify, R: ReportRelay> Agent<C, N, R> {
                 );
             }
         }
+        if !paged.complete {
+            warn!("no relay listed every own replica report; fetching them again next round");
+            return;
+        }
         book.loaded = true;
     }
 
@@ -212,7 +216,7 @@ impl<C: KuboStore, N: Nip05Verify, R: ReportRelay> Agent<C, N, R> {
             .fetch_reports_about(kind, self.own, &reporters, since)
             .await
         {
-            Ok(events) => events,
+            Ok(paged) => paged,
             Err(e) => {
                 warn!(
                     error = format!("{e:#}"),

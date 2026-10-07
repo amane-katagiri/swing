@@ -698,13 +698,9 @@ async fn paged_fetches_walk_each_relay_past_its_page_limit() {
         .await
         .unwrap();
     assert!(one_page.len() < reports.len());
-    let mut ids: Vec<EventId> = client
-        .fetch_pages(filter, 2, "test")
-        .await
-        .unwrap()
-        .into_iter()
-        .map(|e| e.id)
-        .collect();
+    let paged = client.fetch_pages(filter, 2, "test").await.unwrap();
+    assert!(paged.complete);
+    let mut ids: Vec<EventId> = paged.events.into_iter().map(|e| e.id).collect();
     ids.sort();
     let mut expected: Vec<EventId> = reports.iter().map(|e| e.id).collect();
     expected.sort();
@@ -713,6 +709,50 @@ async fn paged_fetches_walk_each_relay_past_its_page_limit() {
     let own = ReportRelay::fetch_own_reports(&client, 35981)
         .await
         .unwrap();
-    assert_eq!(own.len(), reports.len());
+    assert!(own.complete);
+    assert_eq!(own.events.len(), reports.len());
+    client.shutdown().await;
+}
+
+#[tokio::test]
+async fn paged_fetches_step_past_a_second_holding_more_than_a_page() {
+    let reporter = keys();
+    let author = keys().public_key();
+    let now = Timestamp::now().as_secs();
+    let crowded: Vec<Event> = (0..5)
+        .map(|i| {
+            report(
+                &reporter,
+                &author,
+                &format!("c{i}.example"),
+                &[CID_A],
+                now - 10,
+            )
+        })
+        .collect();
+    let older: Vec<Event> = (0..3)
+        .map(|i| {
+            report(
+                &reporter,
+                &author,
+                &format!("o{i}.example"),
+                &[CID_A],
+                now - 60 + i,
+            )
+        })
+        .collect();
+    let (_relay, url) = relay_holding(&[&crowded[..], &older[..]].concat()).await;
+
+    let client = RelayClient::connect(Signer::Local(reporter.clone()), &[url])
+        .await
+        .unwrap();
+    let filter = Filter::new()
+        .kind(Kind::Custom(35981))
+        .author(reporter.public_key());
+    let paged = client.fetch_pages(filter, 2, "test").await.unwrap();
+    assert!(paged.complete);
+    let ids: HashSet<EventId> = paged.events.iter().map(|e| e.id).collect();
+    assert!(older.iter().all(|e| ids.contains(&e.id)));
+    assert!(crowded.iter().filter(|e| ids.contains(&e.id)).count() >= 2);
     client.shutdown().await;
 }

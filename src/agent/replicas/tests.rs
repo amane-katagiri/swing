@@ -171,6 +171,35 @@ async fn stale_reports_are_withdrawn_once_the_relays_answer() {
 }
 
 #[tokio::test]
+async fn own_reports_are_fetched_again_after_a_walk_cut_short() {
+    let fx = Fixture::new(default_policy(), FakeKubo::default());
+    fx.seed(D, "bafy-a", 1, 100).await;
+    let stale = nostr::build_replica_report_builder(
+        35981,
+        35980,
+        &fx.pubkey,
+        "gone.example",
+        &BTreeSet::from([CID_B.to_string()]),
+        Timestamp::from_secs(now_secs() + REPORT_TTL),
+    )
+    .custom_created_at(Timestamp::from_secs(now_secs() - 10))
+    .finalize(&fx.agent.reporter.keys)
+    .unwrap();
+    fx.relay().partial_fetch = true;
+
+    fx.agent.sync_reports().await;
+    assert_eq!(fx.take_reports(), vec![(fx.key(D), cids(&["bafy-a"]))]);
+
+    {
+        let mut relay = fx.relay();
+        relay.stored.push(stale);
+        relay.partial_fetch = false;
+    }
+    fx.agent.sync_reports().await;
+    assert_eq!(fx.take_reports(), vec![(fx.key("gone.example"), vec![])]);
+}
+
+#[tokio::test]
 async fn rejected_reports_are_retried() {
     let fx = Fixture::new(default_policy(), FakeKubo::default());
     fx.seed(D, "bafy-a", 1, 100).await;

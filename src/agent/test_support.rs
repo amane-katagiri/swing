@@ -6,7 +6,7 @@ use nostr_sdk::prelude::*;
 
 use crate::config::{CheckMode, Config, IpfsApi, PolicyConfig};
 use crate::nip05::{Nip05Verify, VerificationResult};
-use crate::nostr::ReportRelay;
+use crate::nostr::{Paged, ReportRelay};
 use crate::state::{self, SiteKey, State, VersionRecord};
 
 use super::Agent;
@@ -52,6 +52,7 @@ pub(super) struct FakeRelayState {
     pub(super) stored: Vec<Event>,
     pub(super) sent: Vec<Event>,
     pub(super) fail_fetch: bool,
+    pub(super) partial_fetch: bool,
     pub(super) reject: bool,
     pub(super) fail_sign: bool,
     pub(super) send_attempts: usize,
@@ -78,12 +79,15 @@ impl ReportRelay for FakeRelay {
         self.keys.public_key()
     }
 
-    async fn fetch_own_reports(&self, _report_kind: u16) -> anyhow::Result<Vec<Event>> {
+    async fn fetch_own_reports(&self, _report_kind: u16) -> anyhow::Result<Paged> {
         let s = self.s.lock().unwrap();
         if s.fail_fetch {
             anyhow::bail!("simulated fetch failure");
         }
-        Ok(s.stored.clone())
+        Ok(Paged {
+            events: s.stored.clone(),
+            complete: !s.partial_fetch,
+        })
     }
 
     async fn fetch_reports_about(

@@ -114,7 +114,8 @@ async fn replica_reports_are_found_by_site_and_replaced_by_withdrawals() {
     );
 
     let own = reporter.fetch_own_reports(35981).await.unwrap();
-    assert_eq!(own.len(), 2);
+    assert!(own.complete);
+    assert_eq!(own.events.len(), 2);
 
     let coordinate = nostr::site_coordinate(35980, &author.public_key(), "replica.example");
     let events = reporter

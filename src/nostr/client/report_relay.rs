@@ -4,16 +4,13 @@ use anyhow::{Context, Result};
 use nostr_sdk::prelude::*;
 
 use super::super::budget;
-use super::{RelayClient, capped_limit};
+use super::{Paged, RelayClient, capped_limit};
 
 const OWN_REPORTS_PAGE: usize = 500;
 
 pub trait ReportRelay {
     fn public_key(&self) -> PublicKey;
-    fn fetch_own_reports(
-        &self,
-        report_kind: u16,
-    ) -> impl Future<Output = Result<Vec<Event>>> + Send;
+    fn fetch_own_reports(&self, report_kind: u16) -> impl Future<Output = Result<Paged>> + Send;
     fn fetch_reports_about(
         &self,
         report_kind: u16,
@@ -29,7 +26,7 @@ impl ReportRelay for RelayClient {
         RelayClient::public_key(self)
     }
 
-    async fn fetch_own_reports(&self, report_kind: u16) -> Result<Vec<Event>> {
+    async fn fetch_own_reports(&self, report_kind: u16) -> Result<Paged> {
         let filter = Filter::new()
             .kind(Kind::Custom(report_kind))
             .author(RelayClient::public_key(self));
@@ -80,7 +77,7 @@ impl<T: ReportRelay + Send + Sync> ReportRelay for std::sync::Arc<T> {
         T::public_key(self)
     }
 
-    async fn fetch_own_reports(&self, report_kind: u16) -> Result<Vec<Event>> {
+    async fn fetch_own_reports(&self, report_kind: u16) -> Result<Paged> {
         T::fetch_own_reports(self, report_kind).await
     }
 
