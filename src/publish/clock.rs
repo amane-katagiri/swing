@@ -36,11 +36,27 @@ fn sign_limit(now: u64) -> u64 {
     now.saturating_add(nostr::MAX_FUTURE_SKEW - SIGN_MARGIN)
 }
 
+fn wait_until_signable(what: &str, at: u64, now: u64) -> ClockError {
+    ClockError(format!(
+        "{what} is dated {} after this machine's clock; a new version has to be dated after it, \
+         and that would be too close to the future limit for relays and mirrors to accept. Wait {} and publish again",
+        describe_secs(at - now),
+        describe_secs(at - sign_limit(now) + 1)
+    ))
+}
+
 fn refuse_future_version(site_path: &str, newest: u64, now: u64) -> Result<(), ClockError> {
-    if newest.saturating_add(1) <= sign_limit(now) {
+    if newest < sign_limit(now) {
         return Ok(());
     }
     let path = format!("{site_path}/{newest}");
+    if newest <= now.saturating_add(nostr::MAX_FUTURE_SKEW) {
+        return Err(wait_until_signable(
+            &format!("the newest version {path}"),
+            newest,
+            now,
+        ));
+    }
     Err(ClockError(format!(
         "the newest version {path} is dated {} after this machine's clock, and a site event dated after it would be dropped as from the future. \
          Either the clock on this machine is behind now (fix the system clock and publish again), \
@@ -51,16 +67,14 @@ fn refuse_future_version(site_path: &str, newest: u64, now: u64) -> Result<(), C
 }
 
 fn refuse_previous_ahead(previous: u64, now: u64) -> Result<(), ClockError> {
-    let limit = sign_limit(now);
-    if previous < limit {
+    if previous < sign_limit(now) {
         return Ok(());
     }
-    let wait = describe_secs(previous - limit + 1);
-    Err(ClockError(format!(
-        "your latest version on the relays is dated {} after this machine's clock; a new version has to be dated after it to replace it, \
-         and that would be too close to the future limit for relays and mirrors to accept. Wait {wait} and publish again",
-        describe_secs(previous - now)
-    )))
+    Err(wait_until_signable(
+        "your latest version on the relays",
+        previous,
+        now,
+    ))
 }
 
 // Reusing a same-second path would let add_site or a cancelled publish's deferred removal delete the other version.
@@ -224,6 +238,32 @@ mod tests {
             err.contains("`docker compose exec ipfs ipfs files rm -r /swing/publish/k/s/11800`"),
             "{err}"
         );
+    }
+
+    #[test]
+    fn a_version_within_the_skew_asks_to_wait_instead_of_removing_it() {
+        let limit = sign_limit(1000);
+        let err = version_time(SITE, Some(limit), None, 1000)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains(&format!("the newest version /swing/publish/k/s/{limit}")),
+            "{err}"
+        );
+        assert!(err.contains("Wait 1 second"), "{err}");
+        assert!(!err.contains("files rm"), "{err}");
+        let edge = 1000 + MAX_FUTURE_SKEW;
+        let err = version_time(SITE, Some(edge), None, 1000)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains(&format!("Wait {} seconds", SIGN_MARGIN + 1)),
+            "{err}"
+        );
+        let beyond = version_time(SITE, Some(edge + 1), None, 1000)
+            .unwrap_err()
+            .to_string();
+        assert!(beyond.contains("files rm"), "{beyond}");
     }
 
     #[test]
