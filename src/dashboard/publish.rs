@@ -115,26 +115,14 @@ pub(super) async fn run_publish(
     let ipfs = state.require_ipfs().await?;
     let relay = state.require_relay().await?;
     let layout = MfsLayout::new(state.config.ipfs.mfs_root.clone());
-    let stage = publish::add_and_measure(
-        &ipfs,
-        &layout,
-        &pubkey_hex,
-        &fields.site,
-        relay.relays(),
-        site,
-    )
-    .await
-    .map_err(stage_error)?;
+    let relays =
+        publish::RelayState::fetch(&relay, state.config.nostr.site_event_kind, &fields.site).await;
+    let stage = publish::add_and_measure(&ipfs, &layout, &pubkey_hex, &fields.site, &relays, site)
+        .await
+        .map_err(stage_error)?;
     let created_at = stage.created_at;
 
-    let unchanged = publish::check_unchanged(
-        &relay,
-        modes.check_unchanged,
-        state.config.nostr.site_event_kind,
-        &fields.site,
-        &stage.cid,
-    )
-    .await;
+    let unchanged = publish::check_unchanged(modes.check_unchanged, &relays, &stage.cid);
     let mut result = Box::new(dto::PublishResultDto {
         published: false,
         gateway_url: dto::gateway_url(state.config.dashboard.gateway.as_deref(), &stage.cid, true),

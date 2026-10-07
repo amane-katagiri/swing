@@ -28,36 +28,65 @@ fn describe_secs(secs: u64) -> String {
     }
 }
 
-pub(super) fn refuse_future_version(
-    site_path: &str,
-    newest: Option<u64>,
-    now: u64,
-) -> Result<(), ClockError> {
-    let Some(newest) = newest.filter(|&newest| !nostr::plausible_at(newest, now)) else {
+fn refuse_future_version(site_path: &str, newest: u64, now: u64) -> Result<(), ClockError> {
+    if nostr::plausible_at(newest.saturating_add(1), now) {
         return Ok(());
-    };
+    }
     let path = format!("{site_path}/{newest}");
     Err(ClockError(format!(
         "the newest version {path} is dated {} after this machine's clock, and a site event dated after it would be dropped as from the future. \
          Either the clock on this machine is behind now (fix the system clock and publish again), \
-         or that version was created while the clock was ahead (remove it with `ipfs files rm -r {path}` and publish again)",
+         or that version was created while the clock was ahead (remove it with `ipfs files rm -r {path}` and publish again; \
+         with Docker Compose, run it in the ipfs container: `docker compose exec ipfs ipfs files rm -r {path}`)",
         describe_secs(newest - now)
     )))
+}
+
+fn refuse_future_previous(previous: u64, now: u64) -> Result<(), ClockError> {
+    if nostr::plausible_at(previous.saturating_add(1), now) {
+        return Ok(());
+    }
+    Err(ClockError(format!(
+        "your latest site event on the relays is dated {} after this machine's clock (created_at {previous}), \
+         and the relays keep it over any event dated before it, so a new event would not replace it. \
+         Either the clock on this machine is behind now (fix the system clock and publish again), \
+         or that event was published while a clock was ahead (wait until that time has passed and publish again)",
+        describe_secs(previous - now)
+    )))
+}
+
+// Reusing a same-second path would let add_site or a cancelled publish's deferred removal delete the other version.
+pub(super) fn version_time(
+    site_path: &str,
+    newest: Option<u64>,
+    previous: Option<u64>,
+    now: u64,
+) -> Result<u64, ClockError> {
+    if let Some(newest) = newest {
+        refuse_future_version(site_path, newest, now)?;
+    }
+    if let Some(previous) = previous {
+        refuse_future_previous(previous, now)?;
+    }
+    Ok([newest, previous]
+        .into_iter()
+        .flatten()
+        .map(|t| t.saturating_add(1))
+        .fold(now, u64::max))
 }
 
 pub(super) fn refuse_clock_ahead(
     now: u64,
     relay_times: &[(String, u64)],
 ) -> Result<(), ClockError> {
-    let Some((relay, time)) = relay_times
-        .iter()
-        .filter(|(_, time)| !nostr::plausible_at(now, *time))
-        .min_by_key(|(_, time)| *time)
-    else {
+    let Some((relay, time)) = relay_times.iter().max_by_key(|(_, time)| *time) else {
         return Ok(());
     };
+    if nostr::plausible_at(now, *time) {
+        return Ok(());
+    }
     Err(ClockError(format!(
-        "the clock on this machine is {} ahead of {relay}; fix the system clock and publish again",
+        "the clock on this machine is {} ahead of every relay that answered (even {relay}, the one closest to it); fix the system clock and publish again",
         describe_secs(now - time)
     )))
 }
@@ -111,47 +140,87 @@ mod tests {
     use super::*;
     use crate::nostr::MAX_FUTURE_SKEW;
 
+    const SITE: &str = "/swing/publish/k/s";
+
     #[test]
-    fn a_version_within_the_skew_is_accepted() {
-        assert!(refuse_future_version("/swing/publish/k/s", None, 1000).is_ok());
-        assert!(refuse_future_version("/swing/publish/k/s", Some(500), 1000).is_ok());
-        assert!(
-            refuse_future_version("/swing/publish/k/s", Some(1000 + MAX_FUTURE_SKEW), 1000).is_ok()
+    fn the_version_time_is_after_every_known_version() {
+        assert_eq!(version_time(SITE, None, None, 1000), Ok(1000));
+        assert_eq!(version_time(SITE, Some(500), Some(400), 1000), Ok(1000));
+        assert_eq!(version_time(SITE, Some(1000), None, 1000), Ok(1001));
+        assert_eq!(version_time(SITE, Some(1000), Some(1200), 1000), Ok(1201));
+        assert_eq!(version_time(SITE, Some(1300), Some(1200), 1000), Ok(1301));
+        assert_eq!(version_time(SITE, None, Some(1000), 1000), Ok(1001));
+    }
+
+    #[test]
+    fn the_version_time_never_goes_beyond_the_skew() {
+        let edge = 1000 + MAX_FUTURE_SKEW - 1;
+        assert_eq!(
+            version_time(SITE, Some(edge), Some(edge), 1000),
+            Ok(1000 + MAX_FUTURE_SKEW)
         );
+        assert!(version_time(SITE, Some(edge + 1), None, 1000).is_err());
+        assert!(version_time(SITE, None, Some(edge + 1), 1000).is_err());
     }
 
     #[test]
     fn a_version_beyond_the_skew_is_refused_with_its_path() {
-        let err = refuse_future_version("/swing/publish/k/s", Some(1000 + 3 * 3600), 1000)
+        let err = version_time(SITE, Some(1000 + 3 * 3600), Some(1000 + 7200), 1000)
             .unwrap_err()
             .to_string();
+        assert!(
+            err.contains("the newest version /swing/publish/k/s/11800"),
+            "{err}"
+        );
         assert!(err.contains("about 3 hours"), "{err}");
         assert!(err.contains("clock on this machine is behind"), "{err}");
         assert!(
             err.contains("`ipfs files rm -r /swing/publish/k/s/11800`"),
             "{err}"
         );
+        assert!(
+            err.contains("`docker compose exec ipfs ipfs files rm -r /swing/publish/k/s/11800`"),
+            "{err}"
+        );
     }
 
     #[test]
-    fn the_clock_check_names_the_relay_it_is_furthest_ahead_of() {
+    fn a_previous_event_beyond_the_skew_is_refused() {
+        let err = version_time(SITE, Some(500), Some(1000 + 2 * 3600), 1000)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.starts_with("your latest site event on the relays is dated about 2 hours after this machine's clock (created_at 8200)"),
+            "{err}"
+        );
+        assert!(err.contains("wait until that time has passed"), "{err}");
+    }
+
+    #[test]
+    fn the_clock_check_refuses_only_when_ahead_of_every_answering_relay() {
         let times = vec![
             ("wss://a".to_string(), 5000),
             ("wss://b".to_string(), 1000),
             ("wss://c".to_string(), 9000),
         ];
-        let err = refuse_clock_ahead(1000 + MAX_FUTURE_SKEW + 60, &times[1..2])
+        assert!(refuse_clock_ahead(7000, &times).is_ok());
+        assert!(refuse_clock_ahead(9000 + MAX_FUTURE_SKEW, &times).is_ok());
+        assert!(refuse_clock_ahead(500, &times).is_ok());
+        assert!(refuse_clock_ahead(1_000_000, &[]).is_ok());
+        let err = refuse_clock_ahead(9000 + MAX_FUTURE_SKEW + 60, &times)
             .unwrap_err()
             .to_string();
         assert_eq!(
             err,
-            "the clock on this machine is about 16 minutes ahead of wss://b; fix the system clock and publish again"
+            "the clock on this machine is about 16 minutes ahead of every relay that answered (even wss://c, the one closest to it); fix the system clock and publish again"
         );
-        let err = refuse_clock_ahead(7000, &times).unwrap_err().to_string();
-        assert!(err.starts_with("the clock on this machine is about 100 minutes ahead of wss://b"));
-        assert!(refuse_clock_ahead(1000 + MAX_FUTURE_SKEW, &times).is_ok());
-        assert!(refuse_clock_ahead(500, &times).is_ok());
-        assert!(refuse_clock_ahead(1_000_000, &[]).is_ok());
+        let err = refuse_clock_ahead(7000, &times[1..2])
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.starts_with("the clock on this machine is about 100 minutes ahead of every relay that answered (even wss://b"),
+            "{err}"
+        );
     }
 
     #[test]

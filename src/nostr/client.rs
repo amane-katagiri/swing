@@ -290,9 +290,8 @@ impl RelayClient {
             .filter_map(|e| parse_site_event(e, site_event_kind).ok())
             .filter(|ev| ev.d == d)
             .collect();
-        Ok(select_latest(&parsed, Timestamp::now().as_secs())
-            .into_values()
-            .next())
+        // A future-dated own event still outranks a new publish on the relays, so publish must see it to refuse.
+        Ok(select_latest(&parsed, u64::MAX).into_values().next())
     }
 
     pub async fn fetch_replica_reports(
