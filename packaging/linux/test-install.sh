@@ -239,10 +239,14 @@ REL=v0.2.0 run sh "$INSTALL" --version 0.2.0 >/dev/null 2>&1 || fail "--version 
 check "requested version installed" [ "$(run "$H/.local/bin/swing" --version)" = "swing 0.2.0" ]
 
 echo "--- --service"
-new_env svc
-out=$(run sh "$INSTALL" --service 2>&1) || fail "--service exits 0"
-check "service install called" contains "$FAKE_LOG" "swing service install"
-check "dashboard hint printed" sh -c "printf '%s' \"\$1\" | grep -q 'swing dashboard open'" _ "$out"
+if [ "$(id -u)" != 0 ]; then
+  new_env svc
+  out=$(run sh "$INSTALL" --service 2>&1) || fail "--service exits 0"
+  check "service install called" contains "$FAKE_LOG" "swing service install"
+  check "dashboard hint printed" sh -c "printf '%s' \"\$1\" | grep -q 'swing dashboard open'" _ "$out"
+else
+  echo "skip --service (install.sh refuses it as root)"
+fi
 
 echo "--- checksum mismatch"
 new_env bad
