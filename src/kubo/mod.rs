@@ -21,6 +21,17 @@ pub use orphan::{recover_orphan, remove_pid_file, write_pid_file};
 
 pub const KUBO_VERSION: &str = "0.43.1";
 
+fn read_optional_json<T: serde::de::DeserializeOwned>(path: &Path) -> Result<Option<T>> {
+    let text = match std::fs::read_to_string(path) {
+        Ok(text) => text,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(e).with_context(|| format!("reading {}", path.display())),
+    };
+    serde_json::from_str(&text)
+        .map(Some)
+        .with_context(|| format!("parsing {}", path.display()))
+}
+
 fn remove_if_present(path: &Path) -> Result<()> {
     match std::fs::remove_file(path) {
         Ok(()) => Ok(()),

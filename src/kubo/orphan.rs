@@ -11,7 +11,7 @@ use tokio::process::Command;
 use crate::proc::{process_alive, process_start_marker};
 
 use super::access::{ApiSecret, read_api_access};
-use super::wait_until;
+use super::{read_optional_json, remove_if_present, wait_until};
 
 const ORPHAN_SHUTDOWN_RPC_TIMEOUT: Duration = Duration::from_secs(3);
 const ORPHAN_SHUTDOWN_GRACE: Duration = Duration::from_secs(30);
@@ -38,30 +38,16 @@ pub fn write_pid_file(state_dir: &Path, pid: u32, api_port: u16) -> Result<()> {
         api_port,
         started_at,
     };
-    let path = pid_file_path(state_dir);
     let text = serde_json::to_string(&record).context("serializing kubo.pid")?;
-    std::fs::write(&path, text).with_context(|| format!("writing {}", path.display()))
+    crate::auth::write_private_file(&pid_file_path(state_dir), &text)
 }
 
 pub(super) fn read_pid_file(state_dir: &Path) -> Result<Option<PidRecord>> {
-    let path = pid_file_path(state_dir);
-    let text = match std::fs::read_to_string(&path) {
-        Ok(text) => text,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-        Err(e) => return Err(e).with_context(|| format!("reading {}", path.display())),
-    };
-    let record: PidRecord =
-        serde_json::from_str(&text).with_context(|| format!("parsing {}", path.display()))?;
-    Ok(Some(record))
+    read_optional_json(&pid_file_path(state_dir))
 }
 
 pub fn remove_pid_file(state_dir: &Path) -> Result<()> {
-    let path = pid_file_path(state_dir);
-    match std::fs::remove_file(&path) {
-        Ok(()) => Ok(()),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(e) => Err(e).with_context(|| format!("removing {}", path.display())),
-    }
+    remove_if_present(&pid_file_path(state_dir))
 }
 
 async fn wait_for_exit(pid: u32, timeout: Duration) -> bool {
@@ -123,18 +109,15 @@ async fn terminate_process(pid: u32) -> Result<()> {
 }
 
 pub async fn recover_orphan(state_dir: &Path, repo: &Path) -> Result<()> {
+    let path = pid_file_path(state_dir);
     let record = match read_pid_file(state_dir) {
         Ok(Some(record)) => record,
         Ok(None) => return Ok(()),
-        Err(e) => {
-            tracing::warn!(
-                error = %e,
-                repo = %repo.display(),
-                "kubo.pid is not a valid pid file; leaving its process alone"
-            );
-            remove_pid_file(state_dir)?;
-            return Ok(());
-        }
+        Err(e) => bail!(
+            "{e:#}; a Kubo started by a previous swing may still be running on {}: stop it if so, then delete {}",
+            repo.display(),
+            path.display()
+        ),
     };
 
     let Some(current_started_at) = process_start_marker(record.pid) else {

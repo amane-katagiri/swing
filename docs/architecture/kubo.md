@@ -12,18 +12,20 @@
 
 1. `[kubo].binary` が指定されていればそのパス。存在しなければエラー。
 2. `swing` 実行ファイル（`current_exe()`）と同じディレクトリの `ipfs`（Windows は `ipfs.exe`）。
-3. `PATH` 上の `ipfs`（Windows も `PATHEXT` は見ず `ipfs.exe` 固定）。
+3. `PATH` 上の `ipfs`（Windows も `PATHEXT` は見ず `ipfs.exe` 固定）。絶対パスでない要素（空や `.` など）は飛ばす（カレントディレクトリに置かれた `ipfs` を実行しないため）。
 4. どれも無ければエラー（`Kubo binary not found: ...`）。
 
 2・3 で見つけたときは解決したパスを info ログに出す。
 
 ### リポジトリの初期化（`kubo::ensure_repo`）
 
-`<repo>/config` が無ければ `IPFS_PATH=<repo>` で `ipfs init` を実行する（あれば何もしない）。`<repo>` ディレクトリ自体は無ければ先に作る。
+`<repo>/config` が無ければ `IPFS_PATH=<repo>` で `ipfs init` を実行する（あれば何もしない）。`<repo>` ディレクトリ自体は無ければ先に作る（unix は 0700。`auth::create_private_dir_all`。既にあるディレクトリの権限は変えない）。
+
+SWING が起動する Kubo のプロセス（`ipfs init`・`ipfs version`・`ipfs daemon`）には、設定カタログ（`settings::SETTINGS`）で種類が秘密のキーの環境変数（今は `SWING_NOSTR_SECRET_KEY`）を渡さない（`kubo_command`）。
 
 ### 適用する Kubo 設定（`kubo::apply_config`）
 
-`swing up` は Kubo を起動するたびに `IPFS_PATH=<repo>` で次の `ipfs config` を順に実行する。
+`swing up` は Kubo を起動するたびに、`ipfs config` は使わずに `<repo>/config` の JSON を読み、次のキーを書き換えて 1 回で書き戻す。
 
 | キー | 値 | 備考 |
 |---|---|---|
@@ -37,9 +39,9 @@
 | `Addresses.API` | `["/ip4/127.0.0.1/tcp/<api_port>"]` | `api_port` は起動のたびに動的に選ぶ（下記）。`API.Authorizations` と一緒に書く（下記） |
 | `API.Authorizations` | `{"swing": {"AuthSecret": "bearer:<secret>", "AllowedPaths": ["/api/v0"]}}` | 値は下記「[RPC の認証](#rpc-の認証managed-のみ)」 |
 
-- `Datastore.StorageMax`・`Provide.Strategy` 以外は `ipfs config --json` で JSON の値として書く。
-- 最後の `Addresses.API` と `API.Authorizations` の 2 つは `ipfs config` を使わず（`kubo::set_api_access`）、`<repo>/config` の JSON を読んで書き換える。`Addresses`・`API` が無いか `null` なら空のオブジェクトを作り、ほかのキーはそのまま残す。書き戻しは `settings::write_atomic`（一時ファイル（unix は 0600）からの rename。`<repo>/config` がシンボリックリンクならリンク先のファイルを置き換え、リンクは残す）。
-- `ipfs config` の実行が失敗したら stderr を含めてエラーにする。
+- `Datastore.StorageMax`・`Provide.Strategy` は文字列、ほかは表の JSON の値として書く。
+- 親のオブジェクト（`Datastore`・`Provide`・`Gateway`・`Addresses`・`API`）が無いか `null` なら空のオブジェクトを作り、ほかのキーはそのまま残す。親がオブジェクト以外なら、そのキーを名指しするエラーにする。
+- `ipfs config` を使わないのは、RPC の秘密を他のユーザーが読めるコマンドラインに載せないため。書き戻しは `settings::write_atomic`（一時ファイル（unix は 0600）からの rename。`<repo>/config` がシンボリックリンクならリンク先のファイルを置き換え、リンクは残す）。
 
 compose の外部 Kubo コンテナでの同等の設定は [`docker.md#kubo-の設定`](docker.md#kubo-の設定)。
 
@@ -104,7 +106,7 @@ unmanaged（`[ipfs].api`）の Kubo には秘密を送らず、認証は SWING �
 - 起動の前に `<repo>/api` があれば消す。
 - `IPFS_PATH=<repo>`。stdin は `/dev/null` 相当、stdout/stderr は pipe。
 - すべての OS で `kill_on_drop(true)` を設定する。
-- Linux（`cfg(target_os = "linux")`）のみ、`pre_exec` で `PR_SET_PDEATHSIG(SIGTERM)` を設定する。swing プロセスが SIGKILL 等で消えても、Linux では子の Kubo に SIGTERM が届く。
+- Linux（`cfg(target_os = "linux")`）のみ、`pre_exec` で `PR_SET_PDEATHSIG(SIGTERM)` を設定する。swing プロセスが SIGKILL 等で消えても、Linux では子の Kubo に SIGTERM が届く。設定した直後に親の pid（`getppid`）が spawn 前の swing の pid と違えば（設定の前に swing が消えていた）、exec せずに起動を失敗させる。このシグナルは spawn したスレッドの終了で届くので、`Daemon::spawn` は tokio のランタイムのワーカー上で呼ぶ（`spawn_blocking` の中では呼ばない）。
 - Windows（`cfg(windows)`）のみ、`JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` の Job Object に子プロセスを割り当てる。ハンドルは `Daemon` が持ち `Drop` で閉じるので、swing が強制終了されても Kubo は一緒に落ちる。
 - macOS では `kill_on_drop(true)` と次回起動時の孤児回収だけになる。
 - 標準出力・標準エラーは 1 行ずつ `target: "kubo"` のログ（`stream` フィールド付き）に流す。標準エラーに `repo.lock` か `someone else has the lock` を含む行が出たら覚えておく（`Daemon::saw_repo_lock_error()`。下記「repo lock のヒント」）。
@@ -132,11 +134,11 @@ unmanaged（`[ipfs].api`）の Kubo には秘密を送らず、認証は SWING �
 
 ### `kubo.pid` と孤児 Kubo の回収（managed のみ）
 
-`kubo::write_pid_file` が `Daemon::spawn` の直後に `<state_dir>/kubo.pid`（JSON: `pid`・`api_port`・`started_at`）を書く（[`up.md#managed`](up.md#managed)）。`started_at` はその `pid` の開始時刻を OS ごとの方法（Linux は `/proc/<pid>/stat`、macOS は `ps -o lstart=`、Windows は `GetProcessTimes`）で取った比較専用の文字列。書けなければ warn を出して続行する（その回は孤児回収の対象にならない）。
+`kubo::write_pid_file` が `Daemon::spawn` の直後に `<state_dir>/kubo.pid`（JSON: `pid`・`api_port`・`started_at`）を `auth::write_private_file`（一時ファイル（unix は 0600）からの rename）で書く（[`up.md#managed`](up.md#managed)）。`started_at` はその `pid` の開始時刻を OS ごとの方法（`proc::process_start_marker`。Linux は `/proc/<pid>/stat`、macOS は `LC_ALL=C` で `/bin/ps -o lstart=`、Windows は `GetProcessTimes`）で取った比較専用の文字列。書けなければ warn を出して続行する（その回は孤児回収の対象にならない）。
 
 `kubo::recover_orphan` は `swing.lock` を持っている間に 1 回呼ぶ（呼ぶ時点は [`up.md#managed`](up.md#managed)）。
 
-- `kubo.pid` が無ければ何もしない。読めなければ warn を出してファイルを消すだけで、何も kill しない。
+- `kubo.pid` が無ければ何もしない。読めない（JSON として壊れている）ときはファイルを残し、何も kill せずにエラーを返す（前の swing が起動した Kubo がまだ動いていれば止めてから `kubo.pid` を消すよう案内する）。`swing up` はこのエラーで終了する。
 - まずその `pid` の今の開始時刻を取り直し、記録と比べる。プロセスがもう無い、または開始時刻が一致しない（PID の再利用）なら、API にも何も送らず kill もせずにファイルを消す。
 - 一致したら記録の `api_port` に API でのシャットダウンを送り（タイムアウト 3 秒、`ORPHAN_SHUTDOWN_RPC_TIMEOUT`）、2xx が返ればその `pid` の終了を最大 30 秒（`ORPHAN_SHUTDOWN_GRACE`）待つ。終われば完了。秘密は `<state_dir>/kubo-api.json` の `port` が記録の `api_port` と同じときだけ付ける（読めなければ warn を出し、秘密なしで送る。秘密なしの要求が拒まれたら次の強制終了に進む）。
 - API で終わらなければ強制終了する（unix は SIGTERM → 最大 30 秒（`ORPHAN_SIGTERM_GRACE`）→ SIGKILL → 最大 10 秒（`ORPHAN_KILL_WAIT`）、Windows は `taskkill /T /F` → 最大 10 秒（`ORPHAN_KILL_WAIT`））。

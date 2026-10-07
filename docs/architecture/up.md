@@ -109,7 +109,7 @@
 | 強制終了までの猶予 = `STOP_BUDGET` + `RUNTIME_SHUTDOWN_TIMEOUT` + 余裕 5 秒 | 70 秒（60 秒） | `FORCE_EXIT_GRACE` |
 | サービスマネージャの上限（systemd の `TimeoutStopSec`、launchd の `ExitTimeOut`、[`service.md`](service.md)） | 90 秒 | `service::STOP_TIMEOUT` |
 
-関係は「`STOP_BUDGET` + `RUNTIME_SHUTDOWN_TIMEOUT` < `FORCE_EXIT_GRACE` < `service::STOP_TIMEOUT`」。署名アプリとの接続を閉じる `Signer::shutdown` と、`ensure_repo`・`apply_config` などが起動する短命の `ipfs` コマンドは時間の上限を持たず、予算に入れていない（詰まったときは watchdog が止める）。
+関係は「`STOP_BUDGET` + `RUNTIME_SHUTDOWN_TIMEOUT` < `FORCE_EXIT_GRACE` < `service::STOP_TIMEOUT`」。署名アプリとの接続を閉じる `Signer::shutdown` と、`ensure_repo`・`version` が起動する短命の `ipfs` コマンドは時間の上限を持たず、予算に入れていない（詰まったときは watchdog が止める）。
 
 ## 多重起動の防止（lock.rs）
 

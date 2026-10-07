@@ -82,7 +82,7 @@ async fn start_kubo(bin: &Path, repo: &Path) -> Daemon {
         swarm_port: None,
         public_gateway_hosts: vec![],
     };
-    kubo::apply_config(bin, repo, &settings).await.unwrap();
+    kubo::apply_config(repo, &settings).unwrap();
     let mut daemon = Daemon::spawn(bin, repo, &api).await.unwrap();
     daemon
         .wait_healthy(repo, Duration::from_secs(60))

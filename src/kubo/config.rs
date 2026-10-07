@@ -5,7 +5,6 @@ use anyhow::{Context, Result, bail};
 use serde_json::json;
 
 use super::access::ApiAccess;
-use super::binary::run;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct KuboSettings {
@@ -71,65 +70,8 @@ pub(super) fn gateway_multiaddr(addr: SocketAddr) -> String {
     }
 }
 
-async fn set_config(bin: &Path, repo: &Path, key: &str, value: &str) -> Result<()> {
-    run(bin, Some(repo), &["config", key, value]).await?;
-    Ok(())
-}
-
-async fn set_config_json(
-    bin: &Path,
-    repo: &Path,
-    key: &str,
-    value: &serde_json::Value,
-) -> Result<()> {
-    let value = serde_json::to_string(value).with_context(|| format!("serializing {key}"))?;
-    run(bin, Some(repo), &["config", "--json", key, &value]).await?;
-    Ok(())
-}
-
-pub async fn apply_config(bin: &Path, repo: &Path, s: &KuboSettings) -> Result<()> {
-    set_config(
-        bin,
-        repo,
-        "Datastore.StorageMax",
-        &s.storage_max.to_string(),
-    )
-    .await?;
-    set_config(bin, repo, "Provide.Strategy", &s.provide_strategy).await?;
-
-    set_config_json(bin, repo, "Gateway.NoFetch", &json!(true)).await?;
-    set_config_json(bin, repo, "Gateway.NoDNSLink", &json!(true)).await?;
-    set_config_json(
-        bin,
-        repo,
-        "Gateway.PublicGateways",
-        &public_gateways_json(&s.public_gateway_hosts),
-    )
-    .await?;
-
-    set_config_json(
-        bin,
-        repo,
-        "Addresses.Gateway",
-        &json!([gateway_multiaddr(s.gateway)]),
-    )
-    .await?;
-
-    if let Some(port) = s.swarm_port {
-        set_config_json(
-            bin,
-            repo,
-            "Addresses.Swarm",
-            &json!(default_swarm_addrs(port)),
-        )
-        .await?;
-    }
-
-    set_api_access(repo, &s.api)
-}
-
-// Edits the file directly because `ipfs config` would put the port and secret on a command line other users can read.
-pub(super) fn set_api_access(repo: &Path, access: &ApiAccess) -> Result<()> {
+// Edits the file directly so the API secret never reaches a command line other users can read.
+pub fn apply_config(repo: &Path, s: &KuboSettings) -> Result<()> {
     let path = repo.join("config");
     let text =
         std::fs::read_to_string(&path).with_context(|| format!("reading {}", path.display()))?;
@@ -138,11 +80,31 @@ pub(super) fn set_api_access(repo: &Path, access: &ApiAccess) -> Result<()> {
     let root = config
         .as_object_mut()
         .with_context(|| format!("{} is not a JSON object", path.display()))?;
-    object_entry(root, "Addresses", &path)?.insert("API".to_string(), json!([access.multiaddr()]));
+
+    object_entry(root, "Datastore", &path)?
+        .insert("StorageMax".to_string(), json!(s.storage_max.to_string()));
+    object_entry(root, "Provide", &path)?.insert("Strategy".to_string(), json!(s.provide_strategy));
+
+    let gateway = object_entry(root, "Gateway", &path)?;
+    gateway.insert("NoFetch".to_string(), json!(true));
+    gateway.insert("NoDNSLink".to_string(), json!(true));
+    gateway.insert(
+        "PublicGateways".to_string(),
+        public_gateways_json(&s.public_gateway_hosts),
+    );
+
+    let addresses = object_entry(root, "Addresses", &path)?;
+    addresses.insert("Gateway".to_string(), json!([gateway_multiaddr(s.gateway)]));
+    if let Some(port) = s.swarm_port {
+        addresses.insert("Swarm".to_string(), json!(default_swarm_addrs(port)));
+    }
+    addresses.insert("API".to_string(), json!([s.api.multiaddr()]));
+
     object_entry(root, "API", &path)?.insert(
         "Authorizations".to_string(),
-        access.secret.kubo_authorizations(),
+        s.api.secret.kubo_authorizations(),
     );
+
     let text = serde_json::to_string_pretty(&config).context("serializing the Kubo config")?;
     crate::settings::write_atomic(&path, &text)
 }

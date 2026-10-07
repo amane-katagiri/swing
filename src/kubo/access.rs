@@ -6,7 +6,7 @@ use serde_json::json;
 
 use crate::ipfs::IpfsClient;
 
-use super::remove_if_present;
+use super::{read_optional_json, remove_if_present};
 
 const API_ACCESS_FILE: &str = "kubo-api.json";
 const API_SECRET_BYTES: usize = 32;
@@ -97,13 +97,9 @@ pub fn write_api_access(state_dir: &Path, access: &ApiAccess) -> Result<()> {
 
 pub(super) fn read_api_access(state_dir: &Path) -> Result<Option<ApiAccess>> {
     let path = api_access_path(state_dir);
-    let text = match std::fs::read_to_string(&path) {
-        Ok(text) => text,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-        Err(e) => return Err(e).with_context(|| format!("reading {}", path.display())),
+    let Some(file) = read_optional_json::<ApiAccessFile>(&path)? else {
+        return Ok(None);
     };
-    let file: ApiAccessFile =
-        serde_json::from_str(&text).with_context(|| format!("parsing {}", path.display()))?;
     let secret = ApiSecret::parse(&file.secret)
         .with_context(|| format!("{} does not hold a hex secret", path.display()))?;
     Ok(Some(ApiAccess {

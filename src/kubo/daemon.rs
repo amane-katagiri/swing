@@ -6,13 +6,14 @@ use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
 use tokio::io::{AsyncBufReadExt, BufReader};
-use tokio::process::{Child, Command};
+use tokio::process::Child;
 
 use crate::ipfs::IpfsClient;
 
 use super::access::{ApiAccess, read_peer_id};
+use super::binary::kubo_command;
 use super::config::multiaddr_to_http_url;
-use super::remove_if_present;
+use super::{remove_if_present, wait_until};
 
 const SHUTDOWN_RPC_TIMEOUT: Duration = Duration::from_secs(5);
 #[cfg(unix)]
@@ -72,7 +73,7 @@ pub struct Daemon {
 impl Daemon {
     pub async fn spawn(bin: &Path, repo: &Path, api: &ApiAccess) -> Result<Daemon> {
         remove_if_present(&repo.join("api"))?;
-        let mut command = Command::new(bin);
+        let mut command = kubo_command(bin);
         command
             .args([
                 "daemon",
@@ -86,12 +87,17 @@ impl Daemon {
             .stderr(Stdio::piped())
             .kill_on_drop(true);
 
+        // PDEATHSIG fires when the spawning thread exits, so this must run on a runtime worker, never in spawn_blocking.
         #[cfg(target_os = "linux")]
         unsafe {
-            command.pre_exec(|| {
+            let parent = libc::getpid();
+            command.pre_exec(move || {
                 let ret = libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGTERM);
                 if ret != 0 {
                     return Err(std::io::Error::last_os_error());
+                }
+                if libc::getppid() != parent {
+                    return Err(std::io::Error::from_raw_os_error(libc::ESRCH));
                 }
                 Ok(())
             });
@@ -232,19 +238,21 @@ impl Daemon {
 }
 
 pub async fn wait_healthy(ipfs: &IpfsClient, timeout: Duration) -> Result<()> {
-    let deadline = tokio::time::Instant::now() + timeout;
-    loop {
-        let err = match ipfs.peer_id().await {
-            Ok(_) => return Ok(()),
-            Err(e) => e,
-        };
-        if tokio::time::Instant::now() >= deadline {
-            return Err(err.context(format!(
-                "Kubo at {} did not become healthy within {timeout:?}",
-                ipfs.api_url()
-            )));
-        }
-        tokio::time::sleep(Duration::from_secs(1)).await;
+    let last_error = std::cell::RefCell::new(None);
+    let last = &last_error;
+    let healthy = wait_until(timeout, Duration::from_secs(1), || async move {
+        let result = ipfs.peer_id().await;
+        let ok = result.is_ok();
+        *last.borrow_mut() = result.err();
+        ok
+    })
+    .await;
+    match last_error.into_inner() {
+        Some(err) if !healthy => Err(err.context(format!(
+            "Kubo at {} did not become healthy within {timeout:?}",
+            ipfs.api_url()
+        ))),
+        _ => Ok(()),
     }
 }
 

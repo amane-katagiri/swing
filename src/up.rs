@@ -167,7 +167,7 @@ async fn start_kubo(
         public_gateway_hosts: config.gateway.hosts.clone(),
     };
     attempt!(
-        kubo::apply_config(bin, &config.kubo.repo, &settings).await,
+        kubo::apply_config(&config.kubo.repo, &settings),
         "failed to configure Kubo"
     );
 

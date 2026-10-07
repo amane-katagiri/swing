@@ -12,7 +12,7 @@ use crate::proc::{process_alive, process_start_marker};
 
 use super::access::{api_access_path, read_api_access, read_peer_id};
 use super::binary::run;
-use super::config::{default_swarm_addrs, gateway_multiaddr, public_gateways_json, set_api_access};
+use super::config::{default_swarm_addrs, gateway_multiaddr, public_gateways_json};
 use super::daemon::is_repo_lock_error;
 use super::orphan::{PidRecord, read_pid_file};
 use super::*;
@@ -392,16 +392,27 @@ fn api_access_round_trips_through_a_private_file_and_stays_out_of_debug() {
     remove_api_access(&state_dir).unwrap();
 }
 
+fn settings(api: ApiAccess, swarm_port: Option<u16>) -> KuboSettings {
+    KuboSettings {
+        storage_max: 123_456_789,
+        provide_strategy: "pinned+mfs".to_string(),
+        api,
+        gateway: SocketAddr::from(([127, 0, 0, 1], 8081)),
+        swarm_port,
+        public_gateway_hosts: vec!["example.com".to_string()],
+    }
+}
+
 #[test]
-fn api_access_is_written_into_the_repo_config() {
+fn apply_config_writes_its_keys_and_keeps_the_rest() {
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(
         dir.path().join("config"),
-        r#"{"Identity":{"PeerID":"mine"},"API":{"HTTPHeaders":{}},"Addresses":{"Gateway":["/ip4/127.0.0.1/tcp/8080"]}}"#,
+        r#"{"Identity":{"PeerID":"mine"},"API":{"HTTPHeaders":{}},"Addresses":{"Gateway":["/ip4/127.0.0.1/tcp/8080"],"Swarm":["/ip4/0.0.0.0/tcp/4001"]},"Datastore":{"StorageMax":"10GB","GCPeriod":"1h"}}"#,
     )
     .unwrap();
     let api = access(41234);
-    set_api_access(dir.path(), &api).unwrap();
+    apply_config(dir.path(), &settings(api.clone(), None)).unwrap();
     let text = std::fs::read_to_string(dir.path().join("config")).unwrap();
     let config: serde_json::Value = serde_json::from_str(&text).unwrap();
     assert_eq!(config["Identity"]["PeerID"], "mine");
@@ -412,29 +423,58 @@ fn api_access_is_written_into_the_repo_config() {
     );
     assert_eq!(
         config["Addresses"],
-        json!({"API": ["/ip4/127.0.0.1/tcp/41234"], "Gateway": ["/ip4/127.0.0.1/tcp/8080"]})
+        json!({
+            "API": ["/ip4/127.0.0.1/tcp/41234"],
+            "Gateway": ["/ip4/127.0.0.1/tcp/8081"],
+            "Swarm": ["/ip4/0.0.0.0/tcp/4001"],
+        })
+    );
+    assert_eq!(
+        config["Datastore"],
+        json!({"StorageMax": "123456789", "GCPeriod": "1h"})
+    );
+    assert_eq!(config["Provide"], json!({"Strategy": "pinned+mfs"}));
+    assert_eq!(
+        config["Gateway"],
+        json!({
+            "NoFetch": true,
+            "NoDNSLink": true,
+            "PublicGateways": public_gateways_json(&["example.com".to_string()]),
+        })
     );
     assert_eq!(api.secret.authorization(), "Bearer abcd");
 
+    apply_config(dir.path(), &settings(api.clone(), Some(4321))).unwrap();
+    let text = std::fs::read_to_string(dir.path().join("config")).unwrap();
+    let config: serde_json::Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(
+        config["Addresses"]["Swarm"],
+        json!(default_swarm_addrs(4321))
+    );
+
     std::fs::write(dir.path().join("config"), r#"{"API":null}"#).unwrap();
-    set_api_access(dir.path(), &api).unwrap();
+    apply_config(dir.path(), &settings(api, None)).unwrap();
     let text = std::fs::read_to_string(dir.path().join("config")).unwrap();
     assert!(
         text.contains("bearer:abcd") && text.contains("/tcp/41234"),
         "{text}"
     );
+
+    std::fs::write(dir.path().join("config"), r#"{"Gateway":[]}"#).unwrap();
+    let err = apply_config(dir.path(), &settings(access(41234), None)).unwrap_err();
+    assert!(err.to_string().contains("Gateway"), "{err}");
 }
 
 #[cfg(unix)]
 #[test]
-fn api_access_writes_through_a_symlinked_repo_config() {
+fn apply_config_writes_through_a_symlinked_repo_config() {
     let dir = tempfile::tempdir().unwrap();
     let real = dir.path().join("real-config");
     std::fs::write(&real, r#"{"Identity":{"PeerID":"mine"}}"#).unwrap();
     let repo = dir.path().join("repo");
     std::fs::create_dir(&repo).unwrap();
     std::os::unix::fs::symlink(&real, repo.join("config")).unwrap();
-    set_api_access(&repo, &access(41234)).unwrap();
+    apply_config(&repo, &settings(access(41234), None)).unwrap();
     assert!(
         std::fs::symlink_metadata(repo.join("config"))
             .unwrap()
@@ -470,6 +510,47 @@ async fn kubo_http_client_sends_the_secret_as_a_bearer_token() {
     assert_eq!(client.peer_id().await.unwrap(), "mine");
     let request = server.await.unwrap();
     assert!(request.contains("authorization: bearer abcd"), "{request}");
+}
+
+#[test]
+fn kubo_commands_do_not_inherit_secret_settings() {
+    let command = super::binary::kubo_command(Path::new("ipfs"));
+    let removed: Vec<_> = command
+        .as_std()
+        .get_envs()
+        .filter(|(_, value)| value.is_none())
+        .map(|(key, _)| key.to_string_lossy().into_owned())
+        .collect();
+    assert_eq!(removed, ["SWING_NOSTR_SECRET_KEY"]);
+}
+
+#[test]
+fn find_on_path_skips_relative_entries() {
+    let dir = tempfile::tempdir().unwrap();
+    let exe = dir.path().join("ipfs-test-exe");
+    std::fs::write(&exe, b"").unwrap();
+    let relative = std::env::join_paths([PathBuf::from("."), PathBuf::from("")]).unwrap();
+    assert_eq!(
+        super::binary::find_on_path(&relative, "ipfs-test-exe"),
+        None
+    );
+    let absolute = std::env::join_paths([PathBuf::from("."), dir.path().to_path_buf()]).unwrap();
+    assert_eq!(
+        super::binary::find_on_path(&absolute, "ipfs-test-exe"),
+        Some(exe)
+    );
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn ensure_repo_creates_a_private_repo_dir() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempfile::tempdir().unwrap();
+    let bin = fake_kubo(dir.path(), "exit 0", "mine");
+    let repo = dir.path().join("custom/repo");
+    assert!(ensure_repo(&bin, &repo).await.unwrap());
+    let mode = std::fs::metadata(&repo).unwrap().permissions().mode();
+    assert_eq!(mode & 0o777, 0o700);
 }
 
 #[test]
@@ -543,11 +624,18 @@ async fn recover_orphan_with_no_pid_file_is_ok() {
 }
 
 #[tokio::test]
-async fn recover_orphan_removes_unparseable_pid_file_without_killing_anything() {
+async fn recover_orphan_keeps_an_unparseable_pid_file_and_says_what_to_do() {
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(dir.path().join("kubo.pid"), "not a pid file").unwrap();
-    recover_orphan(dir.path(), dir.path()).await.unwrap();
-    assert_eq!(read_pid_file(dir.path()).unwrap(), None);
+    let err = recover_orphan(dir.path(), dir.path())
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("delete") && err.contains("kubo.pid"), "{err}");
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("kubo.pid")).unwrap(),
+        "not a pid file"
+    );
 }
 
 #[tokio::test]
@@ -679,7 +767,7 @@ async fn full_lifecycle_against_real_kubo() {
         swarm_port: None,
         public_gateway_hosts: vec!["example.com".to_string()],
     };
-    apply_config(&bin, &repo, &settings).await.unwrap();
+    apply_config(&repo, &settings).unwrap();
 
     std::fs::write(repo.join("api"), "/ip4/127.0.0.1/tcp/1\n").unwrap();
     let mut daemon = Daemon::spawn(&bin, &repo, &api).await.unwrap();
@@ -748,7 +836,7 @@ async fn spawn_orphan(bin: &Path, dir: &Path) -> (PathBuf, String, u32) {
         swarm_port: None,
         public_gateway_hosts: vec![],
     };
-    apply_config(bin, &repo, &settings).await.unwrap();
+    apply_config(&repo, &settings).unwrap();
 
     let api_url = api.url();
     let mut daemon = Daemon::spawn(bin, &repo, &api).await.unwrap();
