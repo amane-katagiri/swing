@@ -238,6 +238,10 @@ impl<C: KuboStore, N: Nip05Verify, R: ReportRelay> Agent<C, N, R> {
             .iter()
             .map(|pk| pk.to_hex())
             .collect();
+        self.attempts
+            .lock()
+            .unwrap()
+            .retain_accounts(|pubkey_hex| targets.contains(pubkey_hex));
         let mut state = self.state.lock().await;
         let unfollowed: Vec<String> = state
             .accounts()

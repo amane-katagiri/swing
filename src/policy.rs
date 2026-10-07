@@ -91,6 +91,15 @@ pub fn fetch_limit(cfg: &PolicyConfig) -> u64 {
         .min(cfg.max_per_account)
 }
 
+pub fn fetch_budget(cfg: &PolicyConfig, usage: Usage) -> u64 {
+    fetch_limit(cfg)
+        .min(
+            cfg.max_per_account
+                .saturating_sub(usage.other_sites_of_account),
+        )
+        .min(cfg.max_total_storage.saturating_sub(usage.other_sites))
+}
+
 pub fn decide(
     existing_versions: &[VersionInfo],
     usage: Usage,
@@ -507,6 +516,23 @@ mod tests {
         assert_eq!(fetch_limit(&c1), 100);
         c1.max_per_site = 50;
         assert_eq!(fetch_limit(&c1), 50);
+    }
+
+    #[test]
+    fn fetch_budget_leaves_out_what_the_account_and_node_already_hold() {
+        let mut c1 = cfg();
+        c1.max_per_account = 1_000;
+        c1.max_total_storage = 2_000;
+        assert_eq!(fetch_budget(&c1, Usage::default()), 250);
+        let usage = |account, total| Usage {
+            other_sites_of_account: account,
+            other_sites: total,
+            ..Usage::default()
+        };
+        assert_eq!(fetch_budget(&c1, usage(900, 900)), 100);
+        assert_eq!(fetch_budget(&c1, usage(0, 1_950)), 50);
+        assert_eq!(fetch_budget(&c1, usage(1_200, 1_200)), 0);
+        assert_eq!(fetch_budget(&c1, usage(0, 3_000)), 0);
     }
 
     #[test]

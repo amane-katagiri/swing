@@ -114,15 +114,16 @@ async fn fetch_failure_leaves_state_and_old_versions_untouched() {
 }
 
 #[tokio::test]
-async fn a_cid_that_is_a_file_is_fetched_but_not_stored() {
+async fn a_cid_that_is_a_file_is_rejected_before_fetching() {
     let kubo = FakeKubo::with(|s| {
         s.files.insert("bafy-file".into());
     });
     let fx = Fixture::new(default_policy(), kubo);
 
     fx.apply(fx.event(D, "bafy-file", Some(20), 200)).await;
+    fx.apply(fx.event(D, "bafy-file", Some(20), 200)).await;
 
-    assert_eq!(fx.kubo().fetched, vec!["bafy-file".to_string()]);
+    assert!(fx.kubo().fetched.is_empty());
     assert!(fx.kubo().paths().is_empty());
     assert!(fx.cids(D).await.is_empty());
     assert!(!fx.state_path.exists());
@@ -226,7 +227,7 @@ async fn a_cid_rejected_after_fetch_is_not_fetched_again_until_it_changes() {
         .await;
     fx.apply(fx.event("f.example", "bafy-file", None, 200))
         .await;
-    assert_eq!(fx.kubo().fetched, vec!["bafy-big", "bafy-file"]);
+    assert_eq!(fx.kubo().fetched, vec!["bafy-big"]);
 
     fx.apply(fx.event(D, "bafy-small", None, 300)).await;
     assert!(fx.kubo().stores("bafy-small"));
@@ -344,6 +345,79 @@ async fn max_per_account_limits_the_sum_of_an_accounts_sites() {
     fx.apply(fx.event("c.example", "bafy-c", None, 200)).await;
     assert!(fx.kubo().stores("bafy-c"));
     assert_eq!(fx.site_bytes("c.example").await, 40);
+}
+
+#[tokio::test]
+async fn the_fetch_stops_at_the_space_left_for_the_account_and_the_node() {
+    let mut policy = default_policy();
+    policy.max_per_account = 100;
+    let fx = Fixture::new(policy, sized(&[("bafy-b", 60)]));
+    fx.seed("a.example", "bafy-a", 60, 100).await;
+
+    fx.apply(fx.event("b.example", "bafy-b", None, 200)).await;
+    assert_eq!(fx.kubo().fetched, vec!["bafy-b"]);
+    assert!(fx.kubo().put_calls.is_empty());
+    assert!(
+        fx.agent
+            .attempts
+            .lock()
+            .unwrap()
+            .is_rejected(&fx.key("b.example"), "bafy-b")
+    );
+
+    let mut policy = default_policy();
+    policy.max_total_storage = 100;
+    let fx = Fixture::new(policy, sized(&[("bafy-b", 60)]));
+    let other = Keys::generate().public_key().to_hex();
+    fx.agent.state.lock().await.apply_store(
+        &state::site_key(&other, "a.example"),
+        VersionRecord {
+            cid: "bafy-a".into(),
+            size: 60,
+            created_at: 100,
+            stored_at: 100,
+        },
+    );
+
+    fx.apply(fx.event("b.example", "bafy-b", None, 200)).await;
+    assert_eq!(fx.kubo().fetched, vec!["bafy-b"]);
+    assert!(fx.kubo().put_calls.is_empty());
+}
+
+#[test]
+fn attempts_of_unfollowed_accounts_are_dropped() {
+    let mut attempts = Attempts::default();
+    let kept = state::site_key("aa", "a.example");
+    let gone = state::site_key("bb", "b.example");
+    attempts.reject(&kept, "x".into());
+    attempts.reject(&gone, "y".into());
+    assert_eq!(attempts.try_attempt(&gone, false, 1000, 600, 10), Ok(()));
+
+    attempts.retain_accounts(|account| account == "aa");
+
+    assert!(attempts.is_rejected(&kept, "x"));
+    assert!(!attempts.is_rejected(&gone, "y"));
+    assert_eq!(state::account_entries(&attempts.sites, "bb").count(), 0);
+}
+
+#[tokio::test]
+async fn unfollow_forgets_the_rejected_cids_of_the_account() {
+    let mut policy = default_policy();
+    policy.max_per_site = 50;
+    let fx = Fixture::new(policy, sized(&[("bafy-big", 1_000)]));
+    fx.apply(fx.event(D, "bafy-big", None, 200)).await;
+    assert!(
+        fx.agent
+            .attempts
+            .lock()
+            .unwrap()
+            .is_rejected(&fx.key(D), "bafy-big")
+    );
+
+    fx.agent.replace_targets(HashSet::new());
+    fx.agent.remove_unfollowed().await;
+
+    assert!(fx.agent.attempts.lock().unwrap().sites.is_empty());
 }
 
 #[tokio::test]

@@ -6,7 +6,7 @@
 
 あなたのサイトを保存してくれる各参加者は、`[policy]`（`max_total_storage`・`max_per_site`・`max_per_account`・`max_sites_per_account`・`max_update_size`・`keep_versions`・`keep_days`・`min_update_interval`・`remove_on_unfollow`・`nip05`・`nip05_cache_ttl` など）に沿って保存量・保存期間を制限しています。値は参加者ごとのローカル設定です。キーごとの既定値と説明は [設定一覧](#設定一覧) を参照してください。
 
-サイズはイベントの `size` タグではなく、実際に取得したデータ量で判定します。取得中に上限（`max_update_size`・`max_per_site`・`max_per_account` の最小値）を超えた時点で取得を打ち切ります。
+サイズはイベントの `size` タグではなく、実際に取得したデータ量で判定します。取得中に上限（`max_update_size`・`max_per_site`・`max_per_account` の最小値。そのアカウントやミラー全体の残りの容量がそれより少なければ残りの容量）を超えた時点で取得を打ち切ります。ディレクトリでない CID は、中身を取得する前に断ります。
 
 打ち切った取得や削除した版のデータは、Kubo の GC が走るまでディスクに残ります。Kubo は `--enable-gc` で起動し、GC の基準になる `Datastore.StorageMax` を起動のたびに設定します。バイナリで `swing up` が管理する Kubo では `[kubo].storage_max`（`SWING_KUBO_STORAGE_MAX`。未設定なら `[policy].max_total_storage` と同じ値）を、Docker Compose の `ipfs` コンテナでは `.env` の `SWING_KUBO_STORAGE_MAX`（未設定なら `SWING_MAX_TOTAL_STORAGE`）を使います。GC はこの値の 90% を超えたときに走るので、少し余裕を足した値にしておくことをおすすめします。容量は `100GiB` のように `GiB` 系の単位で書いてください。swing は `GB` も `GiB` と同じ 1024 基数で読みますが、Docker Compose の Kubo は `GB` を 10 進（1GB = 10^9 バイト）で読むため、`GiB` 系で書いたときだけ両者が同じ値になります。
 
