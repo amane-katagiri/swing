@@ -73,7 +73,7 @@ pub async fn setup(
     AppJson(req): AppJson<SetupRequest>,
 ) -> Result<Response, ApiError> {
     ensure_setup_mode(&state)?;
-    let mut writes = state.lock_config_writes().await;
+    let mut writes = state.locks.config_writes().await;
     if writes.setup_done {
         return Err(ApiError::Conflict(
             "setup is already done; swing is restarting".to_string(),
@@ -126,7 +126,7 @@ pub async fn reconnect_signer(State(state): State<Arc<AppState>>) -> Result<Resp
             mirror::npub(&own)
         )));
     }
-    let writes = state.lock_config_writes().await;
+    let writes = state.locks.config_writes().await;
     let state_dir = state.config.agent.state_dir.clone();
     blocking(move || {
         paired

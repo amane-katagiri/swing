@@ -113,14 +113,6 @@ impl AppState {
         })
     }
 
-    async fn lock_mirror_writes(&self) -> locks::MirrorWrites<'_> {
-        self.locks.mirror_writes().await
-    }
-
-    async fn lock_config_writes(&self) -> locks::ConfigWrites<'_> {
-        self.locks.config_writes().await
-    }
-
     pub fn token(&self) -> String {
         self.token.read().expect("token lock").clone()
     }
@@ -365,7 +357,7 @@ mod tests {
     #[tokio::test]
     async fn mirror_changes_wait_for_the_one_in_progress() {
         let state = test_state();
-        let held = state.lock_mirror_writes().await;
+        let held = state.locks.mirror_writes().await;
         let key = nostr_sdk::prelude::Keys::generate().public_key().to_hex();
         let req = Request::builder()
             .method("POST")
