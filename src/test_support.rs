@@ -55,6 +55,7 @@ pub(crate) struct FakeKuboState {
     pub(crate) fetched: Vec<String>,
     pub(crate) fail_fetch: HashSet<String>,
     pub(crate) fail_stat: HashSet<String>,
+    pub(crate) flaky_stat: HashSet<String>,
     pub(crate) fail_put: HashSet<String>,
     pub(crate) fail_remove: HashSet<String>,
     pub(crate) fail_list: HashSet<String>,
@@ -112,7 +113,10 @@ impl KuboStore for FakeKubo {
         s.dag_stats.push(key.clone());
         for cid in cids {
             if s.fail_stat.contains(*cid) {
-                anyhow::bail!("simulated dag/stat failure");
+                anyhow::bail!("block was not found locally (offline): ipld: could not find {cid}");
+            }
+            if s.flaky_stat.contains(*cid) {
+                anyhow::bail!("simulated dag/stat timeout");
             }
         }
         if let Some(&total) = s.unions.get(&key) {

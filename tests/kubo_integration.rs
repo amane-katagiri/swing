@@ -153,7 +153,8 @@ async fn mfs_entries_protect_content_from_gc_until_the_last_one_is_removed() {
 
     client.mfs_remove(&second).await.unwrap();
     run_gc().await;
-    assert!(client.dag_size_local(&[cid.as_str()]).await.is_err());
+    let err = client.dag_size_local(&[cid.as_str()]).await.unwrap_err();
+    assert!(swing::ipfs::is_block_missing(&err), "{err:#}");
     client.mfs_remove(&root).await.unwrap();
 }
 
@@ -224,7 +225,8 @@ async fn dag_size_local_fails_fast_on_an_incomplete_dag() {
     assert!(removed.status().is_success());
 
     let started = std::time::Instant::now();
-    assert!(client.dag_size_local(&[cid.as_str()]).await.is_err());
+    let err = client.dag_size_local(&[cid.as_str()]).await.unwrap_err();
+    assert!(swing::ipfs::is_block_missing(&err), "{err:#}");
     assert!(started.elapsed() < Duration::from_secs(5));
 
     // check_site takes a whole site as complete from one dag/stat, so one incomplete version must fail the call.

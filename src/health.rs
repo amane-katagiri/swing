@@ -64,7 +64,8 @@ async fn check_placement<C: KuboStore>(ipfs: &C, path: &str, cid: &str) -> Optio
 async fn check_blocks<C: KuboStore>(ipfs: &C, cid: &str) -> VersionHealth {
     match ipfs.dag_size_local(&[cid]).await {
         Ok(_) => VersionHealth::Ok,
-        Err(e) => VersionHealth::Incomplete(format!("{e:#}")),
+        Err(e) if crate::ipfs::is_block_missing(&e) => VersionHealth::Incomplete(format!("{e:#}")),
+        Err(e) => VersionHealth::CheckFailed(format!("{e:#}")),
     }
 }
 
@@ -436,6 +437,8 @@ mod tests {
             s.mfs.insert(path("moved"), "bafy-other".into());
             s.mfs.insert(path("broken"), "bafy-broken".into());
             s.fail_stat.insert("bafy-broken".into());
+            s.mfs.insert(path("slow"), "bafy-slow".into());
+            s.flaky_stat.insert("bafy-slow".into());
             s.fail_mfs_stat_cid.insert(path("flaky"));
         });
 
@@ -457,6 +460,9 @@ mod tests {
         let flaky = check_version(&kubo, &path("flaky"), "bafy-flaky").await;
         assert!(matches!(flaky, VersionHealth::CheckFailed(_)));
         assert!(!flaky.is_broken());
+        let slow = check_version(&kubo, &path("slow"), "bafy-slow").await;
+        assert!(matches!(slow, VersionHealth::CheckFailed(_)));
+        assert!(!slow.is_broken());
     }
 
     #[tokio::test]

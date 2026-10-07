@@ -172,6 +172,11 @@ struct LsLink {
 const UNIXFS_DIRECTORY: u8 = 1;
 
 const MFS_MISSING: &str = "file does not exist";
+const BLOCK_MISSING: &str = "ipld: could not find";
+
+pub fn is_block_missing(e: &anyhow::Error) -> bool {
+    format!("{e:#}").contains(BLOCK_MISSING)
+}
 const ADD_IDLE_TIMEOUT: Duration = Duration::from_secs(300);
 const MAX_RESPONSE_BYTES: usize = 16 << 20;
 

@@ -39,7 +39,7 @@ state は読まない。
 
 `GET /api/status` を叩き（[共通](../cli.md#共通)）、API 側が `state.json` と Kubo だけを見て組み立てた結果を印字する。agent が未準備なら失敗する（[`dashboard/http-api.md#共通`](../dashboard/http-api.md#共通)）。
 
-- `state.json` の版ごとに、版のパス・`cid`・`size`（state に記録された版ごとのサイズ）と判定を 1 行表示する。判定は [起動時の突き合わせ](../agent.md#起動時の突き合わせ) と同じ検査で、`[ok]` / `[missing]`（パスが無い）/ `[cid mismatch]` / `[incomplete]`（ブロックが欠けている）/ `[check failed]`（`files/stat` 自体が失敗）のいずれか。`ok` 以外は理由を添える。state のキーが `<pubkey hex>:<d>` として読めない版は検査せず、キーと `cid` に `[invalid site key]` を付けて出す（API の `health` は `invalid_key`）。
+- `state.json` の版ごとに、版のパス・`cid`・`size`（state に記録された版ごとのサイズ）と判定を 1 行表示する。判定は [起動時の突き合わせ](../agent.md#起動時の突き合わせ) と同じ検査で、`[ok]` / `[missing]`（パスが無い）/ `[cid mismatch]` / `[incomplete]`（Kubo がブロックを手元に見つけられないと答えた）/ `[check failed]`（`files/stat` か `dag/stat` がそれ以外の理由で失敗。版は壊れたものとして扱わない）のいずれか。`ok` 以外は理由を添える。state のキーが `<pubkey hex>:<d>` として読めない版は検査せず、キーと `cid` に `[invalid site key]` を付けて出す（API の `health` は `invalid_key`）。
 - 続けて `Actual size` 見出しの下に、サイトごとの実容量（そのサイトの全版をまとめた `dag/stat` の `TotalSize`。版どうしで共有しているブロックは 1 回だけ数える）と合計を表示する。測れなかったサイトは `unknown` にし、合計も `unknown` にする。
 - 続けて `Not in state` 見出しの下に、[sweep](../agent.md#sweep) が消す MFS のパスを表示する。ディレクトリごと消えるものはそのディレクトリだけを出す。一覧に失敗したディレクトリは `[list failed]: <理由>` 付きで出す。
 - `ok` 以外の版と `Not in state` の項目が 1 つでもあれば、件数を表示して 0 以外で終了する。
