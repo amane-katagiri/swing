@@ -294,6 +294,30 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn the_literal_listen_ip_is_accepted_as_host() {
+        for listen in ["192.168.1.5:8082", "[fd00::1]:8082"] {
+            let (mut config, secret_hex) = test_config(true);
+            config.dashboard.listen = listen.parse().unwrap();
+            let state = build_state(config, test_exit(), test_keys(&secret_hex), TEST_TOKEN);
+            let req = Request::builder()
+                .uri("/api/overview")
+                .header("Host", listen)
+                .body(Body::empty())
+                .unwrap();
+            let resp = call(router(Arc::clone(&state)), req).await;
+            assert_eq!(resp.status(), StatusCode::OK, "{listen}");
+
+            let req = Request::builder()
+                .uri("/api/overview")
+                .header("Host", "192.168.1.99:8082")
+                .body(Body::empty())
+                .unwrap();
+            let resp = call(router(state), req).await;
+            assert_eq!(resp.status(), StatusCode::FORBIDDEN, "{listen}");
+        }
+    }
+
+    #[tokio::test]
     async fn write_request_without_marker_header_is_forbidden() {
         let app = router(test_state());
         let req = Request::builder()

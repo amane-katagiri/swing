@@ -4,6 +4,7 @@ use axum::extract::{Request, State};
 use axum::http::{HeaderMap, HeaderName, HeaderValue, Method, StatusCode, header};
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
+use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 
 use super::AppState;
@@ -77,9 +78,15 @@ pub async fn require_bearer(req: Request<Body>, next: Next) -> Response {
     next.run(req).await
 }
 
-pub fn host_allowed(host_header: &str, allowed_hosts: &[String]) -> bool {
+// DNS rebinding sends the attacker's hostname, so a Host naming the bound IP literally cannot come from it.
+fn is_listen_ip(host: &str, listen: SocketAddr) -> bool {
+    !listen.ip().is_unspecified() && host.parse::<IpAddr>().is_ok_and(|ip| ip == listen.ip())
+}
+
+pub fn host_allowed(host_header: &str, allowed_hosts: &[String], listen: SocketAddr) -> bool {
     let host = extract_host(host_header);
     crate::host::is_loopback_name(&host)
+        || is_listen_ip(&host, listen)
         || allowed_hosts.iter().any(|h| h.eq_ignore_ascii_case(&host))
 }
 
@@ -137,7 +144,11 @@ pub async fn security_middleware(
         return guarded_error(StatusCode::FORBIDDEN, "missing Host header", is_api);
     };
 
-    if !host_allowed(&host_header, &state.config.dashboard.allowed_hosts) {
+    if !host_allowed(
+        &host_header,
+        &state.config.dashboard.allowed_hosts,
+        state.config.dashboard.listen,
+    ) {
         return guarded_error(StatusCode::FORBIDDEN, "host not allowed", is_api);
     }
 
@@ -195,42 +206,67 @@ pub async fn security_middleware(
 mod tests {
     use super::*;
 
+    const LOOPBACK: SocketAddr = SocketAddr::new(IpAddr::V4(std::net::Ipv4Addr::LOCALHOST), 8082);
+
+    #[test]
+    fn host_allowed_accepts_the_literal_listen_ip() {
+        let v4: SocketAddr = "192.168.1.5:8082".parse().unwrap();
+        assert!(host_allowed("192.168.1.5:8082", &[], v4));
+        assert!(host_allowed("192.168.1.5", &[], v4));
+        assert!(!host_allowed("192.168.1.6:8082", &[], v4));
+        assert!(!host_allowed("evil.example:8082", &[], v4));
+
+        let v6: SocketAddr = "[fd00::1]:8082".parse().unwrap();
+        assert!(host_allowed("[fd00::1]:8082", &[], v6));
+        assert!(host_allowed("[FD00:0::1]", &[], v6));
+        assert!(!host_allowed("[fd00::2]:8082", &[], v6));
+        assert!(!host_allowed("[fd00::1]junk", &[], v6));
+    }
+
+    #[test]
+    fn host_allowed_does_not_accept_the_unspecified_address() {
+        let any: SocketAddr = "0.0.0.0:8082".parse().unwrap();
+        assert!(!host_allowed("0.0.0.0:8082", &[], any));
+        let any6: SocketAddr = "[::]:8082".parse().unwrap();
+        assert!(!host_allowed("[::]:8082", &[], any6));
+    }
+
     #[test]
     fn host_allowed_rejects_bracketed_host_with_trailing_junk() {
-        assert!(!host_allowed("[::1]xyz", &[]));
-        assert!(!host_allowed("[::1]:8082xyz", &[]));
+        assert!(!host_allowed("[::1]xyz", &[], LOOPBACK));
+        assert!(!host_allowed("[::1]:8082xyz", &[], LOOPBACK));
     }
 
     #[test]
     fn host_allowed_rejects_non_digit_ports() {
-        assert!(!host_allowed("localhost:abc", &[]));
+        assert!(!host_allowed("localhost:abc", &[], LOOPBACK));
     }
 
     #[test]
     fn host_allowed_accepts_loopback_forms() {
-        assert!(host_allowed("localhost:8082", &[]));
-        assert!(host_allowed("127.0.0.1:8082", &[]));
-        assert!(host_allowed("127.0.0.1", &[]));
-        assert!(host_allowed("[::1]:8082", &[]));
-        assert!(host_allowed("[::1]", &[]));
+        assert!(host_allowed("localhost:8082", &[], LOOPBACK));
+        assert!(host_allowed("127.0.0.1:8082", &[], LOOPBACK));
+        assert!(host_allowed("127.0.0.1", &[], LOOPBACK));
+        assert!(host_allowed("[::1]:8082", &[], LOOPBACK));
+        assert!(host_allowed("[::1]", &[], LOOPBACK));
     }
 
     #[test]
     fn host_allowed_checks_allowed_hosts_case_insensitively() {
         let allowed = vec!["My-Site.example".to_string()];
-        assert!(host_allowed("my-site.example:8082", &allowed));
-        assert!(!host_allowed("other.example:8082", &allowed));
+        assert!(host_allowed("my-site.example:8082", &allowed, LOOPBACK));
+        assert!(!host_allowed("other.example:8082", &allowed, LOOPBACK));
     }
 
     #[test]
     fn host_allowed_rejects_unknown_hosts() {
-        assert!(!host_allowed("evil.example", &[]));
-        assert!(!host_allowed("evil.example:8082", &[]));
+        assert!(!host_allowed("evil.example", &[], LOOPBACK));
+        assert!(!host_allowed("evil.example:8082", &[], LOOPBACK));
     }
 
     #[test]
     fn host_allowed_rejects_junk_disguised_as_localhost() {
-        assert!(!host_allowed("evil.com:8082@localhost", &[]));
+        assert!(!host_allowed("evil.com:8082@localhost", &[], LOOPBACK));
     }
 
     #[test]

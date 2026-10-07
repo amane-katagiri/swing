@@ -43,7 +43,7 @@ HTTP サーバー（axum 0.8）で、ブラウザ向けの管理画面（`[dashb
 
 - `listen`: 待ち受けアドレス（`SocketAddr`。`config::parse_dashboard_listen`）。
 - `ui`: `true`（既定）なら Web UI を配信する（上記「UI と API の分離」）。
-- `allowed_hosts`: Host ヘッダで追加で許可するホスト名（ポート抜き、大文字小文字を区別しない）。環境変数はカンマ区切りで、前後の空白を取り除く。`[gateway].hosts` と同じ名前は入れられない（[`gateway.md#設定gateway`](gateway.md#設定gateway)）。
+- `allowed_hosts`: Host ヘッダで追加で許可するホスト名（ポート抜き、大文字小文字を区別しない）。ループバックの名前と `listen` の IP は入れなくても通る（[`dashboard/security.md#ガード`](dashboard/security.md#ガード)）。環境変数はカンマ区切りで、前後の空白を取り除く。`[gateway].hosts` と同じ名前は入れられない（[`gateway.md#設定gateway`](gateway.md#設定gateway)）。
 - `public_url`: ブラウザからダッシュボードを開くときのベース URL（`http(s)://host[:port]`。[`config.md#検証`](config.md#検証)。`config::parse_public_url`）。`swing dashboard open` と `swing-tray` が作るログインリンクの頭（`login::request_link`。未設定なら `http://<listen>` で、`listen` が `0.0.0.0`/`::` ならループバックに直す）と、`https://` で始まるときのセッション cookie の `Secure` に使う。待ち受けや Host の検証には関わらない。ダッシュボードからは編集できない。
 - `gateway`: 保存済みサイトを開くリンクの IPFS Gateway のベース URL。既定は `[kubo].managed = true` なら `http://localhost:<[kubo].gateway_listen のポート>`、そうでなければ `http://localhost:8080`。規則は `public_url` と同じ（`config::parse_dashboard_gateway`）。空文字なら `gateway_url` を出さない（環境変数の空文字は未設定扱いなので、無効にするには TOML で `gateway = ""`）。
 - `custom_css`: `/custom.css` として配信する CSS ファイルのパス。
