@@ -244,10 +244,6 @@ manifest_entries() {
   done <"$1/manifest"
 }
 
-quote() {
-  printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\\\\''/g")"
-}
-
 links_into() {
   target=$(readlink -- "$1") || return 1
   case $target in
@@ -255,37 +251,6 @@ links_into() {
     *) return 1 ;;
   esac
   [ "$(cd -P -- "${target%/swing}" 2>/dev/null && pwd -P)" = "$2" ]
-}
-
-manual_removal() {
-  real=$(cd -P -- "$LIB" 2>/dev/null && pwd -P) || return 0
-  if [ ! -f "$real/manifest" ] || [ -L "$real/manifest" ]; then
-    return 0
-  fi
-  {
-    printf '\nTo remove the install by hand, check what these commands point at and run them yourself:\n'
-    for unit in "$SYSTEM_UNIT" "$(user_unit)"; do
-      if [ -f "$unit" ]; then
-        printf '  # first remove the service in %s if it runs swing from %s\n' "$unit" "$real"
-      fi
-    done
-    manifest_entries "$real" | while IFS= read -r f; do
-      printf '  rm -f -- %s\n' "$(quote "$real/$f")"
-    done
-    printf '  rm -f -- %s\n' "$(quote "$real/manifest")"
-    bin=$(cd -P -- "$BIN" 2>/dev/null && pwd -P) || bin=
-    if [ -n "$bin" ] && [ -L "$bin/swing" ] && links_into "$bin/swing" "$real"; then
-      printf '  rm -f -- %s\n' "$(quote "$bin/swing")"
-    fi
-    printf '  rmdir -- %s\n' "$(quote "$real")"
-    if [ -n "$PURGE" ]; then
-      data=$(data_dir)
-      case $data in
-        */swing) printf '  rm -rf -- %s\n' "$(quote "$data")" ;;
-      esac
-    fi
-    printf 'Or, if it is safe to, make %s writable only by its owner and run this again.\n' "$LOOSE"
-  } >&2
 }
 
 owned_by_us() {
@@ -544,9 +509,7 @@ do_uninstall() {
     if [ -z "$LOOSE" ]; then
       die "refusing to use $LIB: $PROBLEM; nothing was removed"
     fi
-    printf 'error: refusing to use %s: %s; nothing was removed\n' "$LIB" "$PROBLEM" >&2
-    manual_removal
-    exit 1
+    die "refusing to use $LIB: $PROBLEM; nothing was removed. Make $LOOSE writable only by its owner and run this again"
   fi
   # Everything below goes through this pinned directory so that a swap of the $LIB path after the checks cannot redirect it.
   cd -P -- "$LIB" || die "cannot enter $LIB"

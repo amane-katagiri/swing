@@ -519,15 +519,8 @@ else
   pass "uninstall under a loosened parent is refused"
 fi
 check "uninstall refusal names the directory" contains "$H/out" "$H/loose is writable by its group or other users"
-check "uninstall refusal lists the files" contains "$H/out" "rm -f -- '$lib/swing'"
-check "uninstall refusal lists the manifest" contains "$H/out" "rm -f -- '$lib/manifest'"
-check "uninstall refusal lists the bin link" contains "$H/out" "rm -f -- '$H/loose/p/bin/swing'"
-check "uninstall refusal lists lib/swing" contains "$H/out" "rmdir -- '$lib'"
-check "uninstall refusal points at the user service" contains "$H/out" "first remove the service in $H/.config/systemd/user/swing.service"
-check "uninstall refusal offers fixing the permissions" contains "$H/out" "make $H/loose writable only by its owner"
-check "uninstall refusal skips names outside lib" lacks "$H/out" "victim"
-check "uninstall refusal skips dot names" lacks "$H/out" ".hidden"
-check "uninstall refusal does not purge" lacks "$H/out" "rm -rf"
+check "uninstall refusal lists no commands" lacks "$H/out" "rm -"
+check "uninstall refusal offers fixing the permissions" contains "$H/out" "Make $H/loose writable only by its owner"
 check "swing not run from a loosened directory" lacks "$FAKE_LOG" "swing service"
 check "nothing removed under a loosened parent" [ -x "$lib/swing" ]
 check "bin link kept under a loosened parent" [ -L "$H/loose/p/bin/swing" ]
@@ -539,14 +532,8 @@ if run sh "$INSTALL" --uninstall --purge --yes --prefix "$H/loose/p" >"$H/out" 2
 else
   pass "purge under a loosened parent is refused"
 fi
-check "purge refusal lists the data directory" contains "$H/out" "rm -rf -- '$H/.local/share/swing'"
 check "data kept under a loosened parent" [ -d "$H/.local/share/swing" ]
 check "nothing removed by the refused purge" [ -x "$lib/swing" ]
-grep '^  r' "$H/out" | grep -v 'rm -rf' >"$H/manual.sh"
-sh "$H/manual.sh" || fail "the listed commands run"
-check "the listed commands remove lib/swing" absent "$lib"
-check "the listed commands remove the bin link" absent "$H/loose/p/bin/swing"
-check "the listed commands keep other files" [ -d "$H/loose/p/lib" ]
 run sh "$INSTALL" --prefix "$H/loose/p2" >"$H/out" 2>&1 && fail "install under a loosened parent is refused"
 chmod 755 "$H/loose"
 run sh "$INSTALL" --prefix "$H/loose/p2" >"$H/out" 2>&1 || fail "install after tightening the parent exits 0"
@@ -576,7 +563,7 @@ if [ -n "$delegated_gid" ]; then
   else
     pass "uninstall under a root-owned parent writable by its group is refused"
   fi
-  check "group refusal lists the files" contains "$H/out" "rm -f -- '$H/staff/p/lib/swing/swing'"
+  check "group refusal offers fixing the permissions" contains "$H/out" "Make $H/staff writable only by its owner"
   check "nothing removed under a root-owned parent writable by its group" [ -x "$H/staff/p/lib/swing/swing" ]
   mkdir "$H/leaf"
   run sh "$INSTALL" --prefix "$H/leaf/p" >"$H/out" 2>&1 || fail "install before lib/swing is delegated exits 0"
@@ -608,7 +595,6 @@ if [ -n "$delegated_gid" ]; then
     pass "uninstall under a parent owned by another user is refused"
   fi
   check "another owner above a loose lib/swing is reported" contains "$H/out" "$H/mixed is owned by another user"
-  check "no commands listed under a parent owned by another user" lacks "$H/out" "rm -f --"
   check "nothing removed under a parent owned by another user" [ -x "$H/mixed/p/lib/swing/swing" ]
   mkdir "$H/swap"
   run sh "$INSTALL" --prefix "$H/swap/p" >"$H/out" 2>&1 || fail "install before lib/swing is swapped exits 0"
