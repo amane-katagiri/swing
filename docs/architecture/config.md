@@ -28,7 +28,7 @@ TOML の構文や型のエラーは `line <行>, column <桁>: <理由>` の形�
 
 ## 設定カタログ
 
-すべての設定キー（TOML のセクションとフィールド、環境変数、種類、`swing.example.toml` 上の見え方、編集可否、英日の説明）は `src/settings/mod.rs` の `SETTINGS`（`Setting` の配列）1 か所に持つ。
+すべての設定キー（TOML のセクションとフィールド、環境変数、種類、`swing.example.toml` 上の見え方、編集可否、英日の説明）は `src/settings/catalog.rs` の `SETTINGS`（`Setting` の配列）1 か所に持つ。
 
 - 既定値は `config::build_config`（`src/config/build.rs`）が持つ。
 - 環境変数は TOML の値を上書きする。`build_config` はキーごとの解決を `Resolver` にまとめ、値の出どころ（`Env`・`File`・`Default`）を `Config.sources` に記録する。

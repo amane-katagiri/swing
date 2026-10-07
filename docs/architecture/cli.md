@@ -81,4 +81,4 @@ NIP-46 の署名アプリと、ターミナルに出した QR コードでペア
 
 ## config example / config env-example
 
-設定ファイルを読まない（`--config` を取らない）。`src/settings/mod.rs::SETTINGS` の設定カタログから、リポジトリ直下の `swing.example.toml`／`.env.example` と同じ内容を標準出力に印字する（[`config.md`](config.md)）。両ファイルがこの出力と一致することを `cargo test` が確かめる。
+設定ファイルを読まない（`--config` を取らない）。`src/settings/catalog.rs::SETTINGS` の設定カタログから、リポジトリ直下の `swing.example.toml`／`.env.example` と同じ内容を標準出力に印字する（[`config.md`](config.md)）。両ファイルがこの出力と一致することを `cargo test` が確かめる。

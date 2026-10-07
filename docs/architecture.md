@@ -49,8 +49,8 @@
 |---|---|
 | `main.rs` / `lib.rs` | CLI エントリ（clap）/ クレートルート |
 | `config/` | 設定の読み込みと値のパーサ（`mod.rs`）、`build_config` と `Resolver`（`build.rs`、テストは `build/tests.rs`）。[config.md](architecture/config.md) |
-| `settings/` | 設定キーのカタログ（`mod.rs`）、例の生成（`example.rs`）、設定ファイルの書き換え `update`・`setup`・`pin_addrs`・`write_atomic`（`edit.rs`）。[config.md](architecture/config.md) |
-| `nostr/` | イベントの検証・組み立て、relay との通信（`client.rs`）、site event（`site.rs`）、follow set（`follow.rs`）、レプリカ報告（`report.rs`）、上限 `budget`（`mod.rs`）。[nostr.md](architecture/nostr.md) |
+| `settings/` | 設定キーの型（`mod.rs`）とカタログ `SETTINGS`（`catalog.rs`）、例の生成（`example.rs`）、設定ファイルの書き換え `update`・`setup`・`pin_addrs`・`write_atomic`（`edit.rs`）。[config.md](architecture/config.md) |
+| `nostr/` | イベントの検証・組み立て、relay との通信（`client.rs`。取得の内部処理は `client/fetch.rs`、レプリカ報告の送受信の trait は `client/report_relay.rs`、送信結果の表示は `client/send.rs`）、site event（`site.rs`）、follow set（`follow.rs`）、レプリカ報告（`report.rs`）、上限 `budget`（`mod.rs`）。[nostr.md](architecture/nostr.md) |
 | `signer/`・`pair.rs` | 署名（秘密鍵か NIP-46 の署名アプリ）と `remote-signer.json`、ペアリング / `swing signer pair`。[signer.md](architecture/signer.md) |
 | `nip05.rs` | NIP-05 検証。[nip05.md](architecture/nip05.md) |
 | `ipfs.rs`・`ipfs/site.rs`・`mfs.rs` | Kubo RPC クライアント・サイトのディレクトリの一覧と add の multipart・MFS 上のパスの組み立て。[mfs.md](architecture/mfs.md) |
@@ -125,11 +125,11 @@ swing-tray [--config <path>]
 
 ## 設定と環境変数
 
-設定ファイル（`--config` → `SWING_CONFIG` → あれば `./swing.toml` → ユーザーごとの既定の場所の `swing.toml`）の値を `SWING_` 環境変数が上書きする。すべてのキーは `src/settings/mod.rs` の `SETTINGS` にカタログとしてまとまり、`swing.example.toml` と `.env.example` はそこから生成する。探し方・検証・値の形式・書き換えの規則は [`architecture/config.md`](architecture/config.md)。
+設定ファイル（`--config` → `SWING_CONFIG` → あれば `./swing.toml` → ユーザーごとの既定の場所の `swing.toml`）の値を `SWING_` 環境変数が上書きする。すべてのキーは `src/settings/catalog.rs` の `SETTINGS` にカタログとしてまとまり、`swing.example.toml` と `.env.example` はそこから生成する。探し方・検証・値の形式・書き換えの規則は [`architecture/config.md`](architecture/config.md)。
 
 ## テスト
 
-- ユニットテスト: `cargo test`。agent と health のテストは MFS をメモリ上で真似る `FakeKubo`（`src/test_support.rs`）を使い、agent はこれに `FakeNip05` を組み合わせる。ダッシュボードのテストは axum の `Router` に `oneshot` でリクエストを投げ、TCP で listen しない。署名アプリとのやり取りのテストは [`architecture/signer.md#テスト`](architecture/signer.md#テスト)。
+- ユニットテスト: `cargo test`。大きいテストモジュールは `foo.rs` に `#[cfg(test)] mod tests;` を置いて `foo/tests.rs` に分ける（`config/build/tests.rs`・`nostr/client/tests.rs`・`nostr/site/tests.rs`・`agent/replicas/tests.rs` など）。agent と health のテストは MFS をメモリ上で真似る `FakeKubo`（`src/test_support.rs`）を使い、agent はこれに `FakeNip05` を組み合わせる。ダッシュボードのテストは axum の `Router` に `oneshot` でリクエストを投げ、TCP で listen しない。署名アプリとのやり取りのテストは [`architecture/signer.md#テスト`](architecture/signer.md#テスト)。
 - 統合テスト（`#[ignore]`、ローカルの Kubo / relay が必要。公開ネットワークには接続しない）:
 
 ```bash

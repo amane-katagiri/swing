@@ -36,7 +36,7 @@
 
 ## `limit` と組の大きさ
 
-- relay への `Filter::limit` は `capped_limit(count, per)`（`nostr/client.rs`。`min(count * per, MAX_RELAY_FETCH_LIMIT)`）で、取得先の件数（作者数・サイト数など）に経路ごとの倍率を掛けて決める。`limit` は relay ごとに付くので、合計の取得件数は relay 数倍になり得る。
+- relay への `Filter::limit` は `capped_limit(count, per)`（`nostr/client/fetch.rs`。`min(count * per, MAX_RELAY_FETCH_LIMIT)`）で、取得先の件数（作者数・サイト数など）に経路ごとの倍率を掛けて決める。`limit` は relay ごとに付くので、合計の取得件数は relay 数倍になり得る。
 - 作者（または `#p` の相手）を並べる取得は、組に分けて別々の REQ にする。
   - `fetch_follow_sets`・`fetch_follow_set_authors_referencing`: `AUTHORS_PER_FILTER`（50）人ずつ 1 つのフィルタにまとめ、`limit` もその組の人数から決める（`RelayClient::fetch_by_authors`）。
   - `fetch_replica_reports_by`: 報告者 `AUTHORS_PER_FILTER`（50）人 × 座標 `COORDINATES_PER_FILTER`（250）件の組ごとに REQ を 1 つ作り、`limit` は組の人数 × 座標数 × 2。
