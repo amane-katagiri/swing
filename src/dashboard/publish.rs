@@ -26,8 +26,7 @@ pub(super) enum PublishOutcome {
     CheckFailed(Response),
 }
 
-fn check_failed(error: String, body: serde_json::Value) -> Response {
-    let mut body = body;
+fn check_failed(error: String, mut body: serde_json::Value) -> Response {
     body["error"] = serde_json::Value::String(error);
     (StatusCode::UNPROCESSABLE_ENTITY, Json(body)).into_response()
 }
@@ -49,16 +48,21 @@ async fn run_publish_nip05(
     Ok(dto::nip05_result_dto(&outcome.result))
 }
 
-pub(super) fn try_lock_publish(state: &AppState) -> Result<MutexGuard<'_, ()>, ApiError> {
+pub(super) struct PublishLock<'a> {
+    _guard: MutexGuard<'a, ()>,
+}
+
+pub(super) fn try_lock_publish(state: &AppState) -> Result<PublishLock<'_>, ApiError> {
     state
         .publish_lock
         .try_lock()
+        .map(|guard| PublishLock { _guard: guard })
         .map_err(|_| ApiError::Conflict("a publish is already running".to_string()))
 }
 
 pub(super) async fn run_publish(
     state: &AppState,
-    _publishing: &MutexGuard<'_, ()>,
+    _publishing: &PublishLock<'_>,
     dir: &std::path::Path,
     fields: PublishFields,
 ) -> Result<PublishOutcome, ApiError> {

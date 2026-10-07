@@ -9,10 +9,12 @@ use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use tokio::io::AsyncWriteExt;
 
+use crate::auth::{create_private_dir_all_io, create_private_dir_io};
+
 use super::AppState;
 use super::dto;
 use super::error::{ApiError, internal};
-use super::publish::{PublishFields, PublishOutcome, run_publish, try_lock_publish};
+use super::publish::{PublishFields, PublishLock, PublishOutcome, run_publish, try_lock_publish};
 
 pub const MAX_UPLOAD_FILES: usize = 10_000;
 pub const MAX_PATH_SEGMENTS: usize = 32;
@@ -122,16 +124,12 @@ pub async fn cleanup_upload_dir(state_dir: &Path) -> Result<()> {
     }
 }
 
-async fn create_private_dir_all(path: &Path) -> std::io::Result<()> {
+async fn create_dir_blocking(
+    create: fn(&Path) -> std::io::Result<()>,
+    path: &Path,
+) -> std::io::Result<()> {
     let path = path.to_path_buf();
-    tokio::task::spawn_blocking(move || crate::auth::create_private_dir_all_io(&path))
-        .await
-        .map_err(std::io::Error::other)?
-}
-
-async fn create_private_dir(path: &Path) -> std::io::Result<()> {
-    let path = path.to_path_buf();
-    tokio::task::spawn_blocking(move || crate::auth::create_private_dir_io(&path))
+    tokio::task::spawn_blocking(move || create(&path))
         .await
         .map_err(std::io::Error::other)?
 }
@@ -293,7 +291,7 @@ async fn receive_upload(multipart: &mut Multipart, dest: &Path) -> Result<Parsed
                 if let Some(parent) = target.parent()
                     && !created_dirs.contains(parent)
                 {
-                    create_private_dir_all(parent)
+                    create_dir_blocking(create_private_dir_all_io, parent)
                         .await
                         .map_err(|e| path_conflict_or_internal(&filename, e))?;
                     created_dirs.insert(parent.to_path_buf());
@@ -359,11 +357,11 @@ pub async fn publish_upload(
         .agent
         .state_dir
         .join(crate::publish::DASHBOARD_UPLOAD_DIR);
-    create_private_dir_all(&upload_root)
+    create_dir_blocking(create_private_dir_all_io, &upload_root)
         .await
         .map_err(|e| internal("creating the upload directory failed", e))?;
     let dest: PathBuf = upload_root.join(crate::auth::random_hex(UPLOAD_NAME_BYTES));
-    create_private_dir(&dest)
+    create_dir_blocking(create_private_dir_io, &dest)
         .await
         .map_err(|e| internal("creating the upload directory failed", e))?;
 
@@ -384,7 +382,7 @@ pub async fn publish_upload(
 
 async fn handle_upload(
     state: &AppState,
-    publishing: &tokio::sync::MutexGuard<'_, ()>,
+    publishing: &PublishLock<'_>,
     multipart: &mut Multipart,
     dest: &Path,
 ) -> Result<(PublishOutcome, usize), ApiError> {
@@ -503,7 +501,9 @@ mod tests {
             .path()
             .join(crate::publish::DASHBOARD_UPLOAD_DIR)
             .join("abc");
-        create_private_dir_all(&nested).await.unwrap();
+        create_dir_blocking(create_private_dir_all_io, &nested)
+            .await
+            .unwrap();
         for p in [
             dir.path().join(crate::publish::DASHBOARD_UPLOAD_DIR),
             nested,
@@ -652,8 +652,12 @@ mod tests {
     async fn create_private_dir_refuses_an_existing_entry() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("upload");
-        create_private_dir(&path).await.unwrap();
-        let err = create_private_dir(&path).await.unwrap_err();
+        create_dir_blocking(create_private_dir_io, &path)
+            .await
+            .unwrap();
+        let err = create_dir_blocking(create_private_dir_io, &path)
+            .await
+            .unwrap_err();
         assert_eq!(err.kind(), std::io::ErrorKind::AlreadyExists);
     }
 
