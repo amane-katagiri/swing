@@ -13,7 +13,7 @@ use crate::ipfs::IpfsClient;
 use super::access::{ApiAccess, read_peer_id};
 use super::binary::kubo_command;
 use super::config::multiaddr_to_http_url;
-use super::{remove_if_present, wait_until};
+use super::remove_if_present;
 
 const SHUTDOWN_RPC_TIMEOUT: Duration = Duration::from_secs(5);
 #[cfg(unix)]
@@ -238,21 +238,19 @@ impl Daemon {
 }
 
 pub async fn wait_healthy(ipfs: &IpfsClient, timeout: Duration) -> Result<()> {
-    let last_error = std::cell::RefCell::new(None);
-    let last = &last_error;
-    let healthy = wait_until(timeout, Duration::from_secs(1), || async move {
-        let result = ipfs.peer_id().await;
-        let ok = result.is_ok();
-        *last.borrow_mut() = result.err();
-        ok
-    })
-    .await;
-    match last_error.into_inner() {
-        Some(err) if !healthy => Err(err.context(format!(
-            "Kubo at {} did not become healthy within {timeout:?}",
-            ipfs.api_url()
-        ))),
-        _ => Ok(()),
+    let deadline = tokio::time::Instant::now() + timeout;
+    loop {
+        let err = match ipfs.peer_id().await {
+            Ok(_) => return Ok(()),
+            Err(e) => e,
+        };
+        if tokio::time::Instant::now() >= deadline {
+            return Err(err.context(format!(
+                "Kubo at {} did not become healthy within {timeout:?}",
+                ipfs.api_url()
+            )));
+        }
+        tokio::time::sleep(Duration::from_secs(1)).await;
     }
 }
 
