@@ -16,7 +16,7 @@
 
 | サービス | 内容 |
 |---|---|
-| `ipfs` | `ipfs/kubo:v0.43.1`（[Kubo のバージョン](kubo.md#kubo-のバージョン)）を `daemon --migrate=true --agent-version-suffix=docker --enable-gc` で動かす（`swing up` が管理する Kubo とは agent version で見分けられる。[`kubo.md#デーモンの起動kubodaemonspawn`](kubo.md#デーモンの起動kubodaemonspawn)）。RPC（5001）はホストに公開せず compose の内部ネットワーク（`mirror` からは `http://ipfs:5001`）だけで待ち受け、認証は設定しないので、同じネットワークのコンテナはすべて RPC を使える。healthcheck は `ipfs id` |
+| `ipfs` | `ipfs/kubo:v0.43.1`（[Kubo のバージョン](kubo.md#kubo-のバージョン)）を `daemon --migrate=true --agent-version-suffix=docker --enable-gc` で動かす（`swing up` が管理する Kubo とは agent version で見分けられる。[`kubo/daemon.md#デーモンの起動kubodaemonspawn`](kubo/daemon.md#デーモンの起動kubodaemonspawn)）。RPC（5001）はホストに公開せず compose の内部ネットワーク（`mirror` からは `http://ipfs:5001`）だけで待ち受け、認証は設定しないので、同じネットワークのコンテナはすべて RPC を使える。healthcheck は `ipfs id` |
 | `mirror` | `swing up` の unmanaged 経路で動く（`SWING_KUBO_MANAGED=false` を固定で渡す）。Kubo は子プロセスにせず、外部の `ipfs` サービスの API と Gateway を使う。状態は volume `swing-data`（`/data`）。ダッシュボードと内蔵 gateway のホスト側の公開アドレスは `SWING_DASHBOARD_BIND`・`SWING_GATEWAY_BIND` で決める（下記）。`build: .` の直後に、release ワークフローが push するイメージ（`ghcr.io/amane-katagiri/swing`）の `image:` がコメントアウトしてある（`build` と入れ替えて使う）。`ipfs` が healthy になるのを待つ。`cap_drop: [ALL]` と `security_opt: no-new-privileges:true` で、Linux の capability をすべて外し setuid などで権限を得られないようにする（Kubo の公式イメージは起動時に root で `/data/ipfs` を chown してからユーザーを切り替えるので、`ipfs` には付けない） |
 
 環境変数・ポート・volume の値は [`../../compose.yaml`](../../compose.yaml) が正本。2 サービスとも `restart: unless-stopped`。内蔵 gateway（[`gateway.md`](gateway.md)）は `mirror` コンテナの中で動き、`SWING_GATEWAY_UPSTREAM=http://ipfs:8080` で `ipfs` の Kubo の Gateway にプロキシする。

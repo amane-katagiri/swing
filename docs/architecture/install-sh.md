@@ -19,7 +19,7 @@ curl -fsSL .../install.sh | sh -s -- --version v0.1.0
 | `--force` | `bin/swing` が自分の入れたものでなくても置き換える。`--uninstall` では system unit があっても続ける |
 | `--uninstall` | 入れたものを消す（下記） |
 | `--purge` | `--uninstall` と一緒にだけ使え、既定の設定・データのディレクトリも消す |
-| `--yes` | `--purge` の確認を省く |
+| `--yes`・`-y` | `--purge` の確認を省く |
 
 取得先などはスクリプト先頭の定数で決まり、環境変数では変えられない。
 
@@ -47,7 +47,7 @@ curl -fsSL .../install.sh | sh -s -- --version v0.1.0
 9. ファイルを `lib/swing/` に置く。同じディレクトリに `.<名前>.<pid>` で書いてから `mv -f` する（1 ファイルごとにアトミック）。
 10. 前回の `manifest` に載っていて今回は無いファイル（[一覧の読み方](#一覧の読み方)に合うものだけ）を消し、`manifest` を書き直す。
 11. `bin/swing` を `lib/swing/swing` へのシンボリックリンクにする（一時名で作って `mv -f`）。`current_exe()` は実体のパスを返すので、`ipfs` は `lib/swing` で見つかり（[`kubo.md`](kubo.md#バイナリの検出kubolocate_binary)）、サービスの `ExecStart` も `lib/swing/swing` になる。
-12. `bin` が PATH に無ければ警告する。
+12. `lib/swing/swing --version` が動かなければ警告する。`bin` が PATH に無ければ警告する。
 
 どれかの検証が失敗したら、`lib/swing/` と `bin/` には何も書かない（ダウンロードと照合は置き換えの前にすべて終える）。一時ディレクトリは `trap` で消す。
 
@@ -61,7 +61,7 @@ curl -fsSL .../install.sh | sh -s -- --version v0.1.0
 
 インストールと更新では、この検査を `lib/swing` の中のものを実行する前（Kubo の版の確認・持ち主の確認）に済ませる。アンインストールも `lib/swing` について同じ検査で失敗する（下記）。
 
-インストールと更新では、検査の後も `lib/swing` の中のものをパス（`<lib>/ipfs`・`<lib>/swing`・`<lib>/.swing-check.<pid>`）で実行し、書き込みもパスで行う。アンインストールのように `lib/swing` に入って `./swing` で実行する形にはしていない。`swing service stop`・`start`・`install` はカレントディレクトリの `swing.toml` を設定として探す（[`config.md`](config.md#設定ファイルの場所)）ので、実行したディレクトリのまま動かす必要があるため。
+インストールと更新では、検査の後も `lib/swing` の中のものをパス（`<lib>/ipfs`・`<lib>/swing`・`<lib>/.swing-check.<pid>`）で実行し、書き込みもパスで行う。`swing service stop`・`start`・`install` はカレントディレクトリの `swing.toml` を設定として探す（[`config.md`](config.md#設定ファイルの場所)）ので、カレントディレクトリは変えない。
 
 ## 表示
 
@@ -87,8 +87,8 @@ curl -fsSL .../install.sh | sh -s -- --version v0.1.0
 
 | サービス | 置き換えの前 | 置き換えの後 |
 |---|---|---|
-| ユーザー unit（`$XDG_CONFIG_HOME/systemd/user/swing.service`）が active | 今入っている `swing service stop`（Kubo も止まる）。失敗したら何も変えずに失敗する | `--service` なしなら新しい `swing service start`、ありなら `swing service install` が登録し直して起動する |
-| system unit が active、root で実行 | `systemctl stop swing` | `systemctl start swing` |
+| ユーザー unit（`$XDG_CONFIG_HOME/systemd/user/swing.service`）が active | 今入っている `swing service stop`（Kubo も止まる。`lib/swing/swing` が無ければ `systemctl --user stop swing`）。失敗したら何も変えずに失敗する | `--service` なしなら新しい `swing service start`、ありなら `swing service install` が登録し直して起動する |
+| ユーザー unit が active でなく system unit が active、root で実行 | `systemctl stop swing` | `systemctl start swing` |
 | system unit が active、root 以外 | 止めない | `sudo systemctl restart swing` を促す警告 |
 
 - 置き換えの途中で失敗してサービスを止めたままになったときは、`swing service start` を案内する。
@@ -113,21 +113,10 @@ curl -fsSL .../install.sh | sh -s -- --version v0.1.0
 4. system unit（`/etc/systemd/system/swing.service`）があれば、`sudo <lib>/swing service uninstall --system` を先に実行するよう案内して失敗する。`--force` なら続ける。ただし `./swing service status --system --points-into <lib>` の終了コードが 4（別の場所の `swing` を起動する unit）なら、触れずに続ける（`swing` が無ければ確かめられないので失敗する）。
 5. ユーザー unit があれば `./swing service uninstall --only-from <lib>` を実行する（失敗したら何も消さずに終わる。`swing` が無ければ、手で消すよう warn に出して続ける）。unit が別の場所の `swing` を起動するものなら、`swing` がその旨を出して unit を残す。
 6. 入った `lib/swing` の中で `manifest` に書いたファイル（「一覧の読み方」に合うもの。シンボリックリンクならリンクだけ）と `manifest` を消し、自分のリンクだった `bin/swing` を消す。最後に `lib/swing` の実体の親へ移り、空になっていればその名前のディレクトリを消す。
-7. 設定とデータは残し、場所を表示する。`--purge` なら、ユーザーごとの既定の場所（[`config.md`](config.md#設定ファイルの場所)。実行時の `HOME` と `XDG_DATA_HOME` で決まる）だけを消し、`--config` や `SWING_CONFIG` で指していた別の場所には触れない。
+7. 設定とデータは残し、場所を表示する。`--purge` なら、ユーザーごとの既定の場所（[`config.md`](config.md#設定ファイルの場所)。実行時の `HOME` と `XDG_DATA_HOME` で決まる）だけを消し、`--config` や `SWING_CONFIG` で指していた別の場所には触れない。その場所が `/swing` で終わらなければ、手順 3 で何も消さずに失敗する。
 
 ## テスト
 
-`packaging/linux/test-install.sh` が、偽の `swing`（呼び出しを記録）・偽の Kubo のアーカイブ・`SHA256SUMS` をそろえた一時ディレクトリを `file://` で配り、一時 `HOME` で次を確かめる。動かすのは `install.sh` の先頭の定数（`RELEASES_URL`・`KUBO_BASE_URL`・`SYSTEM_UNIT`・その環境の `KUBO_SHA512_*`）と、`file://` を読めるように `curl` の `--proto` を `sed` で書き換えたコピーで、`latest/download` はシンボリックリンクで切り替える。公開ネットワークには出ない。`systemctl` は偽物に差し替える。
-
-- 新規のインストール（パイプ実行・最新の解決・アンインストーラの取得・リンク・一覧・PATH の警告）、`--version`、`--service`、`--prefix`
-- 更新（動いているサービスの停止と再起動、持ち主の確認を新しい版で行うこと、止まっていれば起動しない、別の場所の `swing` を起動するサービスには触れず確認用のファイルも残らないこと、同じ版の Kubo を取得しない）。偽の `swing` は unit の `ExecStart` を見て `status --points-into` と `uninstall --only-from` に答える
-- `swing` と Kubo それぞれのチェックサム不一致で何も入らないこと
-- 既存の `bin/swing` を `--force` なしでは壊さないこと、macOS の拒否
-- アンインストール（データを残す、`--only-from` で自分の unit を消す、別の場所の `swing` の unit を残す、`--purge --yes`、確認できないときの拒否、`XDG_DATA_HOME`、system unit での拒否と `--force`、別の場所の `swing` の system unit では拒否しないこと）
-- `manifest` に書かれた `/` を含む名前・`.` で始まる名前・ディレクトリを消さないこと、`lib/swing` の外を指すシンボリックリンクはリンクだけ消すこと
-- その他のユーザーが書き込める親ディレクトリと `lib/swing` の拒否、sticky ビット付きの親の許可、実行ユーザーが入っている共有のグループが書き込める親の拒否と個人グループが書き込める親の許可（それぞれ当てはまるグループが無ければ飛ばす）、root で実行したときだけ、グループが書き込める root の持ち物の親と `lib/swing` の拒否
-- 入れた後に親がその他のユーザーから書き込めるようになったとき、更新を断って `--prefix /opt/swing` と `--uninstall --prefix` を案内すること、アンインストールと `--purge` も `swing` を実行せず何も消さずに断り、コマンドを表示せずに権限を直すよう案内すること、親を戻せば消せること。prefix をシンボリックリンク経由で入れても `swing-uninstall.sh` が `bin/swing` を消すこと。root で実行したときだけ、グループが書き込める root の持ち物の親の下でもアンインストールを断ること、別のユーザーの持ち物の `lib/swing`・書き込める `lib/swing` の上の別のユーザーの持ち物の親・別のユーザーの `manifest`・書き込める親の下で別の root の持ち物のインストールや別のユーザーのディレクトリへすり替えた `lib/swing` からは何も消さずに失敗すること
-- 名前に改行・ESC・書式文字を含む親ディレクトリを断るときに、それらを `?` にして 1 行で表示すること
-- 不正な引数（`/` を含む `--version`、相対パスの `HOME` を含む）
+`packaging/linux/test-install.sh` が、偽の `swing`（呼び出しを記録し、unit の `ExecStart` を見て `status --points-into` と `uninstall --only-from` に答える）・偽の Kubo のアーカイブ・`SHA256SUMS` を一時ディレクトリから `file://` で配り、一時 `HOME` と偽の `systemctl` で `install.sh` を動かす。`install.sh` の先頭の定数と `curl` の `--proto` を `sed` で書き換えたコピーを使い、公開ネットワークには出ない。新規インストール・更新・アンインストールの各オプション、チェックサムの不一致、既存の `bin/swing`、`manifest` の読み方、置き場所の検査（root で実行したときだけ、または当てはまるグループがあるときだけ行うものを含む）、表示の置き換え、不正な引数を確かめる。
 
 `shellcheck -s sh packaging/linux/install.sh packaging/linux/test-install.sh` が警告なしで通ること。

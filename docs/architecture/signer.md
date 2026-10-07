@@ -13,9 +13,9 @@ SWING が出すイベント（サイトイベント・Follow Set・レプリカ�
 
 - `Signer::load(config)` が読み込み規則を持つ。秘密鍵だけあれば `Local`、`remote-signer.json` だけあれば `Remote`、どちらも無ければ `None`（`swing up` はセットアップモード。[`up.md#セットアップモード鍵未設定`](up.md#セットアップモード鍵未設定)）、両方あればエラー（どちらかを消すよう促す）。`Signer::require` は `None` をエラーにする。
 - `public_key()` は署名せずに自分の公開鍵を返す。`Remote` はペアリング時に署名アプリから受け取った公開鍵をファイルに持っていて、それを使う（`get_public_key` を送らない）。
-- `RelayClient`（`nostr/client.rs`）は `Signer` を持ち、`RelayClient::sign(builder)` で署名する。publish（`publish::sign_and_send`）・Follow Set の更新（`mirror::publish_if_changed`）・レプリカ報告（`ReportRelay::send_report`）の 3 か所がこれを呼ぶ。
+- `RelayClient`（`nostr/client.rs`）は `Signer` を持ち、`RelayClient::sign(builder)` で署名する。サイトイベント（`publish::sign_site_event`。CLI とダッシュボードの公開）・Follow Set の更新（`mirror::publish_if_changed`）・レプリカ報告（`ReportRelay::send_report`）の 3 か所がこれを呼ぶ。ペアリングの probe（下記）だけは `RemoteSigner` を直接使う。
 - `up::run` は呼ばれるたびに（プロセス内再起動を含む）`Signer::load` を 1 回呼び、`dashboard::AppState.signer` に置く。agent（`agent::lifecycle::run_until`）は再起動のたびにそれを使い回し、`RelayClient::connect` に渡す。agent の終了時は relay の `Client` だけを閉じ、署名アプリとの接続は `up::run` の最後に `Signer::shutdown` で閉じる。
-- relay に直接つなぐ CLI（[`cli.md#共通`](cli.md#共通)）はコマンドごとに `Signer::require` し、`RelayClient::shutdown` で relay と署名アプリの両方の接続を閉じる。`replicas`・`webring`・`publish` は取得や送信がエラーでも閉じてから終わるが、`sites`・`mirror list` は取得がエラーなら閉じずにそのまま終わる。`swing up` と同じアプリ鍵を使うので、署名アプリ側の許可はそのまま効く。
+- relay に直接つなぐ CLI（[`cli.md#共通`](cli.md#共通)）はコマンドごとに `Signer::require` し、終わるときに `RelayClient::shutdown` で relay と署名アプリの両方の接続を閉じる（`sites`・`mirror list` は取得がエラーなら閉じずに終わる）。`swing up` と同じアプリ鍵を使うので、署名アプリ側の許可はそのまま効く。
 
 ## 署名アプリへのリクエスト（`RemoteSigner`）
 
@@ -67,9 +67,4 @@ QR コードはダッシュボード用に `qr_svg`（SVG）、`swing signer pai
 
 ## テスト
 
-外部の relay や Docker は使わず、nostr-sdk の `LocalRelay`（プロセス内の relay）と署名アプリ役（`src/test_support.rs` の `serve_test_signer`、個々の応答を組み立てる `signer::tests::answer_as`）を使う（`#[ignore]` にしていない）。
-
-- `signer::pair::tests`: URI・perms・QR・relay の検証、secret を返す応答だけが署名アプリを決めること（`ack` の横取りを含む）、`get_public_key` の送り直しと拒否、QR 用 URI の発行 → 接続 → probe → `remote-signer.json` から読み直して署名までの通し、probe の拒否、つながらない relay で早く失敗すること。
-- `signer::tests`: `remote-signer.json` の読み書き、`Signer::load` の規則、`check_signed`、`error` を `result` より先に読むこと、拒否理由が `last_failure` に残ること。
-- `dashboard::setup::tests`: `/api/setup/signer` と `POST /api/setup`（`remote_signer: true`）。
-- `pair::tests`（`swing signer pair`）: 新しく保存すること、秘密鍵があれば断ること、保存済みと別のアカウントを断ってファイルを変えないこと。
+外部の relay や Docker は使わず、nostr-sdk の `LocalRelay`（プロセス内の relay）と署名アプリ役（`src/test_support.rs` の `serve_test_signer`、個々の応答を組み立てる `signer::tests::answer_as`）を使う（`#[ignore]` にしていない）。テストは `signer::tests`・`signer::pair::tests`・`dashboard::setup::tests`・`pair::tests`（`swing signer pair`）にある。

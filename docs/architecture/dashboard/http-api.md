@@ -1,6 +1,6 @@
 # ダッシュボード HTTP API（`src/dashboard/api.rs`, `src/dashboard/error.rs`, `src/dashboard/publish.rs`, `src/dashboard/setup.rs`, `src/dashboard/session.rs`, `src/dashboard/upload.rs`, `src/dashboard/dto.rs`, `src/dashboard/config_dto.rs`）
 
-[`../dashboard.md`](../dashboard.md) の子ページ。ガードと認証は [`security.md`](security.md)、画面側からの使い方は [`views.md`](views.md)（Publish は [`views/publish.md`](views/publish.md)）を参照。各エンドポイントの入出力は [一覧](#エンドポイント一覧)から辿る子ページにある。
+[`../dashboard.md`](../dashboard.md) の子ページ。ガードと認証は [`security.md`](security.md)、画面側からの使い方は [`views.md`](views.md)（Publish は [`views/publish.md`](views/publish.md)）を参照。各エンドポイントの入出力は [一覧](#エンドポイント一覧)から辿る子ページにある。API を叩く CLI サブコマンドの一覧は [`../cli.md#共通`](../cli.md#共通)。
 
 ## 共通
 
@@ -42,12 +42,7 @@ API は `swing up` の寿命で動き続ける（[`../up.md`](../up.md)）。
 
 - `keys`（mirror add/remove）・`root`（webring）・`key`（replicas）は 1 リクエストあたり最大 100 件、超えると 400。
 - relay を引く GET の API（`/api/sites`・`/api/mirror`・`/api/webring`・`/api/replicas`・`/api/publish/sites`・`/api/publish/previous-files`）はサーバ側でキャッシュしない。同時に relay を引けるのはこれらを合わせて 4 本までで、空きを最大 20 秒待っても取れなければ 503 `{"error": "too many relay queries are running; try again later"}`。`/api/publish/previous-files` は relay から取る間だけ枠を使い、その後の Kubo での一覧では使わない。
-- `webring`・`replicas` の判定の順は、件数の上限（400）→ 空きを取る（503）→ agent の準備（503）→ `root`・`key` の解析（400）。`mirror/add`・`mirror/remove` は件数（空も含む）と解析（400）→ 実行中の `mirror/add`・`mirror/remove` の終了を待つ → agent の準備（503）の順で、空きは取らない。レート制限は無い。
-- API を叩く CLI サブコマンドの一覧は [`../cli.md#共通`](../cli.md#共通)。
-
-## 既知の性質
-
-- publish の NIP-05 検証の SSRF 対策と、`nip05.detail` がエラー時に粗い分類（`unreachable`/`timeout`/`invalid_response`）だけになる規則は [`../nip05.md`](../nip05.md) を参照。
+- `webring`・`replicas` の判定の順は、`depth` と件数の上限（400）→ 空きを取る（503）→ agent の準備（503）→ `root`・`key` の解析（400）。`mirror/add`・`mirror/remove` は件数（空も含む）と解析（400）→ 実行中の `mirror/add`・`mirror/remove` の終了を待つ → agent の準備（503）の順で、空きは取らない。レート制限は無い。
 
 ## エンドポイント一覧
 

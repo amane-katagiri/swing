@@ -75,9 +75,9 @@ Kubo の版を上げるときの手順は [`kubo.md#kubo-のバージョン`](ku
 
 上書きとアンインストールで共通。
 
-1. `{app}` の `swing.exe` か `ipfs.exe` が動いていれば、`swing service stop`（[`service.md`](service.md#windowsタスクスケジューラ)。グレースフルに止まらなければ `schtasks /End`）を実行する。登録が `{app}` のものでないとき（下記）は、ダッシュボード経由でだけ止める `swing stop`（[`cli.md#stop`](cli.md#stop)）にする。
+1. `{app}` の `swing.exe` か `ipfs.exe` が動いていれば、`swing service stop`（[`service.md`](service.md#windowsタスクスケジューラ)。グレースフルに止まらなければ `schtasks /End`）を実行する。タスクが登録済みでその登録が `{app}` のものでないとき（下記）は、ダッシュボード経由でだけ止める `swing stop`（[`cli.md#stop`](cli.md#stop)）にする。
 2. それらが無くなるまで最大 60 秒待ち、残っていれば強制終了して（ログに `Terminating a process of <path>`）さらに最大 10 秒待つ。`up` 以外の `swing.exe`（`swing publish` など）もここで強制終了になる。
-3. `{app}` の `swing-tray.exe` は、指定の秒数だけ自分で閉じるのを待ってから強制終了する。
+3. `{app}` の `swing-tray.exe` は、自分で閉じるのを待ってから（上書きでは待たない。アンインストールは下記）強制終了し、さらに最大 10 秒待つ。
 
 ## 新規インストール
 
@@ -104,7 +104,7 @@ GUI で、`service install` が成功したときだけ出す（既定はオン�
 1. 前の状態を調べてログに出す（`Upgrading: task registered=…, tray registered=…, swing up running=…, tray running=…, registrations point here=…`）。
    - タスク `swing` が登録済みか（`schtasks /Query /TN swing`）、Run キーの値 `swing-tray` があるか、`{app}` のトレイが動いているか。
    - タスクが登録済みのときだけ: `{app}` の `swing.exe up` が動いているか（コマンドラインが ` up ` を含むか ` up` で終わる）と、登録が `{app}` のものか。後者は新しい `swing.exe` を `{tmp}` に取り出して `swing service status --points-into "{app}"` の終了コードが 0 かで決める（[`service/ownership.md`](service/ownership.md)。本体とトレイのどちらかが別の場所なら 0 にならない）。
-2. [プロセスの止め方](#プロセスの止め方)で止める（トレイは待たずに強制終了）。
+2. [プロセスの止め方](#プロセスの止め方)で止める。
 
 ファイルを置き `Path` を確かめた後、前の状態で分ける。
 

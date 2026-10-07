@@ -14,7 +14,7 @@
 
 NIP-05 の検証結果はバッジで `OK`（`verified`）/ `NG`（`mismatch`）/ `ERR`（`error`）/ `N/A`（`not_applicable`）と短く表示し、意味は `title` 属性に表示言語で出す。カードはサイト名の下の行に保存状態・NIP-05・レプリカ数のバッジ（`.swing-site-badges`）をまとめ、NIP-05 には `nip05: ` を前に付ける。テーブルでは NIP-05 列にラベルだけを出す。
 
-サイズの表示（`util.js::formatSiteSize`）: `stored_size` があれば `formatBytes`（1024 基数で `KiB`・`MiB`・`GiB`・`TiB`、小数 1 桁で `.0` は省く。丸めると 1024 になる値は次の単位に繰り上げる）で、無ければ `size` を `(12.3 MiB)` のように括弧書きで、どちらも無ければ `–`（値の意味は [`http-api/status.md#get-apisites`](http-api/status.md#get-apisites)）。
+サイズの表示（`util.js::formatSiteSize`）: `stored_size` があればそのまま（1024 基数の `KiB`・`MiB`… で小数 1 桁）、無ければ `size` を `(12.3 MiB)` のように括弧書きで、どちらも無ければ `–`（値の意味は [`http-api/status.md#get-apisites`](http-api/status.md#get-apisites)）。
 
 Storage check は [`/api/status`](http-api/status.md#get-apistatus) をボタンを押したときだけ呼び、版ごとの判定の表と、サイトごとの実容量・合計の表を出す。
 
@@ -30,8 +30,8 @@ Storage check は [`/api/status`](http-api/status.md#get-apistatus) をボタン
 - `document` に `swing:show-self-in-webring`（名前は `notify-settings.js::SHOW_SELF_IN_WEBRING`）を投げると、Webring 画面に移って自分（`cache.overview.pubkey`）のノードを選んだ状態にする。今のクエリのグラフを読み込み（キャッシュがあればそれ）、自分のノードがあればそれを選ぶ。無ければ root を空（＝自分）にしてクエリを保存し直し、読み込み直してから選ぶ（depth は変えない）。ブラウザの通知のクリックが使う（[`notices.md#おしらせの出し分け`](notices.md#おしらせの出し分け)）。
 - 再取得中は既存の表示を消さず `aria-busy="true"` で薄く表示する。表示中の内容が無いときだけ「Loading webring…」になる。
 - ノードの選択で [`/api/replicas?key=`](http-api/nostr.md#get-apireplicaskeykey) を引き、詳細パネルを出す。報告者一覧は npub の後ろに最新版か古い版かのタグと tier のタグ（`author` は `[author]`、`chosen` は `[chosen]`、それ以外は `[unverified]`。日本語表示では `[作者]`・`[フォロー中]`・`[未検証]`）を付け、`site.dropped` が 0 より大きければ末尾に「…and N more」相当のヒント文を出す（[`../nostr/fetch.md`](../nostr/fetch.md)）。レプリカ数のバッジは `unverified` が 0 より大きければ未検証の件数も添える。
-- 詳細パネルのミラー操作は、選んだノードが自分自身ならボタン無し、ミラー済みなら削除ボタン、未ミラーなら追加ボタン。判定はキャッシュ済みの `/api/sites` か `/api/mirror` の pubkey 集合。
-- `beyond` と `over_budget`（意味は [`../cli/views.md#webring`](../cli/views.md#webring)）は、0 より大きければ画面下部にヒント文を 1 行ずつ出す。`list` 表示では `referencing`（起点を名指ししているだけでクロールには加えていないアカウント）を「Mutual」「One-way」と並ぶグループとして出し、`more` が 0 より大きければ末尾に件数のヒント文を添える（[`../nostr.md#レプリカ報告の信頼度replicastier`](../nostr.md#レプリカ報告の信頼度replicastier)）。
+- 詳細パネルには「ルートにする」ボタン（root をそのノードに替えて depth はそのままで読み込み直す）と、ミラー操作を置く。ミラー操作は、選んだノードが自分自身ならボタン無し、ミラー済みなら削除ボタン、未ミラーなら追加ボタン。判定はキャッシュ済みの `/api/sites` か `/api/mirror` の pubkey 集合。
+- `beyond` と `over_budget`（意味は [`../webring.md`](../webring.md#グラフwebringbuild_graph)）は、0 より大きければ画面下部にヒント文を 1 行ずつ出す。`list` 表示では `referencing`（起点を名指ししているだけでクロールには加えていないアカウント）を「Mutual」「One-way」と並ぶグループとして出し、`more` が 0 より大きければ末尾に件数のヒント文を添える（[`../webring.md`](../webring.md#たどり方webringcrawl)）。
 
 ### グラフ（`web/graph.js`）
 

@@ -22,11 +22,13 @@
 
 設定ファイルの隣の `data`（状態ファイルと Kubo のリポジトリ）もこの下に入る。ホームディレクトリの無いユーザー（Docker イメージのユーザーなど。[`docker.md`](docker.md)）は 5 になる。空文字の環境変数は未設定として扱う（下記）。
 
-1 か 2 で指したファイルが無ければエラー終了。3〜5 で決まったファイルが無ければエラーにせず、既定値と環境変数だけで組み立てる（`Config.config_exists = false`）。ダッシュボードのセットアップ・設定編集はこのパスに新規作成・上書きし、親ディレクトリが無ければ作る（Unix では `0700`。`settings::write_atomic`）。
+1 か 2 で指したファイルが無ければ `config file not found: <path>` でエラー終了。3〜5 で決まったファイルが無ければエラーにせず、既定値と環境変数だけで組み立てる（`Config.config_exists = false`）。ダッシュボードのセットアップ・設定編集はこのパスに書く（[設定の書き換え](#設定の書き換えsrcsettingseditrs)）。
 
 TOML の構文や型のエラーは `line <行>, column <桁>: <理由>` の形で報告し、該当行を引用しない。
 
-読み込んだファイルに `[nostr].secret_key` があり、Unix でグループかその他のユーザーに読み取り権限がある（`mode & 0o044 != 0`）なら、`chmod 600` を促す警告をログに出す。読み込みは続ける。秘密鍵の文字列（ファイルの本文と `NostrFile.secret_key`・`NostrSecretKey`）は `Zeroizing` に持ち、破棄時にゼロで埋める。`NostrSecretKey` の中身は `expose_secret()` からだけ取り出せる。設定ファイルを書き換えるとき（[下記](#設定の書き換えsrcsettingseditrs)の 3 つの関数）も、読んだ本文・書き出す本文・書き込む鍵の hex と、`POST /api/setup` で受け取った `secret_key` を `Zeroizing` に持つ。`toml_edit` の文書が中に持つコピーと、HTTP のリクエスト本文は消さない（できる範囲での対処）。
+読み込んだファイルに `[nostr].secret_key` があり、Unix でグループかその他のユーザーに読み取り権限がある（`mode & 0o044 != 0`）なら、`chmod 600` を促す警告をログに出して読み込みを続ける。
+
+秘密鍵を含みうる文字列（読んだ設定ファイルの本文、`NostrFile.secret_key`・`NostrSecretKey`、[設定の書き換え](#設定の書き換えsrcsettingseditrs)で読み書きする本文と鍵の hex、`POST /api/setup` で受け取った `secret_key`）は `Zeroizing` に持ち、破棄時にゼロで埋める。`NostrSecretKey` の中身は `expose_secret()` からだけ取り出せ、`Debug` 出力では `<redacted>` になる。`toml_edit` の文書が中に持つコピーと HTTP のリクエスト本文は消さない（できる範囲での対処）。
 
 ## 設定カタログ
 
@@ -78,7 +80,6 @@ TOML の構文や型のエラーは `line <行>, column <桁>: <理由>` の形�
 
 - 容量: `"100GiB"`・`"512MiB"`・`"1TiB"`・`"512B"`。単位は `KiB`・`MiB`・`GiB`・`TiB` と `KB`・`MB`・`GB`・`TB` で、どちらも 1024 基数、大文字小文字を区別しない（compose の Kubo での違いは [`docker.md#kubo-の設定`](docker.md#kubo-の設定)）。数値部分は数字と `.` だけで、小数はバイト換算後に切り捨て。数値だけならバイト。u64 に収まらなければエラー。
 - 時間: `"30s"`・`"10m"`・`"2h"`・`"365d"`。数値部分は整数だけ。数値だけなら秒。秒換算で u64 に収まらなければエラー。
-- 秘密鍵は `Debug` 出力で `<redacted>` になる。
 
 ## 設定の書き換え（`src/settings/edit.rs`）
 
@@ -128,7 +129,7 @@ TOML の構文や型のエラーは `line <行>, column <桁>: <理由>` の形�
 
 ### ダッシュボードでの直列化と反映
 
-- 設定ファイルを書く API（`PUT /api/config`・`POST /api/setup`）と、`remote-signer.json` を書く `POST /api/signer/reconnect` は `AppState.locks.config_writes()`（`dashboard::locks::Locks` が持つ `tokio::sync::Mutex<ConfigWriteState>` のガードを返す）を取ってから、ファイルの読み書き（`Config::load` を含む）を `api::blocking`（`spawn_blocking`）で行う。同じプロセス内では 1 つずつ順に走る。プロセス外からの同時書き込みは対象外。
+- 設定ファイルを書く API（`PUT /api/config`・`POST /api/setup`）と、`remote-signer.json` を書く `POST /api/signer/reconnect` は、同じロック（`AppState.locks.config_writes()`。中身は `ConfigWriteState`）を取ってからファイルの読み書き（`Config::load` を含む）を `dashboard::error::blocking`（`spawn_blocking`）で行うので、同じプロセス内では 1 つずつ順に走る。プロセス外からの同時書き込みは対象外。
 - `ConfigWriteState.setup_done` は、成功後の 2 回目の `POST /api/setup` を 409 にする印（[`dashboard/http-api/config.md#post-apisetup`](dashboard/http-api/config.md#post-apisetup)）。
 - `AppState.restart_required: AtomicBool` は `PUT /api/config` か `POST /api/signer/reconnect` が一度でも成功すると `true` になり、プロセス内再起動まで戻らない（`POST /api/setup` は立てない）。`GET`/`PUT /api/config` の `restart_required` はこの値。
 - `AppState.display_config: RwLock<Arc<Config>>` は起動時は `AppState.config` と同じで、`PUT /api/config` が成功するたびに書き換え後の設定に差し替わる。`GET /api/config` はこれを返す。relay・Kubo・agent が使う `AppState.config` は再起動まで変わらない。

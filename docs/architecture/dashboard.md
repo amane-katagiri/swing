@@ -19,7 +19,7 @@ HTTP サーバー（axum 0.8）で、ブラウザ向けの管理画面（`[dashb
 
 - relay 接続（`Arc<RelayClient>`）と Kubo クライアント（`IpfsClient`）は agent から `AppState::set_ready` で受け取り、`tokio::sync::RwLock<Option<...>>` に持つ。`set_ready` の前と `set_not_ready` の後は `None`（呼ぶ時機は [`agent.md#全体の流れ`](agent.md#全体の流れ) と [`agent.md#シグナルと終了`](agent.md#シグナルと終了)）。その間に `503` を返す API は [`dashboard/http-api.md#共通`](dashboard/http-api.md#共通)。
 - 保存状態は agent の `Mutex<State>` に触れず、CLI と同じく `state.json` をディスクから読み直す（`mirror::collect_sites`・`health::collect_status` など）。
-- `mirror add` / `mirror remove` が relay に受理されると、`tokio::sync::Notify` で agent に知らせ、poll tick と同じ `poll_once`（sweep → Follow Set の再取得 → レプリカ報告の同期）をその場で走らせる。
+- `mirror add` / `mirror remove` が relay に受理されると、`tokio::sync::Notify` で agent に知らせ、poll tick と同じ `poll_once`（[agent.md#全体の流れ](agent.md#全体の流れ) の 4）をその場で走らせる。
 - 署名の方法（`AppState.signer: Option<signer::Signer>`。[`signer.md`](signer.md)）は `up::run` が決めて渡す。自分の公開鍵（`AppState.own_pubkey`）はそこから求めて持つ（署名アプリにリクエストは送らない）。
 
 ### セットアップモードと `AppState::setup_mode`
@@ -70,7 +70,7 @@ HTTP サーバー（axum 0.8）で、ブラウザ向けの管理画面（`[dashb
 | `GET /` | `text/html; charset=utf-8`（`index.html`） |
 | `GET /favicon.svg` `/desktop-icons.svg` | `image/svg+xml` |
 | `GET /favicon-32.png` `/apple-touch-icon.png` | `image/png` |
-| `GET /style.css` `/desktop.css` `/desktop-dialog.css` `/desktop-wallpaper.css` `/desktop-mascot-settings.css` `/desktop-system-settings.css` `/desktop-frame.css` `/desktop-mascot.css` | `text/css; charset=utf-8` |
+| `GET /*.css` | `text/css; charset=utf-8`。一覧は `STATIC_ASSETS` が正本 |
 | `GET /*.js` | `text/javascript; charset=utf-8`。一覧は `STATIC_ASSETS` が正本（役割は [`dashboard/web.md#構成`](dashboard/web.md#構成)） |
 | `GET /desktop-page.html` `/desktop-page.css` | `text/html; charset=utf-8` / `text/css; charset=utf-8`。リンク集ページとその CSS（ページの契約は [`dashboard/desktop.md#リンク集ページiframe`](dashboard/desktop.md#リンク集ページiframe)） |
 | `GET /desktop-banner` | 同梱版は `image/gif`。差し替えると拡張子から決める |

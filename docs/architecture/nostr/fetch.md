@@ -35,11 +35,11 @@
 
 | 定数 | 値 | 適用箇所 |
 |---|---|---|
-| `MAX_FOLLOW_SET_ENTRIES` | 500 | `nostr::follow_set_pubkeys_capped`。tag 順で最初の 500 件の重複しない `p` を残す。自分の Follow Set も対象で、`agent::follow::resubscribe_and_backfill` と `mirror::collect_sites` は切り詰めたら warn を 1 回出す。`swing mirror add` は上限を超える追加をエラーにし、切り詰めない（[`../dashboard/http-api/nostr.md`](../dashboard/http-api/nostr.md#post-apimirroradd-post-apimirrorremove)） |
+| `MAX_FOLLOW_SET_ENTRIES` | 500 | `nostr::follow_set_pubkeys_capped`。tag 順で最初の 500 件の重複しない `p` を残す。自分の Follow Set も対象で、`agent::follow::resubscribe_and_backfill` と `mirror::collect_sites` は切り詰めたら warn を 1 回出す。`swing mirror add` は上限を超える追加をエラーにし、切り詰めない（[`../mirror.md`](../mirror.md#follow-set-の書き換えmirrorapply_add--apply_remove)） |
 | `MAX_SITES_PER_AUTHOR_LISTED` | 50 | `nostr::cap_sites_per_author`（`select_latest` の直後に呼ぶ）。作者ごとに `d` の昇順で先頭 50 件だけを残す。`mirror::collect_sites`・`replicas::collect`・`webring::collect`・`/api/publish/sites` で使う。agent の取り込みの件数制限（`max_sites_per_account`。[`../agent.md`](../agent.md#全体の流れ)）とは別に効く |
 | `MAX_REPORTS_PER_SITE` | 200 | `replicas::collect_reports`。数える報告を [「レプリカ報告の信頼度」](../nostr.md#レプリカ報告の信頼度replicastier) の順に並べ替えて、サイトごとに先頭 200 件を残す。`SiteReplicas.reports` は残した件数、`SiteReplicas.dropped` は切り捨てた件数（`swing replicas`・`/api/replicas`・ダッシュボードはここから「…and N more」を出す） |
 | `MAX_CRAWL_NODES` | 1000 | `webring::crawl`。`Crawl.depths` がこれを超えないように新規ノードの追加を止め、弾いた件数を `Crawl.over_budget`（テキスト出力・`/api/webring` の `over_budget`）に積む。追加しなかったノードは次のレベルの取得にも現れない |
-| `MAX_REFERENCING_LISTED` | 50 | `webring::crawl`。`#p` で見つかる「起点を名指ししているだけの相手」（`Crawl.referencing`）の一覧を先頭 50 件までに切り詰める。超えた件数は `Crawl.referencing_dropped` に積む。たどり方は [`../cli/views.md#webring`](../cli/views.md#webring) |
+| `MAX_REFERENCING_LISTED` | 50 | `webring::crawl`。`#p` で見つかる「起点を名指ししているだけの相手」（`Crawl.referencing`）の一覧を先頭 50 件までに切り詰める。超えた件数は `Crawl.referencing_dropped` に積む。たどり方は [`../webring.md`](../webring.md#たどり方webringcrawl) |
 | `MAX_RELAY_FETCH_LIMIT` | 10,000 | relay 1 台への 1 回の REQ に付ける `limit` の上限（下記）。1 回の REQ で全 relay から受け取って残す件数の上限も同じ値 |
 | `COORDINATES_PER_FILTER` | 250 | `fetch_replica_reports`・`fetch_replica_reports_by` が 1 つのフィルタの `#a` に入れる座標の数。超える分は組に分けて別の REQ にする |
 | `AUTHORS_PER_FILTER` / `AUTHORS_PER_SPLIT_REQ` | 50 / 10 | 作者を並べる取得の組の大きさ（下記） |

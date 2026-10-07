@@ -8,7 +8,7 @@ swing-tray [--config <path>]
 
 引数がこれ以外なら usage を標準エラーに出して（Windows では見えない）終了コード 2 で終わる。
 
-`tray/` にある別クレート（workspace のメンバー、バイナリ名 `swing-tray`）。Windows の通知領域と macOS のメニューバーにアイコンを出し、動いている `swing up` をメニューから操作する。`swing up` とは別のプロセスで、CLI の `swing status` や `swing stop` と同じく、ダッシュボード API のクライアントとして動く（`swing` クレートの `api_client::ApiClient`・`config::Config`・`auth`・`lock`・`login`・`service`・`stop` を使う）。
+`tray/` にある別クレート（workspace のメンバー、バイナリ名 `swing-tray`）。Windows の通知領域と macOS のメニューバーにアイコンを出し、動いている `swing up` をメニューから操作する。`swing up` とは別のプロセスで、CLI の `swing status` や `swing stop` と同じくダッシュボード API のクライアントとして動き、`swing` クレートの関数（`ApiClient`・`login`・`service`・`stop` など）を使う。
 
 - **対応 OS**: Windows と macOS だけ。他の OS では「swing-tray supports only Windows and macOS」を出して終了コード 1 で終わる。
 - **Windows**: `windows_subsystem = "windows"` の GUI アプリで、コンソールウィンドウは開かず、標準出力・標準エラーはどこにも出ない。
@@ -26,7 +26,7 @@ swing-tray [--config <path>]
 
 ## 多重起動の防止
 
-起動時に設定を読めたら、`lock::try_acquire(state_dir, "swing-tray.lock")`（`swing.lock` と同じ仕組み。`state_dir` が無ければ `0700` で作り、ロックファイルに自分の PID を書く。[`up.md`](up.md#多重起動の防止lockrs)）で `<state_dir>/swing-tray.lock` をロックする。ほかの `swing-tray` が同じ `state_dir` でロックしていれば、何も出さずに終了コード 0 で終わる。設定が読めないときとロックの取得そのものに失敗したとき（ディレクトリを作れない・ファイルを開けないなど）は、`swing-tray: <理由>; running without the single-instance lock` を標準エラーに出して（Windows では見えない）、ロックせずに起動する。ロックはプロセスが終わるまで持ち続ける。
+起動時に設定を読めたら、`swing.lock` と同じ仕組み（[`up.md`](up.md#多重起動の防止lockrs)）で `<state_dir>/swing-tray.lock` をロックする。ほかの `swing-tray` が同じ `state_dir` でロックしていれば、何も出さずに終了コード 0 で終わる。設定が読めないときとロックの取得そのものに失敗したとき（ディレクトリを作れない・ファイルを開けないなど）は、`swing-tray: <理由>; running without the single-instance lock` を標準エラーに出して（Windows では見えない）、ロックせずに起動する。ロックはプロセスが終わるまで持ち続ける。
 
 ## メニュー
 
@@ -60,7 +60,7 @@ swing-tray [--config <path>]
 
 ## 起動したときの自動起動
 
-起動して最初の状態の確認で、`swing up` が止まっていて、しかもサービスとして登録済みと確認できたなら（登録状態が分からないときは起動しない）、`service::start(false)` で起動する。表示は下記の「起動しています…」になる。最初の 1 回だけ行い、その後に止まっても起動しない。ログイン時は、サービス（Windows のログオン時トリガー、launchd の `RunAtLoad`）とトレイがほぼ同時に起動するので、両方から起動することがある。その場合も、Windows はタスクの `MultipleInstancesPolicy = IgnoreNew`、macOS は `kickstart`（`-k` なし）が 2 つ目を起こさない。万一 2 つ目が立ち上がっても `swing.lock`（[`up.md`](up.md#多重起動の防止lockrs)）ですぐ終わる。
+起動して最初の状態の確認で、`swing up` が止まっていて、しかもサービスとして登録済みと確認できたなら（登録状態が分からないときは起動しない）、`service::start(false)` で起動する（表示は下記の「起動しています…」）。最初の 1 回だけ行い、その後に止まっても起動しない。ログイン時にサービスとトレイの両方から起動しても、Windows はタスクの `MultipleInstancesPolicy = IgnoreNew`、macOS は `kickstart`（`-k` なし）が 2 つ目を起こさず、万一 2 つ目が立ち上がっても `swing.lock` ですぐ終わる。
 
 ## 状態の表示
 
@@ -91,7 +91,7 @@ swing-tray [--config <path>]
 - 操作が失敗したら（API が 4xx/5xx を返した、`schtasks` が失敗したなど）、途中の表示をやめて失敗を表示する。
 - 120 秒たっても状態が変わらなければ、途中の表示をやめて、確認できた状態に戻す（「終了（はい）」は `stop::run` の 90 秒のタイムアウトで失敗になる）。
 
-状態から表示・使える項目・アイコンを決める部分、途中の表示を戻す条件、ボタンの文字から答えを決める部分は `status.rs`（`Status::from_overview`・`menu_state`・`Pending::settled_by`・`Answer::from_label`）にあり、OS に依存しないユニットテストがある。
+状態から表示・使える項目・アイコンを決める部分、途中の表示を戻す条件、ボタンの文字から答えを決める部分は `status.rs` にあり、OS に依存しないユニットテストがある。
 
 ## サービスの登録が消えたら終了する
 

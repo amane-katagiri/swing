@@ -1,6 +1,6 @@
 # swing up（up.rs, ports.rs, shutdown.rs, lock.rs）
 
-[`../architecture.md`](../architecture.md) の一部。設定キーは [`config.md`](config.md)、内蔵 gateway は [`gateway.md`](gateway.md)、Kubo プロセスの管理は [`kubo.md`](kubo.md#kubo-プロセスの管理kubors)、OS への常駐登録は [`service.md`](service.md)、コンテナでの起動は [`docker.md`](docker.md)。
+[`../architecture.md`](../architecture.md) の一部。設定キーは [`config.md`](config.md)、内蔵 gateway は [`gateway.md`](gateway.md)、Kubo プロセスの管理は [`kubo.md`](kubo.md)、OS への常駐登録は [`service.md`](service.md)、コンテナでの起動は [`docker.md`](docker.md)。
 
 `swing up`（`up::run(config, token, port_shift)`）は次の順で起動する。`up::run` は呼ばれるたびにこの順で最初からやり直す。
 
@@ -44,8 +44,8 @@
 鍵が設定されていれば、`up::run` は `config.kubo.managed` で `run_unmanaged` / `run_managed` に分かれ、どちらも `up::run` が受け取ったトークン（[shutdown](#shutdownshutdownrs)）の下で動く。
 
 - Kubo の起動・ヘルス待ちの失敗、Kubo の異常終了、agent の異常終了（managed は `Err` と panic、unmanaged は `Err` だけ）ではバックオフして再起動し、`up::run` は動き続ける。
-- managed の `locate_binary`・`version`・`recover_orphan` の失敗は、`up::run` ごとエラーで終わる。
-- Kubo の停止（`stop_daemon`）は、どの経路でも `Daemon::stop` が失敗したら warn を出すだけで続ける。`kubo.pid` と `kubo-api.json` は `Daemon::stop` が成功したときだけ消し、失敗したときは残して次回の [`recover_orphan`](kubo.md#kubopid-と孤児-kubo-の回収managed-のみ) に任せる。
+- managed の `locate_binary`・`version`・`recover_orphan` の失敗と、unmanaged の `config.ipfs_client()` の失敗は、`up::run` ごとエラーで終わる。
+- Kubo の停止（`stop_daemon`）は、どの経路でも `Daemon::stop` が失敗したら warn を出すだけで続ける。`kubo.pid` と `kubo-api.json` は `Daemon::stop` が成功したときだけ消し、失敗したときは残して次回の [`recover_orphan`](kubo/daemon.md#kubopid-と孤児-kubo-の回収managed-のみ) に任せる。
 
 ### unmanaged
 
@@ -55,16 +55,16 @@
 
 ### managed
 
-`run_managed` の始めに（`up::run` が呼ばれるたびに）`locate_binary` + `version`（[`kubo.md#kubo-のバージョン`](kubo.md#kubo-のバージョン)）、続けて [`recover_orphan`](kubo.md#kubopid-と孤児-kubo-の回収managed-のみ) を行う。`recover_orphan` はトークンの cancel と競争させ、cancel が先なら回収を途中でやめて `Ok(())` を返す（`kubo.pid` は残り、次の起動で回収し直す）。以後ループ:
+`run_managed` の始めに（`up::run` が呼ばれるたびに）`locate_binary` + `version`（[`kubo.md#kubo-のバージョン`](kubo.md#kubo-のバージョン)）、続けて [`recover_orphan`](kubo/daemon.md#kubopid-と孤児-kubo-の回収managed-のみ) を行う。`recover_orphan` はトークンの cancel と競争させ、cancel が先なら回収を途中でやめて `Ok(())` を返す（`kubo.pid` は残り、次の起動で回収し直す）。以後ループ:
 
-1. 前回の `<state_dir>/kubo-api.json` を消し、repo を用意し（[`ensure_repo`](kubo.md#リポジトリの初期化kuboensure_repo)）、空きポートと新しい RPC の秘密を選んで（[`kubo.md#rpc-の認証managed-のみ`](kubo.md#rpc-の認証managed-のみ)）設定を適用し（[`apply_config`](kubo.md#適用する-kubo-設定kuboapply_config)）、Kubo を起動して `kubo.pid` を書き（[`kubo.md`](kubo.md#kubopid-と孤児-kubo-の回収managed-のみ)）、ヘルス待ち（120 秒、`MANAGED_HEALTH_TIMEOUT`。[`kubo.md`](kubo.md#ヘルス待ちkubowait_healthy--daemonwait_healthy)）の後で `kubo-api.json` を書く。
-   - いずれかの手順が失敗したら（ヘルス待ちか `kubo-api.json` の書き込みが失敗した場合は daemon を止めてから）バックオフして 1 からやり直す。
+1. 前回の `<state_dir>/kubo-api.json` を消し、repo を用意し（[`ensure_repo`](kubo.md#リポジトリの初期化kuboensure_repo)）、空きポートと新しい RPC の秘密を選んで（[`kubo.md#rpc-の認証managed-のみ`](kubo.md#rpc-の認証managed-のみ)）設定を適用し（[`apply_config`](kubo.md#適用する-kubo-設定kuboapply_config)）、Kubo を起動して `kubo.pid` を書き（[`kubo/daemon.md`](kubo/daemon.md#kubopid-と孤児-kubo-の回収managed-のみ)）、ヘルス待ち（120 秒、`MANAGED_HEALTH_TIMEOUT`。[`kubo/daemon.md`](kubo/daemon.md#ヘルス待ちkubowait_healthy--daemonwait_healthy)）の後で `kubo-api.json` を書く。
+   - いずれかの手順が失敗したら（ヘルス待ちか `kubo-api.json` の書き込みが失敗した場合は daemon を止めてから）バックオフして 1 からやり直す。`kubo.pid` の書き込みの失敗だけは warn を出して続ける。
    - ヘルス待ちの間に cancel されたら daemon を止めて `Ok(())` を返す。
 2. Kubo の PID と `Daemon` の RPC クライアントを測定の対象として `AppState.stats` に渡す（Kubo が exit したら外す。[`stats.md`](stats.md#測り方)）。`config.ipfs.api` を `IpfsApi::Url("http://127.0.0.1:<api_port>")` に差し替え、`config.ipfs.api_secret` にその起動の RPC の秘密を入れたコピーで agent を子トークンとともに動かす。ダッシュボードは agent の準備ができたときに、agent と同じクライアントを受け取る。
 3. 次のいずれかを待つ:
    - Kubo が exit したら、agent を止め（最大 15 秒、`AGENT_STOP_TIMEOUT`。超えたら `abort()`）、`kubo.pid` と `kubo-api.json` を消し、バックオフして 1 からやり直す。
    - agent が `Err` か panic で終わったら、バックオフしてから agent だけを同じ Kubo に対して起こし直す。
-   - agent が正常に終わるか、バックオフ中か待っている間に cancel されたら、agent を止め（最大 15 秒）、`Daemon::stop(20s)` して `Ok(())` を返す。
+   - agent が正常に終わるか、バックオフ中か待っている間に cancel されたら、agent を止め（待っている間の cancel なら最大 15 秒）、`Daemon::stop(20s)` して `Ok(())` を返す。
 
 ### バックオフ（`Backoff`）
 
@@ -74,14 +74,10 @@
 
 `up::run` は `Result<shutdown::Exit>`（`Exit::Stop` | `Exit::Restart`）を返す。`main.rs` の `Command::Up` ループは、`Exit::Stop` ならプロセスを終了し（exit code 0）、`Exit::Restart` なら `config::Config::load` で設定を読み直してから同じプロセス・同じ PID のまま `up::run` をもう一度呼ぶ。`Err` なら終了コード 1 でプロセスごと終わる。
 
-`ExitRequest` は `up::run` が呼ばれるたびに、その回のトークン（[shutdown](#shutdownshutdownrs)）から作り直し、`dashboard::AppState.exit` にクローンを渡す。`stop()` はトークンを cancel するだけ、`restart()` は内部の `AtomicBool` を立ててから同じトークンを cancel する。
+`ExitRequest` は `up::run` が呼ばれるたびに、その回のトークン（[shutdown](#shutdownshutdownrs)）から作り直し、`dashboard::AppState.exit` にクローンを渡す。サービスマネージャから見た停止と再起動の扱いは [`service.md#共通`](service.md#共通)。`stop()` はトークンを cancel するだけ、`restart()` は内部の `AtomicBool` を立ててから同じトークンを cancel する。
 
 - `stop()` を呼ぶのは `POST /api/shutdown`、`restart()` を呼ぶのは `POST /api/restart`・`POST /api/setup`・`POST /api/signer/reconnect`（[`dashboard/http-api.md`](dashboard/http-api.md)）。シグナル（または Windows の親プロセス終了）で cancel され、誰も `restart()` を呼んでいなければ `Exit::Stop` になる。
 - `restart()` の後は、シグナルを受けたときと同じ経路で Kubo と agent がグレースフルに終わり（セットアップモードなら `token.cancelled()` を抜けるだけ）、`up::run` が `Exit::Restart` を返す。
-
-### サービスマネージャとの関係
-
-[`service.md#共通`](service.md#共通) を参照。
 
 ## shutdown（shutdown.rs）
 
@@ -102,7 +98,7 @@
 | 段階 | 最悪 | 定数 |
 |---|---|---|
 | agent の停止待ち（超えたら managed は `abort()`、unmanaged は future を捨てる） | 15 秒 | `AGENT_STOP_TIMEOUT` |
-| Kubo の停止（猶予 `DAEMON_STOP_GRACE` 20 秒。内訳は [`kubo.md`](kubo.md#停止daemonstopgrace)） | 35 秒（25 秒） | `kubo::daemon_stop_budget(DAEMON_STOP_GRACE)` |
+| Kubo の停止（猶予 `DAEMON_STOP_GRACE` 20 秒。内訳は [`kubo/daemon.md`](kubo/daemon.md#停止daemonstopgrace)） | 35 秒（25 秒） | `kubo::daemon_stop_budget(DAEMON_STOP_GRACE)` |
 | ダッシュボードの停止待ち | 5 秒 | `DASHBOARD_SHUTDOWN_TIMEOUT` |
 | 上の合計（managed の最悪。unmanaged は agent + ダッシュボードの 20 秒、セットアップモードはダッシュボードの 5 秒） | 55 秒（45 秒） | `STOP_BUDGET` |
 | runtime の畳み込み | 10 秒 | `shutdown::RUNTIME_SHUTDOWN_TIMEOUT` |
@@ -113,10 +109,10 @@
 
 ## 多重起動の防止（lock.rs）
 
-公開しているのは `lock::acquire(state_dir) -> Result<InstanceLock>`、その下の `lock::try_acquire(state_dir, file_name) -> Result<TryAcquire>`（`Acquired(InstanceLock)` か、ほかのプロセスが持っていれば `Held { pid }`。`swing-tray` が `swing-tray.lock` に使う。[`tray.md`](tray.md#多重起動の防止)）と、ロックファイルのパスを返す `InstanceLock::path`。`up::run` は最初に `acquire`（`try_acquire(state_dir, "swing.lock")` の `Held` を下記のエラーにしたもの）を呼ぶ。
+`up::run` は最初に `lock::acquire(state_dir)` で `<state_dir>/swing.lock` を取る。下の `lock::try_acquire(state_dir, file_name)` は、ほかのプロセスが持っていれば `Held { pid }` を返し、`swing-tray` も `swing-tray.lock` に使う（[`tray.md`](tray.md#多重起動の防止)）。
 
 - `state_dir` が無ければ `0700` で作る。
-- `<state_dir>/swing.lock` を作成（無ければ）・読み書きで開き、`std::fs::File::try_lock()`（advisory lock。プロセスが `kill -9` で消えても OS が外す）を取る。
+- ロックファイルを作成（無ければ）・読み書きで開き、`std::fs::File::try_lock()`（advisory lock。プロセスが `kill -9` で消えても OS が外す）を取る。
 - 取れたら中身を空にして自分の PID を書く。
 - 既に別のプロセスが取っていれば、ファイルの中身（相手の PID）を読んで `another swing instance is already running on <state_dir> (pid N)` でエラーにする（PID が読めなければ `(pid N)` を省く。Windows ではロックがファイル全体への強制ロックなので常に省かれる）。
 - `InstanceLock` を drop してもロックファイル自体は消さない。次回の `acquire` はロックが外れていれば中身を上書きして取り直す。

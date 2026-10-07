@@ -12,7 +12,7 @@
 | `x86_64-apple-darwin` | macos-latest | しない | `cargo build`（クロス） |
 | `x86_64-pc-windows-msvc` | windows-latest | する | `cargo build` |
 
-- Rust のバージョンは Dockerfile の builder と同じ（[`docker.md#dockerfile`](docker.md#dockerfile)）。Linux は musl の静的バイナリにする。
+- Rust のバージョンは各ワークフローの環境変数 `RUST_TOOLCHAIN` で決まり、Dockerfile の builder と同じにする（[`docker.md#dockerfile`](docker.md#dockerfile)）。Linux は musl の静的バイナリにする。
 - workspace には `swing` と `swing-tray`（`tray/`）がある。fmt は `cargo fmt --all --check`、clippy / test は `--workspace` で回し、いずれもワークスペース全体（`tray/` を含む）を対象にする。Linux は `-p swing` だけをビルドし、Windows と macOS は `--workspace` でビルドする。
 - Windows 向けのビルドでは、`build.rs`（`swing` と `swing-tray` の両方）が `winresource` でファイルアイコン（`swing` は `assets/swing.ico`、`swing-tray` は `tray/assets/swing-tray.ico`）とバージョン情報（`Cargo.toml` の `name`・`version`）を exe に埋め込む。他の target では何もしない。
 - macOS の `swing` は素の実行ファイルで、ファイルアイコンは付かない。`swing-tray` は `tray/macos/bundle.sh` で `SWING.app` にまとめ、アイコンと名前はバンドルが持つ（[`tray.md`](tray.md#macos-のアプリバンドルswingapp)）。
@@ -37,7 +37,7 @@
 | `mxschmitt/action-tmate` | `macos-check`・`homebrew-check`・`windows-check`・`windows-installer-check` の最後に、ランナーへ SSH で入れる tmate のセッションを開く（下記） |
 | Inno Setup（`jrsoftware/issrc` のリリース） | Windows のインストーラーのコンパイラ（`packaging/windows/build.ps1` が取得する） |
 
-サードパーティおよび `actions/*`（`actions/checkout`・`actions/upload-artifact`・`actions/download-artifact`）の action はフルコミット SHA に固定し、末尾に `# vN` コメントでタグ相当のバージョンを添える。ziglang は pip の `==` で、Inno Setup は `build.ps1` にバージョンとインストーラーの SHA-256 で固定する。Rust ツールチェインのバージョンはワークフローの `toolchain:` 入力（環境変数 `RUST_TOOLCHAIN`）で決まる。選定理由は [2026-09-25 の log](../log/2026-09-25-release-actions-rationale.md)。どのワークフローも git で push しないので、`actions/checkout` は `persist-credentials: false` にしてトークンを `.git/config` に残さない。
+サードパーティおよび `actions/*`（`actions/checkout`・`actions/upload-artifact`・`actions/download-artifact`）の action はフルコミット SHA に固定し、末尾に `# vN` コメントでタグ相当のバージョンを添える。ziglang は pip の `==` で、Inno Setup は `build.ps1` にバージョンとインストーラーの SHA-256 で固定する。選定理由は [2026-09-25 の log](../log/2026-09-25-release-actions-rationale.md)。どのワークフローも git で push しないので、`actions/checkout` は `persist-credentials: false` にしてトークンを `.git/config` に残さない。
 
 ## macOS の動作確認（`.github/workflows/macos-check.yml`）
 

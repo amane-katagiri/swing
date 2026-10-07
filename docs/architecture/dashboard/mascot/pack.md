@@ -11,7 +11,7 @@
 | `GET /mascots/<id>/<sprite>` | スプライトシート。`<sprite>` はマニフェストの `sprite` そのもの |
 
 - どれもログインが要る（[`security.md#ガード`](../security.md#ガード)）。ほかの `{id}`・`{file}` の組み合わせは `404`。
-- `ui = true` のときだけ、`AppState::new` が `mascots::MascotRegistry::load` で起動時に 1 回読み、マニフェスト・スプライトのバイト列と `index.json` の本文をメモリに持つ（反映の条件は [`../../dashboard.md#起動と終了`](../../dashboard.md#起動と終了)）。
+- `ui = true` のときだけ、`AppState::new` が `mascots::MascotRegistry::load` で起動時に 1 回読み、マニフェスト・スプライトのバイト列と `index.json` の本文をメモリに持つ（反映の条件は [`../../dashboard.md#設定dashboard`](../../dashboard.md#設定dashboard)）。
 - 同梱パック（`web/mascots/<id>/`）はバイナリに埋め込んであり、常に読み込める。
 - `mascots/mod.rs` が読み込みと配信、`mascots/nofollow.rs` がリンクを辿らない open と上限付きの読み込み（`read_limited`）、`mascots/image.rs` がスプライトのヘッダの検証（`check_sprite`）を持つ。
 
@@ -78,7 +78,6 @@
 | `overlays` | | 重ね絵（`blink`・`mouth`） |
 | `lines` | | せりふ |
 
-
 **アニメーション**: 名前は `idle`（待機）・`walk`（歩く）・`talk`（吹き出しを出している間）・`sleep`（寝る）・`surprise`（おしらせが来たとき）・`drag`（つままれている間）・`fall`（落ちている間）。`idle` 以外は省略でき、無いものは `idle` で代用する。各アニメーションは `{frames, fps?, loop?, flip?}`:
 
 - `frames`: 空でない配列（最大 256 要素）。要素はコマ番号（整数、表示時間は `1000 / fps` ms）か `{index, ms?, dx?, dy?}`。`ms` は表示時間（省略時 `1000 / fps`）。どちらの書き方でも、各コマの表示時間は 16〜60000 ms でなければならない。`dx` はそのコマに入ったときに進む横方向の距離（シート上の px、`-frame.width`〜`frame.width`）で、`walk` でだけ使う。符号は無視し、常に目標の方向へ進む。`walk` のどれかのコマに 0 以外の `dx` があれば、歩く距離は `speed` ではなく `dx` で決まる。`dy` はそのコマを描く縦のずれ（シート上の px、下が正、`-frame.height`〜`frame.height`）で、位置は変えない（跳ねる絵などに使う）。吹き出しの点と当たり判定は `dy` ぶん絵と一緒にずれる。
@@ -96,11 +95,11 @@
 | 種類 | 出すとき | 差し込み |
 |---|---|---|
 | `greet` | Desktop 画面を初めて表示したとき（1 回だけ。「ひとりごとを言う」を外していれば出さない） | |
-| `site-stored` | おしらせが 1 件 | `{title}`（`title` をサニタイズして最大 60 文字、無ければ `d`）、`{d}`、`{count}` |
-| `sites-stored-many` | おしらせが 2 件以上 | `{count}` |
+| `site-stored` | ミラーしたサイトの保存のおしらせが 1 件 | `{title}`（`title` をサニタイズして最大 60 文字、無ければ `d`）、`{d}`、`{count}` |
+| `sites-stored-many` | 同じく 2 件以上 | `{count}` |
 | `site-published` | 自分のサイトの公開のおしらせが 1 件 | `{title}`（`title` をサニタイズして最大 60 文字、無ければ `d`）、`{d}`、`{count}` |
-| `sites-published-many` | 自分のサイトの公開のおしらせが 2 件以上 | `{count}` |
-| `replica-added` | 自分のサイトをミラーする人が増えたおしらせが 1 サイト | `{title}`（同上。タイトルが分からなければ `d`）、`{d}`、`{count}` |
+| `sites-published-many` | 同じく 2 件以上 | `{count}` |
+| `replica-added` | 自分のサイトをミラーする人が増えたおしらせが 1 サイト | `{title}`（同上）、`{d}`、`{count}` |
 | `replicas-added-many` | 同じく 2 サイト以上 | `{count}`（サイトの数） |
 | `fetch-error` | 更新の確認に失敗したとき | |
 | `recovered` | 失敗の後に確認できたとき | |

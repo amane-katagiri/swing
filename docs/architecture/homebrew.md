@@ -27,7 +27,7 @@ macOS 向けに、tap `amane-katagiri/swing`（リポジトリ `amane-katagiri/h
 | `install` | `swing` と `SWING.app` を `libexec` に、`swing.example.toml` を `pkgshare` に入れる。`bin/swing` は `bin.write_exec_script opt_libexec/"swing"` で作るスクリプトで、中身は `exec "<prefix>/opt/swing/libexec/swing" "$@"` |
 | `caveats` | `swing service install`・`swing dashboard open`、設定とデータ・ログの場所、`brew upgrade` 後に `swing service install` をやり直すこと、`brew uninstall` の前に `swing service uninstall` を実行すること |
 | `test` | `swing --version` にバージョンが含まれること |
-| `service do` | 無い（下記） |
+| `service do` | 無い。LaunchAgent は `swing service install` が登録する（下記） |
 
 ## パスと `brew upgrade`
 
@@ -43,7 +43,7 @@ macOS 向けに、tap `amane-katagiri/swing`（リポジトリ `amane-katagiri/h
 
 - `swing` を PATH から実行すると、スクリプトが `opt` のパスで本体を exec し、`current_exe()` はそのパスを返す。`swing service install` はこれをシンボリックリンクを解決せずに登録し、トレイもその隣の `SWING.app` で見つける（[`service.md`](service.md#共通)）ので、どちらの plist にも `Cellar` のパスは入らない。
 - `brew upgrade` は動いている `swing up` とトレイを止めない。両方とも古い版のまま動き続け、`swing stop --restart`（プロセス内の再起動）でも入れ替わらない。`swing service install` をもう一度実行すると、両方の LaunchAgent を `bootout` して `bootstrap` し直すので、新しい版で起動し直す。次のログインでも新しい版で起動する。`swing up` が落ちて launchd が起動し直したときも新しい版になる。
-- `swing service install` は、カレントディレクトリに `swing.toml` があるとそれを登録する（[`config.md`](config.md#設定ファイルの場所)）。やり直すときは `swing.toml` の無いディレクトリで実行するか、`--config` を付ける。
+- `swing service install` が登録する設定ファイルは [`config.md`](config.md#設定ファイルの場所) の順で決まる（カレントディレクトリの `swing.toml` が既定の場所より先）。
 - Kubo は Homebrew の `kubo` の `ipfs` を PATH（LaunchAgent の `PATH` に `/opt/homebrew/bin` と `/usr/local/bin` がある）から使う。そのバージョンが `KUBO_VERSION` と違っても警告だけで動く（[`kubo.md`](kubo.md)）。`brew upgrade kubo` の後も、`swing up` を起動し直すまでは古い `ipfs` が動き続ける。リポジトリの移行は起動時の `--migrate=true` に任せる。
 - `brew uninstall swing` は LaunchAgent・設定とデータ（ユーザーごとの既定の場所）・ログ（`~/Library/Logs/swing.log`）を消さない。
 

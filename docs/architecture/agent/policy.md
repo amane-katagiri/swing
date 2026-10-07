@@ -1,6 +1,8 @@
 # ポリシー判定（`policy.rs`）
 
-[`../agent.md`](../agent.md) の子ページ。判定を呼ぶ箇所は [`../agent.md#保存の順序`](../agent.md#保存の順序) と [`../agent.md#sweep`](../agent.md#sweep)。
+[`../agent.md`](../agent.md) の子ページ。判定と取得の上限を使う箇所は [`../agent.md#保存の順序`](../agent.md#保存の順序) と [`../agent.md#sweep`](../agent.md#sweep)。
+
+## 判定の順（`policy::decide`）
 
 `policy::decide` は純粋関数。入力は同サイトの既存版、使用量（他サイトの合計容量、同じ pubkey の他サイトの合計容量とサイト数）、候補（cid, size, created_at）、ポリシー設定、現在時刻。出力は `Decision { store: Option<String>, evict: Vec<String>, reason: String }`。
 
@@ -19,3 +21,11 @@
 `size` 不明の事前判定では 6 を飛ばし、新版を 0 バイトとして 7〜11 を評価する。
 
 間隔（5）は `stored_at` で測る。見送った版は次の poll で再評価される。
+
+## 取得の上限
+
+`policy::fetch_budget` は「保存の順序」の 4・5 で使う取得の上限を、次の最小値として返す。新しい版はどれを evict しても残るので、これを超える内容は取得後の `policy::decide` で必ず skip になる。
+
+- `policy::fetch_limit`（`max_update_size`・`max_per_site`・`max_per_account` の最小値）
+- `max_per_account` から、そのアカウントのほかのサイトの合計を引いた残り
+- `max_total_storage` から、ほかのサイトの合計を引いた残り

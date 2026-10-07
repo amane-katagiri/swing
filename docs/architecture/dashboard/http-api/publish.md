@@ -10,7 +10,7 @@
 
 - `site`（必須）・`url`・`title`・`message`・`nip05`・`check_dotfiles`・`check_size`・`check_unchanged`（省略可）。モードの 4 つは `off`/`warn`/`require` で、省略時は `[publish]` の同名の設定。不正な値は 400 `invalid <パート名>: ...`。
 - テキストのパートは 1 つあたり `MAX_TEXT_FIELD_BYTES`（64 KiB）までで、超えるか UTF-8 でなければ 400。知らない名前のパートは読み捨てる。
-- `site`/`url`/`title` は CLI と同じ規則で検証し、違反は 400。`message` は `MAX_CONTENT_BYTES`（4096 バイト）を超えたら、パートを読んだ時点で 400 `invalid message: ...`。`title` が空白のみなら未指定として扱う。
+- `site`/`url`/`title` は[共通の規則](../../publish.md#段階の順)で検証し、違反は 400。`message` は `MAX_CONTENT_BYTES`（4096 バイト）を超えたら、パートを読んだ時点で 400 `invalid message: ...`。
 - `file`（1 個以上）: 各パートの `filename` がサイトルートからの相対パス（`/` 区切り）。`filename` の無い `file` パートは 400。
 
 パスの検証（パートを受け取りながら順に行い、違反は 400）:
@@ -32,17 +32,17 @@
 1. 多重実行（409 `a publish is already running`）。本体を読む前・一時ディレクトリを作る前に判定するので、409 のときは何もディスクに書かない。排他するのはダッシュボード内で同時に来た publish どうしだけで、同じホスト上の CLI `swing publish` とは排他しない
 2. パートの受信とパスの検証、`site` と `file` の有無（400・413）
 3. `site`/`url`/`title` とモードの 4 つの検証（400）
-4. 展開先が設定ファイル・`[agent].state_dir`・`[kubo].repo` と重ならないか（CLI と同じ。400）
+4. [保護パスの拒否](../../publish.md#保護パスの拒否)（400）
 5. セットアップモード（503 `agent is not configured`）
 6. NIP-05（422）
-7. ドットファイル・サイズ（422）
-8. Kubo と relay の準備（503 `agent is not ready`）→ 前の版の取得と relay の時計の問い合わせ（同時に）→ 時計の確認（400）→ add（失敗は 502）
-9. 同じ内容かの確認 → 署名と送信 → `[publish].keep_versions` を超えた古い版の削除
+7. [ドットファイル・サイズ](../../publish.md#サイトの一覧とローカルの確認)（422）
+8. Kubo と relay の準備（503 `agent is not ready`）→ [前の版と relay の時計](../../publish.md#前の版と-relay-の時計) → [時計の確認](../../publish.md#時計の確認)（400）→ [add](../../publish.md#add-と版の配置)（失敗は 502）
+9. [同じ内容かの確認](../../publish.md#同じ内容かの確認) → [署名と送信](../../publish.md#署名と送信) → [古い版の削除](../../publish.md#古い版の削除)
 
 処理:
 
 - `<state_dir>/upload/` の下に一時ディレクトリ（名前は 16 バイトの乱数の hex）を作り、各 `file` パートをストリーミングで書き込む。一時ディレクトリそのものは再帰せずに作り、同じ名前のものが既にあれば 500 にする。unix ではディレクトリを `0o700`、ファイルを `0o600` で作る。
-- 展開先をサイトのディレクトリとして、CLI の `swing publish`（[`../../cli/publish.md`](../../cli/publish.md)）と同じ処理と判定を上記の順で行う（増えたファイルの確認は除く。画面側が [previous-files](#get-apipublishprevious-filessited) で先に行う）。展開先は 1 回だけ一覧し、その一覧でドットファイル・サイズを判定して、同じ一覧を add する（空のディレクトリは届かない）。relay は agent の接続を使う。受け取ったファイルの一覧に失敗したら 500。
+- 展開先をサイトのディレクトリとして、[publish の共通処理](../../publish.md)を上記の順で行う。増えたファイルの確認はしない（画面側が [previous-files](#get-apipublishprevious-filessited) で先に行う）。空のディレクトリは届かない。relay は agent の接続を使う。受け取ったファイルの一覧に失敗したら 500。
 - 展開先ディレクトリは、成功・失敗のときは応答の前に削除する。タイムアウト（[`../../dashboard.md#タイムアウトsrcdashboardmodrs`](../../dashboard.md#タイムアウトsrcdashboardmodrs)）とクライアントの切断では処理を打ち切ったときに削除を始めるので、削除は応答の後になりうる。取りこぼした分は `up::run` の起動時に `<state_dir>/upload/` ごと掃除する（[`../../up.md`](../../up.md)）。
 - ボディが `[dashboard].max_upload` を超えたら 413（ストリーミング中に超えても打ち切る）。それ以外の multipart の受信エラー（ボディの読み取り自体の失敗を含む）は 400。
 
@@ -57,20 +57,18 @@
   "gateway_url": "…", "files": 3 }
 ```
 
-- `nip05.status` は `off`/`verified`/`mismatch`/`not_applicable`/`error`。`require` で検証が通らなければ、add する前に 422 を返す: `{ "error": "...", "nip05": { "status": "...", "detail": "..." } }`。
-- `checks`: 各項目の `mode` はその回に使ったモード。
-  - `dotfiles`: `status` は `off`（`count` は 0、`paths` は空）/`ok`/`found`。`count` は見つかった件数（ディレクトリは 1 件）、`paths` はその先頭 `LISTED_DOTFILES`（10）件。
+- `nip05.status` は `off`/`verified`/`mismatch`/`not_applicable`/`error`。`detail` は `error` のときだけ粗い分類（`unreachable`/`timeout`/`invalid_response`）が入る（SSRF 対策と合わせて [`../../nip05.md`](../../nip05.md)）。`require` で検証が通らなければ、add する前に 422 を返す: `{ "error": "...", "nip05": { "status": "...", "detail": "..." } }`。
+- `checks`: 各項目の `mode` はその回に使ったモード。判定は[ローカルの確認](../../publish.md#サイトの一覧とローカルの確認)と[同じ内容かの確認](../../publish.md#同じ内容かの確認)。
+  - `dotfiles`: `status` は `off`（`count` は 0、`paths` は空）/`ok`/`found`。`count` は見つかった件数、`paths` はその先頭 `LISTED_DOTFILES`（10）件。
   - `size`: `status` は `off`（`bytes` は `null`）/`ok`/`over`。`bytes` はファイルの大きさの合計、`threshold` は `SIZE_GUIDELINE`（512 MiB）。上の `size`（`dag/stat` の値）とは別物。
   - `unchanged`: `status` は `off`/`changed`/`unchanged`/`no_previous`（relay に前の版が無い）/`unknown`（relay から取れなかった。理由が `detail`）。`previous_cid`・`previous_created_at` は前の版が見つかったときだけ入る。
 - ドットファイル・サイズの `require` が引っかかったら、add する前に 422 を返す: `{ "error": "...", "nip05": {...}, "checks": { "dotfiles": {...}, "size": {...}, "unchanged": null } }`。NIP-05 の 422 には `checks` が付かない。
-- `unchanged` が `unchanged` で `check_unchanged` が `require` なら、add した版を MFS から消し、署名も送信も古い版の削除もせずに 200 を返す。このとき `published` は `false`、`created_at` と `mfs_path` は `null`、`relays` と `pruned` は空、`prune_error` は `null`。`cid`・`size`・`gateway_url` は通常どおり入る。[`/api/activity`](status.md#get-apiactivity) の `latest_published_at` は進まない。版を消せなければ 502。
-- add の後、署名できるまでに失敗したら（`dag/stat` の失敗、署名できない）502 を返し、add した版を MFS から消す（古い版は残す。消せなければその理由もエラーに続ける）。この間にタイムアウトやクライアントの切断で処理を打ち切ったときも、版の削除を始める（削除は応答の後になりうる）。
-- 時計の確認（未来の日付の版が MFS にある・relay から取れた前の版が署名の上限以降の日付で、待たないと置き換えられない・この機械の時計が答えたどの relay よりも進んでいる。判定とメッセージは CLI と同じで [`../../cli/publish.md`](../../cli/publish.md) の 6）に当たったら、何も add せずに 400 `{ "error": "..." }` を返す（`publish::ClockError`）。
-- 前の版は `check_unchanged` が `off` でも取る（`created_at` を決めるのに使う）。
-- 署名できた後は、add した版を消さない（送信の途中で打ち切られたときも）。どの relay にも受理されなければ 502 `no relay accepted the site event; old versions were kept (<relay>: <理由>; …)` を返し（理由を返した relay だけを並べる）、add した版も古い版も残す。
-- `relays[].error` は relay が断った理由。未来すぎる `created_at` を理由に断られたときは CLI と同じ案内（` (the relay thinks the event is dated in the future; check your clock)`）が後ろに付く（そのときの理由は CLI と同じく、案内を足しても 500 文字に収まるよう 429 文字で切る）。
+- `unchanged` が `unchanged` で `check_unchanged` が `require` なら、add した版を消して 200 を返す。このとき `published` は `false`、`created_at` と `mfs_path` は `null`、`relays` と `pruned` は空、`prune_error` は `null`。`cid`・`size`・`gateway_url` は通常どおり入る。[`/api/activity`](status.md#get-apiactivity) の `latest_published_at` は進まない。版を消せなければ 502。
+- add の後、署名できるまでに失敗したら（`dag/stat` の失敗、署名できない）502 を返す。add した版の扱いは[告知できなかった版の後始末](../../publish.md#告知できなかった版の後始末)（打ち切りのときの削除は応答の後になりうる）。
+- `created_at` は[共通の決め方](../../publish.md#created_at-の決め方)。[時計の確認](../../publish.md#時計の確認)に当たったら何も add せずに 400 `{ "error": "..." }`（`publish::ClockError`）、そのための MFS の一覧に失敗したら 502 を返す。
+- どの relay にも受理されなければ 502 `no relay accepted the site event; old versions were kept (<relay>: <理由>; …)` を返す（理由を返した relay だけを並べる）。
+- `relays[].error` は relay が断った理由。未来すぎる `created_at` を理由に断られたときは[案内](../../publish.md#署名と送信)が後ろに付く。
 - 古い版の削除に失敗したときは `prune_error` に理由が入るだけで、応答は成功のまま。
-- `created_at`（サイトイベントの `created_at` と MFS の版のディレクトリ名）の決め方は CLI と同じで、現在時刻・MFS にある同じサイトの最大の版 + 1・relay から取れた前の版の `created_at` + 1 の最大になる。MFS の版か前の版がその値を署名の上限より先にするときは、上の時計の確認で 400 を返す（[`../../cli/publish.md`](../../cli/publish.md) の 6）。そのための MFS の一覧に失敗したら 502。
 - `files` は受け取ったファイル数。
 
 ## GET /api/publish/sites
@@ -87,7 +85,7 @@
 
 ## GET /api/publish/previous-files?site=<d>
 
-公開画面が、アップロードする前に増えたファイルを出すために使う。CLI の[増えたファイルの確認](../../cli/publish.md)と同じく、relay から自分の pubkey・この `d` の最新のサイトイベントを取り、その CID を Kubo でオフラインに一覧する（`publish::PreviousFiles::load`）。比べるのはブラウザ側で、サーバは一覧を返すだけ。`/api/publish/upload` はこの確認を経たかどうかを見ない。
+公開画面が、アップロードする前に増えたファイルを出すために使う。relay から自分の pubkey・この `d` の最新のサイトイベントを取り、[前の版のファイル一覧](../../publish.md#前の版のファイル一覧)を返す（`publish::PreviousFiles::load`）。比べるのはブラウザ側で、サーバは一覧を返すだけ。`/api/publish/upload` はこの確認を経たかどうかを見ない。
 
 - `site` が無ければ 400 `missing site`、[`d` の条件](../../nostr.md#検証)を満たさなければ 400 `invalid site: ...`。
 - 判定の順は `site` の検証（400）→ relay の同時実行の空き（503）→ relay の準備（503）→ relay から前の版を取る → Kubo の準備（503）→ Kubo で一覧。relay の同時実行の枠（親ページ）は relay から取る間だけ使う。
@@ -97,5 +95,5 @@
 ```
 
 - `status` は `listed`（一覧できた）/`no_previous`（relay に前の版が無い）/`unknown`（relay から取れなかった、または Kubo で一覧できなかった。理由が `detail`）。`listed` 以外では `previous_cid`・`previous_created_at` は `null`、`files` は空。
-- `files` はファイルのパス（ディレクトリは含まない）のバイト順。一覧の条件と上限は CLI と同じ（[`../../cli/publish.md`](../../cli/publish.md) の 5）。
+- `files` はファイルのパス（ディレクトリは含まない）のバイト順。
 - relay や Kubo が失敗しても 200 の `unknown` で返す。

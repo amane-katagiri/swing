@@ -41,7 +41,7 @@
 
 `created_at` の未来ずれ許容は `nostr::MAX_FUTURE_SKEW`（900 秒）。`nostr::plausible_at(created_at, now)` がこれを超えるかどうかを判定する。保存の可否（`policy::decide`）だけでなく、「現在の版」やその時点で有効な Follow Set をどれとして選ぶかにも同じ基準を使う（`select_latest`・`choose_follow_set`・`newest_by_address`・`fetch_follow_set(s)` など。Follow Set の選び方は [`agent.md`](agent.md#follow-set-の選び方)）。
 
-許容内の版どうしの新しさは、Follow Set もサイトごとの最新のサイトイベント（`select_latest`）も NIP-01 の置き換え規則（[`../protocol.md`](../protocol.md#4-サイトイベント)）で比べる。比べ方は `nostr/mod.rs` の 1 か所（`replaceable_is_newer`）にあり、アドレスごとに最新の 1 件を選ぶ処理（未来ずれの除外を含む）は `newest_per_key` 1 つを `newest_by_address`・`select_latest`・`fetch_follow_set` が共有する。`SiteEvent::id` にイベントの `id` を持つ。
+許容内の版どうしの新しさは、Follow Set もサイトごとの最新のサイトイベント（`select_latest`）も NIP-01 の置き換え規則（[`../protocol.md`](../protocol.md#4-サイトイベント)）で比べる。比べ方は `nostr/mod.rs` の `replaceable_is_newer` 1 か所にあり、アドレスごとに最新の 1 件を選ぶ処理（未来ずれの除外を含む）は `newest_per_key` にまとめて `newest_by_address`・`select_latest` が使う。
 
 ## レプリカ報告の信頼度（`replicas::Tier`）
 
@@ -60,3 +60,13 @@
 - `collect_reports` は、`MAX_REPORTS_PER_SITE` で切り詰める前に、サイトごとの報告を `(tier, created_at 降順, reporter の hex)` の順に並べ替える。tier が高い（`Author` → `Chosen` → `Other`）報告者ほど、`created_at` が古くても切り詰めで残る。
 - 表示用の報告者一覧（`replicas::replicas_of`。`swing replicas` と `/api/replicas` の `reporters`）は `(tier, 最新版を持つものが先, reporter の hex)` の順。
 - カウント（`replicas::count_replicas`）: 現在の版の CID を持つ報告を tier で分け、`Author`・`Chosen` の数を `ReplicaCounts.trusted`、`Other` の数を `ReplicaCounts.unverified` にする。`replicas::collect` は `trusted` を `SiteReplicas.replicas`（CLI・DTO では単に `replicas`）に、`unverified` を `SiteReplicas.unverified` に入れる。表示は `replicas::format_replica_counts`（`"3"` / `"3 (+12 unverified)"`。`unverified` が 0 なら括弧を出さない）。
+
+### 一覧の集計（`replicas::collect`）
+
+`swing replicas` と `/api/replicas` が共有する。作者は呼び出し元が渡す（どちらも省略時は自分の pubkey）。
+
+1. 作者ごとにサイトごとの最新のサイトイベントを取り（`fetch_latest_sites`）、1 作者あたり `d` の昇順で先頭 `MAX_SITES_PER_AUTHOR_LISTED` 件までにする（`nostr::cap_sites_per_author`。[取得と表示の上限](nostr/fetch.md#定数)）。
+2. `fetch_chosen` で信頼する報告者を集め、`fetch_for_sites` で報告を取って上の規則で数える。サイトごとの報告は `MAX_REPORTS_PER_SITE` で切り詰め、落とした件数を `dropped` に入れる。
+3. 作者ごとにサイトを `d` の昇順に並べる。サイトイベントの無い作者も空の一覧で入る。
+
+サイトイベントか Follow Set の取得に失敗したら全体がエラーになる（報告の取得は上記のとおり、2 系統が両方失敗したときだけ）。

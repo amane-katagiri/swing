@@ -2,7 +2,7 @@
 
 [`../architecture.md`](../architecture.md) の一部。bind・起動・終了の順序と待ち時間は `agent::run_until` の [全体の流れ](agent.md#全体の流れ) と [シグナルと終了](agent.md#シグナルと終了)、managed Kubo 側の設定は [`kubo.md`](kubo.md#適用する-kubo-設定kuboapply_config)、compose の外部 Kubo コンテナでの同等設定は [`docker.md`](docker.md#kubo-の設定)。
 
-ホスト名での振り分けと Kubo gateway へのプロキシを axum で agent プロセス内に持つ。gateway のサーバタスクが先に終了（panic 等）しても、error ログを出すだけで agent は止めない。
+ホスト名での振り分けと Kubo gateway へのプロキシを axum で agent プロセス内に持つ。許可ホストの判定以外の挙動（応答の中身）は Kubo の gateway のもので、その設定と公開の注意は [`kubo.md#kubo-の-gatewaynofetch`](kubo.md#kubo-の-gatewaynofetch)。gateway のサーバタスクが先に終了（panic 等）しても、error ログを出すだけで agent は止めない。
 
 ## 設定（`[gateway]`）
 
@@ -53,7 +53,3 @@
 ### HTTP クライアント（`gateway::client`）
 
 `reqwest::Client`。リダイレクトは追わない、プロキシ環境変数を無視する、接続タイムアウト 10 秒、リクエスト全体のタイムアウトは無し（応答ヘッダーまでの待ちは上記の `UPSTREAM_HEADER_TIMEOUT`）。
-
-## Kubo 側との関係
-
-許可ホストの判定以外の挙動（応答の中身）は Kubo の gateway のもの。Kubo の gateway の設定と公開の注意は [`kubo.md#kubo-の-gatewaynofetch`](kubo.md#kubo-の-gatewaynofetch)。

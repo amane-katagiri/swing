@@ -9,8 +9,7 @@
 ```
 
 - `gateway`: `[dashboard].gateway` が空なら `null`。
-- `started_at`: `up::run` の回ごとに `AppState` を作った時刻（Unix 秒）。`instance` と同じく、プロセス内の再起動でも更新される。
-- `instance`: `up::run` の回ごと（`AppState` を作るたび）に変わるランダムな 16 桁の 16 進文字列。プロセス内の再起動（`POST /api/restart`）でも変わる。Web UI が再起動の前後を見分けるのに使う。`swing stop` は同じ値を [`POST /api/identity`](session.md#post-apiidentity) から読む。
+- `started_at`・`instance`: `up::run` の回ごとに `AppState` を作った時刻（Unix 秒）と、そのたびに作るランダムな 16 桁の 16 進文字列。プロセス内の再起動（`POST /api/restart`）でも変わる。Web UI は `instance` で再起動の前後を見分け、`swing stop` は同じ値を [`POST /api/identity`](session.md#post-apiidentity) から読む。
 - `max_upload`: `[dashboard].max_upload` のバイト数。
 - `signer`: 署名の方法。`remote` は NIP-46 の署名アプリを使っているかどうか、`relays` は署名アプリとのやりとりに使っている relay（秘密鍵なら空）、`last_failure` は署名アプリへの最後のリクエストが失敗したときの時刻とメッセージ（成功していれば・秘密鍵なら `null`。[`../../signer.md`](../../signer.md)）。
 - `setup`: 鍵も署名アプリも未設定（セットアップモード。[`../../up.md#セットアップモード鍵未設定`](../../up.md#セットアップモード鍵未設定)）かどうか。そのときは `pubkey`／`npub`／`signer` も `null`。
@@ -43,7 +42,7 @@
 
 ## GET /api/sites
 
-`mirror::collect_sites` の結果（CLI の `swing sites` と同じ集計。[`../../cli/views.md#sites`](../../cli/views.md#sites)）。
+`mirror::collect_sites` の結果。集計（Follow Set の選び方、`stored_size`、レプリカ数とその取得失敗時の扱い、unfollowed、件数の上限）は [`../../mirror.md`](../../mirror.md#sites-の集計mirrorcollect_sites)。
 
 ```json
 { "follow_set": { "found": true, "note": null },
@@ -52,17 +51,15 @@
   "unfollowed": { "remove_on_unfollow": true, "accounts": [ { "...": "同じ形。ただし url・title・message・replicas・unverified_replicas は常に null、stored は常に true、stored_size は size と同じ値" } ] } }
 ```
 
-- `follow_set.note`: CLI が括弧付きで出す注記から括弧を外した文字列。無ければ `null`。
-- `nip05`・`title`・`message`・`size` は値が無ければ `null`。`title` は作者の自己申告で受信側は信頼しない（[`protocol.md` 第 4 節](../../../protocol.md#4-サイトイベント)）。`title` と `message`（生の `content`）のサニタイズ・切り詰めはフロントの責務。
-- `size` はイベントの自己申告の `size` タグ。`stored_size` は `cid` と一致する `state.json` の版の大きさ（保存時に `dag/stat` で測った値）で、一致する版が無ければ `null`。版ごとの重複排除込みの実測合計は `/api/status` の `sites[].actual` にしかない。
-- `stored_at`: `stored_size` と同じ版を保存した時刻。一致する版が無ければ `null`。
-- `replicas`・`unverified_replicas`: 信頼できる tier の報告者の数と、それ以外の数（[`../../nostr.md#レプリカ報告の信頼度replicastier`](../../nostr.md#レプリカ報告の信頼度replicastier)）。レプリカ報告の取得に失敗すると全サイトで両方 `null` になり、`replicas_error` に理由が入る。
+- `follow_set.note`: [使う Follow Set](../../mirror.md#使う-follow-set) の注記から括弧を外した文字列。無ければ `null`。
+- `nip05`・`title`・`message`・`size`・`stored_size`・`stored_at` は値が無ければ `null`。`title` は作者の自己申告で受信側は信頼しない（[`protocol.md` 第 4 節](../../../protocol.md#4-サイトイベント)）。`title` と `message`（生の `content`）のサニタイズ・切り詰めはフロントの責務。
+- 版ごとの重複排除込みの実測合計は `/api/status` の `sites[].actual` にしかない。
+- `replicas`・`unverified_replicas`: `ReplicaCounts` の `trusted` と `unverified`（[`../../nostr.md#レプリカ報告の信頼度replicastier`](../../nostr.md#レプリカ報告の信頼度replicastier)）。レプリカ報告の取得に失敗すると全サイトで両方 `null` になり、`replicas_error` に理由が入る。
 - `gateway_url`: `stored` が true かつ gateway 設定がある版だけに付く。
-- `accounts[].sites` は 1 アカウントあたり `d` の昇順で先頭 `MAX_SITES_PER_AUTHOR_LISTED` 件まで、Follow Set の対象は先頭 `MAX_FOLLOW_SET_ENTRIES` 件まで（[取得と表示の上限](../../nostr/fetch.md)）。
 
 ## GET /api/status
 
-`health::collect_status` の結果（CLI の `swing status` と同じ集計。[`../../cli/views.md#status`](../../cli/views.md#status)）。relay には接続しない。[起動時の突き合わせ](../../agent.md#起動時の突き合わせ)と同じ検査をするので重い。
+`health::collect_status` の結果。判定・実容量・`garbage`・`problems` の数え方は [`../../health.md`](../../health.md#status-の集計healthcollect_status)。relay には接続しない。保存量に比例して重い。
 
 ```json
 { "versions": [
@@ -73,7 +70,7 @@
   "garbage": [ { "path": "/swing/…", "list_failed": false, "list_failed_reason": null } ], "problems": 0 }
 ```
 
-- `sites`: サイトごとの実容量。`actual` はそのサイトの全版をまとめた `dag/stat` の `TotalSize` で、版どうしで共有しているブロックは 1 回だけ数える。測れなかったサイトは `null`。`actual_bytes` は `actual` の合計で、`null` のサイトが 1 つでもあれば `null`。
-- `health`: `ok`/`missing`/`cid_mismatch`/`incomplete`/`check_failed`/`invalid_key`（CLI の判定を snake_case にしたもの）。`ok` 以外は `detail` に理由が入る。`invalid_key` は `state.json` のキーが `<pubkey hex>:<d>` の形式として不正だった版で、`pubkey`・`npub`・`d`・`path`・`size`・`created_at` は `null`、`cid` にはその版の CID、`detail` に元のキー文字列が入る。
+- `sites[].actual`: サイトの実容量。測れなかったサイトは `null`。`actual_bytes` はその合計で、`null` のサイトが 1 つでもあれば `null`。
+- `health`: `ok`/`missing`/`cid_mismatch`/`incomplete`/`check_failed`/`invalid_key`。`ok` 以外は `detail` に理由が入る。`invalid_key` はキーが `<pubkey hex>:<d>` として読めなかった版で、`pubkey`・`npub`・`d`・`path`・`size`・`created_at` は `null`、`cid` にはその版の CID、`detail` に元のキー文字列が入る。
 - 問題があっても HTTP は常に 200（`problems` の件数で分かる）。
 - `garbage[].list_failed_reason`: 一覧に失敗したディレクトリ（`list_failed: true`）だけ理由の文字列が入る。

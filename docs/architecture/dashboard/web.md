@@ -22,7 +22,7 @@
 | `settings-notify.js` | Settings 画面の「通知」パネル（`BrowserNotifySettings`） | `notify-settings.js`・`util.js`・`i18n.js` |
 | `sites.js` / `webring.js` / `publish.js` / `settings.js` / `setup.js` / `login.js` | 各画面（[`views.md`](views.md)、Publish は [`views/publish.md`](views/publish.md)）。`webring.js` は `graph.js`・`notify-settings.js`、`publish.js` と `setup.js` は `pairing.js`、`settings.js` は `stats.js`・`settings-notify.js`、`setup.js` は `publish.js` の `loadOverview` も使う | 上記 |
 | `boot.js` | 描画前に同期実行する小さな通常スクリプト（下記「共通の UI 部品」の読み込み時） | なし |
-| `app.js` | ルーター兼エントリポイント。`<script type="module" src="/app.js">` から読み込まれる | `i18n.js`・`storage.js`・`util.js`・各画面（`sites.js`・`webring.js`・`publish.js`・`settings.js`・`setup.js`・`login.js`）・`settings-notify.js`・`stats.js`・`desktop.js`・`desktop-system-settings.js`（`startupView`） |
+| `app.js` | ルーター兼エントリポイント（`<script type="module" src="/app.js">`） | 各画面と上記の共有モジュール、`desktop.js`・`desktop-system-settings.js`（`startupView`） |
 
 Desktop 画面専用のモジュール（`desktop*.js`）は [`desktop.md#構成`](desktop.md#構成)。
 
