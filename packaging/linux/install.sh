@@ -169,14 +169,19 @@ private_group() {
   return 1
 }
 
-check_dir() {
+dir_problem() {
   target=$1
+  PROBLEM=
+  LOOSE=
   me=$(id -u)
   d=$target
   while [ ! -e "$d" ] && [ ! -L "$d" ]; do
     d=$(dirname -- "$d")
   done
-  real=$(cd -P -- "$d" 2>/dev/null && pwd -P) || die "$d is not a directory"
+  real=$(cd -P -- "$d" 2>/dev/null && pwd -P) || {
+    PROBLEM="$d is not a directory"
+    return 1
+  }
   for p in "$d" "$real"; do
     leaf=
     if [ "$d" = "$target" ]; then
@@ -186,7 +191,10 @@ check_dir() {
       if [ ! -L "$p" ]; then
         # shellcheck disable=SC2046
         set -- $(ls -ldn -- "$p")
-        [ "$3" = 0 ] || [ "$3" = "$me" ] || die "refusing to use $target: $p is owned by another user"
+        if [ "$3" != 0 ] && [ "$3" != "$me" ]; then
+          PROBLEM="$p is owned by another user"
+          return 1
+        fi
         loose=
         case $1 in
           ????????w*) loose=1 ;;
@@ -200,7 +208,9 @@ check_dir() {
             ?????????[tT]*) sticky=1 ;;
           esac
           if [ -n "$leaf" ] || [ -z "$sticky" ]; then
-            die "refusing to use $target: $p is writable by its group or other users"
+            PROBLEM="$p is writable by its group or other users"
+            LOOSE=1
+            return 1
           fi
         fi
       fi
@@ -209,6 +219,17 @@ check_dir() {
       p=$(dirname -- "$p")
     done
   done
+}
+
+check_dir() {
+  dir_problem "$1" && return 0
+  if [ -n "$LOOSE" ]; then
+    PROBLEM="$PROBLEM; install under a prefix only you or root can write to, for example --prefix /opt/swing"
+    if [ -f "$LIB/manifest" ]; then
+      PROBLEM="$PROBLEM, after removing the install in $PREFIX with: install.sh --uninstall --prefix $PREFIX"
+    fi
+  fi
+  die "refusing to use $1: $PROBLEM"
 }
 
 manifest_entries() {
@@ -468,8 +489,12 @@ confirm_purge() {
 
 do_uninstall() {
   [ -f "$LIB/manifest" ] || die "no installation found in $LIB"
-  check_dir "$LIB"
-  check_dir "$BIN"
+  RUN=$LIB/swing
+  # Removing our own files from a loose directory is safe, but running a binary someone else could have replaced is not.
+  if ! dir_problem "$LIB"; then
+    warn "$PROBLEM, so $RUN will not be run"
+    RUN=
+  fi
 
   data=$(data_dir)
   if [ -n "$PURGE" ]; then
@@ -482,8 +507,8 @@ do_uninstall() {
 
   if [ -f "$SYSTEM_UNIT" ] && [ -z "$FORCE" ]; then
     code=0
-    if [ -x "$LIB/swing" ]; then
-      "$LIB/swing" service status --system --points-into "$LIB" >/dev/null 2>&1 || code=$?
+    if [ -n "$RUN" ] && [ -x "$RUN" ]; then
+      "$RUN" service status --system --points-into "$LIB" >/dev/null 2>&1 || code=$?
     fi
     if [ "$code" -ne 4 ]; then
       die "a system service exists; run 'sudo $LIB/swing service uninstall --system' first, or use --force"
@@ -494,8 +519,10 @@ do_uninstall() {
   unit=$(user_unit)
   if [ -f "$unit" ]; then
     info "removing the swing service if it runs swing from $LIB"
-    if [ -x "$LIB/swing" ]; then
-      "$LIB/swing" service uninstall --only-from "$LIB" || die "swing service uninstall failed; nothing was removed"
+    if [ -z "$RUN" ]; then
+      die "$unit exists and $LIB/swing will not be run to check it; remove the service with 'systemctl --user disable --now swing' and '$unit' if it runs swing from $LIB, then run this again; nothing was removed"
+    elif [ -x "$RUN" ]; then
+      "$RUN" service uninstall --only-from "$LIB" || die "swing service uninstall failed; nothing was removed"
     else
       warn "$unit exists but $LIB/swing is missing; remove the service by hand"
     fi

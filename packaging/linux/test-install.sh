@@ -484,6 +484,58 @@ else
 fi
 chmod 755 "$H/sticky/p/lib/swing"
 
+echo "--- an install in a directory that became writable by others"
+new_env loose
+mkdir "$H/loose"
+run sh "$INSTALL" --prefix "$H/loose/p" >"$H/out" 2>&1 || fail "install before the parent is loosened exits 0"
+chmod 777 "$H/loose"
+if REL=v0.2.0 run sh "$INSTALL" --prefix "$H/loose/p" >"$H/out" 2>&1; then
+  fail "an upgrade under a loosened parent is refused"
+else
+  pass "an upgrade under a loosened parent is refused"
+fi
+check "upgrade refusal suggests a private prefix" contains "$H/out" "--prefix /opt/swing"
+check "upgrade refusal suggests uninstalling first" contains "$H/out" "install.sh --uninstall --prefix $H/loose/p"
+check "binary not upgraded" [ "$(run "$H/loose/p/lib/swing/swing" --version)" = "swing 0.1.0" ]
+unit_for "$H/.config/systemd/user/swing.service" "$H/loose/p/lib/swing/swing"
+: >"$FAKE_LOG"
+if run sh "$INSTALL" --uninstall --prefix "$H/loose/p" >"$H/out" 2>&1; then
+  fail "uninstall with a user service under a loosened parent stops"
+else
+  pass "uninstall with a user service under a loosened parent stops"
+fi
+check "service check not run from a loosened directory" lacks "$FAKE_LOG" "swing service"
+check "nothing removed while a user service exists" [ -x "$H/loose/p/lib/swing/swing" ]
+rm -f "$H/.config/systemd/user/swing.service"
+out=$(run sh "$INSTALL" --uninstall --prefix "$H/loose/p" 2>&1) || {
+  echo "$out"
+  fail "uninstall under a loosened parent exits 0"
+}
+check "uninstall under a loosened parent warns" sh -c "printf '%s' \"\$1\" | grep -q 'will not be run'" _ "$out"
+check "files removed under a loosened parent" absent "$H/loose/p/lib/swing"
+check "symlink removed under a loosened parent" absent "$H/loose/p/bin/swing"
+check "swing not run during uninstall from a loosened directory" lacks "$FAKE_LOG" "swing service"
+if [ -n "$delegated_gid" ]; then
+  mkdir "$H/staff"
+  run sh "$INSTALL" --prefix "$H/staff/p" >"$H/out" 2>&1 || fail "install before the parent is delegated exits 0"
+  chgrp "$delegated_gid" "$H/staff"
+  chmod 2775 "$H/staff"
+  run sh "$INSTALL" --uninstall --prefix "$H/staff/p" >"$H/out" 2>&1 || fail "uninstall under a root-owned parent writable by its group exits 0"
+  check "files removed under a root-owned parent writable by its group" absent "$H/staff/p/lib/swing"
+  mkdir "$H/leaf"
+  run sh "$INSTALL" --prefix "$H/leaf/p" >"$H/out" 2>&1 || fail "install before lib/swing is delegated exits 0"
+  chgrp "$delegated_gid" "$H/leaf/p/lib/swing"
+  chmod 2775 "$H/leaf/p/lib/swing"
+  if REL=v0.2.0 run sh "$INSTALL" --prefix "$H/leaf/p" >"$H/out" 2>&1; then
+    fail "a root-owned lib/swing writable by its group is refused"
+  else
+    pass "a root-owned lib/swing writable by its group is refused"
+  fi
+  check "refusal names lib/swing" contains "$H/out" "$H/leaf/p/lib/swing is writable by its group or other users"
+else
+  echo "skip root-owned directories writable by their group (not running as root)"
+fi
+
 echo "--- bad usage"
 new_env usage
 check "unknown option fails" sh -c "! env HOME='$H' sh '$INSTALL' --nope >/dev/null 2>&1"
