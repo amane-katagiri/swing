@@ -62,22 +62,18 @@ pub fn usage(pid: u32) -> Option<ProcessUsage> {
 
 #[cfg(windows)]
 pub fn usage(pid: u32) -> Option<ProcessUsage> {
-    use windows_sys::Win32::Foundation::{CloseHandle, FILETIME};
+    use windows_sys::Win32::Foundation::FILETIME;
     use windows_sys::Win32::System::ProcessStatus::{
         GetProcessMemoryInfo, PROCESS_MEMORY_COUNTERS,
     };
-    use windows_sys::Win32::System::Threading::{
-        GetProcessTimes, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION,
-    };
+    use windows_sys::Win32::System::Threading::GetProcessTimes;
 
     fn hundred_nanos(t: FILETIME) -> u64 {
         (u64::from(t.dwHighDateTime) << 32) | u64::from(t.dwLowDateTime)
     }
 
-    let handle = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) };
-    if handle.is_null() {
-        return None;
-    }
+    let process = crate::proc::ProcessHandle::open(pid)?;
+    let handle = process.raw();
     let zero = FILETIME {
         dwLowDateTime: 0,
         dwHighDateTime: 0,
@@ -96,7 +92,6 @@ pub fn usage(pid: u32) -> Option<ProcessUsage> {
         ) != 0
             && GetProcessMemoryInfo(handle, &raw mut memory, size) != 0
     };
-    unsafe { CloseHandle(handle) };
     if !ok {
         return None;
     }
