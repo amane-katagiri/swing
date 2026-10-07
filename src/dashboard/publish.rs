@@ -1,7 +1,6 @@
 use axum::Json;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
-use tokio::sync::MutexGuard;
 
 use crate::config;
 use crate::mfs::MfsLayout;
@@ -11,6 +10,7 @@ use crate::publish;
 use super::AppState;
 use super::dto;
 use super::error::{ApiError, internal, upstream};
+use super::locks::PublishLock;
 
 pub(super) struct PublishFields {
     pub site: String,
@@ -47,16 +47,10 @@ async fn run_publish_nip05(
     Ok(dto::nip05_result_dto(&outcome.result))
 }
 
-pub(super) struct PublishLock<'a> {
-    _guard: MutexGuard<'a, ()>,
-}
-
 pub(super) fn try_lock_publish(state: &AppState) -> Result<PublishLock<'_>, ApiError> {
     state
-        .publish_lock
-        .try_lock()
-        .map(|guard| PublishLock { _guard: guard })
-        .map_err(|_| ApiError::Conflict("a publish is already running".to_string()))
+        .try_lock_publish()
+        .ok_or_else(|| ApiError::Conflict("a publish is already running".to_string()))
 }
 
 pub(super) async fn run_publish(

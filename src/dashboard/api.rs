@@ -205,7 +205,7 @@ pub async fn mirror_add(
     AppJson(req): AppJson<MirrorKeysRequest>,
 ) -> Result<Json<dto::MirrorChangeDto>, ApiError> {
     validate_keys(&req.keys)?;
-    let _writes = state.mirror_writes.lock().await;
+    let _writes = state.lock_mirror_writes().await;
     let relay = state.require_relay().await?;
     let change = mirror::apply_add(&relay, &state.config, &req.keys)
         .await
@@ -218,7 +218,7 @@ pub async fn mirror_remove(
     AppJson(req): AppJson<MirrorKeysRequest>,
 ) -> Result<Json<dto::MirrorChangeDto>, ApiError> {
     validate_keys(&req.keys)?;
-    let _writes = state.mirror_writes.lock().await;
+    let _writes = state.lock_mirror_writes().await;
     let relay = state.require_relay().await?;
     let change = mirror::apply_remove(&relay, &state.config, &req.keys)
         .await
@@ -348,7 +348,7 @@ pub async fn update_config(
     State(state): State<Arc<AppState>>,
     AppJson(req): AppJson<UpdateConfigRequest>,
 ) -> Result<Json<dto::ConfigDto>, ApiError> {
-    let _writes = state.config_writes.lock().await;
+    let _writes = state.lock_config_writes().await;
     let config = Arc::clone(&state.config);
     let updated =
         blocking(move || settings::update(&config, &req.items).map_err(settings_error)).await?;

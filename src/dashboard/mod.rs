@@ -4,6 +4,7 @@ mod config_dto;
 pub(crate) mod dto;
 mod error;
 pub mod guard;
+mod locks;
 mod mascots;
 mod publish;
 mod session;
@@ -25,7 +26,7 @@ use axum::http::StatusCode;
 use axum::routing::{get, post};
 use nostr_sdk::prelude::{PublicKey, Timestamp};
 use tokio::net::TcpListener;
-use tokio::sync::{Mutex, Notify, RwLock, Semaphore, oneshot};
+use tokio::sync::{MutexGuard, Notify, RwLock, Semaphore, oneshot};
 use tower_http::timeout::TimeoutLayer;
 use tracing::info;
 
@@ -43,34 +44,27 @@ const UPLOAD_TIMEOUT: Duration = Duration::from_secs(30 * 60);
 const INSTANCE_ID_BYTES: usize = 8;
 const RELAY_QUERY_PERMITS: usize = 4;
 
-#[derive(Default)]
-pub struct ConfigWrites {
-    pub setup_done: bool,
-}
-
 pub struct AppState {
     relay: RwLock<Option<Arc<RelayClient>>>,
     ipfs: RwLock<Option<IpfsClient>>,
-    pub config: Arc<Config>,
+    config: Arc<Config>,
     display_config: RwLock<Arc<Config>>,
-    pub notify: Arc<Notify>,
-    pub started_at: u64,
-    pub instance: String,
-    pub publish_lock: Mutex<()>,
-    pub mirror_writes: Mutex<()>,
+    notify: Arc<Notify>,
+    started_at: u64,
+    instance: String,
+    locks: locks::Locks,
     relay_queries: Semaphore,
-    pub config_writes: Mutex<ConfigWrites>,
-    pub own_pubkey: Option<PublicKey>,
-    pub signer: Option<Signer>,
-    pub pairing: std::sync::Mutex<Option<Pairing>>,
-    pub desktop: Option<DesktopAssets>,
+    own_pubkey: Option<PublicKey>,
+    pub(crate) signer: Option<Signer>,
+    pairing: std::sync::Mutex<Option<Pairing>>,
+    desktop: Option<DesktopAssets>,
     mascots: Option<mascots::MascotRegistry>,
-    pub exit: ExitRequest,
-    pub restart_required: std::sync::atomic::AtomicBool,
+    exit: ExitRequest,
+    restart_required: std::sync::atomic::AtomicBool,
     token: std::sync::RwLock<String>,
-    pub login_codes: LoginCodes,
-    pub stats: Arc<stats::Recorder>,
-    pub activity: Arc<Activity>,
+    login_codes: LoginCodes,
+    pub(crate) stats: Arc<stats::Recorder>,
+    pub(crate) activity: Arc<Activity>,
 }
 
 impl AppState {
@@ -103,10 +97,8 @@ impl AppState {
             notify,
             started_at: Timestamp::now().as_secs(),
             instance: auth::random_hex(INSTANCE_ID_BYTES),
-            publish_lock: Mutex::new(()),
-            mirror_writes: Mutex::new(()),
+            locks: locks::Locks::default(),
             relay_queries: Semaphore::new(RELAY_QUERY_PERMITS),
-            config_writes: Mutex::new(ConfigWrites::default()),
             own_pubkey,
             signer,
             pairing: std::sync::Mutex::new(None),
@@ -119,6 +111,18 @@ impl AppState {
             stats: Arc::default(),
             activity: Arc::default(),
         })
+    }
+
+    fn try_lock_publish(&self) -> Option<locks::PublishLock<'_>> {
+        self.locks.try_publish()
+    }
+
+    async fn lock_mirror_writes(&self) -> locks::MirrorWrites<'_> {
+        self.locks.mirror_writes().await
+    }
+
+    async fn lock_config_writes(&self) -> MutexGuard<'_, locks::ConfigWrites> {
+        self.locks.config_writes().await
     }
 
     pub fn token(&self) -> String {
@@ -365,7 +369,7 @@ mod tests {
     #[tokio::test]
     async fn mirror_changes_wait_for_the_one_in_progress() {
         let state = test_state();
-        let held = state.mirror_writes.lock().await;
+        let held = state.lock_mirror_writes().await;
         let key = nostr_sdk::prelude::Keys::generate().public_key().to_hex();
         let req = Request::builder()
             .method("POST")

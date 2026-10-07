@@ -14,7 +14,8 @@ use crate::auth::{create_private_dir_all_io, create_private_dir_io};
 use super::AppState;
 use super::dto;
 use super::error::{ApiError, internal};
-use super::publish::{PublishFields, PublishLock, PublishOutcome, run_publish, try_lock_publish};
+use super::locks::PublishLock;
+use super::publish::{PublishFields, PublishOutcome, run_publish, try_lock_publish};
 
 pub const MAX_UPLOAD_FILES: usize = 10_000;
 pub const MAX_PATH_SEGMENTS: usize = 32;
@@ -633,7 +634,7 @@ mod tests {
                 ("file", Some("index.html"), b"<html></html>"),
             ],
         );
-        let publishing = state.publish_lock.try_lock().unwrap();
+        let publishing = state.try_lock_publish().unwrap();
         let resp = call(
             router(Arc::clone(&state)),
             multipart_request("/api/publish/upload", boundary, body),

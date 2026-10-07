@@ -21,7 +21,7 @@ Follow Set が無ければ `title: null`、`members: []`。`note` は relay か�
 - `changed`: 実際に追加・削除したもの。`unchanged`: 既に追加済み／もともと未登録で no-op だったもの。
 - 変更が無ければ `published: false`、`relays: []`。`published: true` なのにどの relay にも受理されなければ 502。
 - 成功（1 relay 以上が accept）したら agent に即時 refresh を促す。
-- 現在の Follow Set の取得から発行までを、`mirror/add`・`mirror/remove` どうしで 1 件ずつ順に行う（`AppState::mirror_writes`）。
+- 現在の Follow Set の取得から発行までを、`mirror/add`・`mirror/remove` どうしで 1 件ずつ順に行う（`AppState::lock_mirror_writes`。ロックは `dashboard::locks::Locks` の中にあり、このメソッドからしか取れない）。
 - `note`: relay から取れた Follow Set より `state.json` に保存済みの版を使った場合の注記（`(relays returned an older follow set; ...)` / `(follow set not found on relays; ...)`）。括弧付きの文字列そのまま、無ければ `null`。
 - `follow_set_found`: 操作前に Follow Set が見つかっていたか。
 - `add` の結果の `p` タグのうち公開鍵としてパースできたものの数が `MAX_FOLLOW_SET_ENTRIES`（500。[取得と表示の上限](../../nostr/fetch.md)）を超えるときは publish せず 409（`{"error": "would grow the follow set to <N> entries, over the 500-entry limit; remove some first"}`）。それ以外の失敗は 502。
