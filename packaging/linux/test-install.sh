@@ -62,6 +62,7 @@ make_script() {
   sed \
     -e "s|^RELEASES_URL=.*|RELEASES_URL=file://$ROOT/releases|" \
     -e "s|^KUBO_BASE_URL=.*|KUBO_BASE_URL=file://$kubo|" \
+    -e "s|--proto '=https'|--proto '=https,file'|" \
     -e 's|^SYSTEM_UNIT=.*|SYSTEM_UNIT=$HOME/system-swing.service|' \
     -e "s|^$KUBO_PIN=.*|$KUBO_PIN=$(sha512sum "$ROOT/kubo/kubo_v${KUBO_VERSION}_linux-$KUBO_ARCH.tar.gz" | cut -d ' ' -f 1)|" \
     "$SOURCE" >"$out"
@@ -71,6 +72,10 @@ make_script() {
       exit 1
     }
   done
+  grep -qF -- "--proto '=https,file'" "$out" || {
+    echo "could not let curl read file:// URLs in the copy of install.sh" >&2
+    exit 1
+  }
 }
 
 make_swing_release() {
@@ -402,7 +407,7 @@ check "dot file kept" [ -f "$lib/.hidden" ]
 check "directory kept" [ -d "$lib/keepdir" ]
 check "installed files removed" absent "$lib/swing"
 
-echo "--- directories writable by other users are refused"
+echo "--- directories writable by their group or other users are refused"
 new_env shared
 mkdir "$H/shared"
 chmod 777 "$H/shared"
@@ -411,8 +416,41 @@ if run sh "$INSTALL" --prefix "$H/shared/p" >"$H/out" 2>&1; then
 else
   pass "a world-writable parent is refused"
 fi
-check "refusal names the directory" contains "$H/out" "$H/shared is writable by other users"
+check "refusal names the directory" contains "$H/out" "$H/shared is writable by its group or other users"
 check "nothing created under it" absent "$H/shared/p"
+me=$(id -un)
+shared_gid=
+private_gid=
+for gid in $(id -G); do
+  entry=$(getent group "$gid") || continue
+  if [ "${entry%%:*}" = "$me" ] && { [ -z "${entry##*:}" ] || [ "${entry##*:}" = "$me" ]; }; then
+    private_gid=$gid
+  elif [ -z "$shared_gid" ]; then
+    shared_gid=$gid
+  fi
+done
+if [ -n "$shared_gid" ]; then
+  mkdir "$H/group"
+  chgrp "$shared_gid" "$H/group"
+  chmod 775 "$H/group"
+  if run sh "$INSTALL" --prefix "$H/group/p" >"$H/out" 2>&1; then
+    fail "a parent writable by a shared group is refused"
+  else
+    pass "a parent writable by a shared group is refused"
+  fi
+  check "group refusal names the directory" contains "$H/out" "$H/group is writable by its group or other users"
+else
+  echo "skip a parent writable by a shared group (the user is in no shared group)"
+fi
+if [ -n "$private_gid" ]; then
+  mkdir "$H/own"
+  chgrp "$private_gid" "$H/own"
+  chmod 775 "$H/own"
+  run sh "$INSTALL" --prefix "$H/own/p" >"$H/out" 2>&1 || fail "a parent writable by the user's own group is accepted"
+  check "installed under a parent writable by the user's own group" [ -x "$H/own/p/lib/swing/swing" ]
+else
+  echo "skip a parent writable by the user's own group (the user has no private group)"
+fi
 mkdir "$H/sticky"
 chmod 1777 "$H/sticky"
 run sh "$INSTALL" --prefix "$H/sticky/p" >"$H/out" 2>&1 || fail "a sticky world-writable parent is accepted"

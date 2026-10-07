@@ -68,9 +68,9 @@ have() {
 
 fetch() {
   if have curl; then
-    curl -fsSL -o "$2" "$1" || die "download failed: $1"
+    curl --proto '=https' --tlsv1.2 -fsSL -o "$2" "$1" || die "download failed: $1"
   else
-    wget -q -O "$2" "$1" || die "download failed: $1"
+    wget --https-only -q -O "$2" "$1" || die "download failed: $1"
   fi
 }
 
@@ -158,6 +158,17 @@ user_unit() {
   esac
 }
 
+private_group() {
+  have getent || return 1
+  owner=$(getent passwd "$1") || return 1
+  group=$(getent group "$2") || return 1
+  [ "${group%%:*}" = "${owner%%:*}" ] || return 1
+  case ${group##*:} in
+    '' | "${owner%%:*}") return 0 ;;
+  esac
+  return 1
+}
+
 check_dir() {
   target=$1
   me=$(id -u)
@@ -176,17 +187,20 @@ check_dir() {
         # shellcheck disable=SC2046
         set -- $(ls -ldn -- "$p")
         [ "$3" = 0 ] || [ "$3" = "$me" ] || die "refusing to use $target: $p is owned by another user"
+        loose=
         case $1 in
-          ????????w*)
-            sticky=
-            case $1 in
-              ?????????[tT]*) sticky=1 ;;
-            esac
-            if [ -n "$leaf" ] || [ -z "$sticky" ]; then
-              die "refusing to use $target: $p is writable by other users"
-            fi
-            ;;
+          ????????w*) loose=1 ;;
+          ?????w*) private_group "$3" "$4" || loose=1 ;;
         esac
+        if [ -n "$loose" ]; then
+          sticky=
+          case $1 in
+            ?????????[tT]*) sticky=1 ;;
+          esac
+          if [ -n "$leaf" ] || [ -z "$sticky" ]; then
+            die "refusing to use $target: $p is writable by its group or other users"
+          fi
+        fi
       fi
       leaf=
       [ "$p" = / ] && break
@@ -505,6 +519,7 @@ do_uninstall() {
 }
 
 main() {
+  umask 022
   VERSION=
   PREFIX=
   SERVICE=

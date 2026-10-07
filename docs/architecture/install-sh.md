@@ -32,7 +32,7 @@ curl -fsSL .../install.sh | sh -s -- --version v0.1.0
 
 `HOME` は絶対パスでなければ失敗する。
 
-`curl` か `wget`、`tar`、`sha256sum`（無ければ `shasum -a 256`）、`sha512sum`（無ければ `shasum -a 512`）が要る。macOS では Homebrew を案内して、その他の OS・アーキテクチャではエラーで、どちらも非ゼロで終わる。
+`curl` か `wget`、`tar`、`sha256sum`（無ければ `shasum -a 256`）、`sha512sum`（無ければ `shasum -a 512`）が要る。macOS では Homebrew を案内して、その他の OS・アーキテクチャではエラーで、どちらも非ゼロで終わる。ダウンロードは HTTPS に限る（`curl --proto '=https' --tlsv1.2`、`wget --https-only`。リダイレクト先も含む）。作るファイルとディレクトリがグループに書き込めないように、最初に `umask 022` にする。
 
 ## 入れる手順
 
@@ -56,9 +56,10 @@ curl -fsSL .../install.sh | sh -s -- --version v0.1.0
 `lib/swing` と `bin` のそれぞれについて、実在するいちばん深い祖先（そのもの、または親をたどったもの）から `/` までのすべてのディレクトリを、書かれたパスのままのものと `pwd -P` で解決したものの両方で `ls -ldn` で調べ、どれかに当たれば何も変えずに失敗する（`refusing to use <dir>: ...`）。シンボリックリンクそのものは調べない（その親は調べる）。
 
 - 持ち主が root でも実行しているユーザーでもない
-- その他のユーザーが書き込める。ただし祖先が sticky ビット付き（`/tmp` など）なら許す。`lib/swing`・`bin` そのものは sticky でも許さない
+- グループかその他のユーザーが書き込める。ただし祖先が sticky ビット付き（`/tmp` など）なら許す。`lib/swing`・`bin` そのものは sticky でも許さない
+- グループの書き込みは、そのグループが持ち主の個人グループ（`getent` で引いた名前が持ち主のユーザー名と同じで、ほかのメンバーがいない）なら許す。`getent` が無ければ許さない
 
-グループの書き込み権は見ない。この検査は `lib/swing` の中のものを実行する前（Kubo の版の確認・持ち主の確認・アンインストール）に済ませる。
+この検査は `lib/swing` の中のものを実行する前（Kubo の版の確認・持ち主の確認・アンインストール）に済ませる。
 
 ## 置く物
 
@@ -106,7 +107,7 @@ curl -fsSL .../install.sh | sh -s -- --version v0.1.0
 
 ## テスト
 
-`packaging/linux/test-install.sh` が、偽の `swing`（呼び出しを記録）・偽の Kubo のアーカイブ・`SHA256SUMS` をそろえた一時ディレクトリを `file://` で配り、一時 `HOME` で次を確かめる。動かすのは `install.sh` の先頭の定数（`RELEASES_URL`・`KUBO_BASE_URL`・`SYSTEM_UNIT`・その環境の `KUBO_SHA512_*`）を `sed` で書き換えたコピーで、`latest/download` はシンボリックリンクで切り替える。公開ネットワークには出ない。`systemctl` は偽物に差し替える。
+`packaging/linux/test-install.sh` が、偽の `swing`（呼び出しを記録）・偽の Kubo のアーカイブ・`SHA256SUMS` をそろえた一時ディレクトリを `file://` で配り、一時 `HOME` で次を確かめる。動かすのは `install.sh` の先頭の定数（`RELEASES_URL`・`KUBO_BASE_URL`・`SYSTEM_UNIT`・その環境の `KUBO_SHA512_*`）と、`file://` を読めるように `curl` の `--proto` を `sed` で書き換えたコピーで、`latest/download` はシンボリックリンクで切り替える。公開ネットワークには出ない。`systemctl` は偽物に差し替える。
 
 - 新規のインストール（パイプ実行・最新の解決・アンインストーラの取得・リンク・一覧・PATH の警告）、`--version`、`--service`、`--prefix`
 - 更新（動いているサービスの停止と再起動、持ち主の確認を新しい版で行うこと、止まっていれば起動しない、別の場所の `swing` を起動するサービスには触れず確認用のファイルも残らないこと、同じ版の Kubo を取得しない）。偽の `swing` は unit の `ExecStart` を見て `status --points-into` と `uninstall --only-from` に答える
@@ -114,7 +115,7 @@ curl -fsSL .../install.sh | sh -s -- --version v0.1.0
 - 既存の `bin/swing` を `--force` なしでは壊さないこと、macOS の拒否
 - アンインストール（データを残す、`--only-from` で自分の unit を消す、別の場所の `swing` の unit を残す、`--purge --yes`、確認できないときの拒否、`XDG_DATA_HOME`、system unit での拒否と `--force`、別の場所の `swing` の system unit では拒否しないこと）
 - `manifest` に書かれた `/` を含む名前・`.` で始まる名前・ディレクトリを消さないこと
-- その他のユーザーが書き込める親ディレクトリと `lib/swing` の拒否、sticky ビット付きの親の許可
+- その他のユーザーが書き込める親ディレクトリと `lib/swing` の拒否、sticky ビット付きの親の許可、実行ユーザーが入っている共有のグループが書き込める親の拒否と個人グループが書き込める親の許可（それぞれ当てはまるグループが無ければ飛ばす）
 - 不正な引数（`/` を含む `--version`、相対パスの `HOME` を含む）
 
 `shellcheck -s sh packaging/linux/install.sh packaging/linux/test-install.sh` が警告なしで通ること。
