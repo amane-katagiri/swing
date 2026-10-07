@@ -117,7 +117,7 @@ TOML の構文や型のエラーは `line <行>, column <桁>: <理由>` の形�
 
 1. 書き込み先（[設定ファイルの場所](#設定ファイルの場所) で決まるパス）を毎回 `toml_edit::DocumentMut` として読む。無ければ空の文書から始める。
 2. 渡された項目だけを書き換える（コメントや他のキーは残る）。
-3. `config::build_config_from_str` で組み立て直して検証する。失敗したらファイルには触れない。
+3. `config::build_config_for_file` で組み立て直して検証する。相対パスは `Config::load` と同じく書き込み先の親ディレクトリを起点に解決する。失敗したらファイルには触れない。
 4. `settings::write_atomic` で書く。書き込み先がシンボリックリンクならたどった先の実体に書く。親ディレクトリが無ければ `auth::create_private_dir_all` で作り、`auth::write_private_file` で書く（手順は [`dashboard/security.md#トークン`](dashboard/security.md#トークン)）。Unix では既存・新規を問わず `0600` になる。
 5. `Config::load` で読み直す。
 

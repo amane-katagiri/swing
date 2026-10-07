@@ -598,12 +598,28 @@ pub fn parse_dashboard_gateway(input: &str) -> Result<String> {
     }
 }
 
+#[cfg(test)]
 pub(crate) fn build_config_from_str(
     text: &str,
     get_env: impl Fn(&str) -> Option<String>,
 ) -> Result<Config> {
     let file = parse_config_file(text).context("parsing config file")?;
     build::build_config(file, None, get_env)
+}
+
+fn config_file_dir(config_path: &Path) -> Result<Option<PathBuf>> {
+    let absolute = std::path::absolute(config_path)
+        .with_context(|| format!("resolving config file path {}", config_path.display()))?;
+    Ok(absolute.parent().map(Path::to_path_buf))
+}
+
+pub(crate) fn build_config_for_file(
+    text: &str,
+    config_path: &Path,
+    get_env: impl Fn(&str) -> Option<String>,
+) -> Result<Config> {
+    let file = parse_config_file(text).context("parsing config file")?;
+    build::build_config(file, config_file_dir(config_path)?.as_deref(), get_env)
 }
 
 pub fn parse_bool(input: &str) -> Result<bool> {
@@ -630,9 +646,7 @@ impl Config {
     pub fn load(cli_path: Option<&Path>) -> Result<Self> {
         let (file, config_path, config_exists, origin) = load_file(cli_path)?;
         let base = if config_exists || origin == ConfigOrigin::UserDefault {
-            let absolute = std::path::absolute(&config_path)
-                .with_context(|| format!("resolving config file path {}", config_path.display()))?;
-            absolute.parent().map(Path::to_path_buf)
+            config_file_dir(&config_path)?
         } else {
             None
         };

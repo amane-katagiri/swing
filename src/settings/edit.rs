@@ -147,7 +147,7 @@ pub(crate) fn write_atomic(path: &Path, contents: &str) -> Result<()> {
 }
 
 fn validate_and_write(path: &Path, rendered: &str) -> Result<Config, EditError> {
-    config::build_config_from_str(rendered, config::env_var)
+    config::build_config_for_file(rendered, path, config::env_var)
         .context("edited configuration is invalid")
         .map_err(EditError::Invalid)?;
     write_atomic(path, rendered).map_err(EditError::Io)?;
@@ -253,6 +253,22 @@ mod tests {
         cfg.config_path = path;
         cfg.config_exists = exists;
         cfg
+    }
+
+    #[test]
+    fn validation_resolves_relative_paths_like_load() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("swing.toml");
+        let text =
+            "[agent]\nstate_dir = \"./data\"\n[dashboard]\ncustom_css = \"theme/custom.css\"\n";
+        std::fs::write(&path, text).unwrap();
+        let validated = config::build_config_for_file(text, &path, |_| None).unwrap();
+        let loaded = Config::load(Some(&path)).unwrap();
+        let base = std::path::absolute(dir.path()).unwrap();
+        assert_eq!(validated.agent.state_dir, base.join("data"));
+        assert_eq!(validated.agent.state_dir, loaded.agent.state_dir);
+        assert_eq!(validated.kubo.repo, loaded.kubo.repo);
+        assert_eq!(validated.dashboard.custom_css, loaded.dashboard.custom_css);
     }
 
     #[test]
