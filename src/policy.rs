@@ -58,8 +58,7 @@ fn evict_oldest_until(
 fn evict(versions: &mut Vec<VersionInfo>, cfg: &PolicyConfig, now: u64) -> Vec<String> {
     let mut evicted = evict_oldest_until(versions, |vs| total_size(vs) <= cfg.max_per_site);
 
-    // A `keep_versions` of 0 would otherwise evict the newest version, which
-    // is the one just accepted in `decide`.
+    // A `keep_versions` of 0 would otherwise evict the newest version, the one `decide` just accepted.
     let keep_versions = cfg.keep_versions.max(1);
     evicted.extend(evict_oldest_until(versions, |vs| vs.len() <= keep_versions));
 

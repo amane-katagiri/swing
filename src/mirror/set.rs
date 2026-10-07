@@ -12,6 +12,13 @@ pub(super) fn next_created_at(now: u64, previous: Option<&Event>) -> u64 {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Added {
+    pub added: Vec<PublicKey>,
+    pub already: Vec<PublicKey>,
+    pub total: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MirrorSet {
     other_tags: Vec<Tag>,
     p_tags: Vec<Tag>,
@@ -58,8 +65,16 @@ impl MirrorSet {
             .and_then(|t| t.content())
     }
 
-    pub fn add(&mut self, keys: &[PublicKey]) -> Vec<PublicKey> {
-        let mut present: HashSet<PublicKey> = self.pubkeys().into_iter().collect();
+    pub fn add(&mut self, keys: &[PublicKey]) -> Added {
+        let current = self.pubkeys();
+        let before = current.len();
+        let existing: HashSet<PublicKey> = current.into_iter().collect();
+        let already = keys
+            .iter()
+            .filter(|k| existing.contains(k))
+            .copied()
+            .collect();
+        let mut present = existing;
         let mut added = Vec::new();
         for &key in keys {
             if present.insert(key) {
@@ -67,7 +82,11 @@ impl MirrorSet {
                 added.push(key);
             }
         }
-        added
+        Added {
+            total: before + added.len(),
+            added,
+            already,
+        }
     }
 
     pub fn remove(&mut self, keys: &[PublicKey]) -> Vec<PublicKey> {
@@ -133,8 +152,10 @@ mod tests {
         let p1 = keys().public_key();
         let ev = make_follow_set(&author, "swing", None, "", &[p1]);
         let mut set = MirrorSet::from_event(&ev);
-        let added = set.add(&[p1]);
-        assert!(added.is_empty());
+        let outcome = set.add(&[p1]);
+        assert!(outcome.added.is_empty());
+        assert_eq!(outcome.already, vec![p1]);
+        assert_eq!(outcome.total, 1);
         assert_eq!(set.pubkeys(), vec![p1]);
     }
 
@@ -145,8 +166,10 @@ mod tests {
         let p2 = keys().public_key();
         let ev = make_follow_set(&author, "swing", None, "", &[p1]);
         let mut set = MirrorSet::from_event(&ev);
-        let added = set.add(&[p1, p2]);
-        assert_eq!(added, vec![p2]);
+        let outcome = set.add(&[p1, p2]);
+        assert_eq!(outcome.added, vec![p2]);
+        assert_eq!(outcome.already, vec![p1]);
+        assert_eq!(outcome.total, 2);
         let pubkeys = set.pubkeys();
         assert_eq!(pubkeys.len(), 2);
         assert!(pubkeys.contains(&p1));

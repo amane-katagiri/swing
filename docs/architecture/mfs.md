@@ -38,7 +38,7 @@ MFS は DAG が欠けていても置け、GC も `block/rm` も止めない。�
 | PeerID | `id` → `ID` | 10 秒 |
 | 通信量 | `stats/bw` → `TotalIn`・`TotalOut`（[`stats.md`](stats.md)） | 10 秒 |
 | 停止 | `shutdown` | 呼び出し元が指定（[`kubo.md#停止daemonstopgrace`](kubo.md#停止daemonstopgrace) は 5 秒、孤児回収は 3 秒） |
-| add（publish） | `add?recursive=true&cid-version=1&pin=false&quieter=true&wrap-with-directory=false&to-files={path}` | 300 秒 |
+| add（publish） | `add?recursive=true&cid-version=1&pin=false&quieter=true&wrap-with-directory=false&to-files={path}` | 全体の上限なし。送るボディが 300 秒進まなければ（最後のファイルを送った後の応答待ちを含む）失敗（`ADD_IDLE_TIMEOUT`） |
 
 - `dag/stat` に CID を複数渡すと、`TotalSize` はそれらをまとめた重複排除後のサイズ（同じブロックを 1 回だけ数えた合計）になる。1 つでもブロックが欠けていれば呼び出し全体が失敗する。CID を 1 つも渡さないときは呼ばずに 0 を返す。
 - `dag/export` の無通信タイムアウトはヘッダー受信までにも適用する。

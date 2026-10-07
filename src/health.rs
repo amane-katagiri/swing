@@ -323,7 +323,7 @@ fn bytes_or_unknown(size: Option<u64>) -> String {
     size.map_or_else(|| "unknown".to_string(), |n| n.to_string())
 }
 
-// Restates the dashboard API's machine-readable tokens as the short labels the CLI has always printed.
+// Keeps the CLI output readable and stable instead of exposing the API's machine-readable tokens.
 fn health_label(token: &str) -> &str {
     match token {
         "cid_mismatch" => "cid mismatch",

@@ -182,11 +182,12 @@ fn collect_reports(
     }
     out.into_iter()
         .map(|((author, d), mut reports)| {
-            reports.sort_by(|a, b| {
-                tier_of(&author, &a.reporter, chosen)
-                    .cmp(&tier_of(&author, &b.reporter, chosen))
-                    .then_with(|| b.created_at.cmp(&a.created_at))
-                    .then_with(|| a.reporter.to_hex().cmp(&b.reporter.to_hex()))
+            reports.sort_by_cached_key(|r| {
+                (
+                    tier_of(&author, &r.reporter, chosen),
+                    std::cmp::Reverse(r.created_at),
+                    r.reporter,
+                )
             });
             let dropped = reports
                 .len()
@@ -211,7 +212,7 @@ pub fn replicas_of(
             tier: tier_of(author, &r.reporter, chosen),
         })
         .collect();
-    replicas.sort_by_key(|r| (r.tier, !r.latest, r.reporter.to_hex()));
+    replicas.sort_by_key(|r| (r.tier, !r.latest, r.reporter));
     replicas
 }
 

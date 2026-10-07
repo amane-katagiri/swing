@@ -7,8 +7,7 @@ pub fn split_host_port(host_header: &str) -> (&str, Option<&str>) {
     if let Some(rest) = host_header.strip_prefix('[') {
         return match rest.split_once(']') {
             Some((host, "")) => (host, None),
-            // Anything after `]` that isn't `:<digits>` makes the header malformed; fall back to
-            // the raw header so it can't coincidentally match a real host like `::1`.
+            // A malformed suffix after `]` keeps the raw header so it cannot match a real host like `::1`.
             Some((host, after)) => match after.strip_prefix(':').filter(|p| is_port(p)) {
                 Some(port) => (host, Some(port)),
                 None => (host_header, None),

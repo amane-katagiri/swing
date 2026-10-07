@@ -172,6 +172,7 @@ struct LsLink {
 const UNIXFS_DIRECTORY: u8 = 1;
 
 const MFS_MISSING: &str = "file does not exist";
+const ADD_IDLE_TIMEOUT: Duration = Duration::from_secs(300);
 const MAX_RESPONSE_BYTES: usize = 16 << 20;
 
 async fn read_body(resp: reqwest::Response, what: &str) -> Result<String> {
@@ -185,6 +186,26 @@ async fn read_body(resp: reqwest::Response, what: &str) -> Result<String> {
         body.extend_from_slice(&chunk);
     }
     Ok(String::from_utf8_lossy(&body).into_owned())
+}
+
+async fn with_idle_timeout<T>(
+    work: impl Future<Output = Result<T>>,
+    last_progress: &std::sync::Mutex<tokio::time::Instant>,
+    idle: Duration,
+    what: &str,
+) -> Result<T> {
+    tokio::pin!(work);
+    loop {
+        let deadline = *last_progress.lock().unwrap() + idle;
+        tokio::select! {
+            result = &mut work => return result,
+            () = tokio::time::sleep_until(deadline) => {
+                if *last_progress.lock().unwrap() + idle <= tokio::time::Instant::now() {
+                    bail!("{what} made no progress for {idle:?}");
+                }
+            }
+        }
+    }
 }
 
 pub fn kubo_http_client(api_secret: Option<&ApiSecret>) -> reqwest::Client {
@@ -262,6 +283,8 @@ impl IpfsClient {
             "/api/v0/add?recursive=true&cid-version=1&pin=false&quieter=true&wrap-with-directory=false&to-files={}",
             percent_encode_relative_path(mfs_path)
         ));
+        let last_progress = std::sync::Arc::new(std::sync::Mutex::new(tokio::time::Instant::now()));
+        let progress = std::sync::Arc::clone(&last_progress);
         let request = self
             .http
             .post(&url)
@@ -269,9 +292,17 @@ impl IpfsClient {
                 reqwest::header::CONTENT_TYPE,
                 format!("multipart/form-data; boundary={boundary}"),
             )
-            .body(reqwest::Body::wrap_stream(site.into_multipart(boundary)))
-            .timeout(Duration::from_secs(300));
-        let text = self.send(request, "add").await?;
+            .body(reqwest::Body::wrap_stream(
+                site.into_multipart(boundary)
+                    .inspect(move |_| *progress.lock().unwrap() = tokio::time::Instant::now()),
+            ));
+        let text = with_idle_timeout(
+            self.send(request, "add"),
+            &last_progress,
+            ADD_IDLE_TIMEOUT,
+            "add",
+        )
+        .await?;
 
         let last_line = text
             .lines()
@@ -585,6 +616,29 @@ mod tests {
             .unwrap_err();
         assert!(err.to_string().contains("larger than"), "{err}");
         server.abort();
+    }
+
+    #[tokio::test]
+    async fn the_idle_timeout_only_fires_without_progress() {
+        let idle = Duration::from_millis(200);
+        let last = std::sync::Mutex::new(tokio::time::Instant::now());
+        let busy = async {
+            for _ in 0..6 {
+                tokio::time::sleep(Duration::from_millis(100)).await;
+                *last.lock().unwrap() = tokio::time::Instant::now();
+            }
+            Ok(7)
+        };
+        assert_eq!(
+            with_idle_timeout(busy, &last, idle, "add").await.unwrap(),
+            7
+        );
+
+        let stalled = std::future::pending::<Result<()>>();
+        let err = with_idle_timeout(stalled, &last, idle, "add")
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("no progress"), "{err}");
     }
 
     #[tokio::test]

@@ -187,13 +187,9 @@ async fn apply_change(
 
     let (changed, unchanged) = match op {
         MirrorOp::Add => {
-            let current: HashSet<PublicKey> = set.pubkeys().into_iter().collect();
-            let unchanged = keys
-                .iter()
-                .filter(|k| current.contains(k))
-                .copied()
-                .collect();
-            (set.add(&keys), unchanged)
+            let outcome = set.add(&keys);
+            ensure_within_follow_set_cap(outcome.total)?;
+            (outcome.added, outcome.already)
         }
         MirrorOp::Remove => {
             let changed = set.remove(&keys);
@@ -206,9 +202,6 @@ async fn apply_change(
             (changed, unchanged)
         }
     };
-    if op == MirrorOp::Add {
-        ensure_within_follow_set_cap(set.pubkeys().len())?;
-    }
     let (published, relay_results) =
         publish_if_changed(relay, config, &set, existing.as_ref(), &changed).await?;
     Ok(MirrorChange {
