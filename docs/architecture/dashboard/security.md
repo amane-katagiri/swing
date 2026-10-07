@@ -60,11 +60,12 @@
 
 - `[dashboard].listen` の IP がループバック（`127.0.0.0/8` と `::1`）でなければ、起動時に平文で流れることを `warn` で出す（判定は待ち受けアドレスだけ）。
 - この構成で効くのは、Host の検証（公開ホスト名を `allowed_hosts` に入れる）、Origin の検証（プロキシが `Host` を書き換えると書き込み系がすべて 403 になる）、cookie の `Secure`、ログインリンクの頭になる `public_url`。
+- プロキシは `Host` をそのまま転送し（nginx なら `proxy_set_header Host $host;`）、公開ホスト名を `allowed_hosts` に入れる。`Host` を上流の待ち受け IP に書き換えるプロキシ（nginx の `proxy_pass` の既定）でも、待ち受け IP は常に許すので Host の検証は通り、ブラウザがどの名前で来たかをダッシュボードは確かめられない。それでも cookie はブラウザが使った名前のホストにだけ結び付くので別の名前には送られず、書き込み系は `Origin` と書き換え後の `Host` が合わずに 403 になる。
 
 ## 既知の弱点
 
 - **未認証の相手からの DoS**: ヘッダ読み取りのタイムアウトが無く（Slowloris）、レート制限も同時接続数の制限も無い。HTTP のリバースプロキシの裏ならプロキシ側のタイムアウトで止まるが、平文のまま LAN に直接出す構成や TCP をそのまま流す前段では止まらない。ボディを少しずつ送る接続はハンドラの中で読むので `TimeoutLayer`（[`../dashboard.md#タイムアウトsrcdashboardmodrs`](../dashboard.md#タイムアウトsrcdashboardmodrs)）で切れる。止まるのはダッシュボードだけで、agent と Kubo は動き続ける。
-- **peer のサイトが同じホストの別ポートで開かれうる**: 設定の検証（[`../gateway.md#設定gateway`](../gateway.md#設定gateway)）が防ぐのは内蔵 gateway の `[gateway].hosts` とダッシュボードのホスト名の重なりだけ。Kubo 自身の gateway（`[kubo].gateway_listen`、既定 `127.0.0.1:8080`）と `[dashboard].gateway` のリンク先は、`http://127.0.0.1:8080/ipfs/<cid>/` のようなパス形式ならループバックのダッシュボードと同じホストで peer の HTML を返す（`localhost` ならサブドメイン形式に移る）。`SameSite=Strict` はポートを区別しないので、この経路を止めない。
+- **peer のサイトが同じホストの別ポートで開かれうる**: 設定の検証（[`../gateway.md#設定gateway`](../gateway.md#設定gateway)）が防ぐのは内蔵 gateway の `[gateway].hosts` とダッシュボードのホスト名の重なりだけ。Kubo 自身の gateway（`[kubo].gateway_listen`、既定 `127.0.0.1:8080`）と `[dashboard].gateway` のリンク先は、`http://127.0.0.1:8080/ipfs/<cid>/` のようなパス形式なら、ダッシュボードと同じホスト（ループバック。ダッシュボードを LAN の IP で待ち受けさせ、Kubo の gateway も同じ IP で待ち受けているときはその IP）で peer の HTML を返す（`localhost` ならサブドメイン形式に移る）。`SameSite=Strict` はポートを区別しないので、この経路を止めない。
   - 止めているもの: cookie の `HttpOnly` と、[ガード](#ガード)の 2（ヘッダ付きのクロスオリジン要求は CORS のプリフライトで止まり、`mode: 'no-cors'` ではヘッダを付けられない）と、認証の要る `/api/` 外のファイルの `Cross-Origin-Resource-Policy`。
   - 残るもの: そのページが同じホストの cookie を上書き・削除できる（HMAC があるので偽造はできず、ログアウトさせられる程度）。`/login?code=...` のような `/api/` の外の GET を開かせられる（コードを知らなければ何も起きない）。
 - **止まっている間にポートを取った相手に cookie が送られうる**: cookie はポートでなくホストに結び付き、ブラウザには CLI の本人確認に当たるものが無い。Web UI は露出を減らすだけで、止めてはいない（[`web.md#止まっている間の呼び出し`](web.md#止まっている間の呼び出し)）。`/api/identity` をまねて `instance` を返す相手には cookie が渡る。ほかのユーザーがログインできるマシンでは、`swing up` が止まっている間はダッシュボードのタブを閉じるか、疑わしければ `swing dashboard rotate-token` で全セッションを無効にする。

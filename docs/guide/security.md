@@ -15,7 +15,7 @@ Nostr の秘密鍵は、Docker Compose で動かす場合は `.env` に、バイ
 別の端末やインターネットからダッシュボードを使うときは、TLS を終端する HTTP のリバースプロキシ（nginx・Caddy・Cloudflare Tunnel の cloudflared など）の裏に置き、次のように設定してください。
 
 - プロキシは HTTP を解釈するものを使ってください。TCP をそのまま流すもの（socat、nginx の `stream`、HAProxy の TCP モード、SSH のポート転送）は、ヘッダを少しずつ送り続ける DoS をそのまま通すのでおすすめしません。
-- `Host` ヘッダは書き換えずに転送してください。cloudflared の `httpHostHeader` などで `127.0.0.1:8082` に書き換えると、ブラウザが送る `Origin` と合わなくなり、設定の保存や publish などの操作がすべて 403 になります。
+- `Host` ヘッダは書き換えずに転送してください。cloudflared の `httpHostHeader` などで `127.0.0.1:8082` に書き換えると、ブラウザが送る `Origin` と合わなくなり、設定の保存や publish などの操作がすべて 403 になります。nginx は既定で `proxy_pass` の宛先に書き換えるので、`proxy_set_header Host $host;` を足してください。
 - 公開ホスト名を `SWING_DASHBOARD_ALLOWED_HOSTS`（`[dashboard].allowed_hosts`）に入れてください。
 - プロキシに `X-Forwarded-Proto: https` を付けさせてください（Caddy と cloudflared は既定で付けます。nginx は `proxy_set_header X-Forwarded-Proto $scheme;`）。付けられない場合は、次の `SWING_DASHBOARD_PUBLIC_URL` を `https://` にしておけばログイン状態の cookie に `Secure` が付きます。
 - `SWING_DASHBOARD_PUBLIC_URL`（`[dashboard].public_url`）を `https://<公開ホスト>` にすると、`swing dashboard open --no-browser` が外の端末でそのまま開けるリンクを出します。
