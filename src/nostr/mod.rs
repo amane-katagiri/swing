@@ -10,9 +10,8 @@ mod report;
 mod site;
 
 pub use client::{
-    MAX_REJECTION_HINT_CHARS, Paged, RelayClient, RelaySendResult, ReportRelay, bounded_client,
-    cap_rejection_reason, print_relay_line, print_relay_send_result_lines, rejection_line,
-    relay_send_results,
+    Paged, RelayClient, RelaySendResult, ReportRelay, bounded_client, print_relay_line,
+    print_relay_send_result_lines, relay_send_results, with_rejection_hint,
 };
 pub use follow::{
     FollowSetChoice, choose_follow_set, extract_follow_set_pubkeys, follow_set_pubkeys_capped,

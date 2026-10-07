@@ -21,6 +21,7 @@ impl std::error::Error for ClockError {}
 
 fn describe_secs(secs: u64) -> String {
     match secs {
+        1 => "1 second".to_string(),
         0..120 => format!("{secs} seconds"),
         120..7200 => format!("about {} minutes", secs / 60),
         7200..172_800 => format!("about {} hours", secs / 3600),
@@ -49,6 +50,19 @@ fn refuse_future_version(site_path: &str, newest: u64, now: u64) -> Result<(), C
     )))
 }
 
+fn refuse_previous_ahead(previous: u64, now: u64) -> Result<(), ClockError> {
+    let limit = sign_limit(now);
+    if previous < limit {
+        return Ok(());
+    }
+    let wait = describe_secs(previous - limit + 1);
+    Err(ClockError(format!(
+        "your latest version on the relays is dated {} after this machine's clock; a new version has to be dated after it to replace it, \
+         and that would be too close to the future limit for relays and mirrors to accept. Wait {wait} and publish again",
+        describe_secs(previous - now)
+    )))
+}
+
 // Reusing a same-second path would let add_site or a cancelled publish's deferred removal delete the other version.
 pub(super) fn version_time(
     site_path: &str,
@@ -59,10 +73,13 @@ pub(super) fn version_time(
     if let Some(newest) = newest {
         refuse_future_version(site_path, newest, now)?;
     }
-    let after_previous = previous.map(|t| t.saturating_add(1).min(sign_limit(now)));
-    Ok([newest.map(|t| t.saturating_add(1)), after_previous]
+    if let Some(previous) = previous {
+        refuse_previous_ahead(previous, now)?;
+    }
+    Ok([newest, previous]
         .into_iter()
         .flatten()
+        .map(|t| t + 1)
         .fold(now, u64::max))
 }
 
@@ -159,11 +176,33 @@ mod tests {
         assert_eq!(version_time(SITE, Some(limit - 1), None, 1000), Ok(limit));
         assert!(version_time(SITE, Some(limit), None, 1000).is_err());
         assert_eq!(version_time(SITE, None, Some(limit - 1), 1000), Ok(limit));
-        assert_eq!(
-            version_time(SITE, Some(500), Some(1000 + MAX_FUTURE_SKEW), 1000),
-            Ok(limit)
+    }
+
+    #[test]
+    fn a_previous_event_at_the_limit_asks_to_wait_instead_of_signing_an_older_one() {
+        let limit = 1000 + MAX_FUTURE_SKEW - SIGN_MARGIN;
+        let err = version_time(SITE, None, Some(limit), 1000)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.starts_with(&format!(
+                "your latest version on the relays is dated {} after",
+                describe_secs(limit - 1000)
+            )),
+            "{err}"
         );
-        assert_eq!(version_time(SITE, None, Some(u64::MAX), 1000), Ok(limit));
+        assert!(err.ends_with("Wait 1 second and publish again"), "{err}");
+        let err = version_time(SITE, Some(500), Some(1000 + MAX_FUTURE_SKEW), 1000)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.ends_with(&format!(
+                "Wait {} seconds and publish again",
+                SIGN_MARGIN + 1
+            )),
+            "{err}"
+        );
+        assert!(version_time(SITE, None, Some(u64::MAX), 1000).is_err());
     }
 
     #[test]

@@ -327,10 +327,7 @@ fn with_rejection_hints(mut results: Vec<RelaySendResult>) -> Vec<RelaySendResul
             && !result.ok
             && rejected_as_future(error)
         {
-            *error = format!(
-                "{} ({FUTURE_REJECTION_HINT})",
-                nostr::cap_rejection_reason(error)
-            );
+            *error = nostr::with_rejection_hint(error, FUTURE_REJECTION_HINT);
         }
     }
     results
@@ -856,7 +853,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn plan_version_ignores_one_lagging_relay_and_never_refuses_over_the_previous() {
+    async fn plan_version_ignores_one_lagging_relay_and_dates_after_the_previous() {
         let kubo = fake_files_ls(ls_answer(&[100])).await;
         let now = Timestamp::now().as_secs();
         let relays = RelayState {
@@ -877,11 +874,16 @@ mod tests {
                 .unwrap(),
             now + 601
         );
-        let relays = relay_state(Some(now + 3600), Vec::new());
-        let created_at = plan_version(&kubo.ipfs, "/swing/publish/k/s", &relays)
-            .await
-            .unwrap();
-        assert!(created_at < now + 3600, "{created_at}");
+    }
+
+    #[tokio::test]
+    async fn add_and_measure_asks_to_wait_for_a_previous_event_at_the_limit_before_adding() {
+        let now = Timestamp::now().as_secs();
+        let relays = relay_state(Some(now + nostr::MAX_FUTURE_SKEW), Vec::new());
+        let (err, added) = refused_stage(100, relays).await;
+        assert!(err.downcast_ref::<ClockError>().is_some(), "{err:#}");
+        assert!(err.to_string().contains("and publish again"), "{err}");
+        assert!(!added);
     }
 
     #[test]
@@ -895,16 +897,10 @@ mod tests {
             ok: false,
             error: Some(long),
         }]);
-        assert!(FUTURE_REJECTION_HINT.chars().count() + 3 <= nostr::MAX_REJECTION_HINT_CHARS);
         let error = results[0].error.as_deref().unwrap();
         assert!(
             error.ends_with(&format!(" ({FUTURE_REJECTION_HINT})")),
             "{error}"
-        );
-        let line = nostr::rejection_line("wss://a", error);
-        assert!(
-            line.ends_with(&format!(" ({FUTURE_REJECTION_HINT})")),
-            "{line}"
         );
     }
 

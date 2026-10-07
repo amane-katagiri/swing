@@ -22,8 +22,8 @@ use fetch::{
 };
 pub use report_relay::ReportRelay;
 pub use send::{
-    MAX_REJECTION_HINT_CHARS, RelaySendResult, cap_rejection_reason, print_relay_line,
-    print_relay_send_result_lines, rejection_line, relay_send_results,
+    RelaySendResult, print_relay_line, print_relay_send_result_lines, relay_send_results,
+    with_rejection_hint,
 };
 
 pub fn bounded_client(max_event_bytes: u32) -> Client {

@@ -41,16 +41,18 @@ pub fn print_relay_line(relay: &str, ok: bool) {
 }
 
 const MAX_REJECTION_DISPLAY_CHARS: usize = 500;
-pub const MAX_REJECTION_HINT_CHARS: usize = 100;
 
-pub fn cap_rejection_reason(error: &str) -> String {
-    crate::format::sanitize_display_text(
-        error,
-        MAX_REJECTION_DISPLAY_CHARS - MAX_REJECTION_HINT_CHARS,
+pub fn with_rejection_hint(error: &str, hint: &str) -> String {
+    let suffix = format!(" ({hint})");
+    let ellipsis = 1;
+    let budget = MAX_REJECTION_DISPLAY_CHARS.saturating_sub(suffix.chars().count() + ellipsis);
+    format!(
+        "{}{suffix}",
+        crate::format::sanitize_display_text(error, budget)
     )
 }
 
-pub fn rejection_line(relay: &str, error: &str) -> String {
+fn rejection_line(relay: &str, error: &str) -> String {
     format!(
         "  \u{2717} {relay}: {}",
         crate::format::sanitize_display_text(error, MAX_REJECTION_DISPLAY_CHARS)
@@ -80,6 +82,21 @@ mod tests {
         assert_eq!(
             rejection_line("wss://a", &long).chars().count(),
             "  \u{2717} wss://a: ".chars().count() + MAX_REJECTION_DISPLAY_CHARS + 1
+        );
+    }
+
+    #[test]
+    fn a_hint_survives_the_rejection_line_cap() {
+        let hint = "check your clock";
+        let fits = "x".repeat(MAX_REJECTION_DISPLAY_CHARS - hint.len() - 4);
+        assert_eq!(with_rejection_hint(&fits, hint), format!("{fits} ({hint})"));
+        let long = "x".repeat(MAX_REJECTION_DISPLAY_CHARS * 4);
+        let hinted = with_rejection_hint(&long, hint);
+        assert_eq!(hinted.chars().count(), MAX_REJECTION_DISPLAY_CHARS);
+        assert!(hinted.ends_with("\u{2026} (check your clock)"), "{hinted}");
+        assert_eq!(
+            rejection_line("wss://a", &hinted),
+            format!("  \u{2717} wss://a: {hinted}")
         );
     }
 }

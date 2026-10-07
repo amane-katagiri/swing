@@ -65,12 +65,12 @@
 - ドットファイル・サイズの `require` が引っかかったら、add する前に 422 を返す: `{ "error": "...", "nip05": {...}, "checks": { "dotfiles": {...}, "size": {...}, "unchanged": null } }`。NIP-05 の 422 には `checks` が付かない。
 - `unchanged` が `unchanged` で `check_unchanged` が `require` なら、add した版を MFS から消し、署名も送信も古い版の削除もせずに 200 を返す。このとき `published` は `false`、`created_at` と `mfs_path` は `null`、`relays` と `pruned` は空、`prune_error` は `null`。`cid`・`size`・`gateway_url` は通常どおり入る。[`/api/activity`](status.md#get-apiactivity) の `latest_published_at` は進まない。版を消せなければ 502。
 - add の後、署名できるまでに失敗したら（`dag/stat` の失敗、署名できない）502 を返し、add した版を MFS から消す（古い版は残す。消せなければその理由もエラーに続ける）。この間にタイムアウトやクライアントの切断で処理を打ち切ったときも、版の削除を始める（削除は応答の後になりうる）。
-- 時計の確認（未来の日付の版が MFS にある・この機械の時計が答えたどの relay よりも進んでいる。判定とメッセージは CLI と同じで [`../../cli/publish.md`](../../cli/publish.md) の 6）に当たったら、何も add せずに 400 `{ "error": "..." }` を返す（`publish::ClockError`）。
+- 時計の確認（未来の日付の版が MFS にある・relay から取れた前の版が署名の上限以降の日付で、待たないと置き換えられない・この機械の時計が答えたどの relay よりも進んでいる。判定とメッセージは CLI と同じで [`../../cli/publish.md`](../../cli/publish.md) の 6）に当たったら、何も add せずに 400 `{ "error": "..." }` を返す（`publish::ClockError`）。
 - 前の版は `check_unchanged` が `off` でも取る（`created_at` を決めるのに使う）。
 - 署名できた後は、add した版を消さない（送信の途中で打ち切られたときも）。どの relay にも受理されなければ 502 `no relay accepted the site event; old versions were kept (<relay>: <理由>; …)` を返し（理由を返した relay だけを並べる）、add した版も古い版も残す。
-- `relays[].error` は relay が断った理由。未来すぎる `created_at` を理由に断られたときは CLI と同じ案内（` (the relay thinks the event is dated in the future; check your clock)`）が後ろに付く（そのときの理由は CLI と同じく整えて 400 文字で切る）。
+- `relays[].error` は relay が断った理由。未来すぎる `created_at` を理由に断られたときは CLI と同じ案内（` (the relay thinks the event is dated in the future; check your clock)`）が後ろに付く（そのときの理由は CLI と同じく、案内を足しても 500 文字に収まるよう 429 文字で切る）。
 - 古い版の削除に失敗したときは `prune_error` に理由が入るだけで、応答は成功のまま。
-- `created_at`（サイトイベントの `created_at` と MFS の版のディレクトリ名）の決め方は CLI と同じで、MFS にある同じサイトの版と relay から取れた前の版のどちらよりも新しい値になる（[`../../cli/publish.md`](../../cli/publish.md) の 6）。そのための MFS の一覧に失敗したら 502。
+- `created_at`（サイトイベントの `created_at` と MFS の版のディレクトリ名）の決め方は CLI と同じで、現在時刻・MFS にある同じサイトの最大の版 + 1・relay から取れた前の版の `created_at` + 1 の最大になる。MFS の版か前の版がその値を署名の上限より先にするときは、上の時計の確認で 400 を返す（[`../../cli/publish.md`](../../cli/publish.md) の 6）。そのための MFS の一覧に失敗したら 502。
 - `files` は受け取ったファイル数。
 
 ## GET /api/publish/sites
