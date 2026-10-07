@@ -411,6 +411,18 @@ check "dot file kept" [ -f "$lib/.hidden" ]
 check "directory kept" [ -d "$lib/keepdir" ]
 check "installed files removed" absent "$lib/swing"
 
+echo "--- uninstall removes a symlink named in the manifest, not its target"
+new_env manifestlink
+run sh "$INSTALL" >/dev/null 2>&1
+lib=$H/.local/lib/swing
+echo outside >"$H/outside"
+rm -f "$lib/README.md"
+ln -s "$H/outside" "$lib/README.md"
+grep -qxF README.md "$lib/manifest" || echo README.md >>"$lib/manifest"
+run sh "$INSTALL" --uninstall >/dev/null 2>&1 || fail "uninstall with a symlinked manifest entry exits 0"
+check "symlink target outside lib kept" [ -f "$H/outside" ]
+check "lib removed with the symlink" absent "$lib"
+
 echo "--- directories writable by their group or other users are refused"
 new_env shared
 mkdir "$H/shared"
@@ -532,6 +544,38 @@ if [ -n "$delegated_gid" ]; then
     pass "a root-owned lib/swing writable by its group is refused"
   fi
   check "refusal names lib/swing" contains "$H/out" "$H/leaf/p/lib/swing is writable by its group or other users"
+  mkdir "$H/foreign"
+  run sh "$INSTALL" --prefix "$H/foreign/p" >"$H/out" 2>&1 || fail "install before lib/swing changes hands exits 0"
+  chown nobody "$H/foreign/p/lib/swing"
+  if run sh "$INSTALL" --uninstall --prefix "$H/foreign/p" >"$H/out" 2>&1; then
+    fail "uninstall from a lib/swing owned by another user is refused"
+  else
+    pass "uninstall from a lib/swing owned by another user is refused"
+  fi
+  check "refusal names the owner problem" contains "$H/out" "owned by another user"
+  check "nothing removed from a lib/swing owned by another user" [ -x "$H/foreign/p/lib/swing/swing" ]
+  mkdir "$H/swap"
+  run sh "$INSTALL" --prefix "$H/swap/p" >"$H/out" 2>&1 || fail "install before lib/swing is swapped exits 0"
+  chmod 777 "$H/swap/p/lib"
+  mkdir "$H/evil"
+  echo victim >"$H/evil/victim"
+  printf 'victim\n' >"$H/evil/manifest"
+  chown -R nobody "$H/evil"
+  mv "$H/swap/p/lib/swing" "$H/swap/p/lib/real"
+  ln -s "$H/evil" "$H/swap/p/lib/swing"
+  if run sh "$INSTALL" --uninstall --prefix "$H/swap/p" >"$H/out" 2>&1; then
+    fail "uninstall through a swapped lib/swing in a loosened parent is refused"
+  else
+    pass "uninstall through a swapped lib/swing in a loosened parent is refused"
+  fi
+  check "file in the swapped-in directory kept" [ -f "$H/evil/victim" ]
+  chown root "$H/evil"
+  if run sh "$INSTALL" --uninstall --prefix "$H/swap/p" >"$H/out" 2>&1; then
+    fail "uninstall with a manifest owned by another user is refused"
+  else
+    pass "uninstall with a manifest owned by another user is refused"
+  fi
+  check "file kept when the manifest is owned by another user" [ -f "$H/evil/victim" ]
 else
   echo "skip root-owned directories writable by their group (not running as root)"
 fi

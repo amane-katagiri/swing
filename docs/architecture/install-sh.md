@@ -59,7 +59,7 @@ curl -fsSL .../install.sh | sh -s -- --version v0.1.0
 - グループかその他のユーザーが書き込める。ただし祖先が sticky ビット付き（`/tmp` など）なら許す。`lib/swing`・`bin` そのものは sticky でも許さない
 - グループの書き込みは、そのグループが持ち主の個人グループ（`getent` で引いた名前が持ち主のユーザー名と同じで、ほかのメンバーがいない）なら許す。`getent` が無ければ許さない。持ち主が root でも、ほかのグループの書き込みは許さない（Debian の `root:staff 2775` の `/usr/local` も断る。そのときは `--prefix /opt/swing` などを使う）
 
-インストールと更新では、この検査を `lib/swing` の中のものを実行する前（Kubo の版の確認・持ち主の確認）に済ませる。アンインストールでは失敗しない（下記）。
+インストールと更新では、この検査を `lib/swing` の中のものを実行する前（Kubo の版の確認・持ち主の確認）に済ませる。アンインストールでは、グループかその他のユーザーから書き込めることだけが理由なら失敗しない（下記）。
 
 ## 置く物
 
@@ -98,11 +98,13 @@ curl -fsSL .../install.sh | sh -s -- --version v0.1.0
 
 `install.sh --uninstall` と `lib/swing/swing-uninstall.sh`（ファイル名が `swing-uninstall.sh` なら `--uninstall` 扱い。`--prefix` が無ければ、置かれている `<prefix>/lib/swing` から prefix を決める）は同じ処理。
 
-1. `manifest` が無ければ「no installation found」で失敗する。`lib/swing` の置き場所を検査し、当たれば理由と `<lib>/swing` を実行しないことを warn に出して続ける（消すのは「一覧の読み方」に合う `lib/swing` 直下のファイルと自分のリンクだけ）。このとき、下の 3 と 4 で `<lib>/swing` は実行しない。
+1. `manifest` が無ければ「no installation found」で失敗する。`lib/swing` の置き場所を検査し、グループかその他のユーザーから書き込めるディレクトリに当たったときは、理由と `<lib>/swing` を実行しないことを warn に出して続ける。このとき、下の 3 と 4 で `<lib>/swing` は実行しない。ほかの理由（別のユーザーの持ち物・ディレクトリでない）に当たれば、何も消さずに失敗する。
+   - 続けるときは、`cd -P` で `lib/swing` に一度だけ入り、以後の読み書きはその中から相対パスで行う。入った先（実体）が root か実行ユーザーの持ち物でなければ、`manifest` が root か実行ユーザーの持ち物の通常のファイル（シンボリックリンクでない）でなければ、何も消さずに失敗する。親に書き込める人が途中で `lib/swing` をすり替えても、消す先は最初に入ったディレクトリから動かない
+   - `bin` の検査（`check_dir`）はアンインストールでは行わない。`bin` からは何も実行せず、`cd -P` で入った `bin` の中で、`<lib>/swing` を指すシンボリックリンクの `swing` だけを消すため
 2. `--purge` なら、削除先を決めて確認する（`/dev/tty` から読む。端末が無くて `--yes` も無ければ何も消さずに失敗する）。
 3. system unit（`/etc/systemd/system/swing.service`）があれば、`sudo <lib>/swing service uninstall --system` を先に実行するよう案内して失敗する。`--force` なら続ける。ただし `<lib>/swing service status --system --points-into <lib>` の終了コードが 4（別の場所の `swing` を起動する unit）なら、触れずに続ける（`<lib>/swing` を実行しないときは確かめられないので失敗する）。
 4. ユーザー unit があれば `<lib>/swing service uninstall --only-from <lib>` を実行する（失敗したら何も消さずに終わる）。`<lib>/swing` を実行しないときは、`systemctl --user disable --now swing` と unit ファイルの削除を手で行うよう案内して、何も消さずに失敗する。unit が別の場所の `swing` を起動するものなら、`swing` がその旨を出して unit を残す。
-5. `manifest` に書いたファイル（「一覧の読み方」に合うもの）と `manifest`、自分のリンクだった `bin/swing` を消し、空になった `lib/swing` を消す。
+5. 入った `lib/swing` の中で `manifest` に書いたファイル（「一覧の読み方」に合うもの。シンボリックリンクならリンクだけ）と `manifest` を消し、自分のリンクだった `bin/swing` を消す。最後に `lib/swing` の実体の親へ移り、空になっていればその名前のディレクトリを消す。
 6. 設定とデータは残し、場所を表示する。`--purge` なら、ユーザーごとの既定の場所（[`config.md`](config.md#設定ファイルの場所)。実行時の `HOME` と `XDG_DATA_HOME` で決まる）だけを消し、`--config` や `SWING_CONFIG` で指していた別の場所には触れない。
 
 ## テスト
@@ -114,9 +116,9 @@ curl -fsSL .../install.sh | sh -s -- --version v0.1.0
 - `swing` と Kubo それぞれのチェックサム不一致で何も入らないこと
 - 既存の `bin/swing` を `--force` なしでは壊さないこと、macOS の拒否
 - アンインストール（データを残す、`--only-from` で自分の unit を消す、別の場所の `swing` の unit を残す、`--purge --yes`、確認できないときの拒否、`XDG_DATA_HOME`、system unit での拒否と `--force`、別の場所の `swing` の system unit では拒否しないこと）
-- `manifest` に書かれた `/` を含む名前・`.` で始まる名前・ディレクトリを消さないこと
+- `manifest` に書かれた `/` を含む名前・`.` で始まる名前・ディレクトリを消さないこと、`lib/swing` の外を指すシンボリックリンクはリンクだけ消すこと
 - その他のユーザーが書き込める親ディレクトリと `lib/swing` の拒否、sticky ビット付きの親の許可、実行ユーザーが入っている共有のグループが書き込める親の拒否と個人グループが書き込める親の許可（それぞれ当てはまるグループが無ければ飛ばす）、root で実行したときだけ、グループが書き込める root の持ち物の親と `lib/swing` の拒否
-- 入れた後に親がその他のユーザーから書き込めるようになったとき、更新を断って `--prefix /opt/swing` と `--uninstall --prefix` を案内すること、ユーザー unit があればアンインストールも何も消さずに止まること、無ければ `swing` を実行せずに消せること。root で実行したときだけ、グループが書き込める root の持ち物の親の下からも消せること
+- 入れた後に親がその他のユーザーから書き込めるようになったとき、更新を断って `--prefix /opt/swing` と `--uninstall --prefix` を案内すること、ユーザー unit があればアンインストールも何も消さずに止まること、無ければ `swing` を実行せずに消せること。root で実行したときだけ、グループが書き込める root の持ち物の親の下からも消せること、別のユーザーの持ち物の `lib/swing` と、書き込める親の下で別のユーザーのディレクトリや別のユーザーの `manifest` へすり替えた `lib/swing` からは何も消さずに失敗すること
 - 不正な引数（`/` を含む `--version`、相対パスの `HOME` を含む）
 
 `shellcheck -s sh packaging/linux/install.sh packaging/linux/test-install.sh` が警告なしで通ること。

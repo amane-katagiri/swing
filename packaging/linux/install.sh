@@ -53,7 +53,7 @@ cleanup() {
   if [ -n "$TMP" ]; then
     rm -rf "$TMP"
   fi
-  if [ -n "$LIB" ]; then
+  if [ -n "$LIB" ] && [ -z "$UNINSTALL" ]; then
     rm -f "$LIB"/.*."$$" "$BIN"/.*."$$"
   fi
   if [ "$status" -ne 0 ] && [ -n "$STOPPED" ]; then
@@ -237,10 +237,16 @@ manifest_entries() {
     case $f in
       '' | manifest | .* | *[!A-Za-z0-9._-]*) continue ;;
     esac
-    if [ -f "$LIB/$f" ] || [ -L "$LIB/$f" ]; then
+    if [ -f "$1/$f" ] || [ -L "$1/$f" ]; then
       printf '%s\n' "$f"
     fi
-  done <"$LIB/manifest"
+  done <"$1/manifest"
+}
+
+owned_by_us() {
+  # shellcheck disable=SC2046
+  set -- $(ls -ldn -- "$1")
+  [ "$3" = 0 ] || [ "$3" = "$(id -u)" ]
 }
 
 put() {
@@ -432,7 +438,7 @@ do_install() {
     done
   )
   if [ -f "$LIB/manifest" ]; then
-    manifest_entries | while IFS= read -r old; do
+    manifest_entries "$LIB" | while IFS= read -r old; do
       if ! printf '%s\n' "$new_files" | grep -qxF -- "$old"; then
         rm -f "$LIB/$old"
       fi
@@ -490,10 +496,17 @@ confirm_purge() {
 do_uninstall() {
   [ -f "$LIB/manifest" ] || die "no installation found in $LIB"
   RUN=$LIB/swing
-  # Removing our own files from a loose directory is safe, but running a binary someone else could have replaced is not.
   if ! dir_problem "$LIB"; then
+    [ -n "$LOOSE" ] || die "refusing to use $LIB: $PROBLEM"
     warn "$PROBLEM, so $RUN will not be run"
     RUN=
+  fi
+  # Removals go through this pinned directory because others who can write an ancestor could swap the $LIB path between operations.
+  cd -P -- "$LIB" || die "cannot enter $LIB"
+  pinned=$(pwd -P)
+  owned_by_us . || die "refusing to use $LIB: $pinned is owned by another user"
+  if [ ! -f manifest ] || [ -L manifest ] || ! owned_by_us manifest; then
+    die "refusing to use $LIB: $pinned/manifest is not a file of root or the current user"
   fi
 
   data=$(data_dir)
@@ -529,15 +542,18 @@ do_uninstall() {
   fi
 
   info "removing files from $LIB"
-  manifest_entries | while IFS= read -r f; do
-    rm -f "$LIB/$f"
+  manifest_entries . | while IFS= read -r f; do
+    rm -f "./$f"
   done
-  rm -f "$LIB/manifest"
-  link=$BIN/swing
-  if [ -L "$link" ] && [ "$(readlink "$link")" = "$LIB/swing" ]; then
-    rm -f "$link"
-  fi
-  rmdir "$LIB" 2>/dev/null || warn "$LIB is not empty and was left in place"
+  rm -f ./manifest
+  (
+    cd -P -- "$BIN" 2>/dev/null || exit 0
+    if [ -L swing ] && [ "$(readlink swing)" = "$LIB/swing" ]; then
+      rm -f ./swing
+    fi
+  )
+  cd -P .. || die "cannot leave $pinned"
+  rmdir -- "${pinned##*/}" 2>/dev/null || warn "$LIB is not empty and was left in place"
 
   if [ -n "$PURGE" ]; then
     info "removing $data"
