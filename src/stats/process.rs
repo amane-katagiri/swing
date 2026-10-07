@@ -62,6 +62,7 @@ pub fn usage(pid: u32) -> Option<ProcessUsage> {
 
 #[cfg(windows)]
 pub fn usage(pid: u32) -> Option<ProcessUsage> {
+    use std::os::windows::io::AsRawHandle;
     use windows_sys::Win32::Foundation::FILETIME;
     use windows_sys::Win32::System::ProcessStatus::{
         GetProcessMemoryInfo, PROCESS_MEMORY_COUNTERS,
@@ -73,7 +74,7 @@ pub fn usage(pid: u32) -> Option<ProcessUsage> {
     }
 
     let process = crate::proc::open_process_for_query(pid)?;
-    let handle = std::os::windows::io::AsRawHandle::as_raw_handle(&process);
+    let handle = process.as_raw_handle();
     let zero = FILETIME {
         dwLowDateTime: 0,
         dwHighDateTime: 0,
