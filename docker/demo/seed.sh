@@ -120,7 +120,10 @@ echo "publishing sample sites"
 make_site my-garden "わたしの庭" "デモ環境の自分のサイト。" "#234"
 publish self 40d my-garden "サイトを開設" --title "わたしの庭"
 make_site alice.example "Alice's Notes" "日々のメモ。" "#633"
-publish alice 60d alice.example "初版" --url https://alice.example/ --title "ありすの部屋"
+# On a rerun the 6-day-old version is already in MFS, and publish refuses to add one 60 days behind it as dated in the future.
+if ! compose exec -T ipfs ipfs files stat "/swing/publish/$(public_of alice)/alice.example" > /dev/null 2>&1; then
+  publish alice 60d alice.example "初版" --url https://alice.example/ --title "ありすの部屋"
+fi
 printf '<p>追記: 2 本目の記事。</p>\n' >> "$work/alice.example/index.html"
 publish alice 6d alice.example "記事を 1 本追加" --url https://alice.example/ --title "ありすの部屋"
 make_site bob-zine "bob zine" "手作りのジン。" "#363"

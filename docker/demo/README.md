@@ -44,7 +44,7 @@ docker/demo/demo.sh up                      # 付けずに実行し直せば隔�
 
 相互関係は self↔alice、self↔carol、bob↔eve、frank↔ivan、grace↔judy。自分がミラーするのは alice・bob・carol のサイト（4 件）で、agent が保存してレプリカ報告を出す。
 
-- 各サイトの `created_at` は 3 時間前〜90 日前にばらしてある（`swing publish` は常に現在時刻で署名するので、`seed` サービスのイメージに入れた `faketime` で時計をずらして実行する）。Sites 画面の更新順は bob → carol（`carol.example` → `carol-photos`）→ alice になり、名前順・pubkey 順と見分けられる。
+- 各サイトの `created_at` は 3 時間前〜90 日前にばらしてある（`swing publish` は常に現在時刻で署名するので、`seed` サービスのイメージに入れた `faketime` で時計をずらして実行する）。時計は過去にずらすだけなので、publish の時計の確認（relay より進んでいないか）には当たらない。2 版ある `alice.example` は古い版から順に入れ、`seed` をやり直したときは古い版を入れ直さない（MFS にある新しい版より前の時刻で入れようとすると、未来の日付の版があるとして publish が止まるため）。Sites 画面の更新順は bob → carol（`carol.example` → `carol-photos`）→ alice になり、名前順・pubkey 順と見分けられる。
 - `.example` のサイトには `url` を付けている（開いても何も無い）。NIP-05 は `demo.env` で `SWING_NIP05=off` にしてあり、NIP-05 モードでは `warn` になる。
 
 ## 構成
