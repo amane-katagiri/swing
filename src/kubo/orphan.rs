@@ -109,15 +109,17 @@ async fn terminate_process(pid: u32) -> Result<()> {
 }
 
 pub async fn recover_orphan(state_dir: &Path, repo: &Path) -> Result<()> {
-    let path = pid_file_path(state_dir);
     let record = match read_pid_file(state_dir) {
         Ok(Some(record)) => record,
         Ok(None) => return Ok(()),
-        Err(e) => bail!(
-            "{e:#}; a Kubo started by a previous swing may still be running on {}: stop it if so, then delete {}",
-            repo.display(),
-            path.display()
-        ),
+        Err(e) => {
+            tracing::warn!(
+                error = %format!("{e:#}"),
+                repo = %repo.display(),
+                "cannot read kubo.pid; assuming no Kubo from a previous swing is left running"
+            );
+            return Ok(());
+        }
     };
 
     let Some(current_started_at) = process_start_marker(record.pid) else {

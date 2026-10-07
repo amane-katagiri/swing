@@ -624,18 +624,16 @@ async fn recover_orphan_with_no_pid_file_is_ok() {
 }
 
 #[tokio::test]
-async fn recover_orphan_keeps_an_unparseable_pid_file_and_says_what_to_do() {
-    let dir = tempfile::tempdir().unwrap();
-    std::fs::write(dir.path().join("kubo.pid"), "not a pid file").unwrap();
-    let err = recover_orphan(dir.path(), dir.path())
-        .await
-        .unwrap_err()
-        .to_string();
-    assert!(err.contains("delete") && err.contains("kubo.pid"), "{err}");
-    assert_eq!(
-        std::fs::read_to_string(dir.path().join("kubo.pid")).unwrap(),
-        "not a pid file"
-    );
+async fn recover_orphan_skips_an_unparseable_pid_file() {
+    for content in ["not a pid file", ""] {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("kubo.pid"), content).unwrap();
+        recover_orphan(dir.path(), dir.path()).await.unwrap();
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join("kubo.pid")).unwrap(),
+            content
+        );
+    }
 }
 
 #[tokio::test]
