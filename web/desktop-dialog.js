@@ -11,7 +11,6 @@ export function showStorageError(node, show) {
   node.textContent = show ? STORAGE_ERROR_TEXT : '';
 }
 
-/* `.desk-window.desk-dialog` shares the overlay+screen+position rules the SWING Explorer window already has. */
 export function createDialog({ root, returnFocus, onOpen, onOk, onCancel, onApply, onKey }) {
   const titlebar = root.querySelector('.desk-titlebar');
   const screen = document.getElementById('desk-screen');

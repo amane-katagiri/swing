@@ -15,7 +15,7 @@ export function clampPosition(x, y, w, size) {
   return { x: cx, y: cy };
 }
 
-/* No active pointer to capture/release for synthetic events. */
+/* Synthetic events have no active pointer, so capture and release may throw. */
 export function trackPointer(el, downEv, onMove, onEnd) {
   document.body.classList.add('desk-no-select');
   try {
