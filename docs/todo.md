@@ -59,4 +59,3 @@
 | 低 | Debian で `/usr/local` と `/usr/local/bin` がともに `root:staff 2775` の環境では、`install.sh --prefix /usr/local` と `swing service install --system` が `bin` を断る（root 所有でグループが書き込めるディレクトリを受け入れるのは、バイナリより上の階層だけ）。`staff` に任せたものとして `bin` にも広げるか、断るときの案内を変える | [レビューと強化](log/2026-10-07-review-and-hardening.md) |
 | 低 | `swing service install --system` のユニットに `ProtectSystem=strict` などの制限を足す（書き込む場所はすでに `ReadWritePaths` に並んでいる）。実際の systemd で確かめてから入れる | [レビューと強化](log/2026-10-07-review-and-hardening.md) |
 | 中 | 公開の `created_at` は「今」と「MFS にあるそのサイトの最新の版 + 1」の大きいほうにしているので、未来の日付の版のディレクトリ（時計が狂っていたときに作られたものなど）があると、それ以降の公開がすべて未来の日付になり、relay や参加者に受理されなくなる。一定以上先の版は無視するか、見つけたらエラーで知らせる | [レビューの残りの対応](log/2026-10-07-review-followups.md) |
-| 低 | `[gateway].hosts` に、ダッシュボードの待ち受け IP と同じものを書けてしまう（ホスト名との重なりは設定の検証で断っている）。待ち受け IP も断る | [レビューの残りの対応](log/2026-10-07-review-followups.md) |

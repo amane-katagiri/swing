@@ -822,6 +822,22 @@ fn gateway_listen_enabled_with_hosts_is_accepted() {
 }
 
 #[test]
+fn gateway_hosts_must_not_be_the_dashboard_listen_ip() {
+    let build = |listen: &str| {
+        let listen = listen.to_string();
+        build_config(minimal_file(), None, move |k| match k {
+            "SWING_GATEWAY_HOSTS" => Some("192.168.1.5".into()),
+            "SWING_DASHBOARD_LISTEN" => Some(listen.clone()),
+            _ => None,
+        })
+    };
+    let err = build("192.168.1.5:8082").unwrap_err();
+    assert!(err.to_string().contains("also a dashboard host"), "{err}");
+    assert!(build("192.168.1.6:8082").is_ok());
+    assert!(build("0.0.0.0:8082").is_ok());
+}
+
+#[test]
 fn gateway_hosts_must_not_overlap_dashboard_hosts() {
     let err = build_config(minimal_file(), None, |k| match k {
         "SWING_GATEWAY_HOSTS" => Some("example.com,dash.example".into()),

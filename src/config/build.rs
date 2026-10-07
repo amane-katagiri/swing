@@ -597,11 +597,16 @@ fn resolve_gateway<E: Fn(&str) -> Option<String>>(
 // Only keeps the built-in gateway's hosts off the dashboard's; Kubo's own gateway can still serve peer HTML on a loopback host (see the known weaknesses in docs/architecture/dashboard/security.md).
 fn check_gateway_hosts_apart_from_dashboard(
     gateway_hosts: &[String],
-    allowed_hosts: &[String],
+    dashboard: &DashboardConfig,
 ) -> Result<()> {
+    let listen_ip = Some(dashboard.listen.ip()).filter(|ip| !ip.is_unspecified());
     for host in gateway_hosts {
         if crate::host::is_loopback_name(host)
-            || allowed_hosts.iter().any(|h| h.eq_ignore_ascii_case(host))
+            || host.parse::<std::net::IpAddr>().ok() == listen_ip
+            || dashboard
+                .allowed_hosts
+                .iter()
+                .any(|h| h.eq_ignore_ascii_case(host))
         {
             bail!(
                 "[gateway].hosts entry {host} is also a dashboard host; serve the dashboard and the gateway under different host names"
@@ -632,7 +637,7 @@ pub(super) fn build_config(
     let publish = resolve_publish(&mut r, file.publish)?;
     let dashboard = resolve_dashboard(&mut r, file.dashboard, base, &kubo)?;
     let gateway = resolve_gateway(&mut r, file.gateway, kubo.managed, kubo.gateway_listen)?;
-    check_gateway_hosts_apart_from_dashboard(&gateway.hosts, &dashboard.allowed_hosts)?;
+    check_gateway_hosts_apart_from_dashboard(&gateway.hosts, &dashboard)?;
 
     Ok(Config {
         nostr,

@@ -19,7 +19,7 @@
 - 各要素の前後の空白を取り除き、空の要素は捨てる。
 - 各要素は `a-z`・`0-9`・`.`・`-` だけからなり、先頭・末尾が `.` でなく、`..` を含まないこと（大文字は不可）。満たさなければエラー。
 - `listen` が `off` 以外なら、空はエラー。
-- ダッシュボードで開けるホスト名（`[dashboard].allowed_hosts` と、常に許可される `localhost`・`127.0.0.1`・`::1`）と同じ名前（大文字小文字は区別しない）はエラー。この検証は Kubo 自身の gateway（`[kubo].gateway_listen`）には及ばない（[`dashboard/security.md#既知の弱点`](dashboard/security.md#既知の弱点)）。
+- ダッシュボードで開けるホスト名（`[dashboard].allowed_hosts` と、常に許可される `localhost`・`127.0.0.1`・`::1`、`[dashboard].listen` が `0.0.0.0`・`::` 以外ならその IP）と同じ名前（大文字小文字は区別しない）はエラー。この検証は Kubo 自身の gateway（`[kubo].gateway_listen`）には及ばない（[`dashboard/security.md#既知の弱点`](dashboard/security.md#既知の弱点)）。
 
 `[kubo].managed = true` のときは、同じ一覧が Kubo の `Gateway.PublicGateways` にも入る（[`kubo.md#適用する-kubo-設定kuboapply_config`](kubo.md#適用する-kubo-設定kuboapply_config)）。
 
