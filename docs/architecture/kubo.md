@@ -1,8 +1,8 @@
-# Kubo（kubo.rs）
+# Kubo（kubo/）
 
 [`../architecture.md`](../architecture.md) の一部。MFS の使い方と RPC（managed／unmanaged 共通）は [`mfs.md`](mfs.md)、内蔵 gateway は [`gateway.md`](gateway.md)。
 
-## Kubo プロセスの管理（kubo.rs）
+## Kubo プロセスの管理（kubo/）
 
 `swing up`（[`up.md`](up.md)）が managed の Kubo を扱うときの検出・起動・設定・停止・孤児回収。呼ぶ順序は [`up.md#managed`](up.md#managed)。
 
@@ -155,7 +155,7 @@ unmanaged（`[ipfs].api`）の Kubo には秘密を送らず、認証は SWING �
 上げるときに揃える場所:
 
 - `compose.yaml` の `ipfs` サービスのイメージタグ（`ipfs/kubo:v0.43.1`）
-- `kubo::KUBO_VERSION`（`src/kubo.rs`）
+- `kubo::KUBO_VERSION`（`src/kubo/mod.rs`）
 - `packaging/linux/install.sh` の `KUBO_VERSION` と `KUBO_SHA512_AMD64`・`KUBO_SHA512_ARM64`（<https://dist.ipfs.tech/kubo/> の `kubo_v<版>_linux-<amd64|arm64>.tar.gz.sha512` の値。[`install-sh.md`](install-sh.md)）
 - `packaging/windows/kubo.sha512`（`kubo_v<版>_windows-amd64.zip.sha512` をそのまま置く。[`installer-windows.md`](installer-windows.md#kubo-の取得と検証)）
 

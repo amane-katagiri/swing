@@ -11,7 +11,7 @@
 | [`architecture/signer.md`](architecture/signer.md) | 署名（`signer/`）: 秘密鍵か NIP-46 の署名アプリか、`remote-signer.json`、QR コードでのペアリング |
 | [`architecture/nip05.md`](architecture/nip05.md) | NIP-05 検証（agent と publish で共通） |
 | [`architecture/nostr.md`](architecture/nostr.md) | Nostr イベントの検証（`nostr/`）、未来ずれの許容、レプリカ報告の信頼度。取得と表示の上限（`nostr::budget`）の子ページもここから |
-| [`architecture/kubo.md`](architecture/kubo.md) | Kubo プロセスの管理（`kubo.rs`）、Kubo のバージョン |
+| [`architecture/kubo.md`](architecture/kubo.md) | Kubo プロセスの管理（`kubo/`）、Kubo のバージョン |
 | [`architecture/mfs.md`](architecture/mfs.md) | MFS の使い方（`mfs.rs`）と Kubo RPC クライアント（`ipfs.rs`） |
 | [`architecture/up.md`](architecture/up.md) | `swing up`（supervisor）: 起動順、セットアップモード、終了要求・シグナル、停止の時間予算、多重起動の防止 |
 | [`architecture/stats.md`](architecture/stats.md) | リソース使用量の記録（`stats.rs`） |
@@ -54,7 +54,7 @@
 | `signer/`・`pair.rs` | 署名（秘密鍵か NIP-46 の署名アプリ）と `remote-signer.json`、ペアリング / `swing signer pair`。[signer.md](architecture/signer.md) |
 | `nip05.rs` | NIP-05 検証。[nip05.md](architecture/nip05.md) |
 | `ipfs.rs`・`ipfs/site.rs`・`mfs.rs` | Kubo RPC クライアント・サイトのディレクトリの一覧と add の multipart・MFS 上のパスの組み立て。[mfs.md](architecture/mfs.md) |
-| `kubo.rs` | Kubo の検出・init・設定・起動と終了・孤児回収。[kubo.md](architecture/kubo.md) |
+| `kubo/` | Kubo の RPC の秘密と `kubo-api.json`（`access.rs`）・検出と init（`binary.rs`）・設定（`config.rs`）・起動と終了（`daemon.rs`）・`kubo.pid` と孤児回収（`orphan.rs`）、テストは `tests.rs`。[kubo.md](architecture/kubo.md) |
 | `agent/` | mirror-agent のループ。[agent.md](architecture/agent.md) |
 | `policy.rs`・`state.rs` | 保存ポリシーの判定（純粋関数）・`state.json` の永続化。[agent.md](architecture/agent.md) |
 | `health.rs` | 版と MFS の突き合わせ（agent と `status` で共通）と `status`。[cli/views.md](architecture/cli/views.md#status) |
@@ -66,7 +66,7 @@
 | `up.rs`・`ports.rs`・`lock.rs`・`shutdown.rs` | `swing up` の supervisor・セットアップモードでのポートのずらし方・多重起動の防止・シグナルと終了要求。[up.md](architecture/up.md) |
 | `stop.rs` | `swing stop`。[cli.md](architecture/cli.md#stop) |
 | `stats.rs`・`stats/process.rs` | リソース使用量の記録と `stats`、OS ごとのプロセスの CPU とメモリ。[stats.md](architecture/stats.md) |
-| `proc.rs` | Linux の `/proc/<pid>/stat` の読み取り（`kubo.rs` と `stats/process.rs` が共有） |
+| `proc.rs` | プロセスの開始時刻・生存確認・シグナル（`kubo/` が使う）と、Linux の `/proc/<pid>/stat` の読み取り（`stats/process.rs` と共有） |
 | `service/` | `swing service`（`templates.rs`: unit・plist・タスク XML、`process.rs`: 外部コマンド、`ownership.rs`: 登録が指す実行ファイルの読み取りと判定、`linux.rs`・`macos.rs`・`windows.rs`、ほかの OS は `unsupported.rs`）。[service.md](architecture/service.md)、登録の持ち主の判定は [service/ownership.md](architecture/service/ownership.md) |
 | `gateway.rs`・`host.rs` | 内蔵 gateway・Host ヘッダのパーサ（ダッシュボードのガードと共有）。[gateway.md](architecture/gateway.md) |
 | `dashboard/` | Web ダッシュボードと制御 API（`mod.rs`・`guard.rs`・`api.rs`・`error.rs`・`publish.rs`・`session.rs`・`setup.rs`・`upload.rs`・`dto.rs`・`config_dto.rs`・`assets.rs`・`mascots/`・`test_support.rs`）。[dashboard.md](architecture/dashboard.md) |

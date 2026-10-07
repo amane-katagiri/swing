@@ -17,7 +17,7 @@ Inno Setup で作るインストーラー 1 つを、GUI のインストーラ�
 build.ps1 -Archive <swing-<ref>-x86_64-pc-windows-msvc.zip> -OutDir <dir> -RefName <ref> [-WorkDir <dir>] [-Iscc <ISCC.exe>]
 ```
 
-1. `Cargo.toml` の最初の `version = "..."` を版、`src/kubo.rs` の `KUBO_VERSION` を Kubo の版として読む。
+1. `Cargo.toml` の最初の `version = "..."` を版、`src/kubo/mod.rs` の `KUBO_VERSION` を Kubo の版として読む。
 2. Kubo の zip を取得して検証し（下記）、`ipfs.exe` と Kubo のライセンス（`LICENSE`・`LICENSE-APACHE`・`LICENSE-MIT` を `LICENSE-Kubo.txt`・`LICENSE-Kubo-APACHE.txt`・`LICENSE-Kubo-MIT.txt` に改名）を作業ディレクトリ（既定は一時ディレクトリの `swing-installer`。毎回作り直す）の `stage` に置く。
 3. `-Archive` の zip の中のただ 1 つのディレクトリの中身を `stage` に足す。
 4. `-Iscc` が無ければ、Inno Setup 6.7.3 のインストーラーを `jrsoftware/issrc` のリリースから取得し、固定した SHA-256 と照らしてから作業ディレクトリの `inno` に portable モード（`/PORTABLE=1 /CURRENTUSER`）で入れる。

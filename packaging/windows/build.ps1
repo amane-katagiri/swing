@@ -33,10 +33,10 @@ function Read-Checksum([string] $Path) {
 }
 
 $version = Get-FirstMatch (Join-Path $Root 'Cargo.toml') '^version\s*=\s*"([^"]+)"'
-$kuboVersion = Get-FirstMatch (Join-Path $Root 'src\kubo.rs') 'KUBO_VERSION: &str = "([^"]+)"'
+$kuboVersion = Get-FirstMatch (Join-Path $Root 'src\kubo\mod.rs') 'KUBO_VERSION: &str = "([^"]+)"'
 $kuboZip = "kubo_v${kuboVersion}_windows-amd64.zip"
 $pinned = Read-Checksum (Join-Path $PSScriptRoot 'kubo.sha512')
-if ($pinned[1] -ne $kuboZip) { throw "packaging/windows/kubo.sha512 pins $($pinned[1]), but src/kubo.rs wants $kuboZip" }
+if ($pinned[1] -ne $kuboZip) { throw "packaging/windows/kubo.sha512 pins $($pinned[1]), but src/kubo/mod.rs wants $kuboZip" }
 
 if (Test-Path $WorkDir) { Remove-Item -Recurse -Force $WorkDir }
 $download = New-Item -ItemType Directory -Path (Join-Path $WorkDir 'download')
