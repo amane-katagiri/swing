@@ -434,6 +434,17 @@ else
 fi
 check "refusal names the directory" contains "$H/out" "$H/shared is writable by its group or other users"
 check "nothing created under it" absent "$H/shared/p"
+odd=$H/$(printf 'a\nerror: forged \033[31mb\342\200\256c')
+mkdir "$odd"
+chmod 777 "$odd"
+if run sh "$INSTALL" --prefix "$odd/p" >"$H/out" 2>&1; then
+  fail "a world-writable parent with control characters in its name is refused"
+else
+  pass "a world-writable parent with control characters in its name is refused"
+fi
+check "control characters in the refused path are printed as ?" contains "$H/out" "$H/a?error: forged ?[31mb?c is writable by its group or other users"
+check "no escape character reaches the output" lacks "$H/out" "$(printf '\033')"
+check "the forged line does not start a line" sh -c "! grep -q '^error: forged' '$H/out'"
 me=$(id -un)
 shared_gid=
 private_gid=

@@ -63,6 +63,10 @@ curl -fsSL .../install.sh | sh -s -- --version v0.1.0
 
 インストールと更新では、検査の後も `lib/swing` の中のものをパス（`<lib>/ipfs`・`<lib>/swing`・`<lib>/.swing-check.<pid>`）で実行し、書き込みもパスで行う。アンインストールのように `lib/swing` に入って `./swing` で実行する形にはしていない。`swing service stop`・`start`・`install` はカレントディレクトリの `swing.toml` を設定として探す（[`config.md`](config.md#設定ファイルの場所)）ので、実行したディレクトリのまま動かす必要があるため。
 
+## 表示
+
+`info`・`warning:`・`error:` の行と、データの場所・アンインストーラの場所・`--purge` の確認の表示では、埋め込むパスや名前の制御文字（改行・ESC などの C0、DEL、UTF-8 の C1）と、UTF-8 の不可視の書式文字（U+200B〜U+200F・U+2028〜U+202E・U+2060〜U+2064・U+2066〜U+206F・U+FEFF）をそれぞれ `?` に置き換える。ほかのユーザーが名前を付けられるディレクトリのパスが、偽の行や端末のエスケープシーケンスを出せないようにするため。`swing service status` の出力はそのまま中継する（`swing` 側で置き換える）。
+
 ## 置く物
 
 `lib/swing/` に次を置き、名前を 1 行ずつ `manifest` に書く（`manifest` 自身は書かない）。
@@ -123,6 +127,7 @@ curl -fsSL .../install.sh | sh -s -- --version v0.1.0
 - `manifest` に書かれた `/` を含む名前・`.` で始まる名前・ディレクトリを消さないこと、`lib/swing` の外を指すシンボリックリンクはリンクだけ消すこと
 - その他のユーザーが書き込める親ディレクトリと `lib/swing` の拒否、sticky ビット付きの親の許可、実行ユーザーが入っている共有のグループが書き込める親の拒否と個人グループが書き込める親の許可（それぞれ当てはまるグループが無ければ飛ばす）、root で実行したときだけ、グループが書き込める root の持ち物の親と `lib/swing` の拒否
 - 入れた後に親がその他のユーザーから書き込めるようになったとき、更新を断って `--prefix /opt/swing` と `--uninstall --prefix` を案内すること、アンインストールと `--purge` も `swing` を実行せず何も消さずに断り、コマンドを表示せずに権限を直すよう案内すること、親を戻せば消せること。prefix をシンボリックリンク経由で入れても `swing-uninstall.sh` が `bin/swing` を消すこと。root で実行したときだけ、グループが書き込める root の持ち物の親の下でもアンインストールを断ること、別のユーザーの持ち物の `lib/swing`・書き込める `lib/swing` の上の別のユーザーの持ち物の親・別のユーザーの `manifest`・書き込める親の下で別の root の持ち物のインストールや別のユーザーのディレクトリへすり替えた `lib/swing` からは何も消さずに失敗すること
+- 名前に改行・ESC・書式文字を含む親ディレクトリを断るときに、それらを `?` にして 1 行で表示すること
 - 不正な引数（`/` を含む `--version`、相対パスの `HOME` を含む）
 
 `shellcheck -s sh packaging/linux/install.sh packaging/linux/test-install.sh` が警告なしで通ること。

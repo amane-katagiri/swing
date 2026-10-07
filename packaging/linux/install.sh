@@ -15,16 +15,22 @@ STOPPED=
 LIB=
 BIN=
 
+SAFE_SED=$(printf 's/[[:cntrl:]]/?/g;s/\302[\200-\237]/?/g;s/\342\200[\213-\217\250-\256]/?/g;s/\342\201[\240-\244\246-\257]/?/g;s/\357\273\277/?/g')
+
+safe() {
+  printf '%s' "$*" | tr '\n' '?' | LC_ALL=C sed "$SAFE_SED"
+}
+
 info() {
-  printf '==> %s\n' "$*"
+  printf '==> %s\n' "$(safe "$*")"
 }
 
 warn() {
-  printf 'warning: %s\n' "$*" >&2
+  printf 'warning: %s\n' "$(safe "$*")" >&2
 }
 
 die() {
-  printf 'error: %s\n' "$*" >&2
+  printf 'error: %s\n' "$(safe "$*")" >&2
   exit 1
 }
 
@@ -484,8 +490,8 @@ do_install() {
   else
     printf '\nNext steps:\n  swing service install   # run swing at login (or: swing up)\n  swing dashboard open    # open the dashboard to finish the setup\n'
   fi
-  printf 'Your configuration and data live in %s\n' "$(data_dir)"
-  printf 'Uninstall with: %s/swing-uninstall.sh\n' "$LIB"
+  printf 'Your configuration and data live in %s\n' "$(safe "$(data_dir)")"
+  printf 'Uninstall with: %s\n' "$(safe "$LIB/swing-uninstall.sh")"
 }
 
 confirm_purge() {
@@ -495,7 +501,7 @@ confirm_purge() {
   if ! (: </dev/tty) 2>/dev/null; then
     die "cannot ask for confirmation without a terminal; pass --yes to confirm --purge"
   fi
-  printf 'Delete %s, including your swing.toml (with the secret key) and all stored data? [y/N] ' "$1" >&2
+  printf 'Delete %s, including your swing.toml (with the secret key) and all stored data? [y/N] ' "$(safe "$1")" >&2
   read -r answer </dev/tty || answer=
   case $answer in
     y | Y | yes | YES) ;;
@@ -567,7 +573,7 @@ do_uninstall() {
     info "removing $data"
     rm -rf "$data"
   else
-    printf 'Your configuration and data were kept in %s\nRemove them by running the uninstaller again with --purge\n' "$data"
+    printf 'Your configuration and data were kept in %s\nRemove them by running the uninstaller again with --purge\n' "$(safe "$data")"
   fi
 }
 
