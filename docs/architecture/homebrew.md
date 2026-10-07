@@ -57,4 +57,4 @@ macOS 向けに、tap `amane-katagiri/swing`（リポジトリ `amane-katagiri/h
 
 `release.yml` の `homebrew` ジョブが、`build` ジョブの `*-apple-darwin` のアーカイブから `SHA256SUMS` を作り、`render.sh` で `swing.rb` を書き出して artifact `homebrew` に置く。URL の基点は `$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/releases/download/<ref>`。タグの ref では `release` ジョブがこれもリリースの添付ファイルにする（`SHA256SUMS` にも入る）。ブランチの ref ではアーカイブ名にブランチ名が入るので、バージョンを読み取れない formula になる（中身の確認用）。
 
-リリースを公開した後、その `swing.rb` を tap のリポジトリの `Formula/swing.rb` に置いて push すると利用者に届く。formula のアーカイブはリリースの公開後でないとダウンロードできない（ドラフトの添付ファイルは公開されない）。
+リリースを公開した後、その `swing.rb` を tap のリポジトリの `Formula/swing.rb` に置いて push すると利用者に届く。formula のアーカイブはリリースの公開後でないとダウンロードできない（ドラフトの添付ファイルは公開されない）。タグを打ち直すとアーカイブが作り直されて SHA-256 が変わるので、tap の `Formula/swing.rb` もそのリリースの `swing.rb` に差し替える。

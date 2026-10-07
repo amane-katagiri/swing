@@ -34,6 +34,10 @@ SWING（Nostr + IPFS 個人サイト相互ミラー）のリポジトリで作�
 
 GitHub Actions のワークフロー（`macos-check`・`windows-check`・`windows-installer-check`・`homebrew-check` など）で試すときは、作業ブランチを push して、そのブランチで手動実行する。動くまでの試行錯誤のコミットを main に積まない。通ったら、試行のコミットを意味のある単位にまとめてから main に入れる。ブランチ名に `/` を使わない（`release` の `image` ジョブが失敗する）。`release` をブランチで手動実行すると、ブランチ名のタグでイメージが push される（[`docs/architecture/release.md`](docs/architecture/release.md)）。
 
+## リリース
+
+`v*` のタグを打ったり打ち直したりしたら、そのリリースに付いた `swing.rb` で tap のリポジトリの `Formula/swing.rb` を差し替える（[`docs/architecture/homebrew.md`](docs/architecture/homebrew.md#tap-への公開)）。古い formula のままだと SHA-256 が合わず `brew install` が失敗する。
+
 ## コーディング規則
 
 - コメントは原則書かない。書くなら「自然な実装を避けた理由」を 1 行だけ。
