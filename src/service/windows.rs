@@ -117,6 +117,10 @@ fn schtasks(args: &[&str]) -> Result<Output> {
     run_command_with_timeout(schtasks_command(args), SCHTASKS_CHANGE_TIMEOUT)
 }
 
+fn schtasks_query(args: &[&str]) -> Result<Output> {
+    run_command_with_timeout(schtasks_command(args), SCHTASKS_TIMEOUT)
+}
+
 fn current_user() -> Result<String> {
     let username = std::env::var("USERNAME").context("USERNAME is not set")?;
     if let Ok(domain) = std::env::var("USERDOMAIN")
@@ -172,8 +176,7 @@ pub fn start(_system: bool) -> Result<()> {
     Ok(())
 }
 
-// schtasks exits with 1 for every error and localizes the message, so absence is only
-// concluded from a successful listing of all tasks that lacks the task.
+// schtasks exits 1 with a localized message for every error, so absence is read from a full listing instead.
 fn query_installed() -> Result<bool> {
     let query = output_with_timeout(
         &mut schtasks_command(&["/Query", "/TN", TASK_NAME]),
@@ -182,16 +185,7 @@ fn query_installed() -> Result<bool> {
     if query.status.success() {
         return Ok(true);
     }
-    let list = output_with_timeout(
-        &mut schtasks_command(&["/Query", "/FO", "CSV", "/NH"]),
-        SCHTASKS_TIMEOUT,
-    )?;
-    if !list.status.success() {
-        bail!(
-            "`schtasks /Query` failed: {}",
-            decode_output(&list.stderr).trim()
-        );
-    }
+    let list = schtasks_query(&["/Query", "/FO", "CSV", "/NH"])?;
     Ok(task_listed(&decode_output(&list.stdout), TASK_NAME))
 }
 
@@ -295,16 +289,7 @@ fn decode_task_xml(bytes: &[u8]) -> String {
 pub fn registrations(_system: bool) -> Result<Vec<Registration>> {
     let mut out = Vec::new();
     if query_installed().context("checking whether swing is registered with Task Scheduler")? {
-        let xml = output_with_timeout(
-            &mut schtasks_command(&["/Query", "/TN", TASK_NAME, "/XML"]),
-            SCHTASKS_TIMEOUT,
-        )?;
-        if !xml.status.success() {
-            bail!(
-                "`schtasks /Query /TN {TASK_NAME} /XML` failed: {}",
-                decode_output(&xml.stderr).trim()
-            );
-        }
+        let xml = schtasks_query(&["/Query", "/TN", TASK_NAME, "/XML"])?;
         out.push(Registration {
             part: Part::Service,
             what: format!("The Task Scheduler task \"{TASK_NAME}\""),
@@ -343,16 +328,7 @@ pub fn status(_system: bool) -> Result<()> {
         println!("not installed");
         return Ok(());
     }
-    let out = output_with_timeout(
-        &mut schtasks_command(&["/Query", "/TN", TASK_NAME, "/FO", "LIST", "/V"]),
-        SCHTASKS_TIMEOUT,
-    )?;
-    if !out.status.success() {
-        bail!(
-            "`schtasks /Query /TN {TASK_NAME} /V` failed: {}",
-            decode_output(&out.stderr).trim()
-        );
-    }
+    let out = schtasks_query(&["/Query", "/TN", TASK_NAME, "/FO", "LIST", "/V"])?;
     print!("{}", decode_output(&out.stdout));
     Ok(())
 }

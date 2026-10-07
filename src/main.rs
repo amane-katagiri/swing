@@ -296,7 +296,7 @@ enum ServiceCommand {
         #[arg(
             long,
             requires = "system",
-            help = "Allow the system unit to run as root (Linux only)"
+            help = "Allow the system unit to run as root, together with `--run-as root` (Linux only)"
         )]
         allow_root: bool,
         #[arg(long, help = "Register without starting it now")]
