@@ -200,18 +200,18 @@ async fn list_newest_version(ipfs: &IpfsClient, site_path: &str) -> Result<Optio
 
 pub struct RelayState {
     pub previous: Result<Option<nostr::SiteEvent>, String>,
-    relay_times: Vec<(String, u64)>,
+    relay_offsets: Vec<(String, i64)>,
 }
 
 impl RelayState {
     pub async fn fetch(relay: &RelayClient, site_event_kind: u16, d: &str) -> Self {
-        let (previous, relay_times) = tokio::join!(
+        let (previous, relay_offsets) = tokio::join!(
             relay.fetch_own_latest_site(site_event_kind, d),
-            clock::probe_relay_times(relay.relays())
+            clock::probe_relay_offsets(relay.relays())
         );
         Self {
             previous: previous.map_err(|e| format!("{e:#}")),
-            relay_times,
+            relay_offsets,
         }
     }
 
@@ -228,7 +228,7 @@ pub async fn plan_version(ipfs: &IpfsClient, site_path: &str, relays: &RelayStat
     let newest = list_newest_version(ipfs, site_path).await?;
     let now = Timestamp::now().as_secs();
     let created_at = clock::version_time(site_path, newest, relays.previous_created_at(), now)?;
-    clock::refuse_clock_ahead(now, &relays.relay_times)?;
+    clock::refuse_clock_ahead(&relays.relay_offsets)?;
     Ok(created_at)
 }
 
@@ -327,7 +327,10 @@ fn with_rejection_hints(mut results: Vec<RelaySendResult>) -> Vec<RelaySendResul
             && !result.ok
             && rejected_as_future(error)
         {
-            *error = format!("{error} ({FUTURE_REJECTION_HINT})");
+            *error = format!(
+                "{} ({FUTURE_REJECTION_HINT})",
+                nostr::cap_rejection_reason(error)
+            );
         }
     }
     results
@@ -793,7 +796,7 @@ mod tests {
         );
     }
 
-    fn relay_state(previous: Option<u64>, relay_times: Vec<(String, u64)>) -> RelayState {
+    fn relay_state(previous: Option<u64>, relay_offsets: Vec<(String, i64)>) -> RelayState {
         let previous = previous.map(|created_at| nostr::SiteEvent {
             pubkey: Keys::generate().public_key(),
             d: "example.com".to_string(),
@@ -807,7 +810,7 @@ mod tests {
         });
         RelayState {
             previous: Ok(previous),
-            relay_times,
+            relay_offsets,
         }
     }
 
@@ -836,25 +839,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn add_and_measure_refuses_a_future_previous_event_before_adding() {
-        let future = Timestamp::now().as_secs() + nostr::MAX_FUTURE_SKEW + 3600;
-        let (err, added) = refused_stage(200, relay_state(Some(future), Vec::new())).await;
-        assert!(err.downcast_ref::<ClockError>().is_some(), "{err:#}");
-        assert!(
-            err.to_string()
-                .starts_with("your latest site event on the relays is dated"),
-            "{err}"
-        );
-        assert!(!added);
-    }
-
-    #[tokio::test]
     async fn add_and_measure_refuses_a_clock_ahead_of_every_relay_before_adding() {
-        let times = vec![
-            ("wss://a".to_string(), 784_111_777),
-            ("wss://b".to_string(), 784_111_777 + 60),
+        let skew = nostr::MAX_FUTURE_SKEW as i64;
+        let offsets = vec![
+            ("wss://a".to_string(), skew + 3600),
+            ("wss://b".to_string(), skew + 60),
         ];
-        let (err, added) = refused_stage(100, relay_state(None, times)).await;
+        let (err, added) = refused_stage(100, relay_state(None, offsets)).await;
         assert!(err.downcast_ref::<ClockError>().is_some(), "{err:#}");
         assert!(
             err.to_string()
@@ -865,14 +856,14 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn plan_version_ignores_one_lagging_relay_and_an_unknown_previous() {
+    async fn plan_version_ignores_one_lagging_relay_and_never_refuses_over_the_previous() {
         let kubo = fake_files_ls(ls_answer(&[100])).await;
         let now = Timestamp::now().as_secs();
         let relays = RelayState {
             previous: Err("relay down".to_string()),
-            relay_times: vec![
-                ("wss://a".to_string(), 784_111_777),
-                ("wss://b".to_string(), now),
+            relay_offsets: vec![
+                ("wss://a".to_string(), 1_000_000_000),
+                ("wss://b".to_string(), 0),
             ],
         };
         let created_at = plan_version(&kubo.ipfs, "/swing/publish/k/s", &relays)
@@ -885,6 +876,35 @@ mod tests {
                 .await
                 .unwrap(),
             now + 601
+        );
+        let relays = relay_state(Some(now + 3600), Vec::new());
+        let created_at = plan_version(&kubo.ipfs, "/swing/publish/k/s", &relays)
+            .await
+            .unwrap();
+        assert!(created_at < now + 3600, "{created_at}");
+    }
+
+    #[test]
+    fn the_future_hint_survives_a_long_rejection_reason() {
+        let long = format!(
+            "invalid: created_at too far in the future {}",
+            "x".repeat(2000)
+        );
+        let results = with_rejection_hints(vec![RelaySendResult {
+            relay: "wss://a".to_string(),
+            ok: false,
+            error: Some(long),
+        }]);
+        assert!(FUTURE_REJECTION_HINT.chars().count() + 3 <= nostr::MAX_REJECTION_HINT_CHARS);
+        let error = results[0].error.as_deref().unwrap();
+        assert!(
+            error.ends_with(&format!(" ({FUTURE_REJECTION_HINT})")),
+            "{error}"
+        );
+        let line = nostr::rejection_line("wss://a", error);
+        assert!(
+            line.ends_with(&format!(" ({FUTURE_REJECTION_HINT})")),
+            "{line}"
         );
     }
 

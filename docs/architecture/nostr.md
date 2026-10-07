@@ -23,7 +23,7 @@
   | `fetch_follow_set` | kind が 30000、作者が自分の公開鍵、`d` が要求した名前（`is_follow_set_of`）、`created_at` が未来ずれの許容内（`plausible_at`。下記）。残ったものから最新 1 件 |
   | `fetch_follow_sets` | 作者が要求した `authors` に含まれ、kind が 30000・`d` が要求した名前（`is_follow_set_of`）。残ったものを作者ごとに最新 1 件にする |
   | `fetch_site_events` | kind が `[nostr].site_event_kind`、作者が要求した `authors` に含まれる |
-  | `fetch_own_latest_site`（`swing publish` の前の版） | 作者が自分の公開鍵、サイトイベントとしてパースでき（kind も確かめる）、`d` が要求した名前。残ったものから最新 1 件（`select_latest` と同じ順。`created_at` が未来すぎるものも除かない） |
+  | `fetch_own_latest_site`（`swing publish` の前の版） | 作者が自分の公開鍵、サイトイベントとしてパースでき（kind も確かめる）、`d` が要求した名前。`created_at` が未来ずれの許容内。残ったものから最新 1 件（`select_latest`） |
   | `fetch_replica_reports` | kind が `[nostr].replica_event_kind`、`a` タグのどれかが要求した座標のいずれかと一致する |
   | `fetch_replica_reports_by` | `fetch_replica_reports` の条件に加え、作者が要求した報告者に含まれる |
   | `fetch_follow_set_authors_referencing` | kind が 30000・`d` が要求した名前（`is_follow_set_of`）で、`p` タグのどれかが要求した相手に含まれる（作者を指定しない取得） |

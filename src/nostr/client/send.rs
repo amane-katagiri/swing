@@ -41,8 +41,16 @@ pub fn print_relay_line(relay: &str, ok: bool) {
 }
 
 const MAX_REJECTION_DISPLAY_CHARS: usize = 500;
+pub const MAX_REJECTION_HINT_CHARS: usize = 100;
 
-fn rejection_line(relay: &str, error: &str) -> String {
+pub fn cap_rejection_reason(error: &str) -> String {
+    crate::format::sanitize_display_text(
+        error,
+        MAX_REJECTION_DISPLAY_CHARS - MAX_REJECTION_HINT_CHARS,
+    )
+}
+
+pub fn rejection_line(relay: &str, error: &str) -> String {
     format!(
         "  \u{2717} {relay}: {}",
         crate::format::sanitize_display_text(error, MAX_REJECTION_DISPLAY_CHARS)

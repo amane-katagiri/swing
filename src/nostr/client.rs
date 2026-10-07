@@ -22,7 +22,8 @@ use fetch::{
 };
 pub use report_relay::ReportRelay;
 pub use send::{
-    RelaySendResult, print_relay_line, print_relay_send_result_lines, relay_send_results,
+    MAX_REJECTION_HINT_CHARS, RelaySendResult, cap_rejection_reason, print_relay_line,
+    print_relay_send_result_lines, rejection_line, relay_send_results,
 };
 
 pub fn bounded_client(max_event_bytes: u32) -> Client {
@@ -290,8 +291,9 @@ impl RelayClient {
             .filter_map(|e| parse_site_event(e, site_event_kind).ok())
             .filter(|ev| ev.d == d)
             .collect();
-        // A future-dated own event still outranks a new publish on the relays, so publish must see it to refuse.
-        Ok(select_latest(&parsed, u64::MAX).into_values().next())
+        Ok(select_latest(&parsed, Timestamp::now().as_secs())
+            .into_values()
+            .next())
     }
 
     pub async fn fetch_replica_reports(
