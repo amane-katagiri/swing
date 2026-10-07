@@ -509,31 +509,75 @@ fi
 check "upgrade refusal suggests a private prefix" contains "$H/out" "--prefix /opt/swing"
 check "upgrade refusal suggests uninstalling first" contains "$H/out" "install.sh --uninstall --prefix $H/loose/p"
 check "binary not upgraded" [ "$(run "$H/loose/p/lib/swing/swing" --version)" = "swing 0.1.0" ]
-unit_for "$H/.config/systemd/user/swing.service" "$H/loose/p/lib/swing/swing"
+lib=$H/loose/p/lib/swing
+unit_for "$H/.config/systemd/user/swing.service" "$lib/swing"
+printf '../victim\n.hidden\n' >>"$lib/manifest"
 : >"$FAKE_LOG"
 if run sh "$INSTALL" --uninstall --prefix "$H/loose/p" >"$H/out" 2>&1; then
-  fail "uninstall with a user service under a loosened parent stops"
+  fail "uninstall under a loosened parent is refused"
 else
-  pass "uninstall with a user service under a loosened parent stops"
+  pass "uninstall under a loosened parent is refused"
 fi
-check "service check not run from a loosened directory" lacks "$FAKE_LOG" "swing service"
-check "nothing removed while a user service exists" [ -x "$H/loose/p/lib/swing/swing" ]
+check "uninstall refusal names the directory" contains "$H/out" "$H/loose is writable by its group or other users"
+check "uninstall refusal lists the files" contains "$H/out" "rm -f -- '$lib/swing'"
+check "uninstall refusal lists the manifest" contains "$H/out" "rm -f -- '$lib/manifest'"
+check "uninstall refusal lists the bin link" contains "$H/out" "rm -f -- '$H/loose/p/bin/swing'"
+check "uninstall refusal lists lib/swing" contains "$H/out" "rmdir -- '$lib'"
+check "uninstall refusal points at the user service" contains "$H/out" "first remove the service in $H/.config/systemd/user/swing.service"
+check "uninstall refusal offers fixing the permissions" contains "$H/out" "make $H/loose writable only by its owner"
+check "uninstall refusal skips names outside lib" lacks "$H/out" "victim"
+check "uninstall refusal skips dot names" lacks "$H/out" ".hidden"
+check "uninstall refusal does not purge" lacks "$H/out" "rm -rf"
+check "swing not run from a loosened directory" lacks "$FAKE_LOG" "swing service"
+check "nothing removed under a loosened parent" [ -x "$lib/swing" ]
+check "bin link kept under a loosened parent" [ -L "$H/loose/p/bin/swing" ]
+check "user unit kept under a loosened parent" [ -f "$H/.config/systemd/user/swing.service" ]
 rm -f "$H/.config/systemd/user/swing.service"
-out=$(run sh "$INSTALL" --uninstall --prefix "$H/loose/p" 2>&1) || {
-  echo "$out"
-  fail "uninstall under a loosened parent exits 0"
-}
-check "uninstall under a loosened parent warns" sh -c "printf '%s' \"\$1\" | grep -q 'will not be run'" _ "$out"
-check "files removed under a loosened parent" absent "$H/loose/p/lib/swing"
-check "symlink removed under a loosened parent" absent "$H/loose/p/bin/swing"
-check "swing not run during uninstall from a loosened directory" lacks "$FAKE_LOG" "swing service"
+mkdir -p "$H/.local/share/swing"
+if run sh "$INSTALL" --uninstall --purge --yes --prefix "$H/loose/p" >"$H/out" 2>&1; then
+  fail "purge under a loosened parent is refused"
+else
+  pass "purge under a loosened parent is refused"
+fi
+check "purge refusal lists the data directory" contains "$H/out" "rm -rf -- '$H/.local/share/swing'"
+check "data kept under a loosened parent" [ -d "$H/.local/share/swing" ]
+check "nothing removed by the refused purge" [ -x "$lib/swing" ]
+grep '^  r' "$H/out" | grep -v 'rm -rf' >"$H/manual.sh"
+sh "$H/manual.sh" || fail "the listed commands run"
+check "the listed commands remove lib/swing" absent "$lib"
+check "the listed commands remove the bin link" absent "$H/loose/p/bin/swing"
+check "the listed commands keep other files" [ -d "$H/loose/p/lib" ]
+run sh "$INSTALL" --prefix "$H/loose/p2" >"$H/out" 2>&1 && fail "install under a loosened parent is refused"
+chmod 755 "$H/loose"
+run sh "$INSTALL" --prefix "$H/loose/p2" >"$H/out" 2>&1 || fail "install after tightening the parent exits 0"
+chmod 777 "$H/loose"
+run sh "$INSTALL" --uninstall --prefix "$H/loose/p2" >"$H/out" 2>&1 && fail "uninstall under a loosened parent fails"
+chmod 755 "$H/loose"
+run sh "$INSTALL" --uninstall --prefix "$H/loose/p2" >"$H/out" 2>&1 || fail "uninstall after tightening the parent exits 0"
+check "uninstall after tightening the parent removes lib/swing" absent "$H/loose/p2/lib/swing"
+
+echo "--- uninstall through a symlinked prefix removes the bin link"
+new_env linked
+mkdir "$H/real"
+ln -s "$H/real" "$H/linked"
+run sh "$INSTALL" --prefix "$H/linked" >/dev/null 2>&1 || fail "install through a symlinked prefix exits 0"
+check "bin link names the logical path" [ "$(readlink "$H/real/bin/swing")" = "$H/linked/lib/swing/swing" ]
+run "$H/linked/lib/swing/swing-uninstall.sh" >/dev/null 2>&1 || fail "uninstall through a symlinked prefix exits 0"
+check "lib removed through a symlinked prefix" absent "$H/real/lib/swing"
+check "bin link removed through a symlinked prefix" absent "$H/real/bin/swing"
+
 if [ -n "$delegated_gid" ]; then
   mkdir "$H/staff"
   run sh "$INSTALL" --prefix "$H/staff/p" >"$H/out" 2>&1 || fail "install before the parent is delegated exits 0"
   chgrp "$delegated_gid" "$H/staff"
   chmod 2775 "$H/staff"
-  run sh "$INSTALL" --uninstall --prefix "$H/staff/p" >"$H/out" 2>&1 || fail "uninstall under a root-owned parent writable by its group exits 0"
-  check "files removed under a root-owned parent writable by its group" absent "$H/staff/p/lib/swing"
+  if run sh "$INSTALL" --uninstall --prefix "$H/staff/p" >"$H/out" 2>&1; then
+    fail "uninstall under a root-owned parent writable by its group is refused"
+  else
+    pass "uninstall under a root-owned parent writable by its group is refused"
+  fi
+  check "group refusal lists the files" contains "$H/out" "rm -f -- '$H/staff/p/lib/swing/swing'"
+  check "nothing removed under a root-owned parent writable by its group" [ -x "$H/staff/p/lib/swing/swing" ]
   mkdir "$H/leaf"
   run sh "$INSTALL" --prefix "$H/leaf/p" >"$H/out" 2>&1 || fail "install before lib/swing is delegated exits 0"
   chgrp "$delegated_gid" "$H/leaf/p/lib/swing"
@@ -554,28 +598,52 @@ if [ -n "$delegated_gid" ]; then
   fi
   check "refusal names the owner problem" contains "$H/out" "owned by another user"
   check "nothing removed from a lib/swing owned by another user" [ -x "$H/foreign/p/lib/swing/swing" ]
+  mkdir "$H/mixed"
+  run sh "$INSTALL" --prefix "$H/mixed/p" >"$H/out" 2>&1 || fail "install before the owners change exits 0"
+  chmod 777 "$H/mixed/p/lib/swing"
+  chown nobody "$H/mixed"
+  if run sh "$INSTALL" --uninstall --prefix "$H/mixed/p" >"$H/out" 2>&1; then
+    fail "uninstall under a parent owned by another user is refused"
+  else
+    pass "uninstall under a parent owned by another user is refused"
+  fi
+  check "another owner above a loose lib/swing is reported" contains "$H/out" "$H/mixed is owned by another user"
+  check "no commands listed under a parent owned by another user" lacks "$H/out" "rm -f --"
+  check "nothing removed under a parent owned by another user" [ -x "$H/mixed/p/lib/swing/swing" ]
   mkdir "$H/swap"
   run sh "$INSTALL" --prefix "$H/swap/p" >"$H/out" 2>&1 || fail "install before lib/swing is swapped exits 0"
+  run sh "$INSTALL" --prefix "$H/victim" >"$H/out" 2>&1 || fail "install of the other copy exits 0"
   chmod 777 "$H/swap/p/lib"
+  mv "$H/swap/p/lib/swing" "$H/swap/p/lib/real"
+  ln -s "$H/victim/lib/swing" "$H/swap/p/lib/swing"
+  if run sh "$INSTALL" --uninstall --prefix "$H/swap/p" >"$H/out" 2>&1; then
+    fail "uninstall through a lib/swing swapped to another install is refused"
+  else
+    pass "uninstall through a lib/swing swapped to another install is refused"
+  fi
+  check "the other install is kept" [ -x "$H/victim/lib/swing/swing" ]
+  check "swing not run through a swapped lib/swing" lacks "$FAKE_LOG" "swing service"
+  rm "$H/swap/p/lib/swing"
   mkdir "$H/evil"
   echo victim >"$H/evil/victim"
   printf 'victim\n' >"$H/evil/manifest"
   chown -R nobody "$H/evil"
-  mv "$H/swap/p/lib/swing" "$H/swap/p/lib/real"
   ln -s "$H/evil" "$H/swap/p/lib/swing"
   if run sh "$INSTALL" --uninstall --prefix "$H/swap/p" >"$H/out" 2>&1; then
-    fail "uninstall through a swapped lib/swing in a loosened parent is refused"
+    fail "uninstall through a lib/swing swapped to another user's directory is refused"
   else
-    pass "uninstall through a swapped lib/swing in a loosened parent is refused"
+    pass "uninstall through a lib/swing swapped to another user's directory is refused"
   fi
   check "file in the swapped-in directory kept" [ -f "$H/evil/victim" ]
-  chown root "$H/evil"
-  if run sh "$INSTALL" --uninstall --prefix "$H/swap/p" >"$H/out" 2>&1; then
+  mkdir "$H/mf"
+  run sh "$INSTALL" --prefix "$H/mf/p" >"$H/out" 2>&1 || fail "install before the manifest changes hands exits 0"
+  chown nobody "$H/mf/p/lib/swing/manifest"
+  if run sh "$INSTALL" --uninstall --prefix "$H/mf/p" >"$H/out" 2>&1; then
     fail "uninstall with a manifest owned by another user is refused"
   else
     pass "uninstall with a manifest owned by another user is refused"
   fi
-  check "file kept when the manifest is owned by another user" [ -f "$H/evil/victim" ]
+  check "nothing removed when the manifest is owned by another user" [ -x "$H/mf/p/lib/swing/swing" ]
 else
   echo "skip root-owned directories writable by their group (not running as root)"
 fi

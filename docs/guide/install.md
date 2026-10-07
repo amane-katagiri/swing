@@ -50,7 +50,7 @@ curl -fsSL https://github.com/amane-katagiri/swing/releases/latest/download/inst
 バージョンを指定するときは `sh -s -- --version v0.1.0` とします。`swing` のアーカイブと Kubo は SHA-256 / SHA-512 のチェックサムを確かめてから入れます。`~/.local/lib/swing/` に `swing`・`ipfs` などを置き、`~/.local/bin/swing` からのシンボリックリンクを作ります（`~/.local/bin` が PATH に無ければ警告します）。同じコマンドをもう一度実行すると、その場で更新します。systemd のユーザーサービスとして動いていれば、止めてから入れ替えて、動いていたなら再び起動します。
 
 - `--service` を付けると、入れた後に `swing service install` まで行います。設定ファイルが無ければセットアップモードで起動するので、`swing dashboard open` でダッシュボードを開いて設定を進めます。
-- `--prefix DIR` で入れる場所を変えられます（`DIR/lib/swing` と `DIR/bin`）。システム全体に入れるなら `curl -fsSL .../install.sh | sudo sh -s -- --prefix /usr/local` とします。入れる場所かその親が root か自分以外のメンバーのいるグループから書き込めると断ります（Debian で `/usr/local` が `root:staff 2775` のときなど）。そのときは `--prefix /opt/swing` などにします。以前そこに入れたものがあれば、先に `install.sh --uninstall --prefix /usr/local` で消してください（グループやほかのユーザーから書き込めることだけが理由なら、アンインストールはこの検査で止まりません。中の `swing` は実行しないので、ユーザーのサービスを登録していれば先に手で消すよう案内されます）。
+- `--prefix DIR` で入れる場所を変えられます（`DIR/lib/swing` と `DIR/bin`）。システム全体に入れるなら `curl -fsSL .../install.sh | sudo sh -s -- --prefix /usr/local` とします。入れる場所かその親が root か自分以外のメンバーのいるグループから書き込めると断ります（Debian で `/usr/local` が `root:staff 2775` のときなど）。そのときは `--prefix /opt/swing` などにします。以前そこに入れたものがあれば、先に `install.sh --uninstall --prefix /usr/local` で消してください（アンインストールも同じ検査で断ります。グループやほかのユーザーから書き込めることが理由なら、消すはずのファイルを手で消すコマンドが表示されるので、指す先を確かめてから実行するか、そのディレクトリをほかから書き込めないようにしてから実行し直してください）。
 
 削除は `~/.local/lib/swing/swing-uninstall.sh` です（`--prefix` で入れたときは、その `lib/swing` の中の同名のスクリプト）。サービスの登録（`lib/swing` の `swing` を起動するものだけ）と入れたファイルを消し、[設定ファイルとデータ](#設定ファイルとデータの置き場所)は残します。それも消すときは `--purge` を付けます（確認を求められます。`--yes` で省けます）。詳しい動作は [`docs/architecture/install-sh.md`](../architecture/install-sh.md) を参照してください。
 

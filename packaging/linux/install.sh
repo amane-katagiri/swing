@@ -193,6 +193,7 @@ dir_problem() {
         set -- $(ls -ldn -- "$p")
         if [ "$3" != 0 ] && [ "$3" != "$me" ]; then
           PROBLEM="$p is owned by another user"
+          LOOSE=
           return 1
         fi
         loose=
@@ -202,15 +203,14 @@ dir_problem() {
             private_group "$3" "$4" || loose=1
             ;;
         esac
-        if [ -n "$loose" ]; then
+        if [ -n "$loose" ] && [ -z "$LOOSE" ]; then
           sticky=
           case $1 in
             ?????????[tT]*) sticky=1 ;;
           esac
           if [ -n "$leaf" ] || [ -z "$sticky" ]; then
             PROBLEM="$p is writable by its group or other users"
-            LOOSE=1
-            return 1
+            LOOSE=$p
           fi
         fi
       fi
@@ -219,6 +219,7 @@ dir_problem() {
       p=$(dirname -- "$p")
     done
   done
+  [ -z "$LOOSE" ]
 }
 
 check_dir() {
@@ -241,6 +242,50 @@ manifest_entries() {
       printf '%s\n' "$f"
     fi
   done <"$1/manifest"
+}
+
+quote() {
+  printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\\\\''/g")"
+}
+
+links_into() {
+  target=$(readlink -- "$1") || return 1
+  case $target in
+    /*/swing) ;;
+    *) return 1 ;;
+  esac
+  [ "$(cd -P -- "${target%/swing}" 2>/dev/null && pwd -P)" = "$2" ]
+}
+
+manual_removal() {
+  real=$(cd -P -- "$LIB" 2>/dev/null && pwd -P) || return 0
+  if [ ! -f "$real/manifest" ] || [ -L "$real/manifest" ]; then
+    return 0
+  fi
+  {
+    printf '\nTo remove the install by hand, check what these commands point at and run them yourself:\n'
+    for unit in "$SYSTEM_UNIT" "$(user_unit)"; do
+      if [ -f "$unit" ]; then
+        printf '  # first remove the service in %s if it runs swing from %s\n' "$unit" "$real"
+      fi
+    done
+    manifest_entries "$real" | while IFS= read -r f; do
+      printf '  rm -f -- %s\n' "$(quote "$real/$f")"
+    done
+    printf '  rm -f -- %s\n' "$(quote "$real/manifest")"
+    bin=$(cd -P -- "$BIN" 2>/dev/null && pwd -P) || bin=
+    if [ -n "$bin" ] && [ -L "$bin/swing" ] && links_into "$bin/swing" "$real"; then
+      printf '  rm -f -- %s\n' "$(quote "$bin/swing")"
+    fi
+    printf '  rmdir -- %s\n' "$(quote "$real")"
+    if [ -n "$PURGE" ]; then
+      data=$(data_dir)
+      case $data in
+        */swing) printf '  rm -rf -- %s\n' "$(quote "$data")" ;;
+      esac
+    fi
+    printf 'Or, if it is safe to, make %s writable only by its owner and run this again.\n' "$LOOSE"
+  } >&2
 }
 
 owned_by_us() {
@@ -495,13 +540,15 @@ confirm_purge() {
 
 do_uninstall() {
   [ -f "$LIB/manifest" ] || die "no installation found in $LIB"
-  RUN=$LIB/swing
   if ! dir_problem "$LIB"; then
-    [ -n "$LOOSE" ] || die "refusing to use $LIB: $PROBLEM"
-    warn "$PROBLEM, so $RUN will not be run"
-    RUN=
+    if [ -z "$LOOSE" ]; then
+      die "refusing to use $LIB: $PROBLEM; nothing was removed"
+    fi
+    printf 'error: refusing to use %s: %s; nothing was removed\n' "$LIB" "$PROBLEM" >&2
+    manual_removal
+    exit 1
   fi
-  # Removals go through this pinned directory because others who can write an ancestor could swap the $LIB path between operations.
+  # Everything below goes through this pinned directory so that a swap of the $LIB path after the checks cannot redirect it.
   cd -P -- "$LIB" || die "cannot enter $LIB"
   pinned=$(pwd -P)
   owned_by_us . || die "refusing to use $LIB: $pinned is owned by another user"
@@ -520,8 +567,8 @@ do_uninstall() {
 
   if [ -f "$SYSTEM_UNIT" ] && [ -z "$FORCE" ]; then
     code=0
-    if [ -n "$RUN" ] && [ -x "$RUN" ]; then
-      "$RUN" service status --system --points-into "$LIB" >/dev/null 2>&1 || code=$?
+    if [ -x ./swing ]; then
+      ./swing service status --system --points-into "$LIB" >/dev/null 2>&1 || code=$?
     fi
     if [ "$code" -ne 4 ]; then
       die "a system service exists; run 'sudo $LIB/swing service uninstall --system' first, or use --force"
@@ -532,10 +579,8 @@ do_uninstall() {
   unit=$(user_unit)
   if [ -f "$unit" ]; then
     info "removing the swing service if it runs swing from $LIB"
-    if [ -z "$RUN" ]; then
-      die "$unit exists and $LIB/swing will not be run to check it; remove the service with 'systemctl --user disable --now swing' and '$unit' if it runs swing from $LIB, then run this again; nothing was removed"
-    elif [ -x "$RUN" ]; then
-      "$RUN" service uninstall --only-from "$LIB" || die "swing service uninstall failed; nothing was removed"
+    if [ -x ./swing ]; then
+      ./swing service uninstall --only-from "$LIB" || die "swing service uninstall failed; nothing was removed"
     else
       warn "$unit exists but $LIB/swing is missing; remove the service by hand"
     fi
@@ -548,7 +593,7 @@ do_uninstall() {
   rm -f ./manifest
   (
     cd -P -- "$BIN" 2>/dev/null || exit 0
-    if [ -L swing ] && [ "$(readlink swing)" = "$LIB/swing" ]; then
+    if [ -L swing ] && links_into swing "$pinned"; then
       rm -f ./swing
     fi
   )
