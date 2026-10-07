@@ -116,7 +116,7 @@ pub async fn recover_orphan(state_dir: &Path, repo: &Path) -> Result<()> {
             tracing::warn!(
                 error = %format!("{e:#}"),
                 repo = %repo.display(),
-                "cannot read kubo.pid; assuming no Kubo from a previous swing is left running"
+                "cannot read kubo.pid; assuming no Kubo from a previous swing is left running (if Kubo then fails on the repo lock, stop any leftover Kubo using this repo)"
             );
             return Ok(());
         }

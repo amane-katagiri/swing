@@ -138,7 +138,7 @@ unmanaged（`[ipfs].api`）の Kubo には秘密を送らず、認証は SWING �
 
 `kubo::recover_orphan` は `swing.lock` を持っている間に 1 回呼ぶ（呼ぶ時点は [`up.md#managed`](up.md#managed)）。
 
-- `kubo.pid` が無ければ何もしない。読めない（空・JSON として壊れている・読み取りエラー）ときは warn を出し、何も kill せずに「回収する孤児は無い」として続ける。ファイルは残り、次に Kubo を起動したときの `write_pid_file` で上書きされる。前の swing が起動した Kubo が実際にまだ repo を使っていれば、新しい Kubo の起動が失敗し、[repo lock のヒント](#repo-lock-のヒント)が出る。
+- `kubo.pid` が無ければ何もしない。読めない（空・JSON として壊れている・読み取りエラー）ときは、Kubo が repo lock で起動できなければこの repo を使っている残りの Kubo を止めるよう添えた warn を出し、何も kill せずに「回収する孤児は無い」として続ける。ファイルは残り、次に Kubo を起動したときの `write_pid_file` で上書きされる。前の swing が起動した Kubo が実際にまだ repo を使っていれば、新しい Kubo の起動が失敗し、[repo lock のヒント](#repo-lock-のヒント)が出る。
 - まずその `pid` の今の開始時刻を取り直し、記録と比べる。プロセスがもう無い、または開始時刻が一致しない（PID の再利用）なら、API にも何も送らず kill もせずにファイルを消す。
 - 一致したら記録の `api_port` に API でのシャットダウンを送り（タイムアウト 3 秒、`ORPHAN_SHUTDOWN_RPC_TIMEOUT`）、2xx が返ればその `pid` の終了を最大 30 秒（`ORPHAN_SHUTDOWN_GRACE`）待つ。終われば完了。秘密は `<state_dir>/kubo-api.json` の `port` が記録の `api_port` と同じときだけ付ける（読めなければ warn を出し、秘密なしで送る。秘密なしの要求が拒まれたら次の強制終了に進む）。
 - API で終わらなければ強制終了する（unix は SIGTERM → 最大 30 秒（`ORPHAN_SIGTERM_GRACE`）→ SIGKILL → 最大 10 秒（`ORPHAN_KILL_WAIT`）、Windows は `taskkill /T /F` → 最大 10 秒（`ORPHAN_KILL_WAIT`））。
