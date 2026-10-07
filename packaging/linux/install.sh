@@ -191,9 +191,7 @@ check_dir() {
         case $1 in
           ????????w*) loose=1 ;;
           ?????w*)
-            if [ -n "$leaf" ] || [ "$3" != 0 ]; then
-              private_group "$3" "$4" || loose=1
-            fi
+            private_group "$3" "$4" || loose=1
             ;;
         esac
         if [ -n "$loose" ]; then

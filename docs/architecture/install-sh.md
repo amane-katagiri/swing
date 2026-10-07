@@ -57,7 +57,7 @@ curl -fsSL .../install.sh | sh -s -- --version v0.1.0
 
 - 持ち主が root でも実行しているユーザーでもない
 - グループかその他のユーザーが書き込める。ただし祖先が sticky ビット付き（`/tmp` など）なら許す。`lib/swing`・`bin` そのものは sticky でも許さない
-- グループの書き込みは、そのグループが持ち主の個人グループ（`getent` で引いた名前が持ち主のユーザー名と同じで、ほかのメンバーがいない）なら許す。`getent` が無ければ許さない。祖先が root の持ち物なら、グループの書き込みは問わない（Debian の `root:staff 2775` の `/usr/local` など）。`lib/swing`・`bin` そのものには当てはめない
+- グループの書き込みは、そのグループが持ち主の個人グループ（`getent` で引いた名前が持ち主のユーザー名と同じで、ほかのメンバーがいない）なら許す。`getent` が無ければ許さない。持ち主が root でも、ほかのグループの書き込みは許さない（Debian の `root:staff 2775` の `/usr/local` も断る。そのときは `--prefix /opt/swing` などを使う）
 
 この検査は `lib/swing` の中のものを実行する前（Kubo の版の確認・持ち主の確認・アンインストール）に済ませる。
 
@@ -115,7 +115,7 @@ curl -fsSL .../install.sh | sh -s -- --version v0.1.0
 - 既存の `bin/swing` を `--force` なしでは壊さないこと、macOS の拒否
 - アンインストール（データを残す、`--only-from` で自分の unit を消す、別の場所の `swing` の unit を残す、`--purge --yes`、確認できないときの拒否、`XDG_DATA_HOME`、system unit での拒否と `--force`、別の場所の `swing` の system unit では拒否しないこと）
 - `manifest` に書かれた `/` を含む名前・`.` で始まる名前・ディレクトリを消さないこと
-- その他のユーザーが書き込める親ディレクトリと `lib/swing` の拒否、sticky ビット付きの親の許可、実行ユーザーが入っている共有のグループが書き込める親の拒否と個人グループが書き込める親の許可（それぞれ当てはまるグループが無ければ飛ばす）、root で実行したときだけ、グループが書き込める root の持ち物の親の許可とそうした `lib/swing` の拒否
+- その他のユーザーが書き込める親ディレクトリと `lib/swing` の拒否、sticky ビット付きの親の許可、実行ユーザーが入っている共有のグループが書き込める親の拒否と個人グループが書き込める親の許可（それぞれ当てはまるグループが無ければ飛ばす）、root で実行したときだけ、グループが書き込める root の持ち物の親の拒否
 - 不正な引数（`/` を含む `--version`、相対パスの `HOME` を含む）
 
 `shellcheck -s sh packaging/linux/install.sh packaging/linux/test-install.sh` が警告なしで通ること。

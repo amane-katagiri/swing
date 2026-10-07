@@ -463,15 +463,12 @@ if [ -n "$delegated_gid" ]; then
   mkdir "$H/delegated"
   chgrp "$delegated_gid" "$H/delegated"
   chmod 2775 "$H/delegated"
-  run sh "$INSTALL" --prefix "$H/delegated/p" >"$H/out" 2>&1 || fail "a root-owned parent writable by its group is accepted"
-  check "installed under a root-owned parent writable by its group" [ -x "$H/delegated/p/lib/swing/swing" ]
-  chgrp "$delegated_gid" "$H/delegated/p/lib/swing"
-  chmod 2775 "$H/delegated/p/lib/swing"
   if run sh "$INSTALL" --prefix "$H/delegated/p" >"$H/out" 2>&1; then
-    fail "a root-owned lib/swing writable by its group is refused"
+    fail "a root-owned parent writable by its group is refused"
   else
-    pass "a root-owned lib/swing writable by its group is refused"
+    pass "a root-owned parent writable by its group is refused"
   fi
+  check "nothing installed under a root-owned parent writable by its group" [ ! -e "$H/delegated/p/lib/swing/swing" ]
 else
   echo "skip a root-owned parent writable by its group (not running as root)"
 fi

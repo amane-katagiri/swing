@@ -68,7 +68,7 @@ cp swing.example.toml swing.toml
 
 Linux では systemd のユーザーユニット、macOS では launchd の LaunchAgent、Windows ではタスクスケジューラに登録します。Windows と macOS では、`swing` と同じ場所にある `swing-tray.exe`・`SWING.app` も一緒に登録して起動します。トレイのアイコンから、ダッシュボードを開く・再起動・停止ができます。トレイが要らなければ `--no-tray` を付けてください。設定ファイルがまだ無ければ、上記の既定の場所に空の `swing.toml` を作ってから登録するので、サービスはセットアップモードで起動します。
 
-Linux でシステムユニットにするときは `sudo ./swing service install --system` とします。サービスは `sudo` を実行したユーザーの権限で動きます（別のユーザーにするなら `--run-as <user>`。root にするなら `--allow-root` も付けます）。`swing` の実行ファイル・設定ファイル・Kubo のバイナリとその親ディレクトリが、root かサービスのユーザーの持ち物で、ほかのユーザーやグループから書き込めないこと（root の持ち物の親ディレクトリは、グループが書き込めても構いません）を確かめ、そうでなければ登録しません。別のユーザーや root で動かすなら、`swing` と設定ファイルは root の持ち物のディレクトリ（`/usr/local/lib/swing` や `/etc/swing` など）に置いてください。
+Linux でシステムユニットにするときは `sudo ./swing service install --system` とします。サービスは `sudo` を実行したユーザーの権限で動きます（別のユーザーにするなら `--run-as <user>`。root にするなら `--allow-root` も付けます）。`swing` の実行ファイル・設定ファイル・Kubo のバイナリとその親ディレクトリが、root かサービスのユーザーの持ち物で、ほかのユーザーやグループから書き込めないことを確かめ、そうでなければ登録しません。別のユーザーや root で動かすなら、`swing` と設定ファイルは root の持ち物でグループが書き込めないディレクトリ（`/usr/local/lib/swing` や `/etc/swing` など）に置いてください。
 
 状態の確認は `swing service status`、停止は `swing service stop`、登録の削除は `swing service uninstall` です。
 
