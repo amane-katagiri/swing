@@ -148,46 +148,34 @@ fn spawn_watcher(watch: SignalWatch) -> Result<()> {
 
 #[cfg(windows)]
 mod parent_process {
+    use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle};
+
     use anyhow::{Result, bail};
-    use windows_sys::Win32::Foundation::{CloseHandle, HANDLE, INVALID_HANDLE_VALUE};
+    use windows_sys::Win32::Foundation::INVALID_HANDLE_VALUE;
     use windows_sys::Win32::System::Diagnostics::ToolHelp::{
         CreateToolhelp32Snapshot, PROCESSENTRY32W, Process32FirstW, Process32NextW,
         TH32CS_SNAPPROCESS,
     };
     use windows_sys::Win32::System::Threading::{
-        GetCurrentProcessId, INFINITE, OpenProcess, PROCESS_SYNCHRONIZE, WaitForSingleObject,
+        GetCurrentProcessId, INFINITE, PROCESS_SYNCHRONIZE, WaitForSingleObject,
     };
 
-    pub struct Parent(HANDLE);
-
-    unsafe impl Send for Parent {}
+    pub struct Parent(OwnedHandle);
 
     impl Parent {
         pub fn wait(&self) {
             unsafe {
-                WaitForSingleObject(self.0, INFINITE);
-            }
-        }
-    }
-
-    impl Drop for Parent {
-        fn drop(&mut self) {
-            unsafe {
-                CloseHandle(self.0);
+                WaitForSingleObject(self.0.as_raw_handle(), INFINITE);
             }
         }
     }
 
     pub fn open() -> Result<Parent> {
         let pid = parent_pid()?;
-        let handle = unsafe { OpenProcess(PROCESS_SYNCHRONIZE, 0, pid) };
-        if handle.is_null() {
-            bail!(
-                "opening parent process {pid}: {}",
-                std::io::Error::last_os_error()
-            );
+        match crate::proc::open_process(pid, PROCESS_SYNCHRONIZE) {
+            Ok(handle) => Ok(Parent(handle)),
+            Err(e) => bail!("opening parent process {pid}: {e}"),
         }
-        Ok(Parent(handle))
     }
 
     fn parent_pid() -> Result<u32> {
@@ -199,21 +187,21 @@ mod parent_process {
                     std::io::Error::last_os_error()
                 );
             }
+            let snapshot = OwnedHandle::from_raw_handle(snapshot);
             let me = GetCurrentProcessId();
             let mut entry = PROCESSENTRY32W {
                 dwSize: std::mem::size_of::<PROCESSENTRY32W>() as u32,
                 ..Default::default()
             };
             let mut found = None;
-            let mut ok = Process32FirstW(snapshot, &mut entry);
+            let mut ok = Process32FirstW(snapshot.as_raw_handle(), &mut entry);
             while ok != 0 {
                 if entry.th32ProcessID == me {
                     found = Some(entry.th32ParentProcessID);
                     break;
                 }
-                ok = Process32NextW(snapshot, &mut entry);
+                ok = Process32NextW(snapshot.as_raw_handle(), &mut entry);
             }
-            CloseHandle(snapshot);
             match found {
                 Some(pid) => Ok(pid),
                 None => bail!("own process {me} not found in the process snapshot"),

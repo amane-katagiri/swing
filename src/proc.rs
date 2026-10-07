@@ -42,42 +42,40 @@ pub(crate) fn process_start_marker(pid: u32) -> Option<String> {
 }
 
 #[cfg(windows)]
-pub(crate) struct ProcessHandle(windows_sys::Win32::Foundation::HANDLE);
-
-#[cfg(windows)]
-impl ProcessHandle {
-    pub(crate) fn open(pid: u32) -> Option<Self> {
-        use windows_sys::Win32::System::Threading::{
-            OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION,
-        };
-        let handle = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) };
-        (!handle.is_null()).then_some(Self(handle))
+pub(crate) fn open_process(
+    pid: u32,
+    access: windows_sys::Win32::System::Threading::PROCESS_ACCESS_RIGHTS,
+) -> std::io::Result<std::os::windows::io::OwnedHandle> {
+    use std::os::windows::io::FromRawHandle;
+    let handle = unsafe { windows_sys::Win32::System::Threading::OpenProcess(access, 0, pid) };
+    if handle.is_null() {
+        return Err(std::io::Error::last_os_error());
     }
-
-    pub(crate) fn raw(&self) -> windows_sys::Win32::Foundation::HANDLE {
-        self.0
-    }
+    Ok(unsafe { std::os::windows::io::OwnedHandle::from_raw_handle(handle) })
 }
 
 #[cfg(windows)]
-impl Drop for ProcessHandle {
-    fn drop(&mut self) {
-        unsafe { windows_sys::Win32::Foundation::CloseHandle(self.0) };
-    }
+pub(crate) fn open_process_for_query(pid: u32) -> Option<std::os::windows::io::OwnedHandle> {
+    open_process(
+        pid,
+        windows_sys::Win32::System::Threading::PROCESS_QUERY_LIMITED_INFORMATION,
+    )
+    .ok()
 }
 
 #[cfg(windows)]
 pub(crate) fn process_start_marker(pid: u32) -> Option<String> {
+    use std::os::windows::io::AsRawHandle;
     use windows_sys::Win32::Foundation::FILETIME;
     use windows_sys::Win32::System::Threading::GetProcessTimes;
-    let handle = ProcessHandle::open(pid)?;
+    let handle = open_process_for_query(pid)?;
     unsafe {
         let mut creation: FILETIME = std::mem::zeroed();
         let mut exit: FILETIME = std::mem::zeroed();
         let mut kernel: FILETIME = std::mem::zeroed();
         let mut user: FILETIME = std::mem::zeroed();
         let ok = GetProcessTimes(
-            handle.raw(),
+            handle.as_raw_handle(),
             &mut creation,
             &mut exit,
             &mut kernel,
@@ -105,13 +103,14 @@ pub(crate) fn process_alive(pid: u32) -> bool {
 
 #[cfg(windows)]
 pub(crate) fn process_alive(pid: u32) -> bool {
+    use std::os::windows::io::AsRawHandle;
     use windows_sys::Win32::Foundation::STILL_ACTIVE;
     use windows_sys::Win32::System::Threading::GetExitCodeProcess;
-    let Some(handle) = ProcessHandle::open(pid) else {
+    let Some(handle) = open_process_for_query(pid) else {
         return false;
     };
     let mut code: u32 = 0;
-    let ok = unsafe { GetExitCodeProcess(handle.raw(), &mut code) };
+    let ok = unsafe { GetExitCodeProcess(handle.as_raw_handle(), &mut code) };
     ok != 0 && code == STILL_ACTIVE as u32
 }
 

@@ -72,8 +72,8 @@ pub fn usage(pid: u32) -> Option<ProcessUsage> {
         (u64::from(t.dwHighDateTime) << 32) | u64::from(t.dwLowDateTime)
     }
 
-    let process = crate::proc::ProcessHandle::open(pid)?;
-    let handle = process.raw();
+    let process = crate::proc::open_process_for_query(pid)?;
+    let handle = std::os::windows::io::AsRawHandle::as_raw_handle(&process);
     let zero = FILETIME {
         dwLowDateTime: 0,
         dwHighDateTime: 0,

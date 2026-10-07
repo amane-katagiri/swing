@@ -67,7 +67,7 @@ pub struct Daemon {
     // Held only for its Drop: closing the Job Object handle kills the child.
     #[cfg(windows)]
     #[allow(dead_code)]
-    job: windows_job::JobHandle,
+    job: std::os::windows::io::OwnedHandle,
 }
 
 impl Daemon {
@@ -257,29 +257,18 @@ pub async fn wait_healthy(ipfs: &IpfsClient, timeout: Duration) -> Result<()> {
 // A Job Object is the closest Windows equivalent to Linux's PR_SET_PDEATHSIG.
 #[cfg(windows)]
 mod windows_job {
+    use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle};
+
     use anyhow::{Result, bail};
     use tokio::process::Child;
-    use windows_sys::Win32::Foundation::{CloseHandle, GetLastError, HANDLE};
+    use windows_sys::Win32::Foundation::{GetLastError, HANDLE};
     use windows_sys::Win32::System::JobObjects::{
         AssignProcessToJobObject, CreateJobObjectW, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
         JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JobObjectExtendedLimitInformation,
         SetInformationJobObject,
     };
 
-    pub struct JobHandle(HANDLE);
-
-    unsafe impl Send for JobHandle {}
-    unsafe impl Sync for JobHandle {}
-
-    impl Drop for JobHandle {
-        fn drop(&mut self) {
-            unsafe {
-                CloseHandle(self.0);
-            }
-        }
-    }
-
-    pub fn assign_child_to_job(child: &Child) -> Result<JobHandle> {
+    pub fn assign_child_to_job(child: &Child) -> Result<OwnedHandle> {
         let Some(raw) = child.raw_handle() else {
             bail!("Kubo child process has already exited; cannot assign it to a Job Object");
         };
@@ -288,26 +277,23 @@ mod windows_job {
             if job.is_null() {
                 bail!("CreateJobObjectW failed: {}", GetLastError());
             }
+            let job = OwnedHandle::from_raw_handle(job);
             let mut info: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = std::mem::zeroed();
             info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
             let ok = SetInformationJobObject(
-                job,
+                job.as_raw_handle(),
                 JobObjectExtendedLimitInformation,
                 &info as *const _ as *const core::ffi::c_void,
                 std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
             );
             if ok == 0 {
-                let err = GetLastError();
-                CloseHandle(job);
-                bail!("SetInformationJobObject failed: {err}");
+                bail!("SetInformationJobObject failed: {}", GetLastError());
             }
-            let ok = AssignProcessToJobObject(job, raw as HANDLE);
+            let ok = AssignProcessToJobObject(job.as_raw_handle(), raw as HANDLE);
             if ok == 0 {
-                let err = GetLastError();
-                CloseHandle(job);
-                bail!("AssignProcessToJobObject failed: {err}");
+                bail!("AssignProcessToJobObject failed: {}", GetLastError());
             }
-            Ok(JobHandle(job))
+            Ok(job)
         }
     }
 }
