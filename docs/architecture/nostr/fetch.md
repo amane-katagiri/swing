@@ -1,4 +1,4 @@
-# 取得と表示の上限（`nostr::budget`, `nostr/client.rs`）
+# 取得と表示の上限（`nostr::budget`, `nostr/client.rs`, `nostr/client/fetch.rs`）
 
 [`../nostr.md`](../nostr.md) の子ページ。サイトイベント・レプリカ報告・Follow Set を relay から読む経路は、`nostr::budget` の定数で件数を打ち切る。表示用の経路（`swing sites` / `replicas` / `webring`、ダッシュボードの `/api/sites` / `/api/replicas` / `/api/webring`）だけでなく、agent の取り込みと `/api/publish/sites` にも一部が効く。
 
@@ -10,13 +10,23 @@
   - 答えていない: 購読できない、接頭辞付きの CLOSED、認証失敗、途中で接続が切れた、30 秒以内に終わらない。
 - 答えた relay が 1 つも無ければ取得全体を `no relay answered` のエラーにする（relay が 1 つも無い場合も同じ）。1 つでも答えていれば、他の relay の失敗は debug ログだけにして結果を返す。
 - 受け取りながら重複を除き、`created_at` が未来ずれの許容（[`../nostr.md`](../nostr.md#未来ずれの許容nostrmax_future_skew)）を超えるものは捨てる。全 relay の合計が `MAX_RELAY_FETCH_LIMIT` 件か、イベントの JSON の合計が `MAX_FETCH_TOTAL_BYTES / FETCH_CONCURRENCY`（16 MiB）を超えたら、`created_at` の古いものから捨てて新しい方だけを返す。
+- イベントの JSON の大きさ（`event_bytes`）は、初めて受け取ったときに 1 回だけ測ってイベントと一緒に持ち（`Measured`）、捨てるときと複数の REQ の合計（下記）にもその値を使う。同じ `id` の 2 通目以降は測らずに捨てる。
 
 ## 複数の REQ に分ける取得（`RelayClient::fetch_all`）
 
 - REQ を `FETCH_CONCURRENCY`（4）本ずつ並行に出し、結果を合わせる。
 - 合わせた件数が `MAX_FETCH_TOTAL_EVENTS`（50,000）件、JSON の合計が `MAX_FETCH_TOTAL_BYTES`（64 MiB）に達したら、そこで打ち切って warn を出し、それまでの分を返す。
 - 全体の期限は 120 秒（`FETCH_DEADLINE`）。過ぎたら warn を出してそれまでに届いた分を返す。
-- どれか 1 本の REQ がエラーになれば全体をエラーにする。
+- どの relay も答えなかった REQ（`no relay answered`）があっても、他の REQ の結果は捨てずに返し、失敗した本数を warn に出す。すべての REQ が失敗したときだけ全体をエラーにする（REQ が 1 本も無ければ空の結果）。
+
+## ページに分ける取得（`RelayClient::fetch_pages`）
+
+自分のレプリカ報告（`fetch_own_reports`）は、持っているサイトの数だけあり得るので、1 回の `limit` に収めずにページに分けて全部読む。
+
+- 読み取りの relay ごとに別々にたどる（`walk_pages`）。各 relay に `limit` 500（`OWN_REPORTS_PAGE`）の REQ を出し、返ったうちの最も古い `created_at` を次の REQ の `until` にする。relay が自分の上限で `limit` より少なく返すことがあるので、新しい `id` が 1 件も増えなかったら、その relay は読み終えたものとする。
+- 1 ページは「1 回の REQ」と同じく 30 秒で打ち切り、答えなかったらその relay はそこまでの分で止める。全体の期限は 120 秒（`FETCH_DEADLINE`）。
+- relay 1 台あたりの件数と JSON の合計は、`MAX_FETCH_TOTAL_EVENTS`・`MAX_FETCH_TOTAL_BYTES` を relay の数で割った値まで。超えたら warn を出してそこまでの分を返す。
+- 最初のページにどの relay も答えなければ `no relay answered` のエラー。各 relay の結果は `id` で重複を除いて合わせる。
 
 ## 定数
 

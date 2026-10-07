@@ -16,7 +16,8 @@ mod report_relay;
 mod send;
 
 use fetch::{
-    FETCH_DEADLINE, FETCH_TIMEOUT, FetchCap, capped_limit, collect_newest, gather, relay_stream,
+    FETCH_DEADLINE, FETCH_TIMEOUT, FetchCap, Measured, capped_limit, collect_newest, gather,
+    relay_stream, walk_pages,
 };
 pub use report_relay::ReportRelay;
 pub use send::{
@@ -121,7 +122,7 @@ impl RelayClient {
     }
 
     // Client::stream_events hides which relays reached EOSE, so each relay is streamed on its own to tell "nothing found" from "no relay answered".
-    async fn fetch(&self, filters: Vec<Filter>, context: &'static str) -> Result<Vec<Event>> {
+    async fn fetch(&self, filters: Vec<Filter>, context: &'static str) -> Result<Vec<Measured>> {
         let relays = self
             .client
             .relays()
@@ -140,7 +141,42 @@ impl RelayClient {
     }
 
     async fn fetch_one(&self, filter: Filter, context: &'static str) -> Result<Vec<Event>> {
-        self.fetch(vec![filter], context).await
+        let measured = self.fetch(vec![filter], context).await?;
+        Ok(measured.into_iter().map(|m| m.event).collect())
+    }
+
+    // Each relay is walked on its own because a shared `until` would skip what one relay holds below another's oldest answer.
+    async fn fetch_pages(
+        &self,
+        filter: Filter,
+        page: usize,
+        context: &'static str,
+    ) -> Result<Vec<Event>> {
+        let relays = self
+            .client
+            .relays()
+            .with_capabilities(RelayCapabilities::READ)
+            .await;
+        let count = relays.len().max(1);
+        let cap = FetchCap {
+            events: FetchCap::TOTAL.events / count,
+            bytes: FetchCap::TOTAL.bytes / count,
+        };
+        let deadline = tokio::time::Instant::now() + FETCH_DEADLINE;
+        let walks = relays
+            .into_values()
+            .map(|relay| walk_pages(relay, filter.clone(), page, cap, deadline));
+        let walked = futures_util::future::join_all(walks).await;
+        if walked.iter().all(Option::is_none) {
+            anyhow::bail!("{context}: no relay answered");
+        }
+        let mut seen: HashSet<EventId> = HashSet::new();
+        Ok(walked
+            .into_iter()
+            .flatten()
+            .flatten()
+            .filter(|e| seen.insert(e.id))
+            .collect())
     }
 
     async fn fetch_all(&self, reqs: Vec<Vec<Filter>>, context: &'static str) -> Result<Vec<Event>> {

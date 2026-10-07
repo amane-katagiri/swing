@@ -6,6 +6,8 @@ use nostr_sdk::prelude::*;
 use super::super::budget;
 use super::{RelayClient, capped_limit};
 
+const OWN_REPORTS_PAGE: usize = 500;
+
 pub trait ReportRelay {
     fn public_key(&self) -> PublicKey;
     fn fetch_own_reports(
@@ -30,9 +32,9 @@ impl ReportRelay for RelayClient {
     async fn fetch_own_reports(&self, report_kind: u16) -> Result<Vec<Event>> {
         let filter = Filter::new()
             .kind(Kind::Custom(report_kind))
-            .author(RelayClient::public_key(self))
-            .limit(capped_limit(budget::MAX_SITES_PER_AUTHOR_LISTED, 2));
-        self.fetch_one(filter, "fetching own replica reports").await
+            .author(RelayClient::public_key(self));
+        self.fetch_pages(filter, OWN_REPORTS_PAGE, "fetching own replica reports")
+            .await
     }
 
     async fn fetch_reports_about(

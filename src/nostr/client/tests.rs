@@ -2,7 +2,7 @@ use std::collections::BTreeSet;
 use std::time::Duration;
 
 use super::super::fixtures::{follow_set, make_site_event, report, site_event_with};
-use super::fetch::{Streamed, event_bytes};
+use super::fetch::{Measured, Streamed, event_bytes};
 use super::*;
 use crate::nostr::site_coordinate;
 use crate::test_support::{CID_A, CID_B, keys};
@@ -128,7 +128,20 @@ async fn newest_created_at(items: Vec<(RelayUrl, Streamed)>, cap: FetchCap) -> V
         .await
         .events
         .into_iter()
-        .map(|e| e.created_at.as_secs())
+        .map(|m| {
+            assert_eq!(m.bytes, event_bytes(&m.event));
+            m.event.created_at.as_secs()
+        })
+        .collect()
+}
+
+fn measured(events: &[Event]) -> Vec<Measured> {
+    events
+        .iter()
+        .map(|e| Measured {
+            bytes: event_bytes(e),
+            event: e.clone(),
+        })
         .collect()
 }
 
@@ -263,7 +276,7 @@ async fn gather_stops_at_the_total_budget_and_keeps_what_arrived_by_the_deadline
     let batch: Vec<Event> = (1..=3)
         .map(|at| make_site_event(&k, 35980, &format!("s{at}.example"), CID_A, at))
         .collect();
-    let batches = futures_util::stream::iter([Ok(batch.clone()), Ok(batch.clone())]);
+    let batches = futures_util::stream::iter([Ok(measured(&batch)), Ok(measured(&batch))]);
     let cap = FetchCap {
         events: 4,
         bytes: usize::MAX,
@@ -274,17 +287,59 @@ async fn gather_stops_at_the_total_budget_and_keeps_what_arrived_by_the_deadline
     assert_eq!(out.len(), 4);
 
     let slow =
-        futures_util::stream::iter([Ok(batch.clone())]).chain(futures_util::stream::pending());
+        futures_util::stream::iter([Ok(measured(&batch))]).chain(futures_util::stream::pending());
     let out = gather(slow, FetchCap::TOTAL, Duration::from_millis(100), "test")
         .await
         .unwrap();
     assert_eq!(out.len(), 3);
 
-    let failing = futures_util::stream::iter([Ok(batch), Err(anyhow::anyhow!("relay refused"))]);
+    let bytes = measured(&batch[..1])[0].bytes;
+    let cap = FetchCap {
+        events: 100,
+        bytes: bytes * 2,
+    };
+    let out = gather(
+        futures_util::stream::iter([Ok(measured(&batch))]),
+        cap,
+        Duration::from_secs(5),
+        "test",
+    )
+    .await
+    .unwrap();
+    assert_eq!(out.len(), 2);
+}
+
+#[tokio::test]
+async fn gather_keeps_the_answered_requests_and_fails_only_when_none_answered() {
+    let k = keys();
+    let batch: Vec<Event> = (1..=3)
+        .map(|at| make_site_event(&k, 35980, &format!("s{at}.example"), CID_A, at))
+        .collect();
+    let partly = futures_util::stream::iter([
+        Err(anyhow::anyhow!("relay refused")),
+        Ok(measured(&batch)),
+        Err(anyhow::anyhow!("relay refused")),
+    ]);
+    let out = gather(partly, FetchCap::TOTAL, Duration::from_secs(5), "test")
+        .await
+        .unwrap();
+    assert_eq!(out.len(), 3);
+
+    let none = futures_util::stream::iter([
+        Err(anyhow::anyhow!("first refused")),
+        Err(anyhow::anyhow!("second refused")),
+    ]);
+    let err = gather(none, FetchCap::TOTAL, Duration::from_secs(5), "test")
+        .await
+        .unwrap_err();
+    assert!(err.to_string().contains("refused"), "{err}");
+
+    let empty = futures_util::stream::iter(Vec::<Result<Vec<Measured>>>::new());
     assert!(
-        gather(failing, FetchCap::TOTAL, Duration::from_secs(5), "test")
+        gather(empty, FetchCap::TOTAL, Duration::from_secs(5), "test")
             .await
-            .is_err()
+            .unwrap()
+            .is_empty()
     );
 }
 
@@ -596,5 +651,68 @@ async fn a_forged_copy_of_a_verified_event_does_not_hide_the_real_one() {
         .unwrap();
     assert_eq!(both.len(), 1);
     assert_eq!(both[0].content, genuine.content);
+    client.shutdown().await;
+}
+
+async fn relay_holding(events: &[Event]) -> (LocalRelay, String) {
+    let local = LocalRelay::new();
+    local.run().await.unwrap();
+    let url = local.url().await.to_string();
+    let seeder = Client::default();
+    seeder.add_relay(url.as_str()).await.unwrap();
+    seeder.connect().await;
+    for event in events {
+        seeder.send_event(event).await.unwrap();
+    }
+    seeder.shutdown().await;
+    (local, url)
+}
+
+#[tokio::test]
+async fn paged_fetches_walk_each_relay_past_its_page_limit() {
+    let reporter = keys();
+    let author = keys().public_key();
+    let now = Timestamp::now().as_secs();
+    let reports: Vec<Event> = (0..7)
+        .map(|i| {
+            report(
+                &reporter,
+                &author,
+                &format!("s{i}.example"),
+                &[CID_A],
+                now - 60 + i,
+            )
+        })
+        .collect();
+    let (_a, a) = relay_holding(&reports[..5]).await;
+    let (_b, b) = relay_holding(&[&reports[..2], &reports[5..]].concat()).await;
+
+    let client = RelayClient::connect(Signer::Local(reporter.clone()), &[a, b])
+        .await
+        .unwrap();
+    let filter = Filter::new()
+        .kind(Kind::Custom(35981))
+        .author(reporter.public_key());
+    let one_page = client
+        .fetch_one(filter.clone().limit(2), "test")
+        .await
+        .unwrap();
+    assert!(one_page.len() < reports.len());
+    let mut ids: Vec<EventId> = client
+        .fetch_pages(filter, 2, "test")
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|e| e.id)
+        .collect();
+    ids.sort();
+    let mut expected: Vec<EventId> = reports.iter().map(|e| e.id).collect();
+    expected.sort();
+    assert_eq!(ids, expected);
+
+    let own = ReportRelay::fetch_own_reports(&client, 35981)
+        .await
+        .unwrap();
+    assert_eq!(own.len(), reports.len());
     client.shutdown().await;
 }

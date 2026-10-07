@@ -27,7 +27,7 @@
   | `fetch_replica_reports` | kind が `[nostr].replica_event_kind`、`a` タグのどれかが要求した座標のいずれかと一致する |
   | `fetch_replica_reports_by` | `fetch_replica_reports` の条件に加え、作者が要求した報告者に含まれる |
   | `fetch_follow_set_authors_referencing` | kind が 30000・`d` が要求した名前（`is_follow_set_of`）で、`p` タグのどれかが要求した相手に含まれる（作者を指定しない取得） |
-  | `fetch_own_reports`（agent のレプリカ報告の同期） | 呼び出し側（`agent::replicas`）が作者が自分であることを、`parse_replica_report` が kind を確かめる |
+  | `fetch_own_reports`（agent のレプリカ報告の同期。ページに分けて全部読む。[`nostr/fetch.md`](nostr/fetch.md#ページに分ける取得relayclientfetch_pages)） | 呼び出し側（`agent::replicas`）が作者が自分であることを、`parse_replica_report` が kind を確かめる |
   | `fetch_reports_about`（agent が他の報告者からの報告の時刻を記録する） | kind が `[nostr].replica_event_kind`、作者が要求した報告者に含まれ、`p` タグに要求した相手がある。呼び出し側（`agent::replicas`）はさらに報告者が `Chosen` であること（自分は除く）を確かめ、作者は `parse_replica_report` の結果で確かめる |
   | 購読（`subscribe_site_events`） | agent の `submit` が Follow Set の対象かを確かめて捨てる（[`agent.md` の「並行処理」](agent.md#並行処理)） |
 

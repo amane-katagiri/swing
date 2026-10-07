@@ -1,4 +1,4 @@
-use std::collections::{BTreeSet, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::time::Duration;
 
 use anyhow::Result;
@@ -76,8 +76,13 @@ pub(super) fn relay_stream(
     )
 }
 
+pub(super) struct Measured {
+    pub(super) event: Event,
+    pub(super) bytes: usize,
+}
+
 pub(super) struct Collected {
-    pub(super) events: Vec<Event>,
+    pub(super) events: Vec<Measured>,
     pub(super) completed: usize,
 }
 
@@ -86,6 +91,7 @@ pub(super) async fn collect_newest(
     cap: FetchCap,
 ) -> Collected {
     let mut newest: BTreeSet<Event> = BTreeSet::new();
+    let mut sizes: HashMap<EventId, usize> = HashMap::new();
     let mut bytes = 0usize;
     let mut finished: HashSet<RelayUrl> = HashSet::new();
     let mut failed: HashSet<RelayUrl> = HashSet::new();
@@ -95,16 +101,17 @@ pub(super) async fn collect_newest(
             Streamed::Event(event) if !plausible_at(event.created_at.as_secs(), now) => {
                 tracing::debug!(relay = %url, event_id = %event.id, "skipping an event dated too far ahead");
             }
+            Streamed::Event(event) if sizes.contains_key(&event.id) => {}
             Streamed::Event(event) => {
                 let size = event_bytes(&event);
-                if newest.insert(event) {
-                    bytes += size;
-                }
+                sizes.insert(event.id, size);
+                newest.insert(event);
+                bytes += size;
                 while newest.len() > cap.events || bytes > cap.bytes {
                     let Some(oldest) = newest.pop_last() else {
                         break;
                     };
-                    bytes -= event_bytes(&oldest);
+                    bytes -= sizes.remove(&oldest.id).unwrap_or(0);
                 }
             }
             Streamed::Failed(e) => {
@@ -117,43 +124,116 @@ pub(super) async fn collect_newest(
         }
     }
     Collected {
-        events: newest.into_iter().collect(),
+        events: newest
+            .into_iter()
+            .map(|event| Measured {
+                bytes: sizes.get(&event.id).copied().unwrap_or(0),
+                event,
+            })
+            .collect(),
         completed: finished.difference(&failed).count(),
     }
 }
 
 pub(super) async fn gather(
-    batches: impl Stream<Item = Result<Vec<Event>>>,
+    batches: impl Stream<Item = Result<Vec<Measured>>>,
     cap: FetchCap,
     deadline: Duration,
     context: &'static str,
 ) -> Result<Vec<Event>> {
     let mut out = Vec::new();
     let mut bytes = 0usize;
+    let mut answered = 0usize;
+    let mut failures: Vec<anyhow::Error> = Vec::new();
     let collect = async {
         let mut batches = std::pin::pin!(batches);
         while let Some(batch) = batches.next().await {
-            for event in batch? {
-                let size = event_bytes(&event);
+            let batch = match batch {
+                Ok(batch) => batch,
+                Err(e) => {
+                    failures.push(e);
+                    continue;
+                }
+            };
+            answered += 1;
+            for Measured { event, bytes: size } in batch {
                 if out.len() >= cap.events || bytes.saturating_add(size) > cap.bytes {
                     tracing::warn!(
                         context,
                         "relay answers exceed the fetch budget; keeping what fits"
                     );
-                    return Ok(());
+                    return;
                 }
                 bytes += size;
                 out.push(event);
             }
         }
-        Ok::<(), anyhow::Error>(())
     };
-    match tokio::time::timeout(deadline, collect).await {
-        Ok(result) => result?,
-        Err(_) => tracing::warn!(
+    if tokio::time::timeout(deadline, collect).await.is_err() {
+        tracing::warn!(
             context,
             "relays did not finish within the fetch deadline; keeping what arrived"
-        ),
+        );
+    }
+    if answered == 0
+        && let Some(e) = failures.pop()
+    {
+        return Err(e);
+    }
+    if !failures.is_empty() {
+        tracing::warn!(
+            context,
+            failed = failures.len(),
+            answered,
+            error = format!("{:#}", failures[0]),
+            "some requests got no answer from any relay; keeping the others"
+        );
     }
     Ok(out)
+}
+
+pub(super) async fn walk_pages(
+    relay: Relay,
+    filter: Filter,
+    page: usize,
+    cap: FetchCap,
+    deadline: tokio::time::Instant,
+) -> Option<Vec<Event>> {
+    let mut seen: HashSet<EventId> = HashSet::new();
+    let mut out = Vec::new();
+    let mut bytes = 0usize;
+    let mut until: Option<Timestamp> = None;
+    let mut answered = false;
+    while tokio::time::Instant::now() < deadline {
+        let mut request = filter.clone().limit(page);
+        if let Some(until) = until {
+            request = request.until(until);
+        }
+        let stream = relay_stream(relay.clone(), vec![request])
+            .take_until(tokio::time::sleep(FETCH_TIMEOUT))
+            .take_until(tokio::time::sleep_until(deadline));
+        let collected = collect_newest(std::pin::pin!(stream), FetchCap::PER_REQ).await;
+        if collected.completed == 0 {
+            break;
+        }
+        answered = true;
+        let oldest = collected.events.iter().map(|m| m.event.created_at).min();
+        let before = out.len();
+        for Measured { event, bytes: size } in collected.events {
+            if !seen.insert(event.id) {
+                continue;
+            }
+            if out.len() >= cap.events || bytes.saturating_add(size) > cap.bytes {
+                tracing::warn!(relay = %relay.url(), "relay answers exceed the fetch budget; keeping what fits");
+                return Some(out);
+            }
+            bytes += size;
+            out.push(event);
+        }
+        match oldest {
+            Some(oldest) if out.len() > before => until = Some(oldest),
+            _ => break,
+        }
+    }
+    answered.then_some(out)
 }

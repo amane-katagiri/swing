@@ -10,7 +10,7 @@
 - `<mfs_root>/publish/<自分の pubkey hex>/` の下のディレクトリ名を `mfs::site_from_name` で `d` に戻し（エンコードし直して同じ名前にならないもの、`d` の条件を満たさないものは無視）、その下の名前が整数の項目の CID（`files/ls` の `Hash`。`nostr::canonical_cid` で CIDv1 の dag-pb に正規化し、正しい CID でないものは warn を出して無視する）。同じサイトが `state.sites` にもあれば合わせる。同じ Kubo で `swing publish` した自分のサイトだけが対象で、別の Kubo で publish したサイトは報告しない。
 - `publish/<自分>/` の一覧に失敗したら自分が作者のサイトすべてを、`publish/<自分>/<site>/` の一覧に失敗したらそのサイトを「不明」とし、今回は送らない。
 
-送信済みの記録はメモリにだけ持つ（サイトごとに `cid` の集合と `created_at`）。まだ読めていなければ、同期のたびに relay から自分の報告（`replica_event_kind`、作者が自分）を取得し、`d` ごとの最新を記録に入れる（記録にある方が新しければそのまま）。取得に失敗したら（答えた relay が 1 つも無い場合を含む。[`nostr/fetch.md`](../nostr/fetch.md#1-回の-reqrelayclientfetch)）warn を出し、読めたことにはせず次の同期で取り直す。送信は続ける。
+送信済みの記録はメモリにだけ持つ（サイトごとに `cid` の集合と `created_at`）。まだ読めていなければ、同期のたびに relay から自分の報告（`replica_event_kind`、作者が自分）をページに分けて全部取得し（[`nostr/fetch.md`](../nostr/fetch.md#ページに分ける取得relayclientfetch_pages)）、`d` ごとの最新を記録に入れる（記録にある方が新しければそのまま）。取得に失敗したら（最初のページに答えた relay が 1 つも無い場合を含む）warn を出し、読めたことにはせず次の同期で取り直す。送信は続ける。
 
 送るもの:
 
