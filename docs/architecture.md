@@ -36,7 +36,7 @@
 | ダッシュボードの HTTP サーバ | `axum` 0.8、リクエストタイムアウトに `tower-http` |
 | 設定 | `toml` + `serde`、環境変数が TOML を上書き |
 | CLI | `clap` derive |
-| ログ | `tracing` + `tracing-subscriber`（`RUST_LOG`。既定は `swing up` が `info`、ほかのコマンドは `info,nostr_sdk=warn,nostr_connect=warn`） |
+| ログ | `tracing` + `tracing-subscriber`（`RUST_LOG`。既定は `swing up` が `info`、ほかのコマンドは `info,nostr_sdk=warn,nostr_connect=warn`）。メッセージと各フィールドの値は `logging::SanitizedFields` で `format::Sanitized` を通してから書く（relay・Kubo・他人のイベント由来の文字列が改行や端末のエスケープシーケンスでログの行を偽れないように）。`?` のフィールドは `Debug` の書式（文字列は引用符付き） |
 | CID 検証 | `cid` クレート |
 
 クレート `swing` は lib + bin 構成。統合テストは `swing::` としてモジュールを直接使う。
@@ -62,7 +62,8 @@
 | `mirror/` | `mirror list`/`add`/`remove`・`sites`（`set.rs`: Follow Set の編集、`print.rs`・`time.rs`: 表示）。[cli/views.md](architecture/cli/views.md#mirror-list--add--remove) |
 | `replicas.rs` | レプリカ報告の集計と `replicas`。[cli/views.md](architecture/cli/views.md#replicas) |
 | `webring/` | Follow Set のたどり方とグラフ、`webring`（`render.rs`: テキスト・DOT・Mermaid）。[cli/views.md](architecture/cli/views.md#webring) |
-| `key.rs`・`format.rs` | `key generate`・バイト数と秒数の表示、端末に出す他人由来の文字列の無害化（`sanitize_display_text`） |
+| `key.rs`・`format.rs` | `key generate`・バイト数と秒数の表示、端末に出す他人由来の文字列の無害化（`Sanitized`: 制御文字を空白 1 つに置き換え、見えない書式文字（`nostr::is_unsafe_char`）を取り除く。`sanitize_display_text`: それに加えて文字数で切り、前後の空白を削る）、エラー終了のときの表示（`error_report`） |
+| `logging.rs` | `tracing` のフィールドの書き出し（`SanitizedFields`） |
 | `up.rs`・`ports.rs`・`lock.rs`・`shutdown.rs` | `swing up` の supervisor・セットアップモードでのポートのずらし方・多重起動の防止・シグナルと終了要求。[up.md](architecture/up.md) |
 | `stop.rs` | `swing stop`。[cli.md](architecture/cli.md#stop) |
 | `stats.rs`・`stats/process.rs` | リソース使用量の記録と `stats`、OS ごとのプロセスの CPU とメモリ。[stats.md](architecture/stats.md) |

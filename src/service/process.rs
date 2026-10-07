@@ -112,8 +112,8 @@ pub(super) fn run_command_with_timeout(
 fn require_success(display: &str, output: std::process::Output) -> Result<std::process::Output> {
     if !output.status.success() {
         bail!(
-            "command failed: {display}\nstderr: {}",
-            decode_output(&output.stderr)
+            "command failed: {display}; stderr: {}",
+            decode_output(&output.stderr).trim()
         );
     }
     Ok(output)

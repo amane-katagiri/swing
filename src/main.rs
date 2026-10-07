@@ -399,12 +399,16 @@ fn init_tracing(log_file: Option<&PathBuf>, default_filter: &str) -> Result<()> 
                 .with_context(|| format!("opening log file {}", path.display()))?;
             tracing_subscriber::fmt()
                 .with_env_filter(filter)
+                .fmt_fields(swing::logging::SanitizedFields)
                 .with_ansi(false)
                 .with_writer(file)
                 .init();
         }
         None => {
-            tracing_subscriber::fmt().with_env_filter(filter).init();
+            tracing_subscriber::fmt()
+                .with_env_filter(filter)
+                .fmt_fields(swing::logging::SanitizedFields)
+                .init();
         }
     }
     Ok(())
@@ -424,10 +428,14 @@ fn main() -> Result<()> {
     let result = runtime.block_on(run(cli));
     // Not #[tokio::main]: shutdown_timeout keeps a stuck blocking thread from holding the process open.
     runtime.shutdown_timeout(shutdown::RUNTIME_SHUTDOWN_TIMEOUT);
-    if logs_to_file && let Err(e) = &result {
-        tracing::error!("{e:#}");
+    if let Err(e) = &result {
+        if logs_to_file {
+            tracing::error!("{e:#}");
+        }
+        eprintln!("{}", swing::format::error_report(e));
+        std::process::exit(1);
     }
-    result
+    Ok(())
 }
 
 async fn run(cli: Cli) -> Result<()> {

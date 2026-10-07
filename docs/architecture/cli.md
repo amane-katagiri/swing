@@ -17,6 +17,7 @@
   - `<[agent].state_dir>/dashboard.token` を `Authorization: Bearer` で送る。相手がそのトークンを知っていると確かめられなければ送らずにエラー終了する（[`dashboard/security.md`](dashboard/security.md#cli-と-swing-trayapiclient)）。そのため `swing up` と同じ設定（同じ `state_dir`）を読めて、そのファイルを読めるユーザーで実行する。
   - `listen` が未指定アドレス（`0.0.0.0` / `::`）でも、接続先と `Host` ヘッダはループバックの同じポートにする。
   - API に接続できなければ、`status`・`stats`・`mirror add`・`mirror remove`・`dashboard open` は `swing up is not running (cannot connect to <addr>)` で非ゼロ終了し、`stop` は `not running` を出して終了コード 0 で終わる。
+- エラーで終了するときは `Error: <メッセージ>` と、原因があれば `Caused by:` に続けて 1 つずつ（2 つ以上なら番号付きで）標準エラーに出し、終了コード 1 で終わる（`format::error_report`）。メッセージと原因はそれぞれ `format::Sanitized` を通すので、改行を含まず 1 行ずつになる。`RUST_BACKTRACE` などでバックトレースを取っていれば続けて出す。
 - `sites`・`replicas`・`webring`・`mirror list`・`publish` は API を経由せず relay/Kubo に直接つなぐので、`swing up` が動いていなくても使える。これらは秘密鍵か署名アプリの接続情報が要り、どちらも無ければエラー終了する（[`signer.md`](signer.md#signer)）。
 - API 経由のコマンドは鍵が無くても動く。ただし鍵の無い `swing up` はセットアップモード（[up](#up)）で、そこでは `status`・`mirror add`・`mirror remove` は 503 `agent is not configured` を返す。
 

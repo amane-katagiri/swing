@@ -1,3 +1,5 @@
+use std::fmt::{self, Write as _};
+
 const BYTE_UNITS: [(u64, &str); 4] = [
     (1u64 << 40, "TiB"),
     (1u64 << 30, "GiB"),
@@ -48,12 +50,57 @@ pub fn format_duration_secs(secs: u64) -> String {
     format!("{secs}s")
 }
 
+pub struct Sanitized<T>(pub T);
+
+struct SanitizingWriter<'a, 'b>(&'a mut fmt::Formatter<'b>);
+
+impl fmt::Write for SanitizingWriter<'_, '_> {
+    fn write_str(&mut self, s: &str) -> fmt::Result {
+        for c in s.chars() {
+            if c.is_control() {
+                self.0.write_char(' ')?;
+            } else if !crate::nostr::is_unsafe_char(c) {
+                self.0.write_char(c)?;
+            }
+        }
+        Ok(())
+    }
+}
+
+impl<T: fmt::Display> fmt::Display for Sanitized<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let alternate = f.alternate();
+        let mut out = SanitizingWriter(f);
+        if alternate {
+            write!(out, "{:#}", self.0)
+        } else {
+            write!(out, "{}", self.0)
+        }
+    }
+}
+
+pub fn error_report(error: &anyhow::Error) -> String {
+    let mut out = format!("Error: {}", Sanitized(error));
+    let causes: Vec<_> = error.chain().skip(1).collect();
+    if !causes.is_empty() {
+        out.push_str("\n\nCaused by:");
+    }
+    for (i, cause) in causes.iter().enumerate() {
+        if causes.len() == 1 {
+            out.push_str(&format!("\n    {}", Sanitized(cause)));
+        } else {
+            out.push_str(&format!("\n    {i}: {}", Sanitized(cause)));
+        }
+    }
+    let backtrace = error.backtrace();
+    if backtrace.status() == std::backtrace::BacktraceStatus::Captured {
+        out.push_str(&format!("\n\nStack backtrace:\n{backtrace}"));
+    }
+    out
+}
+
 pub fn sanitize_display_text(text: &str, max_chars: usize) -> String {
-    let cleaned: Vec<char> = text
-        .chars()
-        .filter(|c| c.is_control() || !crate::nostr::is_unsafe_char(*c))
-        .map(|c| if c.is_control() { ' ' } else { c })
-        .collect();
+    let cleaned: Vec<char> = Sanitized(text).to_string().chars().collect();
     let mut shown: String = cleaned.iter().take(max_chars).collect();
     if cleaned.len() > max_chars {
         shown.push('\u{2026}');
@@ -92,5 +139,40 @@ mod tests {
         assert_eq!(format_duration_secs(600), "10m");
         assert_eq!(format_duration_secs(30), "30s");
         assert_eq!(format_duration_secs(0), "0s");
+    }
+
+    #[test]
+    fn sanitized_flattens_controls_and_drops_invisible_formatting() {
+        let text = "a\nerror: forged\r\u{1b}[31mb\u{9b}c\u{202e}d\u{200b}e\t\u{7f}f";
+        assert_eq!(Sanitized(text).to_string(), "a error: forged  [31mb cde  f");
+        assert_eq!(Sanitized("  日本語 ok  ").to_string(), "  日本語 ok  ");
+    }
+
+    #[test]
+    fn sanitized_keeps_the_alternate_form() {
+        let error = anyhow::anyhow!("inner\nline").context("outer");
+        assert_eq!(format!("{:#}", Sanitized(&error)), "outer: inner line");
+        assert_eq!(format!("{}", Sanitized(&error)), "outer");
+    }
+
+    #[test]
+    fn error_report_puts_each_cause_on_its_own_line() {
+        let error = anyhow::anyhow!("relay said: ok\nError: forged\u{1b}[2J")
+            .context("sending failed")
+            .context("publishing example.com");
+        assert_eq!(
+            error_report(&error),
+            "Error: publishing example.com\n\nCaused by:\n    0: sending failed\n    1: relay said: ok Error: forged [2J"
+        );
+        assert_eq!(
+            error_report(&anyhow::anyhow!("a\rb").context("c")),
+            "Error: c\n\nCaused by:\n    a b"
+        );
+        assert_eq!(error_report(&anyhow::anyhow!("plain")), "Error: plain");
+    }
+
+    #[test]
+    fn sanitize_display_text_truncates_after_sanitizing() {
+        assert_eq!(sanitize_display_text(" a\u{202e}b\nc d", 4), "ab \u{2026}");
     }
 }

@@ -12,6 +12,7 @@ pub mod ipfs;
 pub mod key;
 pub mod kubo;
 pub mod lock;
+pub mod logging;
 pub mod login;
 pub mod mfs;
 pub mod mirror;

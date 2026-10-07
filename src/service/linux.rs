@@ -200,8 +200,8 @@ fn require_protected(paths: &[(&Path, usize)], user: &Account) -> Result<()> {
         return Ok(());
     }
     bail!(
-        "refusing to register a system service that runs as {name}: only root and {name} may be able to change what it runs, but\n  {}\nInstall swing into a root-owned directory that no group can write (install.sh --prefix /usr/local, or --prefix /opt/swing where /usr/local is group-writable) and keep the config in a directory such as /etc/swing.",
-        problems.join("\n  "),
+        "refusing to register a system service that runs as {name}: only root and {name} may be able to change what it runs, but {}; install swing into a root-owned directory that no group can write (install.sh --prefix /usr/local, or --prefix /opt/swing where /usr/local is group-writable) and keep the config in a directory such as /etc/swing.",
+        problems.join("; "),
         name = user.name,
     )
 }
