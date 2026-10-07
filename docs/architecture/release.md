@@ -30,14 +30,14 @@
 | 名前 | 役割 |
 |---|---|
 | `dtolnay/rust-toolchain` | 指定バージョンの Rust ツールチェインをインストール |
-| `Swatinem/rust-cache` | Cargo のビルドキャッシュ |
+| `Swatinem/rust-cache` | Cargo のビルドキャッシュ。動作確認のワークフローだけで使い、配布物を作る `release.yml` の `build` では使わない（他の実行が保存したキャッシュから配布物を作らないため） |
 | `taiki-e/install-action` | `cargo-zigbuild` をビルド済みバイナリからインストール |
 | ziglang（PyPI、`pip3 install`） | `cargo zigbuild` が使う Zig 本体 |
 | `docker/setup-qemu-action`・`docker/setup-buildx-action`・`docker/login-action`・`docker/build-push-action` | マルチアーキテクチャのイメージのビルドと ghcr.io への push |
 | `mxschmitt/action-tmate` | `macos-check`・`homebrew-check`・`windows-check`・`windows-installer-check` の最後に、ランナーへ SSH で入れる tmate のセッションを開く（下記） |
 | Inno Setup（`jrsoftware/issrc` のリリース） | Windows のインストーラーのコンパイラ（`packaging/windows/build.ps1` が取得する） |
 
-サードパーティおよび `actions/*`（`actions/checkout`・`actions/upload-artifact`・`actions/download-artifact`）の action はフルコミット SHA に固定し、末尾に `# vN` コメントでタグ相当のバージョンを添える。ziglang は pip の `==` で、Inno Setup は `build.ps1` にバージョンとインストーラーの SHA-256 で固定する。Rust ツールチェインのバージョンはワークフローの `toolchain:` 入力（環境変数 `RUST_TOOLCHAIN`）で決まる。選定理由は [2026-09-25 の log](../log/2026-09-25-release-actions-rationale.md)。
+サードパーティおよび `actions/*`（`actions/checkout`・`actions/upload-artifact`・`actions/download-artifact`）の action はフルコミット SHA に固定し、末尾に `# vN` コメントでタグ相当のバージョンを添える。ziglang は pip の `==` で、Inno Setup は `build.ps1` にバージョンとインストーラーの SHA-256 で固定する。Rust ツールチェインのバージョンはワークフローの `toolchain:` 入力（環境変数 `RUST_TOOLCHAIN`）で決まる。選定理由は [2026-09-25 の log](../log/2026-09-25-release-actions-rationale.md)。どのワークフローも git で push しないので、`actions/checkout` は `persist-credentials: false` にしてトークンを `.git/config` に残さない。
 
 ## macOS の動作確認（`.github/workflows/macos-check.yml`）
 
