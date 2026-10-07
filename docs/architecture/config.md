@@ -26,6 +26,8 @@
 
 TOML の構文や型のエラーは `line <行>, column <桁>: <理由>` の形で報告し、該当行を引用しない。
 
+読み込んだファイルに `[nostr].secret_key` があり、Unix でグループかその他のユーザーに読み取り権限がある（`mode & 0o044 != 0`）なら、`chmod 600` を促す警告をログに出す。読み込みは続ける。秘密鍵の文字列（ファイルの本文と `NostrFile.secret_key`・`NostrSecretKey`）は `Zeroizing` に持ち、破棄時にゼロで埋める。`NostrSecretKey` の中身は `expose_secret()` からだけ取り出せる。
+
 ## 設定カタログ
 
 すべての設定キー（TOML のセクションとフィールド、環境変数、種類、`swing.example.toml` 上の見え方、編集可否、英日の説明）は `src/settings/catalog.rs` の `SETTINGS`（`Setting` の配列）1 か所に持つ。
@@ -59,6 +61,8 @@ TOML の構文や型のエラーは `line <行>, column <桁>: <理由>` の形�
 違反はどれもエラー。
 
 - `[nostr].relays` が空（TOML の空配列、または空の要素だけの環境変数）なら既定の relay（`DEFAULT_RELAYS`）に戻し、出どころを `Default` にする。エラーにはしない。
+- `[nostr].relays` の各要素は `ws://` か `wss://` の relay の URL（nostr-sdk の `RelayUrl::parse` が通ること）。違反は `invalid [nostr].relays entry <値>: <理由>`。
+- `[nostr].mirror_set` は d タグとして使える値（`nostr::validate_d_tag`。空でなく、長すぎず、制御文字・見えない書式文字を含まない）。
 - `poll_interval`・`concurrency`・`max_sites_per_account`・`[publish].keep_versions`・`[agent].fetch_timeout`・`[agent].fetch_idle_timeout`・`[dashboard].max_upload` は 0 不可。
 - `report_ttl` は半分が `poll_interval` より大きく、`nostr::MAX_REPORT_AGE`（[`nostr.md`](nostr.md#レプリカ報告の信頼度replicastier)）以下（超えると `report_ttl must be at most 7d`）。
 - `mfs_root` は `/` で始まる絶対パス。`/` そのもの、空の要素、`.`、`..` は不可。末尾の `/` は取り除く。

@@ -3,7 +3,7 @@ use super::*;
 fn minimal_file() -> ConfigFile {
     ConfigFile {
         nostr: NostrFile {
-            secret_key: Some("k".into()),
+            secret_key: Some(String::from("k").into()),
             relays: Some(vec!["wss://r".into()]),
             ..Default::default()
         },
@@ -186,7 +186,7 @@ fn zero_fetch_timeout_is_rejected() {
 fn env_overrides_toml() {
     let file = ConfigFile {
         nostr: NostrFile {
-            secret_key: Some("file-key".into()),
+            secret_key: Some(String::from("file-key").into()),
             relays: Some(vec!["wss://from-file".into()]),
             mirror_set: Some("from-file-set".into()),
             site_event_kind: Some(1111),
@@ -214,7 +214,7 @@ fn env_overrides_toml() {
 fn defaults_applied_when_nothing_set() {
     let file = ConfigFile {
         nostr: NostrFile {
-            secret_key: Some("k".into()),
+            secret_key: Some(String::from("k").into()),
             relays: Some(vec!["wss://r".into()]),
             ..Default::default()
         },
@@ -262,7 +262,7 @@ fn defaults_applied_when_nothing_set() {
 fn default_relays_used_when_none_configured() {
     let file = ConfigFile {
         nostr: NostrFile {
-            secret_key: Some("k".into()),
+            secret_key: Some(String::from("k").into()),
             ..Default::default()
         },
         ..Default::default()
@@ -281,7 +281,7 @@ fn default_relays_used_when_none_configured() {
 fn nip05_mode_env_overrides_file() {
     let file = ConfigFile {
         nostr: NostrFile {
-            secret_key: Some("k".into()),
+            secret_key: Some(String::from("k").into()),
             relays: Some(vec!["wss://r".into()]),
             ..Default::default()
         },
@@ -308,7 +308,7 @@ fn nip05_mode_rejects_garbage() {
 fn publish_nip05_defaults_to_warn() {
     let file = ConfigFile {
         nostr: NostrFile {
-            secret_key: Some("k".into()),
+            secret_key: Some(String::from("k").into()),
             relays: Some(vec!["wss://r".into()]),
             ..Default::default()
         },
@@ -322,7 +322,7 @@ fn publish_nip05_defaults_to_warn() {
 fn publish_nip05_env_overrides_file() {
     let file = ConfigFile {
         nostr: NostrFile {
-            secret_key: Some("k".into()),
+            secret_key: Some(String::from("k").into()),
             relays: Some(vec!["wss://r".into()]),
             ..Default::default()
         },
@@ -455,7 +455,7 @@ fn dashboard_defaults_to_localhost_8082_with_default_gateway() {
 fn dashboard_max_upload_env_overrides_file() {
     let file = ConfigFile {
         nostr: NostrFile {
-            secret_key: Some("k".into()),
+            secret_key: Some(String::from("k").into()),
             relays: Some(vec!["wss://r".into()]),
             ..Default::default()
         },
@@ -526,7 +526,7 @@ fn dashboard_ui_file_value_is_used_when_env_unset() {
 fn dashboard_env_overrides_file() {
     let file = ConfigFile {
         nostr: NostrFile {
-            secret_key: Some("k".into()),
+            secret_key: Some(String::from("k").into()),
             relays: Some(vec!["wss://r".into()]),
             ..Default::default()
         },
@@ -593,7 +593,7 @@ fn dashboard_env_overrides_file() {
 fn dashboard_gateway_empty_string_in_file_disables_links() {
     let file = ConfigFile {
         nostr: NostrFile {
-            secret_key: Some("k".into()),
+            secret_key: Some(String::from("k").into()),
             relays: Some(vec!["wss://r".into()]),
             ..Default::default()
         },
@@ -611,7 +611,7 @@ fn dashboard_gateway_empty_string_in_file_disables_links() {
 fn max_total_storage_env_is_a_size_string() {
     let file = ConfigFile {
         nostr: NostrFile {
-            secret_key: Some("k".into()),
+            secret_key: Some(String::from("k").into()),
             relays: Some(vec!["wss://r".into()]),
             ..Default::default()
         },
@@ -1099,4 +1099,55 @@ fn ipfs_api_and_gateway_upstream_must_be_http_origins() {
         IpfsApi::Url("https://ipfs.example:5001".into())
     );
     assert_eq!(cfg.gateway.upstream, "http://[::1]:8080");
+}
+
+#[test]
+fn relays_must_be_websocket_urls() {
+    let mut file = minimal_file();
+    file.nostr.relays = Some(vec!["wss://ok.example".into(), "wss//typo".into()]);
+    let err = build_config(file, None, |_| None).unwrap_err();
+    assert!(
+        err.to_string()
+            .starts_with("invalid [nostr].relays entry wss//typo"),
+        "{err}"
+    );
+
+    let mut file = minimal_file();
+    file.nostr.relays = Some(vec!["https://relay.example".into()]);
+    assert!(build_config(file, None, |_| None).is_err());
+
+    let err = build_config(minimal_file(), None, |k| {
+        (k == "SWING_NOSTR_RELAYS").then(|| "wss://a,not a url".to_string())
+    })
+    .unwrap_err();
+    assert!(
+        err.to_string()
+            .starts_with("invalid SWING_NOSTR_RELAYS entry"),
+        "{err}"
+    );
+
+    let mut file = minimal_file();
+    file.nostr.relays = Some(vec![
+        "ws://127.0.0.1:7777".into(),
+        "wss://r.example/path".into(),
+    ]);
+    assert!(build_config(file, None, |_| None).is_ok());
+}
+
+#[test]
+fn mirror_set_must_be_a_usable_d_tag() {
+    let mut file = minimal_file();
+    file.nostr.mirror_set = Some(String::new());
+    let err = build_config(file, None, |_| None).unwrap_err();
+    assert_eq!(err.to_string(), "invalid [nostr].mirror_set");
+
+    let mut file = minimal_file();
+    file.nostr.mirror_set = Some("set\u{202E}".into());
+    assert!(build_config(file, None, |_| None).is_err());
+
+    let err = build_config(minimal_file(), None, |k| {
+        (k == "SWING_MIRROR_SET").then(String::new)
+    })
+    .unwrap_err();
+    assert_eq!(err.to_string(), "invalid SWING_MIRROR_SET");
 }

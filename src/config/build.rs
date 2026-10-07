@@ -188,7 +188,11 @@ fn resolve_nostr<E: Fn(&str) -> Option<String>>(
     r: &mut Resolver<E>,
     file: NostrFile,
 ) -> Result<NostrConfig> {
-    let secret_key = r.opt_string("nostr.secret_key", file.secret_key);
+    let secret_key = match r.pick("nostr.secret_key", file.secret_key) {
+        Picked::Env(v) => Some(NostrSecretKey::from(v)),
+        Picked::File(v) => Some(NostrSecretKey::from(v)),
+        Picked::Default => None,
+    };
 
     let mut relays = r.list("nostr.relays", file.relays, false, &DEFAULT_RELAYS);
     if relays.is_empty() {
@@ -197,10 +201,19 @@ fn resolve_nostr<E: Fn(&str) -> Option<String>>(
             .insert("nostr.relays".to_string(), Source::Default);
     }
 
+    for relay in &relays {
+        if let Err(e) = nostr_sdk::prelude::RelayUrl::parse(relay) {
+            bail!("invalid {} entry {relay}: {e}", r.name("nostr.relays"));
+        }
+    }
+
+    let mirror_set = r.string("nostr.mirror_set", file.mirror_set, "swing");
+    crate::nostr::validate_d_tag(&mirror_set).with_context(|| r.invalid("nostr.mirror_set"))?;
+
     Ok(NostrConfig {
-        secret_key: secret_key.map(NostrSecretKey::from),
+        secret_key,
         relays,
-        mirror_set: r.string("nostr.mirror_set", file.mirror_set, "swing"),
+        mirror_set,
         site_event_kind: r.typed(
             "nostr.site_event_kind",
             file.site_event_kind,

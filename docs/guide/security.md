@@ -8,7 +8,7 @@ SWING は公開の IPFS Mainnet をそのまま使うため、匿名性は提供
 
 一方で、Kubo の RPC やローカルのゲートウェイ、ダッシュボード（管理 UI）は外部に公開しません。外部に公開する必要があるのは IPFS swarm 用のポート（`4001`）だけです。バイナリで `swing up` が Kubo を管理する場合、RPC はループバックのランダムなポートで待ち受けるため外部から触ることはできず、同じマシンの他のユーザーからも使えないよう、起動のたびに作り直す秘密（`<state_dir>/kubo-api.json`）を要求します。ただし Kubo は同じポートの `/debug/`（メトリクス・プロファイル・スタック）と `/logs` を秘密なしで返すので、同じマシンの他のユーザーはこれらを読めます（[`docs/architecture/kubo.md`](../architecture/kubo.md#既知の制限-api-ポートの認証のないエンドポイント)）。`[ipfs].api` で外部の Kubo を使う場合、SWING はその RPC に認証を付けないので、同じマシンの他のユーザーやほかのコンテナから届かないようにしてください。Docker Compose の構成でも、Kubo の RPC（5001）はホストに公開されず、ゲートウェイ（`8080`）とダッシュボード（`8082`）はどちらも既定で `127.0.0.1` だけで待ち受けます。ダッシュボードは平文の HTTP なので、`SWING_DASHBOARD_BIND` を変えて平文のまま外部に出すと、ログインコードとログイン状態の cookie がそのまま流れます。外の端末から使う方法は下の「[ダッシュボードを外の端末から使う](#ダッシュボードを外の端末から使う)」、既知の弱点は [`docs/architecture/dashboard/security.md`](../architecture/dashboard/security.md#既知の弱点) を参照してください。内蔵ゲートウェイで外部に配信するのは、設定した `SWING_GATEWAY_HOSTS`（または `gateway.hosts`）のホストの DNSLink だけです。
 
-Nostr の秘密鍵は、Docker Compose で動かす場合は `.env` に、バイナリで `swing.toml` を使う場合は `swing.toml` の `secret_key` に、どちらも平文で保存されます。サイト公開・ミラー参加専用の鍵を新しく作り、他の用途の鍵とは分けて扱うことをおすすめします。`.env` や `swing.toml` を Git にコミットしないよう注意してください。
+Nostr の秘密鍵は、Docker Compose で動かす場合は `.env` に、バイナリで `swing.toml` を使う場合は `swing.toml` の `secret_key` に、どちらも平文で保存されます。サイト公開・ミラー参加専用の鍵を新しく作り、他の用途の鍵とは分けて扱うことをおすすめします。`.env` や `swing.toml` を Git にコミットしないよう注意してください。Linux・macOS では、秘密鍵を書いた `swing.toml` をほかのユーザーが読める権限のままにしていると、起動時に警告が出ます。`chmod 600 swing.toml` で自分だけが読めるようにしてください（ダッシュボードから保存したファイルは最初からそうなっています）。
 
 ## ダッシュボードを外の端末から使う
 

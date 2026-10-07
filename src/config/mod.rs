@@ -6,6 +6,7 @@ use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
 use serde::Deserialize;
+use zeroize::Zeroizing;
 
 mod build;
 
@@ -22,7 +23,7 @@ pub const DEFAULT_MAX_UPDATE_SIZE: u64 = 2 << 30;
 #[derive(Clone, Deserialize, Default)]
 #[serde(default)]
 pub struct NostrFile {
-    pub secret_key: Option<String>,
+    pub secret_key: Option<Zeroizing<String>>,
     pub relays: Option<Vec<String>>,
     pub mirror_set: Option<String>,
     pub site_event_kind: Option<u16>,
@@ -172,18 +173,10 @@ pub struct ConfigFile {
 }
 
 #[derive(Clone)]
-pub struct NostrSecretKey(String);
+pub struct NostrSecretKey(Zeroizing<String>);
 
 impl NostrSecretKey {
     pub fn expose_secret(&self) -> &str {
-        &self.0
-    }
-}
-
-impl std::ops::Deref for NostrSecretKey {
-    type Target = str;
-
-    fn deref(&self) -> &str {
         &self.0
     }
 }
@@ -196,6 +189,12 @@ impl std::fmt::Debug for NostrSecretKey {
 
 impl From<String> for NostrSecretKey {
     fn from(s: String) -> Self {
+        Self(Zeroizing::new(s))
+    }
+}
+
+impl From<Zeroizing<String>> for NostrSecretKey {
+    fn from(s: Zeroizing<String>) -> Self {
         Self(s)
     }
 }
@@ -445,11 +444,36 @@ fn load_file(cli_path: Option<&Path>) -> Result<(ConfigFile, PathBuf, bool, Conf
         }
         return Ok((ConfigFile::default(), path, false, origin));
     }
-    let text = std::fs::read_to_string(&path)
-        .with_context(|| format!("reading config file {}", path.display()))?;
+    let text = Zeroizing::new(
+        std::fs::read_to_string(&path)
+            .with_context(|| format!("reading config file {}", path.display()))?,
+    );
     let file = parse_config_file(&text)
         .with_context(|| format!("parsing config file {}", path.display()))?;
+    #[cfg(unix)]
+    warn_if_secret_is_readable_by_others(&path, &file);
     Ok((file, path, true, origin))
+}
+
+#[cfg(unix)]
+fn warn_if_secret_is_readable_by_others(path: &Path, file: &ConfigFile) {
+    use std::os::unix::fs::PermissionsExt;
+    let Ok(meta) = std::fs::metadata(path) else {
+        return;
+    };
+    let mode = meta.permissions().mode();
+    if secret_readable_by_others(file, mode) {
+        tracing::warn!(
+            path = %path.display(),
+            mode = format!("{:o}", mode & 0o777),
+            "the config file holds [nostr].secret_key and other users can read it; run chmod 600 on it"
+        );
+    }
+}
+
+#[cfg(unix)]
+fn secret_readable_by_others(file: &ConfigFile, mode: u32) -> bool {
+    file.nostr.secret_key.is_some() && mode & 0o044 != 0
 }
 
 fn parse_config_file(text: &str) -> Result<ConfigFile> {
@@ -644,7 +668,7 @@ mod tests {
     #[test]
     fn nostr_file_debug_redacts_the_secret_key() {
         let file = NostrFile {
-            secret_key: Some("nsec1qqqqsecretqqqq".to_string()),
+            secret_key: Some(Zeroizing::new("nsec1qqqqsecretqqqq".to_string())),
             mirror_set: Some("set".to_string()),
             ..Default::default()
         };
@@ -732,6 +756,19 @@ mod tests {
         let missing = dir.path().join("nope.toml");
         let err = load_file(Some(&missing)).unwrap_err();
         assert!(err.to_string().contains("not found"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_secret_key_in_a_file_others_can_read_is_flagged() {
+        let with_secret = parse_config_file("[nostr]\nsecret_key = \"k\"\n").unwrap();
+        let without_secret = parse_config_file("[nostr]\nrelays = [\"wss://r\"]\n").unwrap();
+        assert!(secret_readable_by_others(&with_secret, 0o100644));
+        assert!(secret_readable_by_others(&with_secret, 0o100640));
+        assert!(secret_readable_by_others(&with_secret, 0o100604));
+        assert!(!secret_readable_by_others(&with_secret, 0o100600));
+        assert!(!secret_readable_by_others(&with_secret, 0o100700));
+        assert!(!secret_readable_by_others(&without_secret, 0o100644));
     }
 
     #[test]
