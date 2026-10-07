@@ -4,6 +4,10 @@ use crate::state::VersionRecord;
 use std::collections::HashSet;
 use tokio::task::JoinSet;
 
+fn after_poll_interval(fx: &Fixture) -> Instant {
+    Instant::now() + fx.agent.config.agent.poll_interval
+}
+
 fn cids(list: &[&str]) -> Vec<String> {
     list.iter().map(|c| c.to_string()).collect()
 }
@@ -78,13 +82,47 @@ async fn a_changed_report_is_newer_than_the_previous_one_within_a_second() {
 
 #[test]
 fn reports_in_one_round_get_distinct_times_newer_than_their_previous_ones() {
-    assert_eq!(report_times(&[None, None, None], 100), vec![100, 99, 98]);
     assert_eq!(
-        report_times(&[None, Some(100), Some(99), None], 100),
+        report_times(&[None, None, None], 100, true),
+        vec![100, 99, 98]
+    );
+    assert_eq!(
+        report_times(&[None, Some(100), Some(99), None], 100, true),
         vec![100, 101, 99, 97]
     );
-    assert_eq!(report_times(&[Some(500), Some(500)], 100), vec![500, 501]);
-    assert_eq!(report_times(&[None, None], 0), vec![0, 1]);
+    assert_eq!(
+        report_times(&[Some(500), Some(500)], 100, true),
+        vec![500, 501]
+    );
+    assert_eq!(report_times(&[None, None], 0, true), vec![0, 1]);
+}
+
+#[test]
+fn reports_sent_before_own_reports_are_read_are_not_backdated() {
+    assert_eq!(
+        report_times(&[None, None, None], 100, false),
+        vec![100, 100, 100]
+    );
+    assert_eq!(
+        report_times(&[None, Some(90), Some(150), None], 100, false),
+        vec![100, 100, 150, 100]
+    );
+}
+
+#[tokio::test]
+async fn reports_sent_while_own_reports_are_unread_are_dated_now() {
+    let fx = Fixture::new(default_policy(), FakeKubo::default());
+    let ds = ["a.example", "b.example", "c.example"];
+    for (i, d) in ds.iter().enumerate() {
+        fx.seed(d, &format!("bafy-{i}"), 1, 100).await;
+    }
+    fx.relay().partial_fetch = true;
+    let now = now_secs();
+    fx.agent.sync_reports().await;
+    assert_eq!(fx.take_reports().len(), ds.len());
+    for d in ds {
+        assert!(fx.sent_created_at(&fx.key(d)).await >= now);
+    }
 }
 
 #[tokio::test]
@@ -193,7 +231,12 @@ async fn stale_reports_are_withdrawn_once_the_relays_answer() {
 
     fx.relay().fail_fetch = false;
     fx.agent.sync_reports().await;
+    assert!(fx.take_reports().is_empty());
+    assert_eq!(fx.relay().own_fetches, 1);
+
+    fx.agent.sync_reports_at(after_poll_interval(&fx)).await;
     assert_eq!(fx.take_reports(), vec![(fx.key("gone.example"), vec![])]);
+    assert_eq!(fx.relay().own_fetches, 2);
 }
 
 #[tokio::test]
@@ -222,7 +265,15 @@ async fn own_reports_are_fetched_again_after_a_walk_cut_short() {
         relay.partial_fetch = false;
     }
     fx.agent.sync_reports().await;
+    assert!(fx.take_reports().is_empty());
+    assert_eq!(fx.relay().own_fetches, 1);
+
+    fx.agent.sync_reports_at(after_poll_interval(&fx)).await;
     assert_eq!(fx.take_reports(), vec![(fx.key("gone.example"), vec![])]);
+    assert_eq!(fx.relay().own_fetches, 2);
+
+    fx.agent.sync_reports_at(after_poll_interval(&fx)).await;
+    assert_eq!(fx.relay().own_fetches, 2);
 }
 
 #[tokio::test]

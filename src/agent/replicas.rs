@@ -1,4 +1,5 @@
 use std::collections::{BTreeMap, BTreeSet};
+use std::time::Instant;
 
 use nostr_sdk::prelude::*;
 use tracing::{debug, info, warn};
@@ -22,6 +23,7 @@ pub(super) struct SentReport {
 pub(super) struct ReportBook {
     pub(super) loaded: bool,
     pub(super) sent: BTreeMap<SiteKey, SentReport>,
+    load_after: Option<Instant>,
     own_cids: BTreeMap<SiteKey, BTreeSet<String>>,
 }
 
@@ -69,7 +71,14 @@ fn reports_to_send(
 }
 
 // Relays page by created_at, so one round's reports are spread one per second instead of crowding `now`.
-fn report_times(floors: &[Option<u64>], now: u64) -> Vec<u64> {
+fn report_times(floors: &[Option<u64>], now: u64, loaded: bool) -> Vec<u64> {
+    if !loaded {
+        // A relay may hold a newer report we have not read yet, so nothing goes below `now`, and bumping duplicates upward could pass the future skew allowance.
+        return floors
+            .iter()
+            .map(|floor| floor.map_or(now, |floor| floor.max(now)))
+            .collect();
+    }
     let mut used = BTreeSet::new();
     floors
         .iter()
@@ -169,15 +178,16 @@ impl<C: KuboStore, N: Nip05Verify, R: ReportRelay> Agent<C, N, R> {
         held
     }
 
-    async fn load_sent_reports(&self, book: &mut ReportBook) {
-        if book.loaded {
+    async fn load_sent_reports(&self, book: &mut ReportBook, now: Instant) {
+        if book.loaded || book.load_after.is_some_and(|after| now < after) {
             return;
         }
+        book.load_after = Some(now + self.config.agent.poll_interval);
         let kind = self.config.nostr.replica_event_kind;
         let paged = match self.reporter.fetch_own_reports(kind).await {
             Ok(paged) => paged,
             Err(e) => {
-                warn!(error = %e, "fetching own replica reports failed; stale reports are withdrawn after a later fetch succeeds");
+                warn!(error = %e, "fetching own replica reports failed; fetching them again after poll_interval, and stale reports are withdrawn once a fetch succeeds");
                 return;
             }
         };
@@ -210,7 +220,9 @@ impl<C: KuboStore, N: Nip05Verify, R: ReportRelay> Agent<C, N, R> {
             }
         }
         if !paged.complete {
-            warn!("no relay listed every own replica report; fetching them again next round");
+            warn!(
+                "no relay listed every own replica report; fetching them again after poll_interval"
+            );
             return;
         }
         book.loaded = true;
@@ -286,8 +298,12 @@ impl<C: KuboStore, N: Nip05Verify, R: ReportRelay> Agent<C, N, R> {
     }
 
     pub(super) async fn sync_reports(&self) {
+        self.sync_reports_at(Instant::now()).await;
+    }
+
+    async fn sync_reports_at(&self, at: Instant) {
         let mut book = self.reports.lock().await;
-        self.load_sent_reports(&mut book).await;
+        self.load_sent_reports(&mut book, at).await;
         let held = self.held().await;
         book.own_cids = own_cids(&held, &book.own_cids, &self.own.to_hex());
         let now = now_secs();
@@ -297,7 +313,7 @@ impl<C: KuboStore, N: Nip05Verify, R: ReportRelay> Agent<C, N, R> {
             .iter()
             .map(|(key, _)| book.sent.get(key).map(|prev| prev.created_at + 1))
             .collect();
-        let times = report_times(&floors, now);
+        let times = report_times(&floors, now, book.loaded);
         for ((key, cids), created_at) in to_send.into_iter().zip(times) {
             let Some((author_hex, d)) = state::split_site_key(&key) else {
                 continue;

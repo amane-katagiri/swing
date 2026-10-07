@@ -53,6 +53,7 @@ pub(super) struct FakeRelayState {
     pub(super) sent: Vec<Event>,
     pub(super) fail_fetch: bool,
     pub(super) partial_fetch: bool,
+    pub(super) own_fetches: usize,
     pub(super) reject: bool,
     pub(super) fail_sign: bool,
     pub(super) send_attempts: usize,
@@ -80,7 +81,8 @@ impl ReportRelay for FakeRelay {
     }
 
     async fn fetch_own_reports(&self, _report_kind: u16) -> anyhow::Result<Paged> {
-        let s = self.s.lock().unwrap();
+        let mut s = self.s.lock().unwrap();
+        s.own_fetches += 1;
         if s.fail_fetch {
             anyhow::bail!("simulated fetch failure");
         }

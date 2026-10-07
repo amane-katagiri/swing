@@ -10,7 +10,7 @@
 - `<mfs_root>/publish/<自分の pubkey hex>/` の下のディレクトリ名を `mfs::site_from_name` で `d` に戻し（エンコードし直して同じ名前にならないもの、`d` の条件を満たさないものは無視）、その下の名前が整数の項目の CID（`files/ls` の `Hash`。`nostr::canonical_cid` で CIDv1 の dag-pb に正規化し、正しい CID でないものは warn を出して無視する）。同じサイトが `state.sites` にもあれば合わせる。同じ Kubo で `swing publish` した自分のサイトだけが対象で、別の Kubo で publish したサイトは報告しない。
 - `publish/<自分>/` の一覧に失敗したら自分が作者のサイトすべてを、`publish/<自分>/<site>/` の一覧に失敗したらそのサイトを「不明」とし、今回は送らない。
 
-送信済みの記録はメモリにだけ持つ（サイトごとに `cid` の集合と `created_at`）。まだ読めていなければ、同期のたびに relay から自分の報告（`replica_event_kind`、作者が自分）をページに分けて全部取得し（[`nostr/fetch.md`](../nostr/fetch.md#ページに分ける取得relayclientfetch_pages)）、`d` ごとの最新を記録に入れる（記録にある方が新しければそのまま）。取得に失敗したら（最初のページに答えた relay が 1 つも無い場合を含む）warn を出し、読めたことにはせず次の同期で取り直す。取れた分を記録に入れても、最後までたどれた relay が 1 つも無かったとき（期限切れ・途中で切れた。`Paged::complete` が false）も warn を出して読めたことにはせず、次の同期で取り直す。送信は続ける。
+送信済みの記録はメモリにだけ持つ（サイトごとに `cid` の集合と `created_at`）。まだ読めていなければ、同期のたびに relay から自分の報告（`replica_event_kind`、作者が自分）をページに分けて全部取得し（[`nostr/fetch.md`](../nostr/fetch.md#ページに分ける取得relayclientfetch_pages)）、`d` ごとの最新を記録に入れる（記録にある方が新しければそのまま）。取得に失敗したら（最初のページに答えた relay が 1 つも無い場合を含む）warn を出し、読めたことにはしない。取れた分を記録に入れても、最後までたどれた relay が 1 つも無かったとき（期限切れ・途中で切れた。`Paged::complete` が false）も warn を出して読めたことにはしない。どちらも取得を始めた時刻から `[agent].poll_interval` がたつまでは取り直さず（同期は保存のたびにも走り、取得は最大 120 秒かかるため）、その間の同期は記録にある分（取れた分を含む）で送信を続ける。
 
 送るもの:
 
@@ -21,7 +21,8 @@
 | 無い | `cid` が 1 つ以上 | `cid` 無し（取り下げ） |
 | 不明 | — | 送らない |
 
-- `created_at` は、その回に送る報告の並び（`reports_to_send` の順。保存している CID のサイトをキー順に、続けて取り下げをキー順に）の i 番目（0 始まり）で現在時刻 − i（0 で止める）。relay はページを `created_at` で区切るので、1 回分の報告を同じ 1 秒に詰めない（[`nostr/fetch.md`](../nostr/fetch.md#ページに分ける取得relayclientfetch_pages)）。記録の `created_at` 以下になるときは記録の `created_at + 1` にし、その回ですでに使った値なら空くまで 1 ずつ足す。`expiration` は `created_at + report_ttl`（足し算は飽和させる。`report_ttl` の上限は [`../config.md#検証`](../config.md#検証)）。
+- 自分の報告をまだ読めていないあいだは、relay に記録より新しい報告（再起動の直前に送ったものなど）があるかもしれないので、`created_at` を現在時刻より前にしない。記録の無いサイトは現在時刻、記録のあるサイトは現在時刻と記録の `created_at + 1` の大きい方にする（その回の中で同じ値になってもずらさない。ずらすと未来ずれの許容を超えうる）。
+- 読めたあとは、`created_at` は、その回に送る報告の並び（`reports_to_send` の順。保存している CID のサイトをキー順に、続けて取り下げをキー順に）の i 番目（0 始まり）で現在時刻 − i（0 で止める）。relay はページを `created_at` で区切るので、1 回分の報告を同じ 1 秒に詰めない（[`nostr/fetch.md`](../nostr/fetch.md#ページに分ける取得relayclientfetch_pages)）。記録の `created_at` 以下になるときは記録の `created_at + 1` にし、その回ですでに使った値なら空くまで 1 ずつ足す。`expiration` は `created_at + report_ttl`（足し算は飽和させる。`report_ttl` の上限は [`../config.md#検証`](../config.md#検証)）。
 - 全 relay に送り、どこかに受理されたら記録を更新する。受理されなければ warn を出し、次の同期で送り直す。
 - 署名（NIP-46 の署名アプリへのリクエストを含む）か送信がエラーになったら warn を出して、その回の残りの報告は送らずに打ち切る。残りは次の同期で送り直す（署名アプリがオフラインのときの扱いは [`signer.md#署名アプリがオフラインのとき`](../signer.md#署名アプリがオフラインのとき)）。
 - 取り下げた記録は `cid` 無しで残り、出し直さない。
