@@ -384,7 +384,7 @@ impl IpfsClient {
     pub async fn mfs_put(&self, cid: &str, path: &str) -> Result<()> {
         self.mfs_mkdir(mfs::parent(path)).await?;
         self.mfs_remove(path).await?;
-        // offline=true: callers have already checked the whole DAG is local.
+        // offline=true: callers place content already fetched and check completeness afterwards, so a missing root fails fast instead of searching the network.
         self.call(
             "files/cp",
             &format!(
