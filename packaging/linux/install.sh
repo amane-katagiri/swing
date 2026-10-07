@@ -190,7 +190,11 @@ check_dir() {
         loose=
         case $1 in
           ????????w*) loose=1 ;;
-          ?????w*) private_group "$3" "$4" || loose=1 ;;
+          ?????w*)
+            if [ -n "$leaf" ] || [ "$3" != 0 ]; then
+              private_group "$3" "$4" || loose=1
+            fi
+            ;;
         esac
         if [ -n "$loose" ]; then
           sticky=

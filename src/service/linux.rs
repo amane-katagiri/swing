@@ -147,7 +147,7 @@ fn entry_problem(
     }
     let loose = match mode & 0o022 {
         0 => false,
-        0o020 => !private_group(),
+        0o020 => !(ancestor && owner == 0) && !private_group(),
         _ => true,
     };
     if kind != libc::S_IFLNK && loose {
@@ -454,7 +454,10 @@ mod tests {
         assert!(!check(1000, file | 0o775, false, false));
         assert!(!check(1000, file | 0o757, false, true));
         assert!(!check(0, dir | 0o757, true, false));
-        assert!(!check(0, dir | 0o2775, true, false));
+        assert!(check(0, dir | 0o2775, true, false));
+        assert!(!check(0, dir | 0o2775, false, false));
+        assert!(!check(0, file | 0o775, false, false));
+        assert!(!check(1000, dir | 0o2775, true, false));
         assert!(!check(0, dir | 0o1777, false, false));
         assert!(!check(1001, dir | 0o1777, true, false));
     }

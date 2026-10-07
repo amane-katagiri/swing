@@ -451,6 +451,26 @@ if [ -n "$private_gid" ]; then
 else
   echo "skip a parent writable by the user's own group (the user has no private group)"
 fi
+delegated_gid=
+if [ "$(id -u)" = 0 ]; then
+  delegated_gid=$(getent group staff users nogroup | head -n 1 | cut -d : -f 3)
+fi
+if [ -n "$delegated_gid" ]; then
+  mkdir "$H/delegated"
+  chgrp "$delegated_gid" "$H/delegated"
+  chmod 2775 "$H/delegated"
+  run sh "$INSTALL" --prefix "$H/delegated/p" >"$H/out" 2>&1 || fail "a root-owned parent writable by its group is accepted"
+  check "installed under a root-owned parent writable by its group" [ -x "$H/delegated/p/lib/swing/swing" ]
+  chgrp "$delegated_gid" "$H/delegated/p/lib/swing"
+  chmod 2775 "$H/delegated/p/lib/swing"
+  if run sh "$INSTALL" --prefix "$H/delegated/p" >"$H/out" 2>&1; then
+    fail "a root-owned lib/swing writable by its group is refused"
+  else
+    pass "a root-owned lib/swing writable by its group is refused"
+  fi
+else
+  echo "skip a root-owned parent writable by its group (not running as root)"
+fi
 mkdir "$H/sticky"
 chmod 1777 "$H/sticky"
 run sh "$INSTALL" --prefix "$H/sticky/p" >"$H/out" 2>&1 || fail "a sticky world-writable parent is accepted"
