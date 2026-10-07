@@ -26,7 +26,7 @@ curl -fsSL .../install.sh | sh -s -- --version v0.1.0
 | 定数 | 値 |
 |---|---|
 | `RELEASES_URL` | `https://github.com/amane-katagiri/swing/releases`。`SHA256SUMS`・アーカイブ・`install.sh` は `<RELEASES_URL>/latest/download`（`--version` ありなら `<RELEASES_URL>/download/<tag>`）から取る |
-| `KUBO_BASE_URL` | `https://dist.ipfs.tech/kubo/v<KUBO_VERSION>` |
+| `KUBO_BASE_URL` | `https://github.com/ipfs/kubo/releases/download/v<KUBO_VERSION>` |
 | `KUBO_SHA512_AMD64`・`KUBO_SHA512_ARM64` | Kubo の Linux 向けアーカイブの SHA-512 |
 | `SYSTEM_UNIT` | `/etc/systemd/system/swing.service`（アンインストール時と更新時に system unit を探す場所） |
 

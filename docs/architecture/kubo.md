@@ -96,7 +96,7 @@ agent・`swing publish`・unmanaged のヘルス待ち（[`up.md#unmanaged`](up.
 
 - `compose.yaml` の `ipfs` サービスのイメージタグ（`ipfs/kubo:v0.43.1`）
 - `kubo::KUBO_VERSION`（`src/kubo/mod.rs`）
-- `packaging/linux/install.sh` の `KUBO_VERSION` と `KUBO_SHA512_AMD64`・`KUBO_SHA512_ARM64`（<https://dist.ipfs.tech/kubo/> の `kubo_v<版>_linux-<amd64|arm64>.tar.gz.sha512` の値。[`install-sh.md`](install-sh.md)）
+- `packaging/linux/install.sh` の `KUBO_VERSION` と `KUBO_SHA512_AMD64`・`KUBO_SHA512_ARM64`（<https://github.com/ipfs/kubo/releases> の `kubo_v<版>_linux-<amd64|arm64>.tar.gz.sha512` の値。[`install-sh.md`](install-sh.md)）
 - `packaging/windows/kubo.sha512`（`kubo_v<版>_windows-amd64.zip.sha512` をそのまま置く。[`installer-windows.md`](installer-windows.md#kubo-の取得と検証)）
 - README と docs の版表記（`v0.43.1` で検索できる）
 

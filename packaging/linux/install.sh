@@ -7,7 +7,7 @@ KUBO_SHA512_ARM64=70f082584651ef78fb5b07448be53bb0adf141aadcb7eea15ffa59bd9ca78f
 
 REPO_URL=https://github.com/amane-katagiri/swing
 RELEASES_URL=$REPO_URL/releases
-KUBO_BASE_URL=https://dist.ipfs.tech/kubo/v$KUBO_VERSION
+KUBO_BASE_URL=https://github.com/ipfs/kubo/releases/download/v$KUBO_VERSION
 SYSTEM_UNIT=/etc/systemd/system/swing.service
 
 TMP=

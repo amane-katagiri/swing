@@ -17,7 +17,7 @@ IPFS ノードの Kubo は同梱していません。Windows のインストー�
 
 ## 必要なもの
 
-- Kubo v0.43.1 の `ipfs`（Windows は `ipfs.exe`）。<https://dist.ipfs.tech/kubo/v0.43.1/> から取得し、`swing` と同じディレクトリに置くか PATH に通してください。`swing up` が自動で見つけて起動します
+- Kubo v0.43.1 の `ipfs`（Windows は `ipfs.exe`）。<https://github.com/ipfs/kubo/releases/tag/v0.43.1> から取得し、`swing` と同じディレクトリに置くか PATH に通してください。`swing up` が自動で見つけて起動します
 - Nostr の秘密鍵。SWING 専用の鍵を新しく作ることをおすすめします（下記の手順で作れます）。秘密鍵をこのコンピュータに置きたくなければ、代わりにスマホの署名アプリ（NIP-46）を使えます
 - 保存に回すディスク容量（既定の上限は 100GiB）
 

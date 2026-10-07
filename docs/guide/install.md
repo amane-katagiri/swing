@@ -6,7 +6,7 @@ OS ごとの入れ方、設定ファイルの置き場所、サービス登録�
 
 次のどちらかで動かせます。
 
-- **バイナリで動かす場合**: `swing` バイナリと、IPFS ノードである Kubo のバイナリ（`ipfs`、v0.43.1）。`swing` は GitHub のリリースに Linux・macOS・Windows 向けのビルド済みアーカイブ（Kubo は含みません）があればそれを使い、無ければ自分でビルド（Rust 1.97 で `cargo build --release`）します。Kubo は[公式の配布ページ](https://dist.ipfs.tech/kubo/v0.43.1/)から取得します。`ipfs` は `swing` と同じディレクトリに置くか PATH に通しておけば、`swing up` が自動で見つけます
+- **バイナリで動かす場合**: `swing` バイナリと、IPFS ノードである Kubo のバイナリ（`ipfs`、v0.43.1）。`swing` は GitHub のリリースに Linux・macOS・Windows 向けのビルド済みアーカイブ（Kubo は含みません）があればそれを使い、無ければ自分でビルド（Rust 1.97 で `cargo build --release`）します。Kubo は[GitHub のリリース](https://github.com/ipfs/kubo/releases/tag/v0.43.1)から取得します。`ipfs` は `swing` と同じディレクトリに置くか PATH に通しておけば、`swing up` が自動で見つけます
 - **Docker Compose で動かす場合**: Docker と Docker Compose（`docker compose` コマンドが使えること）
 
 常時起動のサーバでも普段使いの PC でも動かせます。使い方・スペック・通信量の目安は「[動かし方の目安](operation.md#動かし方の目安)」を参照してください。
@@ -94,7 +94,7 @@ GitHub のリリースにビルド済みアーカイブがあればそれを展�
 cargo build --release
 ```
 
-`target/release/swing`（Windows は `swing.exe`）ができます。あわせて Kubo v0.43.1 を[公式の配布ページ](https://dist.ipfs.tech/kubo/v0.43.1/)から取得し、中の `ipfs`（Windows は `ipfs.exe`）を `swing` と同じディレクトリに置くか、PATH に通してください。
+`target/release/swing`（Windows は `swing.exe`）ができます。あわせて Kubo v0.43.1 を[GitHub のリリース](https://github.com/ipfs/kubo/releases/tag/v0.43.1)から取得し、中の `ipfs`（Windows は `ipfs.exe`）を `swing` と同じディレクトリに置くか、PATH に通してください。
 
 秘密鍵を生成します。
 
