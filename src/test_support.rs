@@ -63,6 +63,7 @@ pub(crate) struct FakeKuboState {
     pub(crate) unions: BTreeMap<String, u64>,
     pub(crate) files: HashSet<String>,
     pub(crate) dag_stats: Vec<String>,
+    pub(crate) dir_checks: Vec<String>,
 }
 
 impl FakeKuboState {
@@ -179,7 +180,9 @@ impl KuboStore for FakeKubo {
     }
 
     async fn is_directory(&self, cid: &str) -> anyhow::Result<bool> {
-        Ok(!self.s.lock().unwrap().files.contains(cid))
+        let mut s = self.s.lock().unwrap();
+        s.dir_checks.push(cid.to_string());
+        Ok(!s.files.contains(cid))
     }
 }
 

@@ -62,18 +62,19 @@ relay から取得した版と `state.follow_set` の版を比べて使う方を
 
 Follow Set が決まった tick で行う。Follow Set の更新はこれより先に反映する。決まらない tick では何もせず、warn を出す（state に版か検証結果のあるアカウントがあれば、その数と、鍵か `mirror_set` を変えていないかの確認を添える）。state に保存した Follow Set は今の鍵と `mirror_set` のものしか使わないので、鍵か `mirror_set` を変えて起動すると、新しい Follow Set ができるまで以前のアカウントは消えずに残る。
 
-- `remove_on_unfollow = true`: `state.sites` か `state.verifications` にエントリがあり、今の Follow Set にいない pubkey を state から消して保存し、`<mfs_root>/agent/<pubkey hex>` を消す。state と比べるので、agent の停止中に外した相手や、設定を `true` に変える前に外した相手も消える。
+- `remove_on_unfollow = true`: `state.sites` か `state.verifications` にエントリがあり、今の Follow Set にいない pubkey を state から消して保存し、`<mfs_root>/agent/<pubkey hex>` を消す。ただし保存中（下記の保存の順序の 6）の版のパスがその下にあれば、そのアカウントのディレクトリは消さずに info を出して sweep に任せる。保存の間に作者がフォローし直されていれば版はそのまま記録され、外れたままなら 9 で版のパスが消え、残りは保存が終わった後の sweep が消す。state と比べるので、agent の停止中に外した相手や、設定を `true` に変える前に外した相手も消える。
 - `false`: 外れた相手の保存済みの版を残す。新しい版は取らない。保持期間の適用と容量の集計は続き、最新版は残る。起動時の突き合わせで壊れていた版は取り直さずに消える。
 
 ## 保存の順序
 
-1. 作者が今の Follow Set にいなければ warn を出して終わる。同じサイトで同じ CID が以前 4・5・9 で拒否されていれば（下記）、debug を出して終わる。
+1. 作者が今の Follow Set にいなければ info を出して終わる（キューに入れる前と 6・9 でも同じ確認をする）。同じサイトで同じ CID が以前 4・5・9 で拒否されていれば（下記）、debug を出して終わる。
 2. 事前判定: `size` タグ（無い、または読めなければ不明。[`nostr.md#検証`](nostr.md#検証)）で `policy::decide` する。skip なら終わる。同じ state から、5 で使う取得の上限 `policy::fetch_budget` も決める（`policy::fetch_limit`（`max_update_size`・`max_per_site`・`max_per_account` の最小値）、`max_per_account` からそのアカウントのほかのサイトの合計を引いた残り、`max_total_storage` からほかのサイトの合計を引いた残りの最小値。新しい版はどれを evict しても残るので、これを超える内容は 9 で必ず拒否される）。
 3. 取得の試行の間引き（下記）に当たれば debug を出して終わる。当たらなければ、ここで試行を記録する。
    続けて NIP-05 検証（[`nip05.md#agent-での適用`](nip05.md#agent-での適用)）。`require` で `Verified` でなければ終わる。間引いたイベントでは NIP-05 の問い合わせも state の保存もしない。
-4. ディレクトリ確認: 取得の前に `files/stat /ipfs/<cid>`（ルートのブロックだけを取る）の `Type` を見る。`directory` でなければ `reason = "not_a_directory"` で warn を出して終わる。`files/stat` 自体が失敗したら取得の失敗と同じ扱いで終わる（取り直すのは 3 の試行から `min_update_interval` が過ぎてから）。
+4. 2 で決めた上限が 0（アカウントかノードにもう空きが無い）なら、Kubo に何も問い合わせずに `reason = "no_space_left"` で warn を出して拒否し、終わる。
+   ディレクトリ確認: 取得の前に `files/stat /ipfs/<cid>`（ルートのブロックだけを取る）の `Type` を見る。`directory` でなければ `reason = "not_a_directory"` で warn を出して終わる。`files/stat` 自体が失敗したら取得の失敗と同じ扱いで終わる（取り直すのは 3 の試行から `min_update_interval` が過ぎてから）。
 5. 取得: `dag/export` の CAR を読み捨てながらバイト数を数え、2 で決めた上限を超えたら打ち切る。`[agent].fetch_idle_timeout` か `[agent].fetch_timeout` を超えたら失敗。いずれも state と MFS は変えない。
-6. state のロックを取り、作者が Follow Set から外れていれば終わる。版のパスを「保存中」としてメモリに登録して（9〜10 が終わるまで。sweep はこのパスとその親ディレクトリを消さない）、ロックを放す。ロックの中で登録するので、sweep は登録より前に消し終えているか、登録を見て残すかのどちらかになる。
+6. state のロックを取り、作者が Follow Set から外れていれば終わる。版のパスを「保存中」としてメモリに登録して（9〜10 が終わるまで。sweep と unfollow はこのパスとその親ディレクトリを消さない）、ロックを放す。ロックの中で登録するので、sweep は登録より前に消し終えているか、登録を見て残すかのどちらかになる。
 7. state のロックの外で、版のパスに CID を置く（既存の項目は先に消す）。失敗したら終わる。
 8. state のロックの外で、`dag/stat`（`offline=true`、タイムアウト 300 秒）の `TotalSize` を実サイズとする。
 9. state のロックを取る。8 でブロックが欠けていればエラーになるので、ロックを放して 7 のパスを消して終わる。作者が Follow Set から外れていれば（7 の間に unfollow があった場合を含む）同じく 7 のパスを消して終わる。`size` タグより大きければ warn を出す。実サイズで `policy::decide` する。skip ならロックを放して 7 のパスを消して終わる。
@@ -83,7 +84,7 @@ Follow Set が決まった tick で行う。Follow Set の更新はこれより�
 
 パスの削除に失敗しても state はそのままにし、sweep に任せる。
 
-取得した内容で拒否した版（4 の `not_a_directory`、5 の上限超過、9 の `policy::decide` の skip）:
+取得した内容で拒否した版（4 の `no_space_left` と `not_a_directory`、5 の上限超過、9 の `policy::decide` の skip）:
 
 - その CID をサイトごとにメモリに覚え（`agent::store::Attempts`）、同じ CID のイベントは 1 で終える。1 サイトに複数の CID を覚える。
 - 記録はアカウントごとに合計 50 件まで（`REJECTED_PER_ACCOUNT`）。超えたらそのアカウントの最も古い記録を捨てる。

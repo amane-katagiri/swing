@@ -186,8 +186,7 @@ impl<C: KuboStore, N: Nip05Verify, R: ReportRelay> Agent<C, N, R> {
         }
         let storing = self.storing.lock().unwrap().clone();
         for path in &garbage.paths {
-            let prefix = format!("{path}/");
-            if storing.iter().any(|p| p == path || p.starts_with(&prefix)) {
+            if being_stored(&storing, path) {
                 continue;
             }
             self.remove_path(path).await;
@@ -257,11 +256,21 @@ impl<C: KuboStore, N: Nip05Verify, R: ReportRelay> Agent<C, N, R> {
             }
         }
         self.save(&state, "unfollow").await;
+        let storing = self.storing.lock().unwrap().clone();
         for pubkey_hex in &unfollowed {
-            self.remove_path(&self.layout.agent_account(pubkey_hex))
-                .await;
+            let path = self.layout.agent_account(pubkey_hex);
+            if being_stored(&storing, &path) {
+                info!(path = %path, "a version is being stored under the unfollowed account; leaving its removal to the sweep");
+                continue;
+            }
+            self.remove_path(&path).await;
         }
     }
+}
+
+fn being_stored(storing: &HashSet<String>, path: &str) -> bool {
+    let prefix = format!("{path}/");
+    storing.iter().any(|p| p == path || p.starts_with(&prefix))
 }
 
 #[cfg(test)]

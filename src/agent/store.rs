@@ -90,27 +90,21 @@ impl Attempts {
         let Some((account, _)) = state::split_site_key(key) else {
             return;
         };
-        let account = account.to_string();
-        loop {
-            let rejected: Vec<(&SiteKey, usize, u64)> =
-                state::account_entries(&self.sites, &account)
-                    .flat_map(|(k, e)| {
-                        e.rejected
-                            .iter()
-                            .enumerate()
-                            .map(move |(i, (_, seq))| (k, i, *seq))
-                    })
-                    .collect();
-            if rejected.len() <= REJECTED_PER_ACCOUNT {
-                return;
-            }
-            let Some((k, i, _)) = rejected.into_iter().min_by_key(|(_, _, seq)| *seq) else {
-                return;
-            };
-            let k = k.clone();
-            if let Some(e) = self.sites.get_mut(&k) {
-                e.rejected.remove(i);
-            }
+        let mut seqs: Vec<u64> = state::account_entries(&self.sites, account)
+            .flat_map(|(_, e)| e.rejected.iter().map(|(_, seq)| *seq))
+            .collect();
+        if seqs.len() <= REJECTED_PER_ACCOUNT {
+            return;
+        }
+        seqs.sort_unstable();
+        let cutoff = seqs[seqs.len() - REJECTED_PER_ACCOUNT - 1];
+        let prefix = state::site_key(account, "");
+        for (_, e) in self
+            .sites
+            .range_mut(prefix.clone()..)
+            .take_while(|(k, _)| k.starts_with(&prefix))
+        {
+            e.rejected.retain(|(_, seq)| *seq > cutoff);
         }
     }
 }
@@ -201,12 +195,7 @@ where
             );
             return;
         }
-        if !self.is_target(&ev.pubkey) {
-            warn!(
-                site = %ev.d,
-                pubkey = %pubkey_hex,
-                "ignoring site event from pubkey not in current follow set"
-            );
+        if !self.still_followed(&ev, &pubkey_hex, "submit") {
             return;
         }
         let key = state::site_key(&pubkey_hex, &ev.d);
@@ -329,12 +318,7 @@ impl<C: KuboStore, N: Nip05Verify, R: ReportRelay> Agent<C, N, R> {
     }
 
     async fn worth_fetching(&self, key: &SiteKey, ev: &SiteEvent, pubkey_hex: &str) -> Option<u64> {
-        if !self.is_target(&ev.pubkey) {
-            warn!(
-                site = %ev.d,
-                pubkey = %pubkey_hex,
-                "ignoring site event from pubkey not in current follow set"
-            );
+        if !self.still_followed(ev, pubkey_hex, "precheck") {
             return None;
         }
         if self.attempts.lock().unwrap().is_rejected(key, &ev.cid) {
@@ -376,6 +360,11 @@ impl<C: KuboStore, N: Nip05Verify, R: ReportRelay> Agent<C, N, R> {
     }
 
     async fn fetch_directory(&self, key: &SiteKey, ev: &SiteEvent, max_bytes: u64) -> bool {
+        if max_bytes == 0 {
+            warn!(cid = %ev.cid, site = %ev.d, reason = "no_space_left", "no space is left for this site; not fetching");
+            self.reject(key, ev);
+            return false;
+        }
         match self.ipfs.is_directory(&ev.cid).await {
             Ok(true) => {}
             Ok(false) => {
@@ -411,8 +400,7 @@ impl<C: KuboStore, N: Nip05Verify, R: ReportRelay> Agent<C, N, R> {
         let path = self.layout.agent_version(pubkey_hex, &ev.d, ev.created_at);
         let _storing = {
             let _state = self.state.lock().await;
-            if !self.is_target(&ev.pubkey) {
-                info!(site = %ev.d, pubkey = %pubkey_hex, "author left the follow set during fetch; not storing");
+            if !self.still_followed(ev, pubkey_hex, "fetched") {
                 return false;
             }
             // Registered under the state lock so that a sweep either has already removed what it listed or sees this path.
@@ -433,9 +421,8 @@ impl<C: KuboStore, N: Nip05Verify, R: ReportRelay> Agent<C, N, R> {
                 return false;
             }
         };
-        if !self.is_target(&ev.pubkey) {
+        if !self.still_followed(ev, pubkey_hex, "stored") {
             drop(state);
-            info!(site = %ev.d, pubkey = %pubkey_hex, "author left the follow set during fetch; not storing");
             self.remove_path(&path).await;
             return false;
         }
@@ -469,6 +456,14 @@ impl<C: KuboStore, N: Nip05Verify, R: ReportRelay> Agent<C, N, R> {
         self.remove_versions(key, &evicted).await;
         info!(cid = %cid, site = %ev.d, pubkey = %pubkey_hex, size, "stored");
         true
+    }
+
+    fn still_followed(&self, ev: &SiteEvent, pubkey_hex: &str, stage: &'static str) -> bool {
+        let followed = self.is_target(&ev.pubkey);
+        if !followed {
+            info!(site = %ev.d, pubkey = %pubkey_hex, stage, "author is not in the current follow set; dropping the site event");
+        }
+        followed
     }
 
     fn reject(&self, key: &SiteKey, ev: &SiteEvent) {

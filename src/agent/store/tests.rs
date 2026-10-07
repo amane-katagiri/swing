@@ -308,6 +308,24 @@ async fn the_sweep_leaves_a_version_that_is_being_stored() {
 }
 
 #[tokio::test]
+async fn unfollow_leaves_an_account_with_a_version_being_stored_to_the_sweep() {
+    let fx = Fixture::new(default_policy(), FakeKubo::default());
+    fx.seed(D, "bafy-old", 1, 100).await;
+    let path = fx.path(D, 200);
+    fx.kubo().mfs.insert(path.clone(), "bafy-new".into());
+
+    {
+        let _storing = Storing::new(&fx.agent.storing, path.clone());
+        fx.agent.replace_targets(HashSet::new());
+        fx.agent.remove_unfollowed().await;
+        assert!(fx.cids(D).await.is_empty());
+        assert_eq!(fx.kubo().paths(), vec![fx.path(D, 100), path.clone()]);
+    }
+    fx.agent.sweep().await;
+    assert!(fx.kubo().paths().is_empty());
+}
+
+#[tokio::test]
 async fn declared_size_over_limit_is_skipped_before_fetching() {
     let mut policy = default_policy();
     policy.max_update_size = 50;
@@ -345,6 +363,26 @@ async fn max_per_account_limits_the_sum_of_an_accounts_sites() {
     fx.apply(fx.event("c.example", "bafy-c", None, 200)).await;
     assert!(fx.kubo().stores("bafy-c"));
     assert_eq!(fx.site_bytes("c.example").await, 40);
+}
+
+#[tokio::test]
+async fn no_space_left_rejects_without_touching_the_network() {
+    let mut policy = default_policy();
+    policy.max_per_account = 100;
+    let fx = Fixture::new(policy, sized(&[("bafy-b", 60)]));
+    fx.seed("a.example", "bafy-a", 100, 100).await;
+
+    fx.apply(fx.event("b.example", "bafy-b", None, 200)).await;
+
+    assert!(fx.kubo().dir_checks.is_empty());
+    assert!(fx.kubo().fetched.is_empty());
+    assert!(
+        fx.agent
+            .attempts
+            .lock()
+            .unwrap()
+            .is_rejected(&fx.key("b.example"), "bafy-b")
+    );
 }
 
 #[tokio::test]
