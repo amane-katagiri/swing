@@ -1,4 +1,6 @@
 use std::collections::HashMap;
+use std::collections::hash_map::Entry;
+use std::hash::Hash;
 
 use nostr_sdk::prelude::*;
 
@@ -20,8 +22,8 @@ pub use report::{
     site_coordinate,
 };
 pub use site::{
-    SiteEvent, build_site_event_builder, canonical_cid, cap_sites_per_author, is_unsafe_char,
-    parse_site_event, select_latest, valid_http_url, valid_title, validate_d_tag,
+    SiteEvent, SiteFields, build_site_event_builder, canonical_cid, cap_sites_per_author,
+    is_unsafe_char, parse_site_event, select_latest, valid_http_url, valid_title, validate_d_tag,
 };
 
 pub const SITE_SUBSCRIPTION_ID: &str = "swing-sites";
@@ -84,28 +86,48 @@ fn tag_value<'a>(event: &'a Event, kind: &str) -> Option<&'a str> {
         .and_then(|t| t.content())
 }
 
-pub fn newest_by_address(events: impl IntoIterator<Item = Event>, now: u64) -> Vec<Event> {
-    let mut newest: HashMap<(PublicKey, Kind, Option<String>), Event> = HashMap::new();
-    for event in events {
-        if !plausible_at(event.created_at.as_secs(), now) {
+fn newest_per_key<T, K: Eq + Hash>(
+    items: impl IntoIterator<Item = T>,
+    now: u64,
+    key: impl Fn(&T) -> K,
+    stamp: impl Fn(&T) -> (u64, EventId),
+) -> HashMap<K, T> {
+    let mut newest: HashMap<K, T> = HashMap::new();
+    for item in items {
+        let at = stamp(&item);
+        if !plausible_at(at.0, now) {
             continue;
         }
-        let key = (event.pubkey, event.kind, event.tags.identifier());
-        match newest.get(&key) {
-            Some(current) if !is_newer_replaceable(&event, current) => {}
-            _ => {
-                newest.insert(key, event);
+        match newest.entry(key(&item)) {
+            Entry::Occupied(mut current) => {
+                if replaceable_is_newer(at, stamp(current.get())) {
+                    current.insert(item);
+                }
+            }
+            Entry::Vacant(slot) => {
+                slot.insert(item);
             }
         }
     }
-    newest.into_values().collect()
+    newest
+}
+
+pub fn newest_by_address(events: impl IntoIterator<Item = Event>, now: u64) -> Vec<Event> {
+    newest_per_key(
+        events,
+        now,
+        |e| (e.pubkey, e.kind, e.tags.identifier()),
+        |e| (e.created_at.as_secs(), e.id),
+    )
+    .into_values()
+    .collect()
 }
 
 #[cfg(test)]
 mod fixtures {
     use nostr_sdk::prelude::*;
 
-    use super::build_site_event_builder;
+    use super::{SiteFields, build_site_event_builder};
     use crate::test_support::{self, CID_A};
 
     pub(super) fn make_site_event(
@@ -117,12 +139,13 @@ mod fixtures {
     ) -> Event {
         build_site_event_builder(
             kind,
-            d,
-            cid,
-            Some("https://example.com/"),
-            Some(1234),
-            None,
-            None,
+            &SiteFields {
+                d,
+                cid,
+                url: Some("https://example.com/"),
+                size: Some(1234),
+                ..Default::default()
+            },
         )
         .custom_created_at(Timestamp::from_secs(created_at))
         .finalize(keys)

@@ -6,8 +6,8 @@ use futures_util::StreamExt;
 use nostr_sdk::prelude::*;
 
 use super::{
-    FOLLOW_SET_KIND, SITE_SUBSCRIPTION_ID, SiteEvent, budget, is_follow_set_of,
-    is_newer_replaceable, newest_by_address, parse_site_event, plausible_at, select_latest,
+    FOLLOW_SET_KIND, SITE_SUBSCRIPTION_ID, SiteEvent, budget, is_follow_set_of, newest_by_address,
+    parse_site_event, select_latest,
 };
 use crate::signer::Signer;
 
@@ -174,7 +174,8 @@ impl RelayClient {
             .chunks(budget::AUTHORS_PER_SPLIT_REQ)
             .map(|batch| batch.iter().map(|a| filter_for(*a)).collect())
             .collect();
-        self.fetch_all(reqs, context).await
+        let events = self.fetch_all(reqs, context).await?;
+        Ok(by_authors(events, authors))
     }
 
     pub async fn fetch_follow_set(&self, mirror_set: &str) -> Result<Option<Event>> {
@@ -185,12 +186,12 @@ impl RelayClient {
             // 2x: a relay may hand back a stale duplicate of a replaceable event.
             .limit(capped_limit(1, 2));
         let events = self.fetch_one(filter, "fetching follow set").await?;
-        let now = Timestamp::now().as_secs();
-        Ok(events
+        let own = events
             .into_iter()
-            .filter(|e| is_follow_set_of(e, &self.public_key(), mirror_set))
-            .filter(|e| plausible_at(e.created_at.as_secs(), now))
-            .reduce(|a, b| if is_newer_replaceable(&b, &a) { b } else { a }))
+            .filter(|e| is_follow_set_of(e, &self.public_key(), mirror_set));
+        Ok(newest_by_address(own, Timestamp::now().as_secs())
+            .into_iter()
+            .next())
     }
 
     pub async fn fetch_site_events(
@@ -207,11 +208,7 @@ impl RelayClient {
                     .limit(budget::MAX_SITES_PER_AUTHOR_LISTED)
             })
             .await?;
-        let requested: HashSet<PublicKey> = authors.iter().copied().collect();
-        Ok(events
-            .into_iter()
-            .filter(|e| e.kind == kind && requested.contains(&e.pubkey))
-            .collect())
+        Ok(events.into_iter().filter(|e| e.kind == kind).collect())
     }
 
     pub async fn fetch_latest_sites(
@@ -315,11 +312,10 @@ impl RelayClient {
         let events = self
             .fetch_all(reqs, "fetching replica reports by trusted reporters")
             .await?;
-        let requested: HashSet<PublicKey> = reporters.iter().copied().collect();
-        Ok(reports_for_sites(events, kind, sites)
-            .into_iter()
-            .filter(|e| requested.contains(&e.pubkey))
-            .collect())
+        Ok(by_authors(
+            reports_for_sites(events, kind, sites),
+            reporters,
+        ))
     }
 
     pub async fn fetch_follow_sets(
@@ -336,10 +332,9 @@ impl RelayClient {
                     .limit(capped_limit(batch.len(), 2))
             })
             .await?;
-        let requested: HashSet<PublicKey> = authors.iter().copied().collect();
-        let sets = events.into_iter().filter(|e| {
-            requested.contains(&e.pubkey) && is_follow_set_of(e, &e.pubkey, mirror_set)
-        });
+        let sets = by_authors(events, authors)
+            .into_iter()
+            .filter(|e| is_follow_set_of(e, &e.pubkey, mirror_set));
         Ok(newest_by_address(sets, Timestamp::now().as_secs())
             .into_iter()
             .map(|e| (e.pubkey, e))
@@ -413,6 +408,14 @@ impl RelayClient {
             .context("sending event to relays")?;
         Ok(out)
     }
+}
+
+fn by_authors(events: Vec<Event>, authors: &[PublicKey]) -> Vec<Event> {
+    let requested: HashSet<PublicKey> = authors.iter().copied().collect();
+    events
+        .into_iter()
+        .filter(|e| requested.contains(&e.pubkey))
+        .collect()
 }
 
 fn reports_for_sites(events: Vec<Event>, kind: Kind, sites: &[Coordinate]) -> Vec<Event> {

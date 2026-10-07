@@ -1,4 +1,3 @@
-use std::collections::HashSet;
 use std::future::Future;
 
 use anyhow::{Context, Result};
@@ -61,14 +60,9 @@ impl ReportRelay for RelayClient {
                 },
             )
             .await?;
-        let requested: HashSet<PublicKey> = reporters.iter().copied().collect();
         Ok(events
             .into_iter()
-            .filter(|e| {
-                e.kind == kind
-                    && requested.contains(&e.pubkey)
-                    && e.tags.public_keys().any(|pk| pk == author)
-            })
+            .filter(|e| e.kind == kind && e.tags.public_keys().any(|pk| pk == author))
             .collect())
     }
 

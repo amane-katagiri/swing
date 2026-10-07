@@ -216,12 +216,14 @@ pub async fn sign_and_send(
 ) -> Result<Vec<RelaySendResult>> {
     let builder = build_site_event_builder(
         announcement.site_event_kind,
-        announcement.d,
-        announcement.cid,
-        announcement.url,
-        Some(announcement.size),
-        announcement.title,
-        announcement.message,
+        &nostr::SiteFields {
+            d: announcement.d,
+            cid: announcement.cid,
+            url: announcement.url,
+            size: Some(announcement.size),
+            title: announcement.title,
+            message: announcement.message,
+        },
     )
     .custom_created_at(announcement.created_at);
     let event = relay.sign(builder).await.context("signing site event")?;

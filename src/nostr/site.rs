@@ -3,7 +3,7 @@ use std::collections::{BTreeMap, HashMap};
 use anyhow::{Context, Result};
 use nostr_sdk::prelude::*;
 
-use super::{budget, plausible_at, replaceable_is_newer, tag_value};
+use super::{budget, tag_value};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SiteEvent {
@@ -110,24 +110,15 @@ pub fn parse_site_event(event: &Event, expected_kind: u16) -> Result<SiteEvent> 
 }
 
 pub fn select_latest(events: &[SiteEvent], now: u64) -> HashMap<(String, String), SiteEvent> {
-    let mut latest: HashMap<(String, String), SiteEvent> = HashMap::new();
-    for ev in events {
-        if !plausible_at(ev.created_at, now) {
-            continue;
-        }
-        let key = (ev.pubkey.to_hex(), ev.d.clone());
-        match latest.get(&key) {
-            Some(existing)
-                if !replaceable_is_newer(
-                    (ev.created_at, ev.id),
-                    (existing.created_at, existing.id),
-                ) => {}
-            _ => {
-                latest.insert(key, ev.clone());
-            }
-        }
-    }
-    latest
+    super::newest_per_key(
+        events,
+        now,
+        |ev| (ev.pubkey, ev.d.as_str()),
+        |ev| (ev.created_at, ev.id),
+    )
+    .into_values()
+    .map(|ev| ((ev.pubkey.to_hex(), ev.d.clone()), ev.clone()))
+    .collect()
 }
 
 pub fn cap_sites_per_author<'a>(
@@ -146,26 +137,28 @@ pub fn cap_sites_per_author<'a>(
     out
 }
 
-#[allow(clippy::too_many_arguments)]
-pub fn build_site_event_builder(
-    site_event_kind: u16,
-    d: &str,
-    cid: &str,
-    url: Option<&str>,
-    size: Option<u64>,
-    title: Option<&str>,
-    message: Option<&str>,
-) -> EventBuilder {
-    let mut builder = EventBuilder::new(Kind::Custom(site_event_kind), message.unwrap_or(""))
+#[derive(Debug, Clone, Copy, Default)]
+pub struct SiteFields<'a> {
+    pub d: &'a str,
+    pub cid: &'a str,
+    pub url: Option<&'a str>,
+    pub size: Option<u64>,
+    pub title: Option<&'a str>,
+    pub message: Option<&'a str>,
+}
+
+pub fn build_site_event_builder(site_event_kind: u16, site: &SiteFields<'_>) -> EventBuilder {
+    let d = site.d;
+    let mut builder = EventBuilder::new(Kind::Custom(site_event_kind), site.message.unwrap_or(""))
         .tag(Tag::identifier(d))
-        .tag(Tag::custom("cid", [cid.to_string()]));
-    if let Some(url) = url {
+        .tag(Tag::custom("cid", [site.cid.to_string()]));
+    if let Some(url) = site.url {
         builder = builder.tag(Tag::custom("url", [url.to_string()]));
     }
-    if let Some(size) = size {
+    if let Some(size) = site.size {
         builder = builder.tag(Tag::custom("size", [size.to_string()]));
     }
-    if let Some(title) = title {
+    if let Some(title) = site.title {
         builder = builder.tag(Tag::custom("title", [title.to_string()]));
     }
     builder.tag(Tag::custom(

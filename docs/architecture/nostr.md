@@ -41,7 +41,7 @@
 
 `created_at` の未来ずれ許容は `nostr::MAX_FUTURE_SKEW`（900 秒）。`nostr::plausible_at(created_at, now)` がこれを超えるかどうかを判定する。保存の可否（`policy::decide`）だけでなく、「現在の版」やその時点で有効な Follow Set をどれとして選ぶかにも同じ基準を使う（`select_latest`・`choose_follow_set`・`newest_by_address`・`fetch_follow_set(s)` など。Follow Set の選び方は [`agent.md`](agent.md#follow-set-の選び方)）。
 
-許容内の版どうしの新しさは、Follow Set もサイトごとの最新のサイトイベント（`select_latest`）も NIP-01 の置き換え規則（[`../protocol.md`](../protocol.md#4-サイトイベント)）で比べる。比べ方は `nostr/mod.rs` の 1 か所（`is_newer_replaceable` と `select_latest` が共有）にある。`SiteEvent::id` にイベントの `id` を持つ。
+許容内の版どうしの新しさは、Follow Set もサイトごとの最新のサイトイベント（`select_latest`）も NIP-01 の置き換え規則（[`../protocol.md`](../protocol.md#4-サイトイベント)）で比べる。比べ方は `nostr/mod.rs` の 1 か所（`replaceable_is_newer`）にあり、アドレスごとに最新の 1 件を選ぶ処理（未来ずれの除外を含む）は `newest_per_key` 1 つを `newest_by_address`・`select_latest`・`fetch_follow_set` が共有する。`SiteEvent::id` にイベントの `id` を持つ。
 
 ## レプリカ報告の信頼度（`replicas::Tier`）
 

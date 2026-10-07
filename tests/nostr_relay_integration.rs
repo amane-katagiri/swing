@@ -20,12 +20,14 @@ async fn publish_and_fetch_site_event_round_trip() {
     let event = relay
         .sign(nostr::build_site_event_builder(
             35980,
-            "roundtrip.example",
-            "bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
-            Some("https://roundtrip.example/"),
-            Some(4242),
-            Some("Roundtrip site"),
-            Some("Add a roundtrip page"),
+            &nostr::SiteFields {
+                d: "roundtrip.example",
+                cid: "bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
+                url: Some("https://roundtrip.example/"),
+                size: Some(4242),
+                title: Some("Roundtrip site"),
+                message: Some("Add a roundtrip page"),
+            },
         ))
         .await
         .unwrap();

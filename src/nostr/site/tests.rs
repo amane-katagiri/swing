@@ -9,12 +9,12 @@ fn site_event_content_is_the_message() {
     let cid = "bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi";
     let ev = build_site_event_builder(
         35980,
-        "example.com",
-        cid,
-        None,
-        None,
-        None,
-        Some("Add posts"),
+        &SiteFields {
+            d: "example.com",
+            cid,
+            message: Some("Add posts"),
+            ..Default::default()
+        },
     )
     .finalize(&k)
     .unwrap();
@@ -303,12 +303,12 @@ fn title_round_trips() {
     let cid = "bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi";
     let ev = build_site_event_builder(
         35980,
-        "example.com",
-        cid,
-        None,
-        None,
-        Some("あまねけ！"),
-        None,
+        &SiteFields {
+            d: "example.com",
+            cid,
+            title: Some("あまねけ！"),
+            ..Default::default()
+        },
     )
     .finalize(&k)
     .unwrap();
