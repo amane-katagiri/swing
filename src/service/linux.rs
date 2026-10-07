@@ -159,7 +159,7 @@ fn entry_problem(
     None
 }
 
-fn path_problems(path: &Path, trusted: u32) -> Vec<String> {
+fn path_problems(path: &Path, trusted: u32, strict_depth: usize) -> Vec<String> {
     use std::os::unix::fs::MetadataExt;
     let mut chains = vec![path.to_path_buf()];
     if let Ok(real) = path.canonicalize()
@@ -171,9 +171,11 @@ fn path_problems(path: &Path, trusted: u32) -> Vec<String> {
     for chain in &chains {
         for (i, entry) in chain.ancestors().enumerate() {
             let problem = match std::fs::symlink_metadata(entry) {
-                Ok(meta) => entry_problem(meta.uid(), meta.mode(), trusted, i > 0, || {
-                    is_private_group(meta.uid(), meta.gid())
-                }),
+                Ok(meta) => {
+                    entry_problem(meta.uid(), meta.mode(), trusted, i > strict_depth, || {
+                        is_private_group(meta.uid(), meta.gid())
+                    })
+                }
                 Err(e) => Some(format!("cannot be inspected ({e})")),
             };
             if let Some(problem) = problem {
@@ -184,9 +186,12 @@ fn path_problems(path: &Path, trusted: u32) -> Vec<String> {
     problems
 }
 
-fn require_protected(paths: &[&Path], user: &Account) -> Result<()> {
+fn require_protected(paths: &[(&Path, usize)], user: &Account) -> Result<()> {
     let mut problems: Vec<String> = Vec::new();
-    for problem in paths.iter().flat_map(|path| path_problems(path, user.uid)) {
+    for problem in paths
+        .iter()
+        .flat_map(|&(path, strict_depth)| path_problems(path, user.uid, strict_depth))
+    {
         if !problems.contains(&problem) {
             problems.push(problem);
         }
@@ -257,8 +262,8 @@ pub fn install(exe: &Path, config: &Path, workdir: &Path, opts: &InstallOptions<
     let loaded = if system { load_config(config) } else { None };
     if let Some(user) = &user {
         let kubo = kubo_binary(loaded.as_ref());
-        let mut paths = vec![exe, config, workdir];
-        paths.extend(kubo.as_deref());
+        let mut paths = vec![(exe, 1), (config, 0), (workdir, 0)];
+        paths.extend(kubo.as_deref().map(|kubo| (kubo, 1)));
         require_protected(&paths, user)?;
     }
     let writable = writable_paths(loaded.as_ref());
@@ -463,6 +468,31 @@ mod tests {
     }
 
     #[test]
+    fn the_directory_holding_a_binary_gets_no_ancestor_exemption() {
+        use std::os::unix::fs::MetadataExt;
+        let shared = Path::new("/tmp");
+        let Ok(meta) = std::fs::symlink_metadata(shared) else {
+            return;
+        };
+        if meta.uid() != 0 || meta.mode() & 0o1777 != 0o1777 {
+            return;
+        }
+        let exe = shared.join("swing-binary-check");
+        let names = |problems: Vec<String>| {
+            problems
+                .iter()
+                .any(|p| p.starts_with(&format!("{} ", shared.display())))
+        };
+        assert!(!names(path_problems(&exe, 1000, 0)));
+        assert!(names(path_problems(&exe, 1000, 1)));
+        assert!(!names(path_problems(
+            &shared.join("a").join("swing"),
+            1000,
+            1
+        )));
+    }
+
+    #[test]
     fn path_problems_follow_symlinks_and_name_loose_parents() {
         use std::os::unix::fs::{MetadataExt, PermissionsExt};
         let tmp = tempfile::tempdir().unwrap();
@@ -479,19 +509,19 @@ mod tests {
             let prefix = format!("{} ", path.display());
             problems.iter().any(|p| p.starts_with(&prefix))
         };
-        assert!(!mentions(path_problems(&link, me), &dir));
+        assert!(!mentions(path_problems(&link, me, 0), &dir));
 
         std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o757)).unwrap();
-        assert!(mentions(path_problems(&link, me), &dir));
-        assert!(path_problems(&exe, me).contains(&format!(
+        assert!(mentions(path_problems(&link, me, 0), &dir));
+        assert!(path_problems(&exe, me, 0).contains(&format!(
             "{} is writable by its group or others (mode 757)",
             dir.display()
         )));
         if me != 0 {
-            assert!(mentions(path_problems(&exe, me + 1), &exe));
+            assert!(mentions(path_problems(&exe, me + 1, 0), &exe));
         }
         assert!(mentions(
-            path_problems(&dir.join("missing"), me),
+            path_problems(&dir.join("missing"), me, 0),
             &dir.join("missing")
         ));
     }
