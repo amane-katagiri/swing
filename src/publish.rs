@@ -219,10 +219,10 @@ pub struct SiteAnnouncement<'a> {
     pub created_at: Timestamp,
 }
 
-pub async fn sign_and_send(
+pub async fn sign_site_event(
     relay: &RelayClient,
     announcement: &SiteAnnouncement<'_>,
-) -> Result<Vec<RelaySendResult>> {
+) -> Result<Event> {
     let builder = build_site_event_builder(
         announcement.site_event_kind,
         &nostr::SiteFields {
@@ -235,8 +235,11 @@ pub async fn sign_and_send(
         },
     )
     .custom_created_at(announcement.created_at);
-    let event = relay.sign(builder).await.context("signing site event")?;
-    let output = relay.publish_to_relays(&event).await?;
+    relay.sign(builder).await.context("signing site event")
+}
+
+pub async fn send_site_event(relay: &RelayClient, event: &Event) -> Result<Vec<RelaySendResult>> {
+    let output = relay.publish_to_relays(event).await?;
     Ok(nostr::relay_send_results(relay.relays(), &output))
 }
 
@@ -491,18 +494,22 @@ async fn announce(
     if remote_signer {
         println!("  waiting for the signer app to sign the site event...");
     }
-    let sent = sign_and_send(&relay, announcement).await;
-    relay.shutdown().await;
-    let results = match sent {
-        Ok(results) => results,
-        Err(e) => return Err(version.fail(e).await),
+    let event = match sign_site_event(&relay, announcement).await {
+        Ok(event) => event,
+        Err(e) => {
+            relay.shutdown().await;
+            return Err(version.fail(e).await);
+        }
     };
+    version.keep();
+    let sent = send_site_event(&relay, &event).await;
+    relay.shutdown().await;
+    let results = sent?;
 
     nostr::print_relay_send_result_lines(&results);
     if !results.iter().any(|r| r.ok) {
-        return Err(version.fail(anyhow::anyhow!(NO_RELAY_ACCEPTED)).await);
+        anyhow::bail!(NO_RELAY_ACCEPTED);
     }
-    version.keep();
     Ok(())
 }
 

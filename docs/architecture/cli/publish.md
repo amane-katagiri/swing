@@ -37,6 +37,6 @@
 8. `--check-unchanged` が `off` でなければ、4 で取った前の版と比べ、`Previous version` 見出しの下に結果を表示する。
    - CID が違えば `✓ changed from the latest version on the relays (<前の CID>)`、同じなら `! unchanged: the CID equals your latest version on the relays`、見つからなければ `- no previous version on the relays`、取得に失敗したら `! could not check: <理由>`。
    - 同じで `require` なら、6 で置いた版を MFS から消して `✓ removed <パス>` を出し、署名・送信・古い版の削除をせずに `Unchanged; not published.` で終わる（終了コード 0。消せなければエラー終了）。見つからない・取得に失敗したときは `require` でも続ける。
-9. サイトイベント（`alt` は `SWING site announcement: <d>`）を 6 の `created_at` で作って署名し、全 relay に送る。署名アプリを使っているときは、署名の前（`Nostr` 見出しの直後）に `waiting for the signer app to sign the site event...` を表示し、署名アプリの返事を最大 90 秒待つ。relay ごとの成否（✓/✗）を表示する。署名できない、またはどこにも受理されなければ、6 で置いた版を MFS から消し、古い版は消さずにエラーで終了する（6 の版を消せなければその理由もエラーに続けて出す）。
+9. サイトイベント（`alt` は `SWING site announcement: <d>`）を 6 の `created_at` で作って署名し、全 relay に送る。署名アプリを使っているときは、署名の前（`Nostr` 見出しの直後）に `waiting for the signer app to sign the site event...` を表示し、署名アプリの返事を最大 90 秒待つ。relay ごとの成否（✓/✗）を表示する。署名できなければ、6 で置いた版を MFS から消してエラーで終了する（消せなければその理由もエラーに続けて出す）。署名できた後は 6 の版を消さない（応答を待ち切れなかった relay にもイベントが届いているかもしれないため）。どこにも受理されなければ、6 の版も古い版も残してエラーで終了する。
 10. `<mfs_root>/publish/<pubkey hex>/<site>/` の中で名前が整数の項目のうち、今回の版（6 の `created_at`）は必ず残し、それ以外を新しい順に `[publish].keep_versions - 1` 個残して消す（`Old versions (keeping N)` 見出し）。一覧に失敗したら警告を出して続ける。
 11. `Published.` で終わる。

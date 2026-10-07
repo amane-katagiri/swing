@@ -157,7 +157,7 @@ pub(super) async fn run_publish(
         return Ok(PublishOutcome::Success(result));
     }
 
-    let sent = publish::sign_and_send(
+    let signed = publish::sign_site_event(
         &relay,
         &publish::SiteAnnouncement {
             site_event_kind: state.config.nostr.site_event_kind,
@@ -171,13 +171,16 @@ pub(super) async fn run_publish(
         },
     )
     .await;
-    let relay_results = match sent {
-        Ok(results) => results,
+    let event = match signed {
+        Ok(event) => event,
         Err(e) => return Err(upstream(stage.version.fail(e).await)),
     };
+    result.mfs_path = Some(stage.version.keep());
+    let relay_results = publish::send_site_event(&relay, &event)
+        .await
+        .map_err(upstream)?;
     if !relay_results.iter().any(|r| r.ok) {
-        let e = anyhow::anyhow!(publish::NO_RELAY_ACCEPTED);
-        return Err(upstream(stage.version.fail(e).await));
+        return Err(upstream(anyhow::anyhow!(publish::NO_RELAY_ACCEPTED)));
     }
     state.activity.record_published(created_at.as_secs());
 
@@ -192,7 +195,6 @@ pub(super) async fn run_publish(
 
     result.published = true;
     result.created_at = Some(created_at.as_secs());
-    result.mfs_path = Some(stage.version.keep());
     result.relays = dto::relay_results_dto(&relay_results);
     result.pruned = prune.pruned().into_iter().map(str::to_string).collect();
     result.prune_error = prune.error_summary();
