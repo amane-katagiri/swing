@@ -28,16 +28,36 @@ pub(super) struct PidRecord {
     pub(super) pid: u32,
     pub(super) api_port: u16,
     pub(super) started_at: String,
+    #[cfg(target_os = "linux")]
+    pub(super) boot_id: String,
+}
+
+impl PidRecord {
+    pub(super) fn new(pid: u32, api_port: u16, started_at: String) -> Result<Self> {
+        Ok(Self {
+            pid,
+            api_port,
+            started_at,
+            #[cfg(target_os = "linux")]
+            boot_id: crate::proc::boot_id().context("reading the Linux boot id")?,
+        })
+    }
+
+    #[cfg(target_os = "linux")]
+    fn written_this_boot(&self) -> bool {
+        crate::proc::boot_id().is_some_and(|id| id == self.boot_id)
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    fn written_this_boot(&self) -> bool {
+        true
+    }
 }
 
 pub fn write_pid_file(state_dir: &Path, pid: u32, api_port: u16) -> Result<()> {
     let started_at = process_start_marker(pid)
         .with_context(|| format!("determining the start time of Kubo process {pid}"))?;
-    let record = PidRecord {
-        pid,
-        api_port,
-        started_at,
-    };
+    let record = PidRecord::new(pid, api_port, started_at)?;
     let text = serde_json::to_string(&record).context("serializing kubo.pid")?;
     crate::auth::write_private_file(&pid_file_path(state_dir), &text)
 }
@@ -121,6 +141,16 @@ pub async fn recover_orphan(state_dir: &Path, repo: &Path) -> Result<()> {
             return Ok(());
         }
     };
+
+    if !record.written_this_boot() {
+        tracing::info!(
+            pid = record.pid,
+            repo = %repo.display(),
+            "stale kubo.pid (written before the last reboot)"
+        );
+        remove_pid_file(state_dir)?;
+        return Ok(());
+    }
 
     let Some(current_started_at) = process_start_marker(record.pid) else {
         tracing::info!(

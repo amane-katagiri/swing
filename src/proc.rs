@@ -19,6 +19,13 @@ pub(crate) fn process_start_marker(pid: u32) -> Option<String> {
     parse_proc_stat_starttime(&read_stat(pid)?)
 }
 
+#[cfg(target_os = "linux")]
+pub(crate) fn boot_id() -> Option<String> {
+    let text = std::fs::read_to_string("/proc/sys/kernel/random/boot_id").ok()?;
+    let id = text.trim();
+    (!id.is_empty()).then(|| id.to_string())
+}
+
 #[cfg(target_os = "macos")]
 pub(crate) fn process_start_marker(pid: u32) -> Option<String> {
     let output = std::process::Command::new("/bin/ps")

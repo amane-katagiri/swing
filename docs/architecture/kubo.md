@@ -134,12 +134,13 @@ unmanaged（`[ipfs].api`）の Kubo には秘密を送らず、認証は SWING �
 
 ### `kubo.pid` と孤児 Kubo の回収（managed のみ）
 
-`kubo::write_pid_file` が `Daemon::spawn` の直後に `<state_dir>/kubo.pid`（JSON: `pid`・`api_port`・`started_at`）を `auth::write_private_file`（一時ファイル（unix は 0600）からの rename）で書く（[`up.md#managed`](up.md#managed)）。`started_at` はその `pid` の開始時刻を OS ごとの方法（`proc::process_start_marker`。Linux は `/proc/<pid>/stat`、macOS は `LC_ALL=C` で `/bin/ps -o lstart=`、Windows は `GetProcessTimes`）で取った比較専用の文字列。書けなければ warn を出して続行する（その回は孤児回収の対象にならない）。
+`kubo::write_pid_file` が `Daemon::spawn` の直後に `<state_dir>/kubo.pid`（JSON: `pid`・`api_port`・`started_at`、Linux ではさらに `boot_id`）を `auth::write_private_file`（一時ファイル（unix は 0600）からの rename）で書く（[`up.md#managed`](up.md#managed)）。`started_at` はその `pid` の開始時刻を OS ごとの方法（`proc::process_start_marker`。Linux は `/proc/<pid>/stat`、macOS は `LC_ALL=C` で `/bin/ps -o lstart=`、Windows は `GetProcessTimes`）で取った比較専用の文字列。Linux の開始時刻は起動からの経過クロック数で、再起動をまたぐと別のプロセスと一致しうるので、`boot_id` に `/proc/sys/kernel/random/boot_id`（`proc::boot_id`）を合わせて記録する。macOS と Windows の開始時刻は絶対時刻なので `boot_id` は持たない。書けなければ warn を出して続行する（その回は孤児回収の対象にならない）。
 
 `kubo::recover_orphan` は `swing.lock` を持っている間に 1 回呼ぶ（呼ぶ時点は [`up.md#managed`](up.md#managed)）。
 
 - `kubo.pid` が無ければ何もしない。読めない（空・JSON として壊れている・読み取りエラー）ときは、Kubo が repo lock で起動できなければこの repo を使っている残りの Kubo を止めるよう添えた warn を出し、何も kill せずに「回収する孤児は無い」として続ける。ファイルは残り、次に Kubo を起動したときの `write_pid_file` で上書きされる。前の swing が起動した Kubo が実際にまだ repo を使っていれば、新しい Kubo の起動が失敗し、[repo lock のヒント](#repo-lock-のヒント)が出る。
-- まずその `pid` の今の開始時刻を取り直し、記録と比べる。プロセスがもう無い、または開始時刻が一致しない（PID の再利用）なら、API にも何も送らず kill もせずにファイルを消す。
+- Linux では、記録の `boot_id` が今の boot id と違う（読めない場合を含む）なら、記録したプロセスは再起動で消えているので、API にも何も送らず kill もせずにファイルを消す。Linux で `boot_id` の無いファイルは読めないファイルとして扱う。
+- 次にその `pid` の今の開始時刻を取り直し、記録と比べる。プロセスがもう無い、または開始時刻が一致しない（PID の再利用）なら、API にも何も送らず kill もせずにファイルを消す。
 - 一致したら記録の `api_port` に API でのシャットダウンを送り（タイムアウト 3 秒、`ORPHAN_SHUTDOWN_RPC_TIMEOUT`）、2xx が返ればその `pid` の終了を最大 30 秒（`ORPHAN_SHUTDOWN_GRACE`）待つ。終われば完了。秘密は `<state_dir>/kubo-api.json` の `port` が記録の `api_port` と同じときだけ付ける（読めなければ warn を出し、秘密なしで送る。秘密なしの要求が拒まれたら次の強制終了に進む）。
 - API で終わらなければ強制終了する（unix は SIGTERM → 最大 30 秒（`ORPHAN_SIGTERM_GRACE`）→ SIGKILL → 最大 10 秒（`ORPHAN_KILL_WAIT`）、Windows は `taskkill /T /F` → 最大 10 秒（`ORPHAN_KILL_WAIT`））。
 - 強制終了しても終わらなければエラーを返し、`swing up` は Kubo を起動せずに終了する。

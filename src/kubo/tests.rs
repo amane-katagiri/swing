@@ -605,6 +605,8 @@ fn pid_file_round_trips() {
     assert_eq!(record.pid, pid);
     assert_eq!(record.api_port, 4242);
     assert!(!record.started_at.is_empty());
+    #[cfg(target_os = "linux")]
+    assert_eq!(Some(record.boot_id), crate::proc::boot_id());
     remove_pid_file(dir.path()).unwrap();
     assert_eq!(read_pid_file(dir.path()).unwrap(), None);
     remove_pid_file(dir.path()).unwrap();
@@ -639,11 +641,7 @@ async fn recover_orphan_skips_an_unparseable_pid_file() {
 #[tokio::test]
 async fn recover_orphan_removes_stale_pid_file() {
     let dir = tempfile::tempdir().unwrap();
-    let record = PidRecord {
-        pid: 999_999_999,
-        api_port: pick_free_port().unwrap(),
-        started_at: "0".to_string(),
-    };
+    let record = PidRecord::new(999_999_999, pick_free_port().unwrap(), "0".to_string()).unwrap();
     std::fs::write(
         dir.path().join("kubo.pid"),
         serde_json::to_string(&record).unwrap(),
@@ -663,11 +661,7 @@ async fn orphan_shutdown_request(access_port_matches: bool) -> String {
     let pid = child.id();
     std::thread::spawn(move || child.wait());
     let server = serve("500 Internal Server Error", String::new()).await;
-    let record = PidRecord {
-        pid,
-        api_port: server.port,
-        started_at: process_start_marker(pid).unwrap(),
-    };
+    let record = PidRecord::new(pid, server.port, process_start_marker(pid).unwrap()).unwrap();
     std::fs::write(
         dir.path().join("kubo.pid"),
         serde_json::to_string(&record).unwrap(),
@@ -710,11 +704,12 @@ async fn recover_orphan_does_not_kill_on_start_time_mismatch() {
         process_start_marker(pid).expect("spawned process should have a start time");
     let api = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     api.set_nonblocking(true).unwrap();
-    let record = PidRecord {
+    let record = PidRecord::new(
         pid,
-        api_port: api.local_addr().unwrap().port(),
-        started_at: format!("{real_started_at}-not-the-real-one"),
-    };
+        api.local_addr().unwrap().port(),
+        format!("{real_started_at}-not-the-real-one"),
+    )
+    .unwrap();
     std::fs::write(
         dir.path().join("kubo.pid"),
         serde_json::to_string(&record).unwrap(),
@@ -732,6 +727,72 @@ async fn recover_orphan_does_not_kill_on_start_time_mismatch() {
         api.accept().unwrap_err().kind(),
         std::io::ErrorKind::WouldBlock,
         "a start-time mismatch must not send a shutdown to the recorded API port"
+    );
+
+    let _ = child.kill();
+    let _ = child.wait();
+}
+
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn recover_orphan_does_not_touch_a_process_recorded_before_a_reboot() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut child = std::process::Command::new("sleep")
+        .arg("5")
+        .spawn()
+        .unwrap();
+    let pid = child.id();
+    let api = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    api.set_nonblocking(true).unwrap();
+    let mut record = PidRecord::new(
+        pid,
+        api.local_addr().unwrap().port(),
+        process_start_marker(pid).unwrap(),
+    )
+    .unwrap();
+    record.boot_id = "00000000-0000-0000-0000-000000000000".to_string();
+    std::fs::write(
+        dir.path().join("kubo.pid"),
+        serde_json::to_string(&record).unwrap(),
+    )
+    .unwrap();
+
+    recover_orphan(dir.path(), dir.path()).await.unwrap();
+
+    assert_eq!(read_pid_file(dir.path()).unwrap(), None);
+    assert!(process_alive(pid));
+    assert_eq!(
+        api.accept().unwrap_err().kind(),
+        std::io::ErrorKind::WouldBlock
+    );
+
+    let _ = child.kill();
+    let _ = child.wait();
+}
+
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn recover_orphan_skips_a_pid_file_without_a_boot_id() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut child = std::process::Command::new("sleep")
+        .arg("5")
+        .spawn()
+        .unwrap();
+    let pid = child.id();
+    let content = json!({
+        "pid": pid,
+        "api_port": pick_free_port().unwrap(),
+        "started_at": process_start_marker(pid).unwrap(),
+    })
+    .to_string();
+    std::fs::write(dir.path().join("kubo.pid"), &content).unwrap();
+
+    recover_orphan(dir.path(), dir.path()).await.unwrap();
+
+    assert!(process_alive(pid));
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("kubo.pid")).unwrap(),
+        content
     );
 
     let _ = child.kill();
