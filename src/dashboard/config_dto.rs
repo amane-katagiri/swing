@@ -388,8 +388,7 @@ mod tests {
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o400)).unwrap();
         let cfg = test_config_at(path.clone(), true);
         if std::fs::OpenOptions::new().append(true).open(&path).is_ok() {
-            // Root, or a filesystem that ignores 0o400, can still open this; skip rather than
-            // fail the test under those runners.
+            // Root, or a filesystem that ignores 0o400, can still open this.
             return;
         }
         assert!(!is_config_writable(&cfg));

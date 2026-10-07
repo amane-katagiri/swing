@@ -58,7 +58,7 @@ fn env_default_literal(kind: Kind, literal: &str) -> String {
     }
 }
 
-/// Lives here rather than in the catalog because it's docker-compose wiring knowledge (which env vars `compose.yaml` fixes directly for the mirror service), not a per-setting fact.
+// compose.yaml wiring, not a per-setting fact, so it stays out of the catalog.
 const ENV_NO_EFFECT_IN_COMPOSE: &[&str] = &[
     "ipfs.api",
     "agent.state_dir",

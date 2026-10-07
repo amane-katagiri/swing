@@ -951,8 +951,6 @@ mod tests {
               Content-Type: application/octet-stream\r\n\r\n<html>",
         );
 
-        // Yields the preamble once, then stalls forever (no more data, no terminating
-        // boundary), simulating a slow upload that gets cancelled mid-flight.
         let mut chunk = Some(preamble);
         let stream = futures_util::stream::poll_fn(move |_cx| match chunk.take() {
             Some(data) => std::task::Poll::Ready(Some(Ok::<_, std::io::Error>(data))),

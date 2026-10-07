@@ -81,7 +81,6 @@ pub fn find(key: &str) -> Option<&'static Setting> {
     SETTINGS.iter().find(|s| s.key == key)
 }
 
-/// Exists so each env var name lives in exactly one place (the catalog).
 pub fn env_of(key: &str) -> &'static str {
     find(key)
         .unwrap_or_else(|| panic!("settings::env_of: no such catalog key: {key}"))
@@ -192,8 +191,7 @@ mod tests {
         assert_eq!(SETTINGS.iter().filter(|s| s.editable).count(), 24);
     }
 
-    // raw_value() hand-enumerates editable keys separately from the catalog; a key added to
-    // SETTINGS without a matching raw_value() arm would silently return None instead of failing.
+    // raw_value() lists editable keys by hand, so a key missing there would silently read as None.
     #[test]
     fn raw_value_covers_every_editable_key() {
         let cfg = crate::config::build_config_from_str("", |_| None).unwrap();
