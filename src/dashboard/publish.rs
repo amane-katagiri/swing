@@ -47,6 +47,13 @@ async fn run_publish_nip05(
     Ok(dto::nip05_result_dto(&outcome.result))
 }
 
+fn stage_error(e: anyhow::Error) -> ApiError {
+    match e.downcast_ref::<publish::ClockError>() {
+        Some(clock) => ApiError::BadRequest(clock.to_string()),
+        None => upstream(e),
+    }
+}
+
 pub(super) fn try_lock_publish(state: &AppState) -> Result<PublishLock<'_>, ApiError> {
     state
         .try_lock_publish()
@@ -107,9 +114,16 @@ pub(super) async fn run_publish(
     let ipfs = state.require_ipfs().await?;
     let relay = state.require_relay().await?;
     let layout = MfsLayout::new(state.config.ipfs.mfs_root.clone());
-    let stage = publish::add_and_measure(&ipfs, &layout, &pubkey_hex, &fields.site, site)
-        .await
-        .map_err(upstream)?;
+    let stage = publish::add_and_measure(
+        &ipfs,
+        &layout,
+        &pubkey_hex,
+        &fields.site,
+        relay.relays(),
+        site,
+    )
+    .await
+    .map_err(stage_error)?;
     let created_at = stage.created_at;
 
     let unchanged = publish::check_unchanged(
@@ -166,7 +180,7 @@ pub(super) async fn run_publish(
         .await
         .map_err(upstream)?;
     if !relay_results.iter().any(|r| r.ok) {
-        return Err(upstream(anyhow::anyhow!(publish::NO_RELAY_ACCEPTED)));
+        return Err(upstream(publish::no_relay_accepted(&relay_results)));
     }
     state.activity.record_published(created_at.as_secs());
 

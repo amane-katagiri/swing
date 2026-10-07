@@ -36,7 +36,7 @@
 5. セットアップモード（503 `agent is not configured`）
 6. NIP-05（422）
 7. ドットファイル・サイズ（422）
-8. Kubo と relay の準備（503 `agent is not ready`）→ add（失敗は 502）
+8. Kubo と relay の準備（503 `agent is not ready`）→ 時計の確認（400）→ add（失敗は 502）
 9. 同じ内容かの確認 → 署名と送信 → `[publish].keep_versions` を超えた古い版の削除
 
 処理:
@@ -65,7 +65,9 @@
 - ドットファイル・サイズの `require` が引っかかったら、add する前に 422 を返す: `{ "error": "...", "nip05": {...}, "checks": { "dotfiles": {...}, "size": {...}, "unchanged": null } }`。NIP-05 の 422 には `checks` が付かない。
 - `unchanged` が `unchanged` で `check_unchanged` が `require` なら、add した版を MFS から消し、署名も送信も古い版の削除もせずに 200 を返す。このとき `published` は `false`、`created_at` と `mfs_path` は `null`、`relays` と `pruned` は空、`prune_error` は `null`。`cid`・`size`・`gateway_url` は通常どおり入る。[`/api/activity`](status.md#get-apiactivity) の `latest_published_at` は進まない。版を消せなければ 502。
 - add の後、署名できるまでに失敗したら（`dag/stat` の失敗、署名できない）502 を返し、add した版を MFS から消す（古い版は残す。消せなければその理由もエラーに続ける）。この間にタイムアウトやクライアントの切断で処理を打ち切ったときも、版の削除を始める（削除は応答の後になりうる）。
-- 署名できた後は、add した版を消さない（送信の途中で打ち切られたときや、応答を待ち切れなかった relay にもイベントが届いているかもしれないため）。どの relay にも受理されなければ 502 を返し、add した版も古い版も残す。
+- 時計の確認（未来の日付の版が MFS にある・この機械の時計が relay より進んでいる。判定とメッセージは CLI と同じで [`../../cli/publish.md`](../../cli/publish.md) の 6）に当たったら、何も add せずに 400 `{ "error": "..." }` を返す（`publish::ClockError`）。422 は確認のモードで止めるもの（本文に `nip05`・`checks` が付く）に、409 は多重実行に使っているため、利用者が直すべき前提の誤りとして 400 にする。
+- 署名できた後は、add した版を消さない（送信の途中で打ち切られたときや、応答を待ち切れなかった relay にもイベントが届いているかもしれないため）。どの relay にも受理されなければ 502 `no relay accepted the site event; old versions were kept (<relay>: <理由>; …)` を返し（理由を返した relay だけを並べる）、add した版も古い版も残す。
+- `relays[].error` は relay が断った理由。未来すぎる `created_at` を理由に断られたときは CLI と同じ案内（` (the relay thinks the event is dated in the future; check your clock)`）が後ろに付く。
 - 古い版の削除に失敗したときは `prune_error` に理由が入るだけで、応答は成功のまま。
 - `created_at`（サイトイベントの `created_at` と MFS の版のディレクトリ名）の決め方は CLI と同じで、同じサイトの既存の版より必ず新しい値になる（[`../../cli/publish.md`](../../cli/publish.md) の 6）。そのための MFS の一覧に失敗したら 502。
 - `files` は受け取ったファイル数。

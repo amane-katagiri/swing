@@ -12,6 +12,7 @@ use crate::nostr::{self, RelayClient, RelaySendResult, build_site_event_builder}
 use crate::signer::Signer;
 
 mod checks;
+mod clock;
 mod new_files;
 mod staged;
 
@@ -19,6 +20,7 @@ pub use checks::{
     DASHBOARD_UPLOAD_DIR, LISTED_DOTFILES, LocalChecks, SIZE_GUIDELINE, UnchangedOutcome,
     UnchangedStatus, find_dotfiles, refuse_protected_paths,
 };
+pub use clock::ClockError;
 pub use new_files::PreviousFiles;
 use new_files::count_new_files;
 pub use staged::StagedVersion;
@@ -175,16 +177,19 @@ pub async fn check_nip05<V: Nip05Verify>(
     }
 }
 
-fn next_version_time(names: &[String], now: u64) -> u64 {
+fn newest_version(names: &[String]) -> Option<u64> {
     names
         .iter()
         .filter_map(|name| name.parse::<u64>().ok())
         .max()
-        .map_or(now, |newest| now.max(newest.saturating_add(1)))
 }
 
 // Reusing a same-second path would let add_site or a cancelled publish's deferred removal delete the other version.
-async fn choose_created_at(ipfs: &IpfsClient, site_path: &str, now: u64) -> Result<u64> {
+fn next_version_time(newest: Option<u64>, now: u64) -> u64 {
+    newest.map_or(now, |newest| now.max(newest.saturating_add(1)))
+}
+
+async fn list_newest_version(ipfs: &IpfsClient, site_path: &str) -> Result<Option<u64>> {
     let names: Vec<String> = ipfs
         .mfs_list(site_path)
         .await
@@ -192,7 +197,7 @@ async fn choose_created_at(ipfs: &IpfsClient, site_path: &str, now: u64) -> Resu
         .into_iter()
         .map(|e| e.name)
         .collect();
-    Ok(next_version_time(&names, now))
+    Ok(newest_version(&names))
 }
 
 pub struct IpfsStage {
@@ -207,14 +212,15 @@ pub async fn add_and_measure(
     layout: &MfsLayout,
     pubkey_hex: &str,
     d: &str,
+    relays: &[String],
     site: SiteListing,
 ) -> Result<IpfsStage> {
-    let created_at = choose_created_at(
-        ipfs,
-        &layout.publish_site(pubkey_hex, d),
-        Timestamp::now().as_secs(),
-    )
-    .await?;
+    let site_path = layout.publish_site(pubkey_hex, d);
+    let newest = list_newest_version(ipfs, &site_path).await?;
+    clock::refuse_future_version(&site_path, newest, Timestamp::now().as_secs())?;
+    let relay_times = clock::probe_relay_times(relays).await;
+    clock::refuse_clock_ahead(Timestamp::now().as_secs(), &relay_times)?;
+    let created_at = next_version_time(newest, Timestamp::now().as_secs());
     let path = layout.publish_version(pubkey_hex, d, created_at);
     let added = ipfs.add_site(site, &path).await?;
     let version = StagedVersion::new(ipfs, path);
@@ -269,9 +275,48 @@ pub async fn sign_site_event(
     relay.sign(builder).await.context("signing site event")
 }
 
+pub const FUTURE_REJECTION_HINT: &str =
+    "the relay thinks the event is dated in the future; check your clock";
+
+fn rejected_as_future(message: &str) -> bool {
+    let m = message.to_ascii_lowercase();
+    let too_early = ["early", "old", "past"].iter().any(|w| m.contains(w));
+    m.contains("future")
+        || m.contains("too late")
+        || m.contains("too new")
+        || (m.contains("created_at") && m.contains("too") && !too_early)
+}
+
+fn with_rejection_hints(mut results: Vec<RelaySendResult>) -> Vec<RelaySendResult> {
+    for result in &mut results {
+        if let Some(error) = &mut result.error
+            && !result.ok
+            && rejected_as_future(error)
+        {
+            *error = format!("{error} ({FUTURE_REJECTION_HINT})");
+        }
+    }
+    results
+}
+
 pub async fn send_site_event(relay: &RelayClient, event: &Event) -> Result<Vec<RelaySendResult>> {
     let output = relay.publish_to_relays(event).await?;
-    Ok(nostr::relay_send_results(relay.relays(), &output))
+    Ok(with_rejection_hints(nostr::relay_send_results(
+        relay.relays(),
+        &output,
+    )))
+}
+
+pub fn no_relay_accepted(results: &[RelaySendResult]) -> anyhow::Error {
+    let reasons: Vec<String> = results
+        .iter()
+        .filter_map(|r| r.error.as_ref().map(|e| format!("{}: {e}", r.relay)))
+        .collect();
+    if reasons.is_empty() {
+        anyhow::anyhow!(NO_RELAY_ACCEPTED)
+    } else {
+        anyhow::anyhow!("{NO_RELAY_ACCEPTED} ({})", reasons.join("; "))
+    }
 }
 
 #[derive(Debug)]
@@ -598,7 +643,7 @@ pub async fn run(config: Config, dir: &Path, request: Request) -> Result<()> {
     println!("IPFS");
 
     let layout = MfsLayout::new(config.ipfs.mfs_root.clone());
-    let stage = match add_and_measure(&ipfs, &layout, &pubkey_hex, &d, site).await {
+    let stage = match add_and_measure(&ipfs, &layout, &pubkey_hex, &d, relay.relays(), site).await {
         Ok(stage) => stage,
         Err(e) => {
             relay.shutdown().await;
@@ -661,57 +706,115 @@ mod tests {
     #[test]
     fn next_version_time_is_after_every_existing_version() {
         let names = |list: &[&str]| list.iter().map(|s| s.to_string()).collect::<Vec<_>>();
-        assert_eq!(next_version_time(&[], 500), 500);
-        assert_eq!(next_version_time(&names(&["100", "junk"]), 500), 500);
-        assert_eq!(next_version_time(&names(&["100", "500"]), 500), 501);
-        assert_eq!(next_version_time(&names(&["501", "100"]), 500), 502);
-        assert_eq!(next_version_time(&names(&["junk"]), 500), 500);
+        let next = |list: &[&str], now| next_version_time(newest_version(&names(list)), now);
+        assert_eq!(next(&[], 500), 500);
+        assert_eq!(next(&["100", "junk"], 500), 500);
+        assert_eq!(next(&["100", "500"], 500), 501);
+        assert_eq!(next(&["501", "100"], 500), 502);
+        assert_eq!(next(&["junk"], 500), 500);
     }
 
-    async fn fake_files_ls(answer: &'static str) -> IpfsClient {
-        let router = axum::Router::new().route(
-            "/api/v0/files/ls",
-            axum::routing::post(move || async move {
-                if answer == "missing" {
-                    let body = r#"{"Message":"file does not exist","Code":0,"Type":"error"}"#;
-                    return (axum::http::StatusCode::INTERNAL_SERVER_ERROR, body);
-                }
-                (axum::http::StatusCode::OK, answer)
-            }),
-        );
+    struct FakeKubo {
+        ipfs: IpfsClient,
+        added: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    }
+
+    async fn fake_files_ls(answer: String) -> FakeKubo {
+        let added = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let added_flag = added.clone();
+        let router = axum::Router::new()
+            .route(
+                "/api/v0/files/ls",
+                axum::routing::post(move || async move {
+                    if answer == "missing" {
+                        let body = r#"{"Message":"file does not exist","Code":0,"Type":"error"}"#;
+                        return (
+                            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                            body.to_string(),
+                        );
+                    }
+                    (axum::http::StatusCode::OK, answer)
+                }),
+            )
+            .fallback(move || async move {
+                added_flag.store(true, std::sync::atomic::Ordering::SeqCst);
+                axum::http::StatusCode::INTERNAL_SERVER_ERROR
+            });
         let addr = crate::test_support::serve_router(router).await;
-        IpfsClient::new(format!("http://{addr}"))
+        FakeKubo {
+            ipfs: IpfsClient::new(format!("http://{addr}")),
+            added,
+        }
+    }
+
+    fn ls_answer(names: &[u64]) -> String {
+        let entries: Vec<String> = names
+            .iter()
+            .map(|n| format!(r#"{{"Name":"{n}","Type":1,"Hash":"bafy"}}"#))
+            .collect();
+        format!(r#"{{"Entries":[{}]}}"#, entries.join(","))
     }
 
     #[tokio::test]
-    async fn choose_created_at_skips_past_a_same_second_version() {
-        let ipfs = fake_files_ls(
-            r#"{"Entries":[{"Name":"500","Type":1,"Hash":"bafy"},{"Name":"499","Type":1,"Hash":"bafy"}]}"#,
-        )
+    async fn list_newest_version_reads_the_site_dir() {
+        let kubo = fake_files_ls(ls_answer(&[499, 500])).await;
+        assert_eq!(
+            list_newest_version(&kubo.ipfs, "/swing/publish/k/s")
+                .await
+                .unwrap(),
+            Some(500)
+        );
+        let kubo = fake_files_ls("missing".to_string()).await;
+        assert_eq!(
+            list_newest_version(&kubo.ipfs, "/swing/publish/k/s")
+                .await
+                .unwrap(),
+            None
+        );
+    }
+
+    async fn refused_stage(newest: u64, relays: &[String]) -> (anyhow::Error, bool) {
+        let kubo = fake_files_ls(ls_answer(&[100, newest])).await;
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("index.html"), b"hi").unwrap();
+        let site = SiteListing::read_async(dir.path()).await.unwrap();
+        let layout = MfsLayout::new("/swing".to_string());
+        let Err(err) = add_and_measure(&kubo.ipfs, &layout, "k", "example.com", relays, site).await
+        else {
+            panic!("add_and_measure should refuse");
+        };
+        (err, kubo.added.load(std::sync::atomic::Ordering::SeqCst))
+    }
+
+    #[tokio::test]
+    async fn add_and_measure_refuses_a_future_version_before_adding() {
+        let future = Timestamp::now().as_secs() + nostr::MAX_FUTURE_SKEW + 3600;
+        let (err, added) = refused_stage(future, &[]).await;
+        assert!(err.downcast_ref::<ClockError>().is_some(), "{err:#}");
+        let rm = format!("ipfs files rm -r /swing/publish/k/example.com/{future}");
+        assert!(err.to_string().contains(&rm), "{err}");
+        assert!(!added);
+    }
+
+    #[tokio::test]
+    async fn add_and_measure_refuses_a_clock_ahead_of_a_relay_before_adding() {
+        let relay = crate::test_support::serve_router(axum::Router::new().route(
+            "/",
+            axum::routing::get(|| async {
+                (
+                    [(axum::http::header::DATE, "Sun, 06 Nov 1994 08:49:37 GMT")],
+                    "{}",
+                )
+            }),
+        ))
         .await;
-        assert_eq!(
-            choose_created_at(&ipfs, "/swing/publish/k/s", 500)
-                .await
-                .unwrap(),
-            501
+        let (err, added) = refused_stage(100, &[format!("ws://{relay}")]).await;
+        assert!(err.downcast_ref::<ClockError>().is_some(), "{err:#}");
+        assert!(
+            err.to_string().contains(&format!("ahead of ws://{relay}")),
+            "{err}"
         );
-        assert_eq!(
-            choose_created_at(&ipfs, "/swing/publish/k/s", 900)
-                .await
-                .unwrap(),
-            900
-        );
-    }
-
-    #[tokio::test]
-    async fn choose_created_at_uses_now_for_a_new_site() {
-        let ipfs = fake_files_ls("missing").await;
-        assert_eq!(
-            choose_created_at(&ipfs, "/swing/publish/k/s", 500)
-                .await
-                .unwrap(),
-            500
-        );
+        assert!(!added);
     }
 
     #[test]
@@ -925,5 +1028,71 @@ mod tests {
             list_error: None,
         };
         assert!(clean.error_summary().is_none());
+    }
+
+    #[test]
+    fn future_rejections_are_recognized() {
+        for message in [
+            "invalid: created_at too late",
+            "invalid: event creation date is too far in the FUTURE",
+            "blocked: created_at is too far ahead",
+            "invalid: event is too new",
+        ] {
+            assert!(rejected_as_future(message), "{message}");
+        }
+        for message in [
+            "invalid: created_at too early",
+            "invalid: created_at is too old",
+            "blocked: pubkey not allowed",
+            "rate-limited: slow down",
+            "",
+        ] {
+            assert!(!rejected_as_future(message), "{message}");
+        }
+    }
+
+    fn sent(relay: &str, ok: bool, error: Option<&str>) -> RelaySendResult {
+        RelaySendResult {
+            relay: relay.to_string(),
+            ok,
+            error: error.map(str::to_string),
+        }
+    }
+
+    #[test]
+    fn only_future_rejections_get_the_clock_hint() {
+        let results = with_rejection_hints(vec![
+            sent("wss://a", false, Some("invalid: created_at too late")),
+            sent("wss://b", false, Some("blocked: not allowed")),
+            sent("wss://c", true, None),
+            sent("wss://d", false, None),
+        ]);
+        assert_eq!(
+            results[0].error.as_deref(),
+            Some(
+                "invalid: created_at too late (the relay thinks the event is dated in the future; check your clock)"
+            )
+        );
+        assert_eq!(results[1].error.as_deref(), Some("blocked: not allowed"));
+        assert!(results[0..2].iter().all(|r| !r.ok));
+        assert_eq!(results[2], sent("wss://c", true, None));
+        assert_eq!(results[3], sent("wss://d", false, None));
+    }
+
+    #[test]
+    fn no_relay_accepted_lists_the_reasons() {
+        assert_eq!(
+            no_relay_accepted(&[sent("wss://a", false, None)]).to_string(),
+            NO_RELAY_ACCEPTED
+        );
+        assert_eq!(
+            no_relay_accepted(&[
+                sent("wss://a", false, Some("x")),
+                sent("wss://b", false, None),
+                sent("wss://c", false, Some("y")),
+            ])
+            .to_string(),
+            format!("{NO_RELAY_ACCEPTED} (wss://a: x; wss://c: y)")
+        );
     }
 }

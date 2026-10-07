@@ -42,6 +42,9 @@ pub fn print_relay_line(relay: &str, ok: bool) {
 
 pub fn print_relay_send_result_lines(results: &[RelaySendResult]) {
     for result in results {
-        print_relay_line(&result.relay, result.ok);
+        match &result.error {
+            Some(error) if !result.ok => println!("  \u{2717} {}: {error}", result.relay),
+            _ => print_relay_line(&result.relay, result.ok),
+        }
     }
 }
