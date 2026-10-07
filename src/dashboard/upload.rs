@@ -634,7 +634,9 @@ mod tests {
                 ("file", Some("index.html"), b"<html></html>"),
             ],
         );
-        let publishing = state.try_lock_publish().unwrap();
+        let Ok(publishing) = try_lock_publish(&state) else {
+            panic!("publish lock is free");
+        };
         let resp = call(
             router(Arc::clone(&state)),
             multipart_request("/api/publish/upload", boundary, body),

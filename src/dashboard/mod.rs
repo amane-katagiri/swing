@@ -26,7 +26,7 @@ use axum::http::StatusCode;
 use axum::routing::{get, post};
 use nostr_sdk::prelude::{PublicKey, Timestamp};
 use tokio::net::TcpListener;
-use tokio::sync::{MutexGuard, Notify, RwLock, Semaphore, oneshot};
+use tokio::sync::{Notify, RwLock, Semaphore, oneshot};
 use tower_http::timeout::TimeoutLayer;
 use tracing::info;
 
@@ -113,15 +113,11 @@ impl AppState {
         })
     }
 
-    fn try_lock_publish(&self) -> Option<locks::PublishLock<'_>> {
-        self.locks.try_publish()
-    }
-
     async fn lock_mirror_writes(&self) -> locks::MirrorWrites<'_> {
         self.locks.mirror_writes().await
     }
 
-    async fn lock_config_writes(&self) -> MutexGuard<'_, locks::ConfigWrites> {
+    async fn lock_config_writes(&self) -> locks::ConfigWrites<'_> {
         self.locks.config_writes().await
     }
 

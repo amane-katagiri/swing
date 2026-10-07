@@ -1,7 +1,9 @@
+use std::ops::{Deref, DerefMut};
+
 use tokio::sync::{Mutex, MutexGuard};
 
 #[derive(Default)]
-pub(super) struct ConfigWrites {
+pub(super) struct ConfigWriteState {
     pub(super) setup_done: bool,
 }
 
@@ -13,11 +15,29 @@ pub(super) struct MirrorWrites<'a> {
     _guard: MutexGuard<'a, ()>,
 }
 
+pub(super) struct ConfigWrites<'a> {
+    guard: MutexGuard<'a, ConfigWriteState>,
+}
+
+impl Deref for ConfigWrites<'_> {
+    type Target = ConfigWriteState;
+
+    fn deref(&self) -> &ConfigWriteState {
+        &self.guard
+    }
+}
+
+impl DerefMut for ConfigWrites<'_> {
+    fn deref_mut(&mut self) -> &mut ConfigWriteState {
+        &mut self.guard
+    }
+}
+
 #[derive(Default)]
 pub(super) struct Locks {
     publish: Mutex<()>,
     mirror_writes: Mutex<()>,
-    config_writes: Mutex<ConfigWrites>,
+    config_writes: Mutex<ConfigWriteState>,
 }
 
 impl Locks {
@@ -34,7 +54,9 @@ impl Locks {
         }
     }
 
-    pub(super) async fn config_writes(&self) -> MutexGuard<'_, ConfigWrites> {
-        self.config_writes.lock().await
+    pub(super) async fn config_writes(&self) -> ConfigWrites<'_> {
+        ConfigWrites {
+            guard: self.config_writes.lock().await,
+        }
     }
 }

@@ -56,7 +56,8 @@ fn stage_error(e: anyhow::Error) -> ApiError {
 
 pub(super) fn try_lock_publish(state: &AppState) -> Result<PublishLock<'_>, ApiError> {
     state
-        .try_lock_publish()
+        .locks
+        .try_publish()
         .ok_or_else(|| ApiError::Conflict("a publish is already running".to_string()))
 }
 

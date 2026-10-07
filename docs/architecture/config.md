@@ -128,8 +128,8 @@ TOML の構文や型のエラーは `line <行>, column <桁>: <理由>` の形�
 
 ### ダッシュボードでの直列化と反映
 
-- 設定ファイルを書く API（`PUT /api/config`・`POST /api/setup`）と、`remote-signer.json` を書く `POST /api/signer/reconnect` は `AppState::lock_config_writes`（`dashboard::locks::Locks` が持つ `tokio::sync::Mutex<ConfigWrites>`）を取ってから、ファイルの読み書き（`Config::load` を含む）を `api::blocking`（`spawn_blocking`）で行う。同じプロセス内では 1 つずつ順に走る。プロセス外からの同時書き込みは対象外。
-- `ConfigWrites.setup_done` は、成功後の 2 回目の `POST /api/setup` を 409 にする印（[`dashboard/http-api/config.md#post-apisetup`](dashboard/http-api/config.md#post-apisetup)）。
+- 設定ファイルを書く API（`PUT /api/config`・`POST /api/setup`）と、`remote-signer.json` を書く `POST /api/signer/reconnect` は `AppState::lock_config_writes`（`dashboard::locks::Locks` が持つ `tokio::sync::Mutex<ConfigWriteState>`。取ったときは `locks::ConfigWrites` が返る）を取ってから、ファイルの読み書き（`Config::load` を含む）を `api::blocking`（`spawn_blocking`）で行う。同じプロセス内では 1 つずつ順に走る。プロセス外からの同時書き込みは対象外。
+- `ConfigWriteState.setup_done` は、成功後の 2 回目の `POST /api/setup` を 409 にする印（[`dashboard/http-api/config.md#post-apisetup`](dashboard/http-api/config.md#post-apisetup)）。
 - `AppState.restart_required: AtomicBool` は `PUT /api/config` か `POST /api/signer/reconnect` が一度でも成功すると `true` になり、プロセス内再起動まで戻らない（`POST /api/setup` は立てない）。`GET`/`PUT /api/config` の `restart_required` はこの値。
 - `AppState.display_config: RwLock<Arc<Config>>` は起動時は `AppState.config` と同じで、`PUT /api/config` が成功するたびに書き換え後の設定に差し替わる。`GET /api/config` はこれを返す。relay・Kubo・agent が使う `AppState.config` は再起動まで変わらない。
 - [`POST /api/setup`](dashboard/http-api/config.md#post-apisetup) はこの書き込みに、鍵（または `remote-signer.json`）の保存とプロセス内再起動が加わる。
