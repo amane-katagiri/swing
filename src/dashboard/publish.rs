@@ -108,6 +108,7 @@ pub(super) async fn run_publish(
     }
 
     let ipfs = state.require_ipfs().await?;
+    let relay = state.require_relay().await?;
     let layout = MfsLayout::new(state.config.ipfs.mfs_root.clone());
     let created_at = Timestamp::now();
     let stage = publish::add_and_measure(
@@ -121,7 +122,6 @@ pub(super) async fn run_publish(
     .await
     .map_err(upstream)?;
 
-    let relay = state.require_relay().await?;
     let unchanged = publish::check_unchanged(
         &relay,
         modes.check_unchanged,
@@ -149,13 +149,11 @@ pub(super) async fn run_publish(
     });
 
     if unchanged.stops_publish() {
-        ipfs.mfs_remove(&stage.path)
-            .await
-            .map_err(|e| upstream(e.context(format!("could not remove {}", stage.path))))?;
+        stage.version.withdraw().await.map_err(upstream)?;
         return Ok(PublishOutcome::Success(result));
     }
 
-    let relay_results = publish::sign_and_send(
+    let sent = publish::sign_and_send(
         &relay,
         &publish::SiteAnnouncement {
             site_event_kind: state.config.nostr.site_event_kind,
@@ -168,13 +166,14 @@ pub(super) async fn run_publish(
             created_at,
         },
     )
-    .await
-    .map_err(upstream)?;
-
+    .await;
+    let relay_results = match sent {
+        Ok(results) => results,
+        Err(e) => return Err(upstream(stage.version.fail(e).await)),
+    };
     if !relay_results.iter().any(|r| r.ok) {
-        return Err(ApiError::Upstream(
-            "no relay accepted the site event; old versions were kept".to_string(),
-        ));
+        let e = anyhow::anyhow!(publish::NO_RELAY_ACCEPTED);
+        return Err(upstream(stage.version.fail(e).await));
     }
     state.activity.record_published(created_at.as_secs());
 
@@ -189,7 +188,7 @@ pub(super) async fn run_publish(
 
     result.published = true;
     result.created_at = Some(created_at.as_secs());
-    result.mfs_path = Some(stage.path);
+    result.mfs_path = Some(stage.version.keep());
     result.relays = dto::relay_results_dto(&relay_results);
     result.pruned = prune.pruned().into_iter().map(str::to_string).collect();
     result.prune_error = prune.error_summary();

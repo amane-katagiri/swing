@@ -1,4 +1,4 @@
-# publish（`src/publish.rs`, `src/publish/checks.rs`, `src/publish/new_files.rs`）
+# publish（`src/publish.rs`, `src/publish/checks.rs`, `src/publish/new_files.rs`, `src/publish/staged.rs`）
 
 [`../cli.md`](../cli.md) の子ページ。`swing publish` の引数・確認・処理順。ダッシュボードの公開画面からの publish は [`../dashboard/http-api/publish.md`](../dashboard/http-api/publish.md)。
 
@@ -33,10 +33,10 @@
    - 2 の一覧のファイル（ディレクトリは除く）のうち、前の版に同じパスが無いものが「増えたファイル」。中身が変わっただけのファイルは数えない。無ければ `✓ no new files`、あれば `! N new files` の後に、ルート直下のファイルを先に、続けてフォルダ（ファイルの親のパス全体。`a/b/` は `a/` の中に入れず 1 つのフォルダとする）ごとに `<フォルダ>/` の行とその下へさらに字下げしたファイル名を、フォルダもファイル名もバイト順で並べる（`new_files::group_by_folder`）。並べるファイルは先頭 `LISTED_NEW_FILES`（50）件までで、残りは `… and N more` にまとめる。
    - 増えたファイルがあり `--yes` が無ければ、標準入力が端末なら `Publish with N new files? [y/N]`（1 件なら `1 new file`。以下同じ）と聞き、`y` か `yes`（大小文字無視）以外なら `cancelled; nothing was added or published` でエラー終了する。端末でなければ聞かずに `confirmation needed for N new files: review them above and rerun with --yes` でエラー終了する。
 6. `IPFS` 見出しを出す。現在時刻を `created_at` に決め、2 の一覧を CIDv1・pin なしで add し、`<mfs_root>/publish/<pubkey hex>/<site>/<created_at>` に置く（既存の項目は先に消す）。
-7. `dag/stat`（`offline=true`）の `TotalSize` を `size` タグにする。失敗したら（ブロックが欠けていたら）エラーで終了する。`IPFS` 見出しの `Size:` はこの値。
+7. `dag/stat`（`offline=true`）の `TotalSize` を `size` タグにする。失敗したら（ブロックが欠けていたら）6 で置いた版を MFS から消してエラーで終了する。`IPFS` 見出しの `Size:` はこの値。
 8. `--check-unchanged` が `off` でなければ、4 で取った前の版と比べ、`Previous version` 見出しの下に結果を表示する。
    - CID が違えば `✓ changed from the latest version on the relays (<前の CID>)`、同じなら `! unchanged: the CID equals your latest version on the relays`、見つからなければ `- no previous version on the relays`、取得に失敗したら `! could not check: <理由>`。
    - 同じで `require` なら、6 で置いた版を MFS から消して `✓ removed <パス>` を出し、署名・送信・古い版の削除をせずに `Unchanged; not published.` で終わる（終了コード 0。消せなければエラー終了）。見つからない・取得に失敗したときは `require` でも続ける。
-9. サイトイベント（`alt` は `SWING site announcement: <d>`）を 6 の `created_at` で作って署名し、全 relay に送る。署名アプリを使っているときは、署名の前（`Nostr` 見出しの直後）に `waiting for the signer app to sign the site event...` を表示し、署名アプリの返事を最大 90 秒待つ。relay ごとの成否（✓/✗）を表示する。署名できない、またはどこにも受理されなければ、古い版を消さずにエラーで終了する。
+9. サイトイベント（`alt` は `SWING site announcement: <d>`）を 6 の `created_at` で作って署名し、全 relay に送る。署名アプリを使っているときは、署名の前（`Nostr` 見出しの直後）に `waiting for the signer app to sign the site event...` を表示し、署名アプリの返事を最大 90 秒待つ。relay ごとの成否（✓/✗）を表示する。署名できない、またはどこにも受理されなければ、6 で置いた版を MFS から消し、古い版は消さずにエラーで終了する（6 の版を消せなければその理由もエラーに続けて出す）。
 10. `<mfs_root>/publish/<pubkey hex>/<site>/` の中で名前が整数の項目のうち、今回の版（6 の `created_at`）は必ず残し、それ以外を新しい順に `[publish].keep_versions - 1` 個残して消す（`Old versions (keeping N)` 見出し）。一覧に失敗したら警告を出して続ける。
 11. `Published.` で終わる。

@@ -36,8 +36,8 @@
 5. セットアップモード（503 `agent is not configured`）
 6. NIP-05（422）
 7. ドットファイル・サイズ（422）
-8. Kubo の準備（503 `agent is not ready`）→ add（失敗は 502）
-9. relay の準備（503 `agent is not ready`）→ 同じ内容かの確認 → 署名と送信 → `[publish].keep_versions` を超えた古い版の削除
+8. Kubo と relay の準備（503 `agent is not ready`）→ add（失敗は 502）
+9. 同じ内容かの確認 → 署名と送信 → `[publish].keep_versions` を超えた古い版の削除
 
 処理:
 
@@ -64,7 +64,7 @@
   - `unchanged`: `status` は `off`/`changed`/`unchanged`/`no_previous`（relay に前の版が無い）/`unknown`（relay から取れなかった。理由が `detail`）。`previous_cid`・`previous_created_at` は前の版が見つかったときだけ入る。
 - ドットファイル・サイズの `require` が引っかかったら、add する前に 422 を返す: `{ "error": "...", "nip05": {...}, "checks": { "dotfiles": {...}, "size": {...}, "unchanged": null } }`。NIP-05 の 422 には `checks` が付かない。
 - `unchanged` が `unchanged` で `check_unchanged` が `require` なら、add した版を MFS から消し、署名も送信も古い版の削除もせずに 200 を返す。このとき `published` は `false`、`created_at` と `mfs_path` は `null`、`relays` と `pruned` は空、`prune_error` は `null`。`cid`・`size`・`gateway_url` は通常どおり入る。[`/api/activity`](status.md#get-apiactivity) の `latest_published_at` は進まない。版を消せなければ 502。
-- どの relay にも受理されなければ 502（Kubo に add した内容と古い版はそのまま残す）。
+- add の後で失敗したら（`dag/stat` の失敗、署名できない、どの relay にも受理されない）502 を返し、add した版を MFS から消す（古い版は残す。消せなければその理由もエラーに続ける）。タイムアウトやクライアントの切断で処理を打ち切ったときも、告知していない版の削除を始める（削除は応答の後になりうる）。
 - 古い版の削除に失敗したときは `prune_error` に理由が入るだけで、応答は成功のまま。
 - `files` は受け取ったファイル数。
 

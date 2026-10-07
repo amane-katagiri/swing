@@ -13,6 +13,7 @@ use crate::signer::Signer;
 
 mod checks;
 mod new_files;
+mod staged;
 
 pub use checks::{
     DASHBOARD_UPLOAD_DIR, LISTED_DOTFILES, LocalChecks, SIZE_GUIDELINE, UnchangedOutcome,
@@ -20,6 +21,7 @@ pub use checks::{
 };
 pub use new_files::PreviousFiles;
 use new_files::count_new_files;
+pub use staged::StagedVersion;
 
 fn versions_to_prune(names: &[String], current: u64, keep: usize) -> Vec<String> {
     let mut versions: Vec<(u64, &String)> = names
@@ -173,11 +175,10 @@ pub async fn check_nip05<V: Nip05Verify>(
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct IpfsStage {
     pub cid: String,
     pub size: u64,
-    pub path: String,
+    pub version: StagedVersion,
 }
 
 pub async fn add_and_measure(
@@ -189,14 +190,22 @@ pub async fn add_and_measure(
     site: SiteListing,
 ) -> Result<IpfsStage> {
     let path = layout.publish_version(pubkey_hex, d, created_at);
-    let cid = nostr::canonical_cid(&ipfs.add_site(site, &path).await?)
-        .context("Kubo returned an invalid cid")?;
+    let added = ipfs.add_site(site, &path).await?;
+    let version = StagedVersion::new(ipfs, path);
+    let cid = match nostr::canonical_cid(&added).context("Kubo returned an invalid cid") {
+        Ok(cid) => cid,
+        Err(e) => return Err(version.fail(e).await),
+    };
     // add with pin=false doesn't hold Kubo's GC lock, so this verifies nothing was dropped before MFS linked it.
-    let size = ipfs
+    let size = match ipfs
         .dag_size_local(&[cid.as_str()])
         .await
-        .context("added content is not complete in Kubo")?;
-    Ok(IpfsStage { cid, size, path })
+        .context("added content is not complete in Kubo")
+    {
+        Ok(size) => size,
+        Err(e) => return Err(version.fail(e).await),
+    };
+    Ok(IpfsStage { cid, size, version })
 }
 
 pub struct SiteAnnouncement<'a> {
@@ -454,37 +463,26 @@ async fn confirm_new_files(
     Ok(())
 }
 
-async fn withdraw_if_unchanged(
-    relay: &RelayClient,
-    ipfs: &IpfsClient,
+fn report_unchanged(
     mode: CheckMode,
     previous: &Result<Option<nostr::SiteEvent>, String>,
-    stage: &IpfsStage,
-) -> Result<bool> {
+    cid: &str,
+) -> bool {
     if mode == CheckMode::Off {
-        return Ok(false);
+        return false;
     }
     let previous = previous.clone().map_err(anyhow::Error::msg);
-    let unchanged = UnchangedOutcome::decide(mode, previous, &stage.cid);
+    let unchanged = UnchangedOutcome::decide(mode, previous, cid);
     println!();
     println!("Previous version");
     println!("  {}", unchanged.line());
-    if !unchanged.stops_publish() {
-        return Ok(false);
-    }
-    relay.shutdown().await;
-    ipfs.mfs_remove(&stage.path)
-        .await
-        .with_context(|| format!("could not remove {}", stage.path))?;
-    println!("  \u{2713} removed {}", stage.path);
-    println!();
-    println!("Unchanged; not published.");
-    Ok(true)
+    unchanged.stops_publish()
 }
 
 async fn announce(
     relay: RelayClient,
     remote_signer: bool,
+    version: StagedVersion,
     announcement: &SiteAnnouncement<'_>,
 ) -> Result<()> {
     println!();
@@ -493,21 +491,22 @@ async fn announce(
     if remote_signer {
         println!("  waiting for the signer app to sign the site event...");
     }
-    let results = match sign_and_send(&relay, announcement).await {
+    let sent = sign_and_send(&relay, announcement).await;
+    relay.shutdown().await;
+    let results = match sent {
         Ok(results) => results,
-        Err(e) => {
-            relay.shutdown().await;
-            return Err(e);
-        }
+        Err(e) => return Err(version.fail(e).await),
     };
 
     nostr::print_relay_send_result_lines(&results);
-    relay.shutdown().await;
     if !results.iter().any(|r| r.ok) {
-        anyhow::bail!("no relay accepted the site event; old versions were kept");
+        return Err(version.fail(anyhow::anyhow!(NO_RELAY_ACCEPTED)).await);
     }
+    version.keep();
     Ok(())
 }
+
+pub const NO_RELAY_ACCEPTED: &str = "no relay accepted the site event; old versions were kept";
 
 pub struct Request {
     pub d: String,
@@ -571,16 +570,23 @@ pub async fn run(config: Config, dir: &Path, request: Request) -> Result<()> {
             }
         };
     println!("  CID: {}", stage.cid);
-    println!("  \u{2713} added to {}", stage.path);
+    println!("  \u{2713} added to {}", stage.version.path());
     println!("  Size: {} bytes", stage.size);
 
-    if withdraw_if_unchanged(&relay, &ipfs, modes.check_unchanged, &previous, &stage).await? {
+    if report_unchanged(modes.check_unchanged, &previous, &stage.cid) {
+        relay.shutdown().await;
+        let path = stage.version.path().to_string();
+        stage.version.withdraw().await?;
+        println!("  \u{2713} removed {path}");
+        println!();
+        println!("Unchanged; not published.");
         return Ok(());
     }
 
     announce(
         relay,
         remote_signer,
+        stage.version,
         &SiteAnnouncement {
             site_event_kind,
             d: &d,
