@@ -802,6 +802,11 @@ textarea.swing-input {
   background: var(--swing-ok-soft);
 }
 
+.swing-badge[data-stored="pending"] {
+  border-color: var(--swing-ok);
+  color: var(--swing-ok);
+}
+
 .swing-badge[data-stored="false"] {
   border-color: var(--swing-text-faint);
 }

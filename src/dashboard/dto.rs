@@ -191,6 +191,16 @@ pub struct SiteDto {
     pub unverified_replicas: Option<usize>,
     pub stored: bool,
     pub gateway_url: Option<String>,
+    pub previous: Option<PreviousVersionDto>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct PreviousVersionDto {
+    pub cid: String,
+    pub created_at: u64,
+    pub stored_at: u64,
+    pub stored_size: u64,
+    pub gateway_url: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -216,6 +226,13 @@ fn site_dto(site: &mirror::SiteRow, gateway: Option<&str>) -> SiteDto {
         unverified_replicas: site.replicas.map(|c| c.unverified),
         stored: site.stored,
         gateway_url: gateway_url(gateway, &site.cid, site.stored),
+        previous: site.previous.as_ref().map(|v| PreviousVersionDto {
+            cid: v.cid.clone(),
+            created_at: v.created_at,
+            stored_at: v.stored_at,
+            stored_size: v.size,
+            gateway_url: gateway_url(gateway, &v.cid, true),
+        }),
     }
 }
 

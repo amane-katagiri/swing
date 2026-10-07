@@ -19,9 +19,9 @@ import {
   wireSortSwitch,
   createLoadGuard,
 } from './util.js';
-import { copyButton, storedBadge, appendLinksAndMessage, renderMirrorOpResult, renderOpError, buildRemoveControl, buildSiteNameRow, parseMirrorKeys, MAX_MIRROR_KEYS } from './ui.js';
+import { copyButton, storedBadge, storedState, appendLinksAndMessage, renderMirrorOpResult, renderOpError, buildRemoveControl, buildSiteNameRow, parseMirrorKeys, MAX_MIRROR_KEYS } from './ui.js';
 
-const SITE_FIELD_DEFAULTS = { url: null, title: null, message: null, nip05: null, replicas: null, unverified_replicas: null, stored: null, stored_size: null, gateway_url: null };
+const SITE_FIELD_DEFAULTS = { url: null, title: null, message: null, nip05: null, replicas: null, unverified_replicas: null, stored: null, stored_size: null, gateway_url: null, previous: null };
 
 function replicaCountText(site) {
   if (site.replicas == null) return '–';
@@ -32,8 +32,10 @@ function normalizeSite(site, contextDefaults) {
   return Object.assign({}, SITE_FIELD_DEFAULTS, contextDefaults || {}, site);
 }
 
-function matchesFilter(site, acct, filterVal, storedOnly) {
-  if (storedOnly && !site.stored) return false;
+const STORED_FILTERS = ['all', 'true', 'pending', 'false'];
+
+function matchesFilter(site, acct, filterVal, storedFilter) {
+  if (storedFilter !== 'all' && storedState(site) !== storedFilter) return false;
   if (!filterVal) return true;
   const hay = [site.d, site.message, site.cid, site.url, acct.npub, acct.pubkey]
     .filter(Boolean)
@@ -69,8 +71,12 @@ function nip05Badge(status, template) {
   }, template ? t(template, { status: label }) : label);
 }
 
+function previousVersionText(previous) {
+  return t('previousVersion', { size: formatBytes(previous.stored_size), time: formatTime(previous.created_at) });
+}
+
 function buildSiteEntry(site) {
-  const wrap = el('div', { class: 'swing-site', 'data-stored': String(!!site.stored) });
+  const wrap = el('div', { class: 'swing-site', 'data-stored': storedState(site) });
   const row = buildSiteNameRow(site);
   const badges = el('div', { class: 'swing-site-badges' }, [
     storedBadge(site),
@@ -87,6 +93,7 @@ function buildSiteEntry(site) {
       ]),
     ]),
     el('div', { class: 'swing-site-meta-info' }, `${formatSiteSize(site)} · ${formatTime(site.created_at)}`),
+    site.previous ? el('div', { class: 'swing-site-meta-info' }, previousVersionText(site.previous)) : null,
   ]);
   wrap.append(meta);
 
@@ -95,15 +102,26 @@ function buildSiteEntry(site) {
   return wrap;
 }
 
+function previousGatewayLink(href) {
+  const link = maybeLink(href, t('openGateway'));
+  link.title = t('openPreviousGateway');
+  return link;
+}
+
 function buildSiteTable(sites) {
   const table = el('table', { class: 'swing-table' });
   const headers = [t('tableSite'), t('tableStored'), 'NIP-05', t('tableReplicas'), 'CID', t('tableSize'), t('tableUpdated'), t('tableLinks')];
   table.append(el('thead', {}, el('tr', {}, headers.map((h) => el('th', {}, h)))));
   const tbody = el('tbody');
   for (const site of sites) {
-    const tr = el('tr', { 'data-stored': String(!!site.stored) });
+    const tr = el('tr', { 'data-stored': storedState(site) });
     tr.append(el('td', { dir: 'auto' }, sanitizeDisplayText(site.d)));
-    tr.append(el('td', { class: 'swing-nowrap' }, storedBadge(site)));
+    tr.append(
+      el('td', {}, [
+        storedBadge(site),
+        site.previous ? el('div', { class: 'swing-hint' }, previousVersionText(site.previous)) : null,
+      ]),
+    );
     tr.append(el('td', {}, site.nip05 ? nip05Badge(site.nip05) : '–'));
     tr.append(el('td', { class: 'swing-nowrap' }, replicaCountText(site)));
     tr.append(
@@ -116,9 +134,12 @@ function buildSiteTable(sites) {
     tr.append(el('td', { class: 'swing-nowrap' }, formatTime(site.created_at)));
     const linksTd = el('td', {});
     if (site.url) linksTd.append(el('span', { class: 'swing-nowrap' }, maybeLink(site.url, t('openSite'))));
-    if (site.url && site.gateway_url) linksTd.append(document.createTextNode(' '));
-    if (site.gateway_url) linksTd.append(el('span', { class: 'swing-nowrap' }, maybeLink(site.gateway_url, t('openGateway'))));
-    if (!site.url && !site.gateway_url) linksTd.append(document.createTextNode('–'));
+    const gateway = site.gateway_url
+      ? maybeLink(site.gateway_url, t('openGateway'))
+      : site.previous?.gateway_url ? previousGatewayLink(site.previous.gateway_url) : null;
+    if (site.url && gateway) linksTd.append(document.createTextNode(' '));
+    if (gateway) linksTd.append(el('span', { class: 'swing-nowrap' }, gateway));
+    if (!site.url && !gateway) linksTd.append(document.createTextNode('–'));
     tr.append(linksTd);
     tbody.append(tr);
   }
@@ -200,9 +221,9 @@ const statusCheckGuard = createLoadGuard();
 
 function buildAccountElement(acct, opts) {
   const filterVal = opts.filterVal;
-  const storedOnly = opts.storedOnly;
-  const filtering = Boolean(filterVal) || storedOnly;
-  const sites = acct.sites.map((s) => normalizeSite(s, opts.siteDefaults)).filter((s) => matchesFilter(s, acct, filterVal, storedOnly));
+  const storedFilter = opts.storedFilter;
+  const filtering = Boolean(filterVal) || storedFilter !== 'all';
+  const sites = acct.sites.map((s) => normalizeSite(s, opts.siteDefaults)).filter((s) => matchesFilter(s, acct, filterVal, storedFilter));
   if (filtering && sites.length === 0) return null;
 
   const head = el('div', { class: 'swing-account-head' }, [
@@ -239,9 +260,10 @@ export const SitesView = {
   init() {
     wireStyleSwitch('sites', () => this.render());
     sitesEls.filterText.addEventListener('input', () => this.render());
-    sitesEls.filterStored.checked = storage.get('swing:sites:stored-only', '0') === '1';
+    const savedFilter = storage.get('swing:sites:stored-filter', 'all');
+    sitesEls.filterStored.value = STORED_FILTERS.includes(savedFilter) ? savedFilter : 'all';
     sitesEls.filterStored.addEventListener('change', () => {
-      storage.set('swing:sites:stored-only', sitesEls.filterStored.checked ? '1' : '0');
+      storage.set('swing:sites:stored-filter', sitesEls.filterStored.value);
       this.render();
     });
     wireSortSwitch('.swing-sort-switch', 'swing:sites:sort', 'updated', () => this.render());
@@ -342,7 +364,7 @@ export const SitesView = {
     }
 
     const filterVal = sitesEls.filterText.value.trim().toLowerCase();
-    const storedOnly = sitesEls.filterStored.checked;
+    const storedFilter = sitesEls.filterStored.value;
     const sortMode = storage.get('swing:sites:sort', 'updated');
 
     sitesEls.content.replaceChildren();
@@ -350,7 +372,7 @@ export const SitesView = {
       .map((a) => buildAccountElement(a, {
         removable: true,
         filterVal,
-        storedOnly,
+        storedFilter,
         resultEl: sitesEls.mirrorAddResult,
         onChanged: () => this.load(true),
       }))
@@ -373,7 +395,7 @@ export const SitesView = {
       sitesEls.unfollowedNote.textContent = t(note);
       sitesEls.unfollowedContent.replaceChildren();
       for (const a of sortAccounts(unfollowed.accounts, sortMode)) {
-        const elm = buildAccountElement(a, { removable: false, filterVal, storedOnly, siteDefaults: { stored: true } });
+        const elm = buildAccountElement(a, { removable: false, filterVal, storedFilter, siteDefaults: { stored: true } });
         if (elm) sitesEls.unfollowedContent.append(elm);
       }
     } else {

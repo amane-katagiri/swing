@@ -10,9 +10,9 @@
 - `name`: 最初のサイトの `d` のロケール順（`localeCompare`）。サイト無しは最後。
 - `pubkey`: 画面に出す `npub` の文字列順（hex の順とは一致しない）。
 
-`Unfollowed but still stored` セクションも同じ並び順を使う。セクションの注記は `unfollowed.remove_on_unfollow` が `false` なら残ることを、`true` で `follow_set.found` が `true` なら次の更新で消えることを、`true` で `follow_set.found` が `false` なら Follow Set が見つかるまで消えないこと（[agent の unfollow](../agent.md#unfollow)）を示す。「Stored only」チェックボックスの状態は `localStorage["swing:sites:stored-only"]`。
+`Unfollowed but still stored` セクションも同じ並び順を使う。セクションの注記は `unfollowed.remove_on_unfollow` が `false` なら残ることを、`true` で `follow_set.found` が `true` なら次の更新で消えることを、`true` で `follow_set.found` が `false` なら Follow Set が見つかるまで消えないこと（[agent の unfollow](../agent.md#unfollow)）を示す。保存状態のフィルター（`#sites-filter-stored` の `<select>`。`all`・`true`（保存済み）・`pending`（更新待ち）・`false`（未保存））の値は `localStorage["swing:sites:stored-filter"]`（既定 `all`）。
 
-NIP-05 の検証結果はバッジで `OK`（`verified`）/ `NG`（`mismatch`）/ `ERR`（`error`）/ `N/A`（`not_applicable`）と短く表示し、意味は `title` 属性に表示言語で出す。カードはサイト名の下の行に保存状態・NIP-05・レプリカ数のバッジ（`.swing-site-badges`）をまとめ、NIP-05 には `nip05: ` を前に付ける。テーブルでは NIP-05 列にラベルだけを出す。
+NIP-05 の検証結果はバッジで `OK`（`verified`）/ `NG`（`mismatch`）/ `ERR`（`error`）/ `N/A`（`not_applicable`）と短く表示し、意味は `title` 属性に表示言語で出す。保存状態（`ui.js::storedState`）は、`stored` が true なら `true`（保存済み）、false で `previous` があれば `pending`（更新待ち）、どちらでもなければ `false`（未保存）で、バッジとカード・行の `data-stored` に使う。更新待ちのサイトは、カードのメタ情報とテーブルの保存状態の列に保存済みの版の大きさと `created_at` を添え、`gateway_url` が無ければ `previous.gateway_url` へのリンクを出す（カードは「保存済みの版をゲートウェイで開く」、テーブルは幅を抑えるため「ゲートウェイで開く」で、`title` に前者を出す）。カードはサイト名の下の行に保存状態・NIP-05・レプリカ数のバッジ（`.swing-site-badges`）をまとめ、NIP-05 には `nip05: ` を前に付ける。テーブルでは NIP-05 列にラベルだけを出す。
 
 サイズの表示（`util.js::formatSiteSize`）: `stored_size` があればそのまま（1024 基数の `KiB`・`MiB`… で小数 1 桁）、無ければ `size` を `(12.3 MiB)` のように括弧書きで、どちらも無ければ `–`（値の意味は [`http-api/status.md#get-apisites`](http-api/status.md#get-apisites)）。
 

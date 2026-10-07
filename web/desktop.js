@@ -105,11 +105,25 @@ const NEW_DAYS = 7;
 const UP_DAYS = 30;
 const SECONDS_PER_DAY = 86400;
 
+function previousVersionSite(site) {
+  const { previous } = site;
+  return Object.assign({}, site, {
+    cid: previous.cid,
+    created_at: previous.created_at,
+    stored_at: previous.stored_at,
+    stored_size: previous.stored_size,
+    gateway_url: previous.gateway_url,
+    message: null,
+    stored: true,
+  });
+}
+
 function collectStoredSites(data) {
   const list = [];
   for (const acct of data.accounts || []) {
     for (const site of acct.sites || []) {
       if (site.stored) list.push(site);
+      else if (site.previous) list.push(previousVersionSite(site));
     }
   }
   if (data.unfollowed && Array.isArray(data.unfollowed.accounts)) {

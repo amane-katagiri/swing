@@ -32,6 +32,7 @@ CLI の `swing mirror list` / `add` / `remove`・`swing sites`（[`cli/views.md`
 3. その版のレプリカ数を数える（下記）。
 4. `state.json` を読み、サイトごとに次を付ける。
    - `stored_size`・`stored_at`: 同じサイトの版のうち `cid` がイベントと一致するものの `size`（保存時に `dag/stat` で測った値）と保存時刻。一致する版が無ければ無し。`stored` は一致する版があるかどうか。
+   - `previous`: 一致する版が無く、同じサイトの版が state にあるとき、そのうち `created_at` が最大の版（`cid`・`size`・`created_at`・`stored_at`）。新しい版を `min_update_interval` などで待っている間も、配っている版が分かるようにする。一致する版があるか、版が 1 つも無ければ無し。
    - `nip05`: `state.json` の `verifications` にあるそのサイトの検証結果。
    - `size`・`url`・`title`・`message` はイベントの値（`size` は作者の自己申告）。
 5. `[policy].remove_on_unfollow` の値と、[unfollow の一覧](#unfollow-の一覧)を添える。

@@ -7,6 +7,7 @@ use crate::config::Config;
 use crate::dashboard::dto;
 use crate::format::{Sanitized, sanitize_display_text};
 use crate::nostr::FOLLOW_SET_KIND;
+use crate::state::VersionRecord;
 use crate::{nostr, replicas};
 
 pub(super) fn print_mirror_set(mirror_set_name: &str, set: &MirrorSet) {
@@ -103,6 +104,15 @@ pub(super) fn format_site_line(row: &SiteRow, status: &str) -> String {
     )
 }
 
+pub(super) fn format_previous_line(previous: &VersionRecord) -> String {
+    format!(
+        "    stored version: cid={} size={} created_at={}",
+        previous.cid,
+        previous.size,
+        format_unix_timestamp(previous.created_at)
+    )
+}
+
 pub(super) const MAX_MESSAGE_DISPLAY_CHARS: usize = 200;
 
 pub(super) fn format_title_line(title: &str) -> String {
@@ -145,13 +155,20 @@ pub(super) fn print_sites(view: &SitesView) -> Result<()> {
             continue;
         }
         for site in &account.sites {
-            let status = if site.stored { "stored" } else { "not stored" };
+            let status = match (site.stored, &site.previous) {
+                (true, _) => "stored",
+                (false, Some(_)) => "update pending",
+                (false, None) => "not stored",
+            };
             println!("{}", format_site_line(site, status));
             if let Some(title) = &site.title {
                 println!("{}", format_title_line(title));
             }
             if let Some(message) = &site.message {
                 println!("{}", format_message_line(message));
+            }
+            if let Some(previous) = &site.previous {
+                println!("{}", format_previous_line(previous));
             }
         }
     }
@@ -217,6 +234,7 @@ mod tests {
             nip05: None,
             replicas: None,
             stored: stored_size.is_some(),
+            previous: None,
         }
     }
 

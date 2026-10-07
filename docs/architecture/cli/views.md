@@ -16,7 +16,7 @@
 
 集計は [`../mirror.md`](../mirror.md#sites-の集計mirrorcollect_sites)。Follow Set が無ければ `(no follow set found)`、対象が空なら `(follow set is empty)` を出す。
 
-- アカウントごとに npub と hex の見出しを出し、サイトごとに 1 行（`d`、`cid`、`url`、`size`、`created_at`、NIP-05 検証結果、`replicas`、`[stored]` / `[not stored]`）表示する。サイトイベントが無いアカウントは `(no site events)`。
+- アカウントごとに npub と hex の見出しを出し、サイトごとに 1 行（`d`、`cid`、`url`、`size`、`created_at`、NIP-05 検証結果、`replicas`、`[stored]` / `[update pending]` / `[not stored]`）表示する。`[update pending]` はイベントの版は未保存だが同じサイトの別の版を保存しているとき（[`../mirror.md`](../mirror.md#sites-の集計mirrorcollect_sites) の `previous`）で、`title`・`message` の行の後に `    stored version: cid=… size=… created_at=…` を出す。サイトイベントが無いアカウントは `(no site events)`。
   - `size` 列: `stored_size` があれば数値で、無ければイベントの自己申告の `size` を括弧書き（例 `(12345)`）で、どちらも無ければ `-` を出す。
   - `replicas` 列: `3` または `3 (+12 unverified)`（未検証の報告者がいるとき）の形（`replicas::format_replica_counts`）。レプリカ報告の取得に失敗したら先頭に `(fetching replica reports failed: ...)` を表示して `-` にする。
 - `title` があれば次の行に `    title: `、`message` があれば続けて `    message: ` を出す。どちらも `format::sanitize_display_text` で無害化し 200 文字までにする（超えた分は `…`）。`url` 列も `format::Sanitized` を通す。

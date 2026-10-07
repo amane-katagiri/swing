@@ -11,8 +11,16 @@ export function copyButton(text, ariaLabel) {
   return el('button', attrs, t('copy'));
 }
 
+export function storedState(site) {
+  if (site.stored) return 'true';
+  return site.previous ? 'pending' : 'false';
+}
+
+const STORED_LABELS = { true: 'stored', pending: 'updatePending', false: 'notStored' };
+
 export function storedBadge(site) {
-  return el('span', { class: 'swing-badge', 'data-stored': String(!!site.stored) }, site.stored ? t('stored') : t('notStored'));
+  const state = storedState(site);
+  return el('span', { class: 'swing-badge', 'data-stored': state }, t(STORED_LABELS[state]));
 }
 
 export function buildSiteNameRow(site) {
@@ -27,6 +35,7 @@ export function appendLinksAndMessage(wrap, site) {
   const links = el('div', { class: 'swing-site-links' }, [
     site.url ? maybeLink(site.url, t('openSite')) : null,
     site.gateway_url ? maybeLink(site.gateway_url, t('openGateway')) : null,
+    !site.gateway_url && site.previous?.gateway_url ? maybeLink(site.previous.gateway_url, t('openPreviousGateway')) : null,
   ]);
   if (links.childNodes.length) wrap.append(links);
 

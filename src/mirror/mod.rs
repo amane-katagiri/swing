@@ -274,6 +274,7 @@ pub struct SiteRow {
     pub nip05: Option<String>,
     pub replicas: Option<replicas::ReplicaCounts>,
     pub stored: bool,
+    pub previous: Option<VersionRecord>,
 }
 
 fn unfollowed_sites(
@@ -380,10 +381,12 @@ fn followed_accounts(
             .into_iter()
             .map(|ev| {
                 let key = state::site_key(&pubkey_hex, &ev.d);
-                let stored_version = state
-                    .sites
-                    .get(&key)
-                    .and_then(|versions| versions.iter().find(|v| v.cid == ev.cid));
+                let versions = state.sites.get(&key).map(Vec::as_slice).unwrap_or_default();
+                let stored_version = versions.iter().find(|v| v.cid == ev.cid);
+                let previous = match stored_version {
+                    Some(_) => None,
+                    None => versions.iter().max_by_key(|v| v.created_at).cloned(),
+                };
                 SiteRow {
                     d: ev.d.clone(),
                     cid: ev.cid.clone(),
@@ -397,6 +400,7 @@ fn followed_accounts(
                     nip05: nip05_status(state, &key),
                     replicas: replica_counts(replica_data, ev),
                     stored: stored_version.is_some(),
+                    previous,
                 }
             })
             .collect();
@@ -428,6 +432,7 @@ fn unfollowed_accounts(state: &State, targets: &[PublicKey]) -> Result<Vec<Accou
                     message: None,
                     replicas: None,
                     stored: true,
+                    previous: None,
                 }
             })
             .collect();
@@ -544,6 +549,57 @@ mod tests {
             .map(|(d, v)| (d.as_str(), v.cid.as_str()))
             .collect();
         assert_eq!(sites, vec![("x.example", "new"), ("y:z", "yz")]);
+    }
+
+    #[test]
+    fn followed_accounts_reports_the_latest_stored_version_while_the_event_is_not_stored() {
+        let pk = keys().public_key();
+        let hex = pk.to_hex();
+        let record = |cid: &str, created_at| VersionRecord {
+            cid: cid.into(),
+            size: created_at,
+            created_at,
+            stored_at: created_at,
+        };
+        let mut state = State::default();
+        state.apply_store(&state::site_key(&hex, "pending.example"), record("old", 1));
+        state.apply_store(
+            &state::site_key(&hex, "pending.example"),
+            record("older", 0),
+        );
+        state.apply_store(&state::site_key(&hex, "stored.example"), record("old", 1));
+        state.apply_store(
+            &state::site_key(&hex, "stored.example"),
+            record(crate::test_support::CID_A, 2),
+        );
+        let events = [
+            crate::test_support::site_event_fixture(pk, "pending.example", 3),
+            crate::test_support::site_event_fixture(pk, "stored.example", 2),
+            crate::test_support::site_event_fixture(pk, "new.example", 3),
+        ];
+        let latest: Vec<&nostr::SiteEvent> = events.iter().collect();
+
+        let accounts = followed_accounts(&[pk], &latest, &state, &None).unwrap();
+
+        let rows: Vec<(&str, bool, Option<&str>)> = accounts[0]
+            .sites
+            .iter()
+            .map(|s| {
+                (
+                    s.d.as_str(),
+                    s.stored,
+                    s.previous.as_ref().map(|v| v.cid.as_str()),
+                )
+            })
+            .collect();
+        assert_eq!(
+            rows,
+            vec![
+                ("new.example", false, None),
+                ("pending.example", false, Some("old")),
+                ("stored.example", true, None),
+            ]
+        );
     }
 
     fn signed_follow_set(keys: &Keys, created_at: u64) -> Event {

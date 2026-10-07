@@ -567,7 +567,12 @@
           <button type="button" data-sort-value="name" data-i18n="sortName">Name</button>
           <button type="button" data-sort-value="pubkey" data-i18n="sortPubkey">Pubkey</button>
         </div>
-        <label class="swing-checkbox swing-toolbar-end"><input type="checkbox" id="sites-filter-stored"> <span data-i18n="storedOnly">Stored only</span></label>
+        <select id="sites-filter-stored" class="swing-input swing-toolbar-end" aria-label="Storage state" data-i18n-aria-label="storedFilterLabel">
+          <option value="all" data-i18n="storedFilterAll">All</option>
+          <option value="true" data-i18n="storedFilterStored">Stored</option>
+          <option value="pending" data-i18n="storedFilterPending">Update pending</option>
+          <option value="false" data-i18n="storedFilterNotStored">Not stored</option>
+        </select>
       </div>
       <div class="swing-toolbar swing-toolbar-row">
         <input type="search" id="sites-filter-text" class="swing-input" data-i18n-placeholder="filterPlaceholder" placeholder="Filter by name, domain, cid…">

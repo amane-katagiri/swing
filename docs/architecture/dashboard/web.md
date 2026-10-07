@@ -99,7 +99,7 @@ CSS の読み込み順と上書きの仕方は [`css.md#読み込み順`](css.md
 |---|---|---|
 | `swing:style:<view>`（`view` は `sites`/`webring`） | 文字列（スタイル名） | 画面ごとの表示スタイル |
 | `swing:sites:sort` | `updated` / `name` / `pubkey` | Sites の並び順（既定 `updated`） |
-| `swing:sites:stored-only` | `"1"` / `"0"` | Sites の「Stored only」チェックボックスの状態 |
+| `swing:sites:stored-filter` | `"all"` / `"true"` / `"pending"` / `"false"` | Sites の保存状態のフィルター |
 | `swing:webring:query` | JSON `{root, depth}` | Webring の最後のクエリ（起動時に復元） |
 | `swing:publish:last` | JSON `{site, url, title, message, nip05, check_dotfiles, check_size, check_unchanged}` | Publish フォームの最後の入力（起動時にプリフィル） |
 | `swing:nav:collapsed` | `"1"` / `"0"` | サイドナビを畳んでいるか（既定 `0`） |

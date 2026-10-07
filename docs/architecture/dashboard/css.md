@@ -38,7 +38,7 @@
 
 | 属性 | 付く要素 |
 |---|---|
-| `data-stored="true\|false"` | サイトのカード・テーブルの行、保存状態のバッジ |
+| `data-stored="true\|pending\|false"` | サイトのカード・テーブルの行、保存状態のバッジ |
 | `data-nip05="verified\|mismatch\|not_applicable\|error"` | NIP-05 のバッジ |
 | `data-health="ok\|missing\|cid_mismatch\|incomplete\|check_failed\|invalid_key"` | Storage check の行とバッジ |
 | `data-ok="true\|false"` | relay 結果の行（`swing-relay-result`） |

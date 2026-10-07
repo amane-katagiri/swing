@@ -46,9 +46,9 @@
 
 ```json
 { "follow_set": { "found": true, "note": null },
-  "accounts": [ { "pubkey": "…", "npub": "…", "sites": [ { "d": "example.com", "cid": "bafy…", "url": "…", "size": 12345, "stored_size": 12300, "stored_at": 1790000100, "created_at": 1790000000, "title": "…", "message": "…", "nip05": "verified", "replicas": 3, "unverified_replicas": 0, "stored": true, "gateway_url": "…" } ] } ],
+  "accounts": [ { "pubkey": "…", "npub": "…", "sites": [ { "d": "example.com", "cid": "bafy…", "url": "…", "size": 12345, "stored_size": 12300, "stored_at": 1790000100, "created_at": 1790000000, "title": "…", "message": "…", "nip05": "verified", "replicas": 3, "unverified_replicas": 0, "stored": true, "gateway_url": "…", "previous": null } ] } ],
   "replicas_error": null,
-  "unfollowed": { "remove_on_unfollow": true, "accounts": [ { "...": "同じ形。ただし url・title・message・replicas・unverified_replicas は常に null、stored は常に true、stored_size は size と同じ値" } ] } }
+  "unfollowed": { "remove_on_unfollow": true, "accounts": [ { "...": "同じ形。ただし url・title・message・replicas・unverified_replicas は常に null、stored は常に true、stored_size は size と同じ値、previous は常に null" } ] } }
 ```
 
 - `follow_set.note`: [使う Follow Set](../../mirror.md#使う-follow-set) の注記から括弧を外した文字列。無ければ `null`。
@@ -56,6 +56,7 @@
 - 版ごとの重複排除込みの実測合計は `/api/status` の `sites[].actual` にしかない。
 - `replicas`・`unverified_replicas`: `ReplicaCounts` の `trusted` と `unverified`（[`../../nostr.md#レプリカ報告の信頼度replicastier`](../../nostr.md#レプリカ報告の信頼度replicastier)）。レプリカ報告の取得に失敗すると全サイトで両方 `null` になり、`replicas_error` に理由が入る。
 - `gateway_url`: `stored` が true かつ gateway 設定がある版だけに付く。
+- `previous`: イベントの版をまだ保存しておらず、同じサイトの別の版を保存しているとき（[`../../mirror.md`](../../mirror.md#sites-の集計mirrorcollect_sites) の `previous`）の `{ "cid", "created_at", "stored_at", "stored_size", "gateway_url" }`。`gateway_url` は gateway 設定があればその版の CID で付ける。それ以外は `null`。
 
 ## GET /api/status
 
