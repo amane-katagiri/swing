@@ -4,10 +4,6 @@ use crate::state::VersionRecord;
 use std::collections::HashSet;
 use tokio::task::JoinSet;
 
-fn after_poll_interval(fx: &Fixture) -> Instant {
-    Instant::now() + fx.agent.config.agent.poll_interval
-}
-
 fn cids(list: &[&str]) -> Vec<String> {
     list.iter().map(|c| c.to_string()).collect()
 }
@@ -234,7 +230,7 @@ async fn stale_reports_are_withdrawn_once_the_relays_answer() {
     assert!(fx.take_reports().is_empty());
     assert_eq!(fx.relay().own_fetches, 1);
 
-    fx.agent.sync_reports_at(after_poll_interval(&fx)).await;
+    fx.agent.sync_reports_in_round().await;
     assert_eq!(fx.take_reports(), vec![(fx.key("gone.example"), vec![])]);
     assert_eq!(fx.relay().own_fetches, 2);
 }
@@ -268,12 +264,36 @@ async fn own_reports_are_fetched_again_after_a_walk_cut_short() {
     assert!(fx.take_reports().is_empty());
     assert_eq!(fx.relay().own_fetches, 1);
 
-    fx.agent.sync_reports_at(after_poll_interval(&fx)).await;
+    fx.agent.sync_reports_in_round().await;
     assert_eq!(fx.take_reports(), vec![(fx.key("gone.example"), vec![])]);
     assert_eq!(fx.relay().own_fetches, 2);
 
-    fx.agent.sync_reports_at(after_poll_interval(&fx)).await;
+    fx.agent.sync_reports_in_round().await;
     assert_eq!(fx.relay().own_fetches, 2);
+}
+
+#[tokio::test]
+async fn a_failed_load_is_retried_once_per_report_round() {
+    let fx = Fixture::new(default_policy(), FakeKubo::default());
+    fx.seed(D, "bafy-a", 1, 100).await;
+    fx.relay().fail_fetch = true;
+
+    fx.agent.sync_reports().await;
+    assert_eq!(fx.relay().own_fetches, 1);
+    fx.agent.sync_reports().await;
+    assert_eq!(fx.relay().own_fetches, 1);
+
+    fx.agent.sync_reports_in_round().await;
+    assert_eq!(fx.relay().own_fetches, 2);
+    fx.agent.sync_reports().await;
+    assert_eq!(fx.relay().own_fetches, 2);
+
+    fx.relay().fail_fetch = false;
+    fx.agent.sync_reports_in_round().await;
+    assert_eq!(fx.relay().own_fetches, 3);
+    fx.agent.sync_reports_in_round().await;
+    fx.agent.sync_reports().await;
+    assert_eq!(fx.relay().own_fetches, 3);
 }
 
 #[tokio::test]

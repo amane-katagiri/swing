@@ -62,7 +62,7 @@ where
         }
         let agent = Arc::clone(self);
         *round = Some(tasks.spawn(async move {
-            agent.sync_reports().await;
+            agent.sync_reports_in_round().await;
             agent.record_replica_reports().await;
         }));
     }

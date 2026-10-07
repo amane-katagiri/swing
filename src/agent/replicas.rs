@@ -1,7 +1,5 @@
-use std::collections::{BTreeMap, BTreeSet};
-use std::time::Instant;
-
 use nostr_sdk::prelude::*;
+use std::collections::{BTreeMap, BTreeSet};
 use tracing::{debug, info, warn};
 
 use crate::ipfs::KuboStore;
@@ -23,7 +21,7 @@ pub(super) struct SentReport {
 pub(super) struct ReportBook {
     pub(super) loaded: bool,
     pub(super) sent: BTreeMap<SiteKey, SentReport>,
-    load_after: Option<Instant>,
+    load_tried: bool,
     own_cids: BTreeMap<SiteKey, BTreeSet<String>>,
 }
 
@@ -178,16 +176,16 @@ impl<C: KuboStore, N: Nip05Verify, R: ReportRelay> Agent<C, N, R> {
         held
     }
 
-    async fn load_sent_reports(&self, book: &mut ReportBook, now: Instant) {
-        if book.loaded || book.load_after.is_some_and(|after| now < after) {
+    async fn load_sent_reports(&self, book: &mut ReportBook, round: bool) {
+        if book.loaded || (book.load_tried && !round) {
             return;
         }
-        book.load_after = Some(now + self.config.agent.poll_interval);
+        book.load_tried = true;
         let kind = self.config.nostr.replica_event_kind;
         let paged = match self.reporter.fetch_own_reports(kind).await {
             Ok(paged) => paged,
             Err(e) => {
-                warn!(error = %e, "fetching own replica reports failed; fetching them again after poll_interval, and stale reports are withdrawn once a fetch succeeds");
+                warn!(error = %e, "fetching own replica reports failed; fetching them again in the next report round, and stale reports are withdrawn once a fetch succeeds");
                 return;
             }
         };
@@ -221,7 +219,7 @@ impl<C: KuboStore, N: Nip05Verify, R: ReportRelay> Agent<C, N, R> {
         }
         if !paged.complete {
             warn!(
-                "no relay listed every own replica report; fetching them again after poll_interval"
+                "no relay listed every own replica report; fetching them again in the next report round"
             );
             return;
         }
@@ -298,12 +296,17 @@ impl<C: KuboStore, N: Nip05Verify, R: ReportRelay> Agent<C, N, R> {
     }
 
     pub(super) async fn sync_reports(&self) {
-        self.sync_reports_at(Instant::now()).await;
+        self.sync_reports_with(false).await;
     }
 
-    async fn sync_reports_at(&self, at: Instant) {
+    // Syncs also follow every stored site and a fetch can take minutes, so only the periodic round retries a failed load.
+    pub(super) async fn sync_reports_in_round(&self) {
+        self.sync_reports_with(true).await;
+    }
+
+    async fn sync_reports_with(&self, round: bool) {
         let mut book = self.reports.lock().await;
-        self.load_sent_reports(&mut book, at).await;
+        self.load_sent_reports(&mut book, round).await;
         let held = self.held().await;
         book.own_cids = own_cids(&held, &book.own_cids, &self.own.to_hex());
         let now = now_secs();
