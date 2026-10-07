@@ -1,8 +1,6 @@
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result};
 use axum::Json;
@@ -12,8 +10,9 @@ use axum::response::{IntoResponse, Response};
 use tokio::io::AsyncWriteExt;
 
 use super::AppState;
-use super::api::{ApiError, PublishFields, PublishOutcome, internal, run_publish};
 use super::dto;
+use super::error::{ApiError, internal};
+use super::publish::{PublishFields, PublishOutcome, run_publish, try_lock_publish};
 
 pub const MAX_UPLOAD_FILES: usize = 10_000;
 pub const MAX_PATH_SEGMENTS: usize = 32;
@@ -71,8 +70,7 @@ pub fn validate_relative_path(path: &str) -> Result<(), String> {
     Ok(())
 }
 
-// Reserved on Windows regardless of extension (e.g. `nul.txt`); rejected on every platform so a
-// site published from Linux still mirrors cleanly onto a Windows checkout.
+// Rejected on every platform, extension or not (`nul.txt`), so a site published from Linux still mirrors onto Windows.
 const WINDOWS_RESERVED_NAMES: &[&str] = &[
     "CON",
     "PRN",
@@ -113,15 +111,7 @@ fn is_windows_reserved_segment(segment: &str) -> bool {
         .any(|name| base.eq_ignore_ascii_case(name))
 }
 
-static UPLOAD_COUNTER: AtomicU64 = AtomicU64::new(0);
-
-fn random_upload_name() -> String {
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default();
-    let counter = UPLOAD_COUNTER.fetch_add(1, Ordering::Relaxed);
-    format!("{}-{}-{counter}", now.as_nanos(), std::process::id())
-}
+const UPLOAD_NAME_BYTES: usize = 16;
 
 pub async fn cleanup_upload_dir(state_dir: &Path) -> Result<()> {
     let upload_dir = state_dir.join(crate::publish::DASHBOARD_UPLOAD_DIR);
@@ -135,6 +125,13 @@ pub async fn cleanup_upload_dir(state_dir: &Path) -> Result<()> {
 async fn create_private_dir_all(path: &Path) -> std::io::Result<()> {
     let path = path.to_path_buf();
     tokio::task::spawn_blocking(move || crate::auth::create_private_dir_all_io(&path))
+        .await
+        .map_err(std::io::Error::other)?
+}
+
+async fn create_private_dir(path: &Path) -> std::io::Result<()> {
+    let path = path.to_path_buf();
+    tokio::task::spawn_blocking(move || crate::auth::create_private_dir_io(&path))
         .await
         .map_err(std::io::Error::other)?
 }
@@ -188,8 +185,7 @@ fn path_conflict(filename: &str) -> ApiError {
     ))
 }
 
-// Owns the upload temp dir so a timeout or client disconnect (which drops the handler future
-// mid-await, skipping any code after the `.await`) still frees it via Drop.
+// A timeout or client disconnect drops the handler mid-await, so only Drop is sure to free the temp dir.
 struct UploadDirGuard {
     dest: Option<PathBuf>,
 }
@@ -237,6 +233,7 @@ async fn receive_upload(multipart: &mut Multipart, dest: &Path) -> Result<Parsed
     let mut modes = crate::publish::ModeOverrides::default();
     let mut seen_paths: HashSet<String> = HashSet::new();
     let mut seen_dirs: HashSet<String> = HashSet::new();
+    let mut created_dirs: HashSet<PathBuf> = HashSet::from([dest.to_path_buf()]);
     let mut file_count = 0usize;
 
     loop {
@@ -293,10 +290,13 @@ async fn receive_upload(multipart: &mut Multipart, dest: &Path) -> Result<Parsed
                         "file path escapes the upload directory: {filename}"
                     )));
                 }
-                if let Some(parent) = target.parent() {
+                if let Some(parent) = target.parent()
+                    && !created_dirs.contains(parent)
+                {
                     create_private_dir_all(parent)
                         .await
                         .map_err(|e| path_conflict_or_internal(&filename, e))?;
+                    created_dirs.insert(parent.to_path_buf());
                 }
                 let mut out = match create_private_file(&target).await {
                     Ok(out) => out,
@@ -353,6 +353,7 @@ pub async fn publish_upload(
     State(state): State<Arc<AppState>>,
     mut multipart: Multipart,
 ) -> Result<Response, ApiError> {
+    let publishing = try_lock_publish(&state)?;
     let upload_root = state
         .config
         .agent
@@ -361,13 +362,13 @@ pub async fn publish_upload(
     create_private_dir_all(&upload_root)
         .await
         .map_err(|e| internal("creating the upload directory failed", e))?;
-    let dest: PathBuf = upload_root.join(random_upload_name());
-    create_private_dir_all(&dest)
+    let dest: PathBuf = upload_root.join(crate::auth::random_hex(UPLOAD_NAME_BYTES));
+    create_private_dir(&dest)
         .await
         .map_err(|e| internal("creating the upload directory failed", e))?;
 
     let guard = UploadDirGuard::new(dest.clone());
-    let result = handle_upload(&state, &mut multipart, &dest).await;
+    let result = handle_upload(&state, &publishing, &mut multipart, &dest).await;
     guard.cleanup().await;
 
     let (outcome, file_count) = result?;
@@ -383,11 +384,12 @@ pub async fn publish_upload(
 
 async fn handle_upload(
     state: &AppState,
+    publishing: &tokio::sync::MutexGuard<'_, ()>,
     multipart: &mut Multipart,
     dest: &Path,
 ) -> Result<(PublishOutcome, usize), ApiError> {
     let parsed = receive_upload(multipart, dest).await?;
-    let outcome = run_publish(state, dest, parsed.fields).await?;
+    let outcome = run_publish(state, publishing, dest, parsed.fields).await?;
     Ok((outcome, parsed.file_count))
 }
 
@@ -617,6 +619,42 @@ mod tests {
         .await;
         assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
         assert!(upload_dir_entries(dir.path()).is_empty());
+    }
+
+    #[tokio::test]
+    async fn upload_during_a_running_publish_is_refused_before_anything_is_written() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = test_state_with(dir.path().to_path_buf(), 2 * (1u64 << 30));
+        let boundary = "SwingTestBoundary";
+        let body = multipart_body(
+            boundary,
+            &[
+                ("site", None, b"example.com"),
+                ("file", Some("index.html"), b"<html></html>"),
+            ],
+        );
+        let publishing = state.publish_lock.try_lock().unwrap();
+        let resp = call(
+            router(Arc::clone(&state)),
+            multipart_request("/api/publish/upload", boundary, body),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::CONFLICT);
+        assert!(
+            !dir.path()
+                .join(crate::publish::DASHBOARD_UPLOAD_DIR)
+                .exists()
+        );
+        drop(publishing);
+    }
+
+    #[tokio::test]
+    async fn create_private_dir_refuses_an_existing_entry() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("upload");
+        create_private_dir(&path).await.unwrap();
+        let err = create_private_dir(&path).await.unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::AlreadyExists);
     }
 
     #[tokio::test]

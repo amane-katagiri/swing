@@ -1,4 +1,4 @@
-# ダッシュボード HTTP API（`src/dashboard/api.rs`, `src/dashboard/setup.rs`, `src/dashboard/session.rs`, `src/dashboard/upload.rs`, `src/dashboard/dto.rs`, `src/dashboard/config_dto.rs`）
+# ダッシュボード HTTP API（`src/dashboard/api.rs`, `src/dashboard/error.rs`, `src/dashboard/publish.rs`, `src/dashboard/setup.rs`, `src/dashboard/session.rs`, `src/dashboard/upload.rs`, `src/dashboard/dto.rs`, `src/dashboard/config_dto.rs`）
 
 [`../dashboard.md`](../dashboard.md) の子ページ。ガードと認証は [`security.md`](security.md)、画面側からの使い方は [`views.md`](views.md)（Publish は [`views/publish.md`](views/publish.md)）を参照。各エンドポイントの入出力は [一覧](#エンドポイント一覧)から辿る子ページにある。
 
@@ -13,7 +13,7 @@
 |---|---|
 | 400 | 入力不正。JSON の構文エラー・必須フィールド欠落・`Content-Type` 不一致も 400（422 にはしない）。`POST /api/publish/upload` に multipart でない `Content-Type` を送ったときは axum の素の 400（本文は JSON ではない） |
 | 401 | 認証が通らない（[`security.md#ガード`](security.md#ガード)）。認証の要る `/api/*` は、存在しないパスでも 401 |
-| 403 | ガードの Host・`X-Swing-Dashboard`・Origin の検証に通らない |
+| 403 | ガードの Host・`X-Swing-Dashboard`・Origin の検証に通らない。Bearer 限定のエンドポイントをセッション cookie で呼んだ |
 | 404 | 存在しないルート（空ボディ）。`/api/*` では認証を通った後だけ |
 | 405 | ルートはあるがメソッドが違う（空ボディ） |
 | 408 | リクエストタイムアウト（空ボディ。[`../dashboard.md#タイムアウトsrcdashboardmodrs`](../dashboard.md#タイムアウトsrcdashboardmodrs)） |

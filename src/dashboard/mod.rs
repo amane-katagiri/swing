@@ -2,8 +2,10 @@ mod api;
 mod assets;
 mod config_dto;
 pub(crate) mod dto;
+mod error;
 pub mod guard;
 mod mascots;
+mod publish;
 mod session;
 mod setup;
 #[cfg(test)]
@@ -213,8 +215,12 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/api/restart", post(api::restart))
         .route("/api/login", post(session::login))
         .route("/api/identity", post(session::identity))
-        .route("/api/login-code", post(session::login_code))
-        .route("/api/token/rotate", post(session::rotate_token));
+        .merge(
+            Router::new()
+                .route("/api/login-code", post(session::login_code))
+                .route("/api/token/rotate", post(session::rotate_token))
+                .route_layer(axum::middleware::from_fn(guard::require_bearer)),
+        );
 
     if state.config.dashboard.ui {
         app = app.merge(ui_router());

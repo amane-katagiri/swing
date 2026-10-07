@@ -40,7 +40,7 @@ impl From<&nostr::RelaySendResult> for RelayResultDto {
     }
 }
 
-fn relay_results_dto(results: &[nostr::RelaySendResult]) -> Vec<RelayResultDto> {
+pub(super) fn relay_results_dto(results: &[nostr::RelaySendResult]) -> Vec<RelayResultDto> {
     results.iter().map(RelayResultDto::from).collect()
 }
 

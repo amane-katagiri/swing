@@ -17,7 +17,7 @@
 
 ## POST /api/login-code
 
-使い捨てのログインコードを発行する（`swing dashboard open` と `swing-tray` が使う）。ボディは不要。`expires_in` は有効期限の秒数。
+使い捨てのログインコードを発行する（`swing dashboard open` と `swing-tray` が使う）。`Authorization: Bearer` で認証したときだけ受け付け、セッション cookie での呼び出しは 403（[`../security.md#ガード`](../security.md#ガード)）。ボディは不要。`expires_in` は有効期限の秒数。
 
 ```json
 { "code": "cc2455ac565b74586b0628e1d7bda4c3", "expires_in": 300 }
@@ -37,4 +37,4 @@
 
 ## POST /api/token/rotate
 
-トークンを作り直す。成功で `200 {"ok": true}`、ファイルが書けなければ 500。
+トークンを作り直す。`POST /api/login-code` と同じく Bearer のときだけ受け付ける（cookie なら 403）。成功で `200 {"ok": true}`、ファイルが書けなければ 500。

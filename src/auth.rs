@@ -71,18 +71,24 @@ pub(crate) fn create_private_dir_all(path: &Path) -> Result<()> {
 }
 
 pub(crate) fn create_private_dir_all_io(path: &Path) -> std::io::Result<()> {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::DirBuilderExt;
-        std::fs::DirBuilder::new()
-            .recursive(true)
-            .mode(0o700)
-            .create(path)
-    }
-    #[cfg(not(unix))]
-    {
-        std::fs::create_dir_all(path)
-    }
+    private_dir_builder().recursive(true).create(path)
+}
+
+pub(crate) fn create_private_dir_io(path: &Path) -> std::io::Result<()> {
+    private_dir_builder().create(path)
+}
+
+#[cfg(unix)]
+fn private_dir_builder() -> std::fs::DirBuilder {
+    use std::os::unix::fs::DirBuilderExt;
+    let mut builder = std::fs::DirBuilder::new();
+    builder.mode(0o700);
+    builder
+}
+
+#[cfg(not(unix))]
+fn private_dir_builder() -> std::fs::DirBuilder {
+    std::fs::DirBuilder::new()
 }
 
 pub(crate) fn private_file_options() -> std::fs::OpenOptions {
@@ -124,7 +130,12 @@ pub(crate) fn random_hex(len: usize) -> String {
 }
 
 fn hex(bytes: &[u8]) -> String {
-    bytes.iter().map(|b| format!("{b:02x}")).collect()
+    use std::fmt::Write as _;
+    let mut out = String::with_capacity(bytes.len() * 2);
+    for b in bytes {
+        let _ = write!(out, "{b:02x}");
+    }
+    out
 }
 
 fn unix_now() -> u64 {

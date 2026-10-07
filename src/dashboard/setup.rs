@@ -13,8 +13,8 @@ use crate::settings;
 use crate::signer::{self, Pairing, PairingRequest, PairingState, Signer};
 
 use super::AppState;
-use super::api::{ApiError, AppJson, blocking, internal, settings_error};
 use super::dto;
+use super::error::{ApiError, AppJson, blocking, internal, settings_error};
 
 #[derive(Debug, Deserialize)]
 pub struct SetupRequest {

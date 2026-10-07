@@ -50,12 +50,31 @@ fn bearer_token(headers: &HeaderMap) -> Option<&str> {
         .and_then(|v| v.strip_prefix("Bearer "))
 }
 
-pub fn authorized(headers: &HeaderMap, host_header: &str, token: &str) -> bool {
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AuthMethod {
+    Bearer,
+    Session,
+}
+
+pub fn authenticate(headers: &HeaderMap, host_header: &str, token: &str) -> Option<AuthMethod> {
     if let Some(presented) = bearer_token(headers) {
-        return auth::token_matches(token, presented.trim());
+        return auth::token_matches(token, presented.trim()).then_some(AuthMethod::Bearer);
     }
     let name = session_cookie_name(host_header);
-    cookie_values(headers, &name).any(|v| auth::verify_session(token, auth::DASHBOARD_SESSION, v))
+    cookie_values(headers, &name)
+        .any(|v| auth::verify_session(token, auth::DASHBOARD_SESSION, v))
+        .then_some(AuthMethod::Session)
+}
+
+pub async fn require_bearer(req: Request<Body>, next: Next) -> Response {
+    if req.extensions().get::<AuthMethod>() != Some(&AuthMethod::Bearer) {
+        return guarded_error(
+            StatusCode::FORBIDDEN,
+            "this endpoint needs the dashboard token, not a browser session",
+            true,
+        );
+    }
+    next.run(req).await
 }
 
 pub fn host_allowed(host_header: &str, allowed_hosts: &[String]) -> bool {
@@ -104,7 +123,7 @@ fn apply_security_headers(headers: &mut HeaderMap, is_api: bool) {
 
 pub async fn security_middleware(
     State(state): State<Arc<AppState>>,
-    req: Request<Body>,
+    mut req: Request<Body>,
     next: Next,
 ) -> Response {
     let is_api = req.uri().path().starts_with("/api/");
@@ -149,12 +168,15 @@ pub async fn security_middleware(
     }
 
     let protected = needs_auth(req.uri().path());
-    if protected && !authorized(req.headers(), &host_header, &state.token()) {
-        return guarded_error(
-            StatusCode::UNAUTHORIZED,
-            "missing or invalid dashboard token or session",
-            is_api,
-        );
+    if protected {
+        let Some(method) = authenticate(req.headers(), &host_header, &state.token()) else {
+            return guarded_error(
+                StatusCode::UNAUTHORIZED,
+                "missing or invalid dashboard token or session",
+                is_api,
+            );
+        };
+        req.extensions_mut().insert(method);
     }
 
     let mut response = next.run(req).await;
@@ -228,22 +250,31 @@ mod tests {
     }
 
     #[test]
-    fn authorized_accepts_bearer_token() {
+    fn authenticate_accepts_bearer_token() {
         let h = headers(&[(header::AUTHORIZATION, "Bearer tok")]);
-        assert!(authorized(&h, "127.0.0.1:8082", "tok"));
+        assert_eq!(
+            authenticate(&h, "127.0.0.1:8082", "tok"),
+            Some(AuthMethod::Bearer)
+        );
         let h = headers(&[(header::AUTHORIZATION, "Bearer nope")]);
-        assert!(!authorized(&h, "127.0.0.1:8082", "tok"));
-        assert!(!authorized(&HeaderMap::new(), "127.0.0.1:8082", "tok"));
+        assert_eq!(authenticate(&h, "127.0.0.1:8082", "tok"), None);
+        assert_eq!(
+            authenticate(&HeaderMap::new(), "127.0.0.1:8082", "tok"),
+            None
+        );
     }
 
     #[test]
-    fn authorized_accepts_session_cookie_for_this_port_only() {
+    fn authenticate_accepts_session_cookie_for_this_port_only() {
         let session = auth::new_session("tok", auth::DASHBOARD_SESSION);
         let cookie = format!("theme=dark; swing_session_8082={session}");
         let h = headers(&[(header::COOKIE, &cookie)]);
-        assert!(authorized(&h, "127.0.0.1:8082", "tok"));
-        assert!(!authorized(&h, "127.0.0.1:18082", "tok"));
-        assert!(!authorized(&h, "127.0.0.1:8082", "rotated"));
+        assert_eq!(
+            authenticate(&h, "127.0.0.1:8082", "tok"),
+            Some(AuthMethod::Session)
+        );
+        assert_eq!(authenticate(&h, "127.0.0.1:18082", "tok"), None);
+        assert_eq!(authenticate(&h, "127.0.0.1:8082", "rotated"), None);
     }
 
     #[test]

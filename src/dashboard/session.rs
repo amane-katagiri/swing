@@ -9,8 +9,8 @@ use serde::Deserialize;
 use crate::auth;
 
 use super::AppState;
-use super::api::{ApiError, AppJson, internal};
 use super::dto;
+use super::error::{ApiError, AppJson, internal};
 use super::guard;
 
 #[derive(Deserialize)]
@@ -322,6 +322,24 @@ mod tests {
         let resp = call_anonymous(router(state), post_json("/api/login", &body)).await;
         assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
         assert!(set_cookie(&resp).is_none());
+    }
+
+    #[tokio::test]
+    async fn a_browser_session_can_neither_mint_login_codes_nor_rotate_the_token() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = test_state_with(dir.path().to_path_buf(), 1 << 20);
+        let session = crate::auth::new_session(TEST_TOKEN, crate::auth::DASHBOARD_SESSION);
+        for path in ["/api/login-code", "/api/token/rotate"] {
+            let mut req = post_json(path, "");
+            req.headers_mut().insert(
+                "cookie",
+                format!("swing_session_8082={session}").parse().unwrap(),
+            );
+            let resp = call_anonymous(router(Arc::clone(&state)), req).await;
+            assert_eq!(resp.status(), StatusCode::FORBIDDEN, "{path}");
+        }
+        assert!(crate::auth::read_token(dir.path()).unwrap().is_none());
+        assert_eq!(state.token(), TEST_TOKEN);
     }
 
     #[tokio::test]

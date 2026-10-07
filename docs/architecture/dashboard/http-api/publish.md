@@ -1,4 +1,4 @@
-# publish（`src/dashboard/upload.rs`, `src/dashboard/api.rs`, `src/dashboard/dto.rs`）
+# publish（`src/dashboard/upload.rs`, `src/dashboard/publish.rs`, `src/dashboard/api.rs`, `src/dashboard/dto.rs`）
 
 [`../http-api.md`](../http-api.md) の子ページ。共通の形式・エラー・準備状態は親ページを参照。
 
@@ -29,10 +29,10 @@
 
 判定の順:
 
-1. パートの受信とパスの検証、`site` と `file` の有無（400・413）
-2. `site`/`url`/`title` とモードの 4 つの検証（400）
-3. 展開先が設定ファイル・`[agent].state_dir`・`[kubo].repo` と重ならないか（CLI と同じ。400）
-4. 多重実行（409 `a publish is already running`）。本体を最後まで受け取ってから判定するので、409 はアップロードの後になる。排他するのはダッシュボード内で同時に来た publish どうしだけで、同じホスト上の CLI `swing publish` とは排他しない
+1. 多重実行（409 `a publish is already running`）。本体を読む前・一時ディレクトリを作る前に判定するので、409 のときは何もディスクに書かない。排他するのはダッシュボード内で同時に来た publish どうしだけで、同じホスト上の CLI `swing publish` とは排他しない
+2. パートの受信とパスの検証、`site` と `file` の有無（400・413）
+3. `site`/`url`/`title` とモードの 4 つの検証（400）
+4. 展開先が設定ファイル・`[agent].state_dir`・`[kubo].repo` と重ならないか（CLI と同じ。400）
 5. セットアップモード（503 `agent is not configured`）
 6. NIP-05（422）
 7. ドットファイル・サイズ（422）
@@ -41,7 +41,7 @@
 
 処理:
 
-- `<state_dir>/upload/` の下に一時ディレクトリを作り、各 `file` パートをストリーミングで書き込む。unix ではディレクトリを `0o700`、ファイルを `0o600` で作る。
+- `<state_dir>/upload/` の下に一時ディレクトリ（名前は 16 バイトの乱数の hex）を作り、各 `file` パートをストリーミングで書き込む。一時ディレクトリそのものは再帰せずに作り、同じ名前のものが既にあれば 500 にする。unix ではディレクトリを `0o700`、ファイルを `0o600` で作る。
 - 展開先をサイトのディレクトリとして、CLI の `swing publish`（[`../../cli/publish.md`](../../cli/publish.md)）と同じ処理と判定を上記の順で行う（増えたファイルの確認は除く。画面側が [previous-files](#get-apipublishprevious-filessited) で先に行う）。展開先は 1 回だけ一覧し、その一覧でドットファイル・サイズを判定して、同じ一覧を add する（空のディレクトリは届かない）。relay は agent の接続を使う。受け取ったファイルの一覧に失敗したら 500。
 - 展開先ディレクトリは、成功・失敗のときは応答の前に削除する。タイムアウト（[`../../dashboard.md#タイムアウトsrcdashboardmodrs`](../../dashboard.md#タイムアウトsrcdashboardmodrs)）とクライアントの切断では処理を打ち切ったときに削除を始めるので、削除は応答の後になりうる。取りこぼした分は `up::run` の起動時に `<state_dir>/upload/` ごと掃除する（[`../../up.md`](../../up.md)）。
 - ボディが `[dashboard].max_upload` を超えたら 413（ストリーミング中に超えても打ち切る）。それ以外の multipart の受信エラー（ボディの読み取り自体の失敗を含む）は 400。
