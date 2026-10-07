@@ -34,7 +34,7 @@
 ### 転送するヘッダー・捨てるヘッダー
 
 - hop-by-hop（`connection`、`keep-alive`、`proxy-authenticate`、`proxy-authorization`、`te`、`trailer`、`transfer-encoding`、`upgrade`）は往復とも捨てる。`Connection` ヘッダに列挙された追加のヘッダー名（例 `Connection: X-Foo`）もその都度捨てる。
-- リクエスト側はさらに、クライアントが送ってきた `Forwarded` と `X-Forwarded-*` を丸ごと捨ててから、以下を付け直す:
+- リクエスト側はさらに、クライアントが送ってきた `Cookie`・`Authorization`（Kubo のゲートウェイは使わず、`upstream` が遠くの HTTP なら平文で流れてしまうため）と `Forwarded`・`X-Forwarded-*` を丸ごと捨ててから、以下を付け直す:
   - `Host`: 一致した `hosts` の要素（設定の綴り）。受け取った `Host` にポートがあれば `:<ポート>` を付ける。クライアントの `Host` の値はそのまま転送しない。
   - `X-Forwarded-For`: 接続元 IP。
   - `X-Forwarded-Proto`: `http` 固定。

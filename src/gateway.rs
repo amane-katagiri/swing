@@ -128,7 +128,7 @@ async fn proxy(
     let mut out_headers = req.headers().clone();
     strip_hop_by_hop(&mut out_headers, &extra_drop);
     remove_headers_matching(&mut out_headers, |name| {
-        name == "forwarded" || name.starts_with("x-forwarded-")
+        matches!(name, "forwarded" | "cookie" | "authorization") || name.starts_with("x-forwarded-")
     });
     out_headers.insert(header::HOST, forwarded_host.clone());
     out_headers.insert(
@@ -218,6 +218,8 @@ mod tests {
             "host": headers.get(header::HOST).and_then(|v| v.to_str().ok()),
             "x_forwarded_host": headers.get("x-forwarded-host").and_then(|v| v.to_str().ok()),
             "x_forwarded_for": headers.get("x-forwarded-for").and_then(|v| v.to_str().ok()),
+            "cookie": headers.get(header::COOKIE).and_then(|v| v.to_str().ok()),
+            "authorization": headers.get(header::AUTHORIZATION).and_then(|v| v.to_str().ok()),
             "method": method,
             "path": path,
             "body": String::from_utf8_lossy(&body_bytes),
@@ -270,6 +272,8 @@ mod tests {
             .post(format!("{gateway}/some/path?q=1"))
             .header("host", "example.com")
             .header("x-forwarded-for", "9.9.9.9")
+            .header("cookie", "session=secret")
+            .header("authorization", "Bearer secret")
             .body("hello body")
             .send()
             .await
@@ -281,6 +285,8 @@ mod tests {
         assert_eq!(body["host"], "example.com");
         assert_eq!(body["x_forwarded_host"], "example.com");
         assert_eq!(body["x_forwarded_for"], "127.0.0.1");
+        assert!(body["cookie"].is_null());
+        assert!(body["authorization"].is_null());
         assert_eq!(body["method"], "POST");
         assert_eq!(body["path"], "/some/path?q=1");
         assert_eq!(body["body"], "hello body");
