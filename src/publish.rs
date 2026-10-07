@@ -5,6 +5,7 @@ use anyhow::{Context, Result};
 use nostr_sdk::prelude::*;
 
 use crate::config::{self, CheckMode, Config};
+use crate::format::Sanitized;
 use crate::ipfs::{IpfsClient, SiteEntry, SiteListing};
 use crate::mfs::MfsLayout;
 use crate::nip05::{self, Nip05Verify};
@@ -115,14 +116,20 @@ pub async fn prune_old_versions_collect(
 
 fn print_prune_lines(site_path: &str, outcome: &PruneOutcome) {
     if let Some(err) = &outcome.list_error {
-        println!("  ! could not list old versions: {err}");
+        println!("  ! could not list old versions: {}", Sanitized(err));
         return;
     }
     for attempt in &outcome.attempts {
         match attempt {
-            PruneAttempt::Removed(name) => println!("  \u{2713} removed {site_path}/{name}"),
+            PruneAttempt::Removed(name) => {
+                println!("  \u{2713} removed {site_path}/{}", Sanitized(name))
+            }
             PruneAttempt::Failed(name, err) => {
-                println!("  ! could not remove {site_path}/{name}: {err}")
+                println!(
+                    "  ! could not remove {site_path}/{}: {}",
+                    Sanitized(name),
+                    Sanitized(err)
+                )
             }
         }
     }
@@ -495,7 +502,7 @@ async fn run_nip05_check(mode: CheckMode, d: &str, pubkey_hex: &str) -> Result<(
 
     println!();
     println!("NIP-05");
-    println!("  {}", outcome.line);
+    println!("  {}", Sanitized(&outcome.line));
 
     if let Some(msg) = outcome.abort {
         anyhow::bail!(msg);
@@ -516,7 +523,7 @@ fn run_local_checks(entries: &[SiteEntry], modes: &Modes, dotfiles_allow: &[Stri
     println!();
     println!("Checks");
     for line in local.lines() {
-        println!("  {line}");
+        println!("  {}", Sanitized(line));
     }
     if let Some(msg) = local.abort_message() {
         anyhow::bail!(msg);
@@ -550,7 +557,7 @@ async fn confirm_new_files(
     println!();
     println!("New files");
     for line in previous_files.lines(&new_files) {
-        println!("  {line}");
+        println!("  {}", Sanitized(line));
     }
     if new_files.is_empty() || yes {
         return Ok(());
@@ -574,7 +581,7 @@ fn report_unchanged(mode: CheckMode, relays: &RelayState, cid: &str) -> bool {
     let unchanged = check_unchanged(mode, relays, cid);
     println!();
     println!("Previous version");
-    println!("  {}", unchanged.line());
+    println!("  {}", Sanitized(unchanged.line()));
     unchanged.stops_publish()
 }
 

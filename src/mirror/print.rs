@@ -5,7 +5,7 @@ use super::time::format_unix_timestamp;
 use super::{MirrorListView, MirrorSet, SiteRow, SitesView, npub};
 use crate::config::Config;
 use crate::dashboard::dto;
-use crate::format::sanitize_display_text;
+use crate::format::{Sanitized, sanitize_display_text};
 use crate::nostr::FOLLOW_SET_KIND;
 use crate::{nostr, replicas};
 
@@ -91,7 +91,9 @@ pub(super) fn format_site_line(row: &SiteRow, status: &str) -> String {
         "  d={:<24} cid={:<62} url={:<32} size={:<12} created_at={:<25} nip05={:<14} replicas={:<4} [{}]",
         row.d,
         row.cid,
-        row.url.clone().unwrap_or_else(|| "-".to_string()),
+        row.url
+            .as_deref()
+            .map_or_else(|| "-".to_string(), |url| Sanitized(url).to_string()),
         format_size_column(row),
         format_unix_timestamp(row.created_at),
         row.nip05.as_deref().unwrap_or("-"),
@@ -133,7 +135,7 @@ pub(super) fn print_sites(view: &SitesView) -> Result<()> {
         println!("(follow set is empty)");
     }
     if let Some(err) = &view.replicas_error {
-        println!("(fetching replica reports failed: {err})");
+        println!("(fetching replica reports failed: {})", Sanitized(err));
     }
 
     for account in &view.accounts {

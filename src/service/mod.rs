@@ -4,6 +4,7 @@ use std::time::Duration;
 use anyhow::{Context, Result, bail};
 
 use crate::config::{ConfigOrigin, locate_config};
+use crate::format::Sanitized;
 
 mod ownership;
 mod process;
@@ -183,7 +184,10 @@ pub async fn uninstall(system: bool, only_from: Option<&Path>) -> Result<()> {
                 Part::Tray => tray = true,
             }
         } else {
-            println!("{}; left it as is.", describe_outside(registration, &dir));
+            println!(
+                "{}; left it as is.",
+                Sanitized(describe_outside(registration, &dir))
+            );
         }
     }
     if service || tray {
@@ -206,12 +210,12 @@ pub fn placement(system: bool, dir: &Path) -> Result<Placement> {
             if inside {
                 println!(
                     "{} runs {}, which is under {}.",
-                    registration.what,
-                    registration.exe.as_deref().unwrap_or_default(),
-                    dir.display()
+                    Sanitized(&registration.what),
+                    Sanitized(registration.exe.as_deref().unwrap_or_default()),
+                    Sanitized(dir.display())
                 );
             } else {
-                println!("{}.", describe_outside(registration, &dir));
+                println!("{}.", Sanitized(describe_outside(registration, &dir)));
             }
             inside
         })

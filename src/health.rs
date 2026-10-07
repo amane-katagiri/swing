@@ -8,6 +8,7 @@ use nostr_sdk::prelude::PublicKey;
 use crate::api_client::ApiClient;
 use crate::config::Config;
 use crate::dashboard::dto::StatusDto;
+use crate::format::Sanitized;
 use crate::ipfs::{KuboStore, MfsEntry};
 use crate::mfs::MfsLayout;
 use crate::state::{self, State};
@@ -342,17 +343,21 @@ fn print_status_dto(state_path: &std::path::Path, dto: &StatusDto) {
         if v.health == "invalid_key" {
             let key = v.detail.as_deref().unwrap_or("?");
             let cid = v.cid.as_deref().unwrap_or("?");
-            println!("  {key} cid={cid} [invalid site key]");
+            println!(
+                "  {} cid={} [invalid site key]",
+                Sanitized(key),
+                Sanitized(cid)
+            );
             continue;
         }
         let detail = match &v.detail {
-            Some(d) => format!(": {d}"),
+            Some(d) => format!(": {}", Sanitized(d)),
             None => String::new(),
         };
         println!(
             "  {} cid={} size={} [{}]{detail}",
-            v.path.as_deref().unwrap_or(""),
-            v.cid.as_deref().unwrap_or(""),
+            Sanitized(v.path.as_deref().unwrap_or("")),
+            Sanitized(v.cid.as_deref().unwrap_or("")),
             v.size.unwrap_or(0),
             health_label(&v.health),
         );
@@ -364,7 +369,11 @@ fn print_status_dto(state_path: &std::path::Path, dto: &StatusDto) {
         println!("  (none)");
     }
     for site in &dto.sites {
-        println!("  {} {}", site.path, bytes_or_unknown(site.actual));
+        println!(
+            "  {} {}",
+            Sanitized(&site.path),
+            bytes_or_unknown(site.actual)
+        );
     }
     if !dto.sites.is_empty() {
         println!("  total {}", bytes_or_unknown(dto.actual_bytes));
@@ -378,9 +387,13 @@ fn print_status_dto(state_path: &std::path::Path, dto: &StatusDto) {
     for g in &dto.garbage {
         if g.list_failed {
             let reason = g.list_failed_reason.as_deref().unwrap_or("unknown error");
-            println!("  {} [list failed]: {reason}", g.path);
+            println!(
+                "  {} [list failed]: {}",
+                Sanitized(&g.path),
+                Sanitized(reason)
+            );
         } else {
-            println!("  {}", g.path);
+            println!("  {}", Sanitized(&g.path));
         }
     }
 }

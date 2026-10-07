@@ -76,7 +76,8 @@ async fn pair_and_save(
     match &paired.probe_error {
         None => println!("the check event was signed"),
         Some(e) => eprintln!(
-            "warning: the check event was not signed ({e}); allow SWING's requests in the signer app"
+            "warning: the check event was not signed ({}); allow SWING's requests in the signer app",
+            crate::format::Sanitized(e)
         ),
     }
     println!(
