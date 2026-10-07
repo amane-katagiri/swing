@@ -175,9 +175,30 @@ pub async fn check_nip05<V: Nip05Verify>(
     }
 }
 
+fn next_version_time(names: &[String], now: u64) -> u64 {
+    names
+        .iter()
+        .filter_map(|name| name.parse::<u64>().ok())
+        .max()
+        .map_or(now, |newest| now.max(newest.saturating_add(1)))
+}
+
+// Reusing a same-second path would let add_site or a cancelled publish's deferred removal delete the other version.
+async fn choose_created_at(ipfs: &IpfsClient, site_path: &str, now: u64) -> Result<u64> {
+    let names: Vec<String> = ipfs
+        .mfs_list(site_path)
+        .await
+        .with_context(|| format!("listing {site_path}"))?
+        .into_iter()
+        .map(|e| e.name)
+        .collect();
+    Ok(next_version_time(&names, now))
+}
+
 pub struct IpfsStage {
     pub cid: String,
     pub size: u64,
+    pub created_at: Timestamp,
     pub version: StagedVersion,
 }
 
@@ -186,9 +207,14 @@ pub async fn add_and_measure(
     layout: &MfsLayout,
     pubkey_hex: &str,
     d: &str,
-    created_at: u64,
     site: SiteListing,
 ) -> Result<IpfsStage> {
+    let created_at = choose_created_at(
+        ipfs,
+        &layout.publish_site(pubkey_hex, d),
+        Timestamp::now().as_secs(),
+    )
+    .await?;
     let path = layout.publish_version(pubkey_hex, d, created_at);
     let added = ipfs.add_site(site, &path).await?;
     let version = StagedVersion::new(ipfs, path);
@@ -205,7 +231,12 @@ pub async fn add_and_measure(
         Ok(size) => size,
         Err(e) => return Err(version.fail(e).await),
     };
-    Ok(IpfsStage { cid, size, version })
+    Ok(IpfsStage {
+        cid,
+        size,
+        created_at: Timestamp::from_secs(created_at),
+        version,
+    })
 }
 
 pub struct SiteAnnouncement<'a> {
@@ -567,15 +598,14 @@ pub async fn run(config: Config, dir: &Path, request: Request) -> Result<()> {
     println!("IPFS");
 
     let layout = MfsLayout::new(config.ipfs.mfs_root.clone());
-    let created_at = Timestamp::now();
-    let stage =
-        match add_and_measure(&ipfs, &layout, &pubkey_hex, &d, created_at.as_secs(), site).await {
-            Ok(stage) => stage,
-            Err(e) => {
-                relay.shutdown().await;
-                return Err(e);
-            }
-        };
+    let stage = match add_and_measure(&ipfs, &layout, &pubkey_hex, &d, site).await {
+        Ok(stage) => stage,
+        Err(e) => {
+            relay.shutdown().await;
+            return Err(e);
+        }
+    };
+    let created_at = stage.created_at;
     println!("  CID: {}", stage.cid);
     println!("  \u{2713} added to {}", stage.version.path());
     println!("  Size: {} bytes", stage.size);
@@ -627,6 +657,62 @@ pub async fn run(config: Config, dir: &Path, request: Request) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn next_version_time_is_after_every_existing_version() {
+        let names = |list: &[&str]| list.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        assert_eq!(next_version_time(&[], 500), 500);
+        assert_eq!(next_version_time(&names(&["100", "junk"]), 500), 500);
+        assert_eq!(next_version_time(&names(&["100", "500"]), 500), 501);
+        assert_eq!(next_version_time(&names(&["501", "100"]), 500), 502);
+        assert_eq!(next_version_time(&names(&["junk"]), 500), 500);
+    }
+
+    async fn fake_files_ls(answer: &'static str) -> IpfsClient {
+        let router = axum::Router::new().route(
+            "/api/v0/files/ls",
+            axum::routing::post(move || async move {
+                if answer == "missing" {
+                    let body = r#"{"Message":"file does not exist","Code":0,"Type":"error"}"#;
+                    return (axum::http::StatusCode::INTERNAL_SERVER_ERROR, body);
+                }
+                (axum::http::StatusCode::OK, answer)
+            }),
+        );
+        let addr = crate::test_support::serve_router(router).await;
+        IpfsClient::new(format!("http://{addr}"))
+    }
+
+    #[tokio::test]
+    async fn choose_created_at_skips_past_a_same_second_version() {
+        let ipfs = fake_files_ls(
+            r#"{"Entries":[{"Name":"500","Type":1,"Hash":"bafy"},{"Name":"499","Type":1,"Hash":"bafy"}]}"#,
+        )
+        .await;
+        assert_eq!(
+            choose_created_at(&ipfs, "/swing/publish/k/s", 500)
+                .await
+                .unwrap(),
+            501
+        );
+        assert_eq!(
+            choose_created_at(&ipfs, "/swing/publish/k/s", 900)
+                .await
+                .unwrap(),
+            900
+        );
+    }
+
+    #[tokio::test]
+    async fn choose_created_at_uses_now_for_a_new_site() {
+        let ipfs = fake_files_ls("missing").await;
+        assert_eq!(
+            choose_created_at(&ipfs, "/swing/publish/k/s", 500)
+                .await
+                .unwrap(),
+            500
+        );
+    }
 
     #[test]
     fn versions_to_prune_keeps_the_current_and_the_newest_others() {

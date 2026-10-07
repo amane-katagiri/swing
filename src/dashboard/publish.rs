@@ -1,7 +1,6 @@
 use axum::Json;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
-use nostr_sdk::prelude::Timestamp;
 use tokio::sync::MutexGuard;
 
 use crate::config;
@@ -114,17 +113,10 @@ pub(super) async fn run_publish(
     let ipfs = state.require_ipfs().await?;
     let relay = state.require_relay().await?;
     let layout = MfsLayout::new(state.config.ipfs.mfs_root.clone());
-    let created_at = Timestamp::now();
-    let stage = publish::add_and_measure(
-        &ipfs,
-        &layout,
-        &pubkey_hex,
-        &fields.site,
-        created_at.as_secs(),
-        site,
-    )
-    .await
-    .map_err(upstream)?;
+    let stage = publish::add_and_measure(&ipfs, &layout, &pubkey_hex, &fields.site, site)
+        .await
+        .map_err(upstream)?;
+    let created_at = stage.created_at;
 
     let unchanged = publish::check_unchanged(
         &relay,
