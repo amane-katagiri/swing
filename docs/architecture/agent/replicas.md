@@ -21,7 +21,7 @@
 | 無い | `cid` が 1 つ以上 | `cid` 無し（取り下げ） |
 | 不明 | — | 送らない |
 
-- `created_at` は現在時刻。記録の `created_at` 以下になるときは記録の `created_at + 1` にする。`expiration` は `created_at + report_ttl`（足し算は飽和させる。`report_ttl` の上限は [`../config.md#検証`](../config.md#検証)）。
+- `created_at` は、その回に送る報告の並び（`reports_to_send` の順。保存している CID のサイトをキー順に、続けて取り下げをキー順に）の i 番目（0 始まり）で現在時刻 − i（0 で止める）。relay はページを `created_at` で区切るので、1 回分の報告を同じ 1 秒に詰めない（[`nostr/fetch.md`](../nostr/fetch.md#ページに分ける取得relayclientfetch_pages)）。記録の `created_at` 以下になるときは記録の `created_at + 1` にし、その回ですでに使った値なら空くまで 1 ずつ足す。`expiration` は `created_at + report_ttl`（足し算は飽和させる。`report_ttl` の上限は [`../config.md#検証`](../config.md#検証)）。
 - 全 relay に送り、どこかに受理されたら記録を更新する。受理されなければ warn を出し、次の同期で送り直す。
 - 署名（NIP-46 の署名アプリへのリクエストを含む）か送信がエラーになったら warn を出して、その回の残りの報告は送らずに打ち切る。残りは次の同期で送り直す（署名アプリがオフラインのときの扱いは [`signer.md#署名アプリがオフラインのとき`](../signer.md#署名アプリがオフラインのとき)）。
 - 取り下げた記録は `cid` 無しで残り、出し直さない。

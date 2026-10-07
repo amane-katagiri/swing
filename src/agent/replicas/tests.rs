@@ -76,6 +76,32 @@ async fn a_changed_report_is_newer_than_the_previous_one_within_a_second() {
     assert_eq!(fx.take_reports().len(), 2);
 }
 
+#[test]
+fn reports_in_one_round_get_distinct_times_newer_than_their_previous_ones() {
+    assert_eq!(report_times(&[None, None, None], 100), vec![100, 99, 98]);
+    assert_eq!(
+        report_times(&[None, Some(100), Some(99), None], 100),
+        vec![100, 101, 99, 97]
+    );
+    assert_eq!(report_times(&[Some(500), Some(500)], 100), vec![500, 501]);
+    assert_eq!(report_times(&[None, None], 0), vec![0, 1]);
+}
+
+#[tokio::test]
+async fn reports_sent_together_do_not_share_a_second() {
+    let fx = Fixture::new(default_policy(), FakeKubo::default());
+    let ds = ["a.example", "b.example", "c.example"];
+    for (i, d) in ds.iter().enumerate() {
+        fx.seed(d, &format!("bafy-{i}"), 1, 100).await;
+    }
+    fx.agent.sync_reports().await;
+    assert_eq!(fx.take_reports().len(), ds.len());
+    let mut times = HashSet::new();
+    for d in ds {
+        assert!(times.insert(fx.sent_created_at(&fx.key(d)).await));
+    }
+}
+
 #[tokio::test]
 async fn unfollowed_sites_are_withdrawn_once() {
     let fx = Fixture::new(default_policy(), FakeKubo::default());

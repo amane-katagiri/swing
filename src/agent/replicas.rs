@@ -68,6 +68,25 @@ fn reports_to_send(
     out
 }
 
+// Relays page by created_at, so one round's reports are spread one per second instead of crowding `now`.
+fn report_times(floors: &[Option<u64>], now: u64) -> Vec<u64> {
+    let mut used = BTreeSet::new();
+    floors
+        .iter()
+        .enumerate()
+        .map(|(i, floor)| {
+            let mut at = now.saturating_sub(i as u64);
+            if let Some(floor) = floor {
+                at = at.max(*floor);
+            }
+            while !used.insert(at) {
+                at += 1;
+            }
+            at
+        })
+        .collect()
+}
+
 fn own_cids(
     held: &Held,
     previous: &BTreeMap<SiteKey, BTreeSet<String>>,
@@ -216,7 +235,7 @@ impl<C: KuboStore, N: Nip05Verify, R: ReportRelay> Agent<C, N, R> {
             .fetch_reports_about(kind, self.own, &reporters, since)
             .await
         {
-            Ok(paged) => paged,
+            Ok(events) => events,
             Err(e) => {
                 warn!(
                     error = format!("{e:#}"),
@@ -273,17 +292,19 @@ impl<C: KuboStore, N: Nip05Verify, R: ReportRelay> Agent<C, N, R> {
         book.own_cids = own_cids(&held, &book.own_cids, &self.own.to_hex());
         let now = now_secs();
         let ttl = self.config.agent.report_ttl.as_secs();
-        for (key, cids) in reports_to_send(&held, &book.sent, now, ttl / 2) {
+        let to_send = reports_to_send(&held, &book.sent, now, ttl / 2);
+        let floors: Vec<Option<u64>> = to_send
+            .iter()
+            .map(|(key, _)| book.sent.get(key).map(|prev| prev.created_at + 1))
+            .collect();
+        let times = report_times(&floors, now);
+        for ((key, cids), created_at) in to_send.into_iter().zip(times) {
             let Some((author_hex, d)) = state::split_site_key(&key) else {
                 continue;
             };
             let Ok(author) = PublicKey::from_hex(author_hex) else {
                 continue;
             };
-            let created_at = book
-                .sent
-                .get(&key)
-                .map_or(now, |prev| now.max(prev.created_at + 1));
             let report = nostr::build_replica_report_builder(
                 self.config.nostr.replica_event_kind,
                 self.config.nostr.site_event_kind,
