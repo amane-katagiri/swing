@@ -26,7 +26,7 @@
 
 TOML の構文や型のエラーは `line <行>, column <桁>: <理由>` の形で報告し、該当行を引用しない。
 
-読み込んだファイルに `[nostr].secret_key` があり、Unix でグループかその他のユーザーに読み取り権限がある（`mode & 0o044 != 0`）なら、`chmod 600` を促す警告をログに出す。読み込みは続ける。秘密鍵の文字列（ファイルの本文と `NostrFile.secret_key`・`NostrSecretKey`）は `Zeroizing` に持ち、破棄時にゼロで埋める。`NostrSecretKey` の中身は `expose_secret()` からだけ取り出せる。
+読み込んだファイルに `[nostr].secret_key` があり、Unix でグループかその他のユーザーに読み取り権限がある（`mode & 0o044 != 0`）なら、`chmod 600` を促す警告をログに出す。読み込みは続ける。秘密鍵の文字列（ファイルの本文と `NostrFile.secret_key`・`NostrSecretKey`）は `Zeroizing` に持ち、破棄時にゼロで埋める。`NostrSecretKey` の中身は `expose_secret()` からだけ取り出せる。設定ファイルを書き換えるとき（[下記](#設定の書き換えsrcsettingseditrs)の 3 つの関数）も、読んだ本文・書き出す本文・書き込む鍵の hex と、`POST /api/setup` で受け取った `secret_key` を `Zeroizing` に持つ。`toml_edit` の文書が中に持つコピーと、HTTP のリクエスト本文は消さない（できる範囲での対処）。
 
 ## 設定カタログ
 

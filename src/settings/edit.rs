@@ -6,6 +6,7 @@ use std::path::Path;
 use anyhow::{Context, Result, anyhow, bail};
 use nostr_sdk::prelude::Keys;
 use toml_edit::{Array, DocumentMut, Item, Table, Value};
+use zeroize::Zeroizing;
 
 use super::*;
 use crate::config::{self, Config};
@@ -116,8 +117,8 @@ impl std::error::Error for EditError {}
 
 fn load_document(path: &Path) -> Result<DocumentMut, EditError> {
     let text = match std::fs::read_to_string(path) {
-        Ok(text) => text,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
+        Ok(text) => Zeroizing::new(text),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Zeroizing::default(),
         Err(e) => {
             return Err(EditError::Io(
                 anyhow::Error::new(e).context(format!("reading config file {}", path.display())),
@@ -157,7 +158,7 @@ pub fn update(current: &Config, items: &BTreeMap<String, InputValue>) -> Result<
     check_not_env_sourced(current, items).map_err(EditError::Invalid)?;
     let mut doc = load_document(&current.config_path)?;
     apply_items(&mut doc, items).map_err(EditError::Invalid)?;
-    validate_and_write(&current.config_path, &doc.to_string())
+    validate_and_write(&current.config_path, &Zeroizing::new(doc.to_string()))
 }
 
 fn insert_addrs(doc: &mut DocumentMut, addrs: &[(&str, SocketAddr)]) -> Result<()> {
@@ -174,7 +175,7 @@ fn insert_addrs(doc: &mut DocumentMut, addrs: &[(&str, SocketAddr)]) -> Result<(
 pub fn pin_addrs(current: &Config, addrs: &[(&str, SocketAddr)]) -> Result<Config, EditError> {
     let mut doc = load_document(&current.config_path)?;
     insert_addrs(&mut doc, addrs).map_err(EditError::Invalid)?;
-    validate_and_write(&current.config_path, &doc.to_string())
+    validate_and_write(&current.config_path, &Zeroizing::new(doc.to_string()))
 }
 
 pub fn setup_keys(secret_key_input: Option<&str>) -> Result<Keys> {
@@ -189,7 +190,9 @@ pub fn setup_keys(secret_key_input: Option<&str>) -> Result<Keys> {
 fn insert_secret_key(doc: &mut DocumentMut, keys: &Keys) -> Result<()> {
     ensure_table(doc, "nostr")?.insert(
         "secret_key",
-        Item::Value(Value::from(keys.secret_key().to_secret_hex())),
+        Item::Value(Value::from(
+            Zeroizing::new(keys.secret_key().to_secret_hex()).as_str(),
+        )),
     );
     Ok(())
 }
@@ -210,7 +213,7 @@ pub fn setup(
     if let Some(keys) = keys {
         insert_secret_key(&mut doc, keys).map_err(EditError::Invalid)?;
     }
-    validate_and_write(&current.config_path, &doc.to_string())
+    validate_and_write(&current.config_path, &Zeroizing::new(doc.to_string()))
 }
 
 #[cfg(test)]

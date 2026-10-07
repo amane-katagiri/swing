@@ -7,6 +7,7 @@ use axum::extract::State;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use serde::Deserialize;
+use zeroize::Zeroizing;
 
 use crate::mirror;
 use crate::settings;
@@ -18,7 +19,7 @@ use super::error::{ApiError, AppJson, blocking, internal, settings_error};
 
 #[derive(Debug, Deserialize)]
 pub struct SetupRequest {
-    secret_key: Option<String>,
+    secret_key: Option<Zeroizing<String>>,
     #[serde(default)]
     remote_signer: bool,
     #[serde(default)]
@@ -94,7 +95,7 @@ pub async fn setup(
         *state.pairing.lock().expect("pairing lock") = None;
         user
     } else {
-        let keys = settings::setup_keys(req.secret_key.as_deref())
+        let keys = settings::setup_keys(req.secret_key.as_ref().map(|s| s.as_str()))
             .map_err(|e| ApiError::BadRequest(format!("{e:#}")))?;
         blocking(move || {
             settings::setup(&config, Some(&keys), &items).map_err(settings_error)?;
