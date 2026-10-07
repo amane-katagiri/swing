@@ -40,11 +40,38 @@ pub fn print_relay_line(relay: &str, ok: bool) {
     }
 }
 
+const MAX_REJECTION_DISPLAY_CHARS: usize = 500;
+
+fn rejection_line(relay: &str, error: &str) -> String {
+    format!(
+        "  \u{2717} {relay}: {}",
+        crate::format::sanitize_display_text(error, MAX_REJECTION_DISPLAY_CHARS)
+    )
+}
+
 pub fn print_relay_send_result_lines(results: &[RelaySendResult]) {
     for result in results {
         match &result.error {
-            Some(error) if !result.ok => println!("  \u{2717} {}: {error}", result.relay),
+            Some(error) if !result.ok => println!("{}", rejection_line(&result.relay, error)),
             _ => print_relay_line(&result.relay, result.ok),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rejection_lines_strip_terminal_controls_and_cap_the_length() {
+        assert_eq!(
+            rejection_line("wss://a", "blocked:\u{1b}[2J\u{202e} spam"),
+            "  \u{2717} wss://a: blocked: [2J spam"
+        );
+        let long = "x".repeat(MAX_REJECTION_DISPLAY_CHARS + 10);
+        assert_eq!(
+            rejection_line("wss://a", &long).chars().count(),
+            "  \u{2717} wss://a: ".chars().count() + MAX_REJECTION_DISPLAY_CHARS + 1
+        );
     }
 }
