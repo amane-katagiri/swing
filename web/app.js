@@ -36,6 +36,11 @@ function showRoute() {
   for (const key of Object.keys(VIEWS)) {
     document.getElementById(`view-${key}`).hidden = key !== name;
   }
+  if (unauthorized) {
+    document.querySelectorAll('[data-home-link]').forEach((a) => {
+      a.hidden = true;
+    });
+  }
   const style = getStyle(name);
   if (style) document.body.dataset.style = style;
   else delete document.body.dataset.style;

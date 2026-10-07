@@ -362,7 +362,8 @@ p {
   overflow: hidden;
 }
 
-.swing-nav-footer > span {
+.swing-nav-footer > span,
+.swing-nav-footer > a {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -472,7 +473,10 @@ body[data-nav="collapsed"] .swing-nav-toggle .swing-nav-icon {
     opacity: 1;
   }
   .swing-page-footer {
-    display: block;
+    display: flex;
+    flex-direction: column;
+    gap: var(--swing-space-1);
+    align-items: center;
     text-align: center;
     padding: var(--swing-space-3) var(--swing-space-4);
     font-size: 0.8rem;

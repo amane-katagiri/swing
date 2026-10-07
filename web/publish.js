@@ -196,7 +196,10 @@ export function updateNavFooter(overview) {
   mirrorSet.textContent = t('navFooterMirror', { name: overview.mirror_set });
   mirrorSet.title = mirrorSet.textContent;
   document.getElementById('nav-version').textContent = t('navFooterVersion', { version: overview.version });
-  document.getElementById('page-footer').textContent = `${t('navFooterMirror', { name: overview.mirror_set })} · ${t('navFooterVersion', { version: overview.version })}`;
+  document.querySelectorAll('[data-home-link]').forEach((a) => {
+    a.hidden = false;
+  });
+  document.getElementById('page-footer-text').textContent = `${t('navFooterMirror', { name: overview.mirror_set })} · ${t('navFooterVersion', { version: overview.version })}`;
 }
 
 export function renderIdentity(overview) {
