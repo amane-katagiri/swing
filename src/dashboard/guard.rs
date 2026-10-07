@@ -4,12 +4,12 @@ use axum::extract::{Request, State};
 use axum::http::{HeaderMap, HeaderName, HeaderValue, Method, StatusCode, header};
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
-use std::net::{IpAddr, SocketAddr};
+use std::net::SocketAddr;
 use std::sync::Arc;
 
 use super::AppState;
 use crate::auth;
-use crate::host::{extract_host, split_host_port};
+use crate::host::{extract_host, is_listen_ip, split_host_port};
 
 const DASHBOARD_MARKER_HEADER: &str = "x-swing-dashboard";
 const SESSION_COOKIE_PREFIX: &str = "swing_session";
@@ -76,11 +76,6 @@ pub async fn require_bearer(req: Request<Body>, next: Next) -> Response {
         );
     }
     next.run(req).await
-}
-
-// DNS rebinding sends the attacker's hostname, so a Host naming the bound IP literally cannot come from it.
-fn is_listen_ip(host: &str, listen: SocketAddr) -> bool {
-    !listen.ip().is_unspecified() && host.parse::<IpAddr>().is_ok_and(|ip| ip == listen.ip())
 }
 
 pub fn host_allowed(host_header: &str, allowed_hosts: &[String], listen: SocketAddr) -> bool {
@@ -206,7 +201,8 @@ pub async fn security_middleware(
 mod tests {
     use super::*;
 
-    const LOOPBACK: SocketAddr = SocketAddr::new(IpAddr::V4(std::net::Ipv4Addr::LOCALHOST), 8082);
+    const LOOPBACK: SocketAddr =
+        SocketAddr::new(std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST), 8082);
 
     #[test]
     fn host_allowed_accepts_the_literal_listen_ip() {

@@ -599,10 +599,9 @@ fn check_gateway_hosts_apart_from_dashboard(
     gateway_hosts: &[String],
     dashboard: &DashboardConfig,
 ) -> Result<()> {
-    let listen_ip = Some(dashboard.listen.ip()).filter(|ip| !ip.is_unspecified());
     for host in gateway_hosts {
         if crate::host::is_loopback_name(host)
-            || host.parse::<std::net::IpAddr>().ok() == listen_ip
+            || crate::host::is_listen_ip(host, dashboard.listen)
             || dashboard
                 .allowed_hosts
                 .iter()

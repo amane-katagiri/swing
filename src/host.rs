@@ -25,6 +25,14 @@ pub fn extract_host(host_header: &str) -> String {
     split_host_port(host_header).0.to_ascii_lowercase()
 }
 
+// DNS rebinding sends the attacker's hostname, so a Host naming the bound IP literally cannot come from it.
+pub fn is_listen_ip(host: &str, listen: std::net::SocketAddr) -> bool {
+    !listen.ip().is_unspecified()
+        && host
+            .parse::<std::net::IpAddr>()
+            .is_ok_and(|ip| ip == listen.ip())
+}
+
 pub fn is_loopback_name(host: &str) -> bool {
     ["localhost", "127.0.0.1", "::1"]
         .iter()

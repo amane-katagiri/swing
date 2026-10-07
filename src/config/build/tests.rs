@@ -838,6 +838,24 @@ fn gateway_hosts_must_not_be_the_dashboard_listen_ip() {
 }
 
 #[test]
+fn named_gateway_hosts_are_accepted_whatever_the_dashboard_listens_on() {
+    for listen in [
+        "0.0.0.0:8082",
+        "[::]:8082",
+        "192.168.1.5:8082",
+        "127.0.0.1:8082",
+    ] {
+        let listen = listen.to_string();
+        let built = build_config(minimal_file(), None, move |k| match k {
+            "SWING_GATEWAY_HOSTS" => Some("example.com".into()),
+            "SWING_DASHBOARD_LISTEN" => Some(listen.clone()),
+            _ => None,
+        });
+        assert!(built.is_ok(), "{built:?}");
+    }
+}
+
+#[test]
 fn gateway_hosts_must_not_overlap_dashboard_hosts() {
     let err = build_config(minimal_file(), None, |k| match k {
         "SWING_GATEWAY_HOSTS" => Some("example.com,dash.example".into()),
