@@ -57,6 +57,7 @@ pub struct AppState {
     pub started_at: u64,
     pub instance: String,
     pub publish_lock: Mutex<()>,
+    pub mirror_writes: Mutex<()>,
     relay_queries: Semaphore,
     pub config_writes: Mutex<ConfigWrites>,
     pub own_pubkey: Option<PublicKey>,
@@ -103,6 +104,7 @@ impl AppState {
             started_at: Timestamp::now().as_secs(),
             instance: auth::random_hex(INSTANCE_ID_BYTES),
             publish_lock: Mutex::new(()),
+            mirror_writes: Mutex::new(()),
             relay_queries: Semaphore::new(RELAY_QUERY_PERMITS),
             config_writes: Mutex::new(ConfigWrites::default()),
             own_pubkey,
@@ -334,6 +336,27 @@ mod tests {
             .unwrap();
         let resp = call(app, req).await;
         assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn mirror_changes_wait_for_the_one_in_progress() {
+        let state = test_state();
+        let held = state.mirror_writes.lock().await;
+        let key = nostr_sdk::prelude::Keys::generate().public_key().to_hex();
+        let req = Request::builder()
+            .method("POST")
+            .uri("/api/mirror/remove")
+            .header("Host", "127.0.0.1:8082")
+            .header("x-swing-dashboard", "1")
+            .header("content-type", "application/json")
+            .body(Body::from(format!("{{\"keys\":[\"{key}\"]}}")))
+            .unwrap();
+        let pending = tokio::spawn(call(router(state.clone()), req));
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        assert!(!pending.is_finished());
+        drop(held);
+        let resp = pending.await.unwrap();
+        assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
     }
 
     #[tokio::test]

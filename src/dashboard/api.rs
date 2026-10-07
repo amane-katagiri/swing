@@ -205,6 +205,7 @@ pub async fn mirror_add(
     AppJson(req): AppJson<MirrorKeysRequest>,
 ) -> Result<Json<dto::MirrorChangeDto>, ApiError> {
     validate_keys(&req.keys)?;
+    let _writes = state.mirror_writes.lock().await;
     let relay = state.require_relay().await?;
     let change = mirror::apply_add(&relay, &state.config, &req.keys)
         .await
@@ -217,6 +218,7 @@ pub async fn mirror_remove(
     AppJson(req): AppJson<MirrorKeysRequest>,
 ) -> Result<Json<dto::MirrorChangeDto>, ApiError> {
     validate_keys(&req.keys)?;
+    let _writes = state.mirror_writes.lock().await;
     let relay = state.require_relay().await?;
     let change = mirror::apply_remove(&relay, &state.config, &req.keys)
         .await
