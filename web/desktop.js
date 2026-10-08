@@ -25,6 +25,8 @@ const DESK_TEXT = {
   iconDefaultDesc: '最近の更新はありません',
   openSite: 'サイトを開く',
   openGateway: 'ゲートウェイで開く',
+  openCache: '保存済みの前の版をゲートウェイで開く（新しい版は取り込み待ち）',
+  pendingTitle: '最新版がまだ保存されていません',
 };
 
 const deskEls = {
@@ -105,25 +107,11 @@ const NEW_DAYS = 7;
 const UP_DAYS = 30;
 const SECONDS_PER_DAY = 86400;
 
-function previousVersionSite(site) {
-  const { previous } = site;
-  return Object.assign({}, site, {
-    cid: previous.cid,
-    created_at: previous.created_at,
-    stored_at: previous.stored_at,
-    stored_size: previous.stored_size,
-    gateway_url: previous.gateway_url,
-    message: null,
-    stored: true,
-  });
-}
-
 function collectStoredSites(data) {
   const list = [];
   for (const acct of data.accounts || []) {
     for (const site of acct.sites || []) {
-      if (site.stored) list.push(site);
-      else if (site.previous) list.push(previousVersionSite(site));
+      if (site.stored || site.previous) list.push(site);
     }
   }
   if (data.unfollowed && Array.isArray(data.unfollowed.accounts)) {
@@ -175,13 +163,15 @@ function buildLinkRow(site) {
   const cleanTitle = sanitizeMessage(site.title, 120);
   const cleanD = sanitizeDisplayText(site.d);
   const titleText = cleanTitle || cleanD;
-  const primaryHref = site.gateway_url || site.url || null;
+  const pending = !site.stored && site.previous != null;
+  const primaryHref = pending ? null : site.gateway_url || site.url || null;
   let titleNode;
   if (primaryHref) {
     titleNode = maybeLink(primaryHref, titleText);
     titleNode.title = site.gateway_url ? DESK_TEXT.openGateway : DESK_TEXT.openSite;
   } else {
     titleNode = el('span', {}, titleText);
+    if (pending) titleNode.title = DESK_TEXT.pendingTitle;
   }
   titleNode.classList.add('desk-link-title');
   titleNode.setAttribute('dir', 'auto');
@@ -191,11 +181,19 @@ function buildLinkRow(site) {
     li.append(el('span', { class: 'desk-link-d', dir: 'auto' }, `(${cleanD})`));
   }
 
-  if (site.gateway_url && site.url) {
+  if (site.url && (pending || site.gateway_url)) {
     const honke = maybeLink(site.url, '[本家]');
     honke.classList.add('desk-link-honke');
     honke.setAttribute('aria-label', `${titleText} — ${DESK_TEXT.openSite}`);
     li.append(honke);
+  }
+
+  if (pending && site.previous.gateway_url) {
+    const cacheLink = maybeLink(site.previous.gateway_url, '[キャッシュ]');
+    cacheLink.classList.add('desk-link-cache');
+    cacheLink.title = DESK_TEXT.openCache;
+    cacheLink.setAttribute('aria-label', `${titleText} — ${DESK_TEXT.openCache}`);
+    li.append(cacheLink);
   }
 
   const msg = sanitizeMessage(site.message);

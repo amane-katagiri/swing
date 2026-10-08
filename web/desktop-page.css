@@ -356,7 +356,8 @@ span.desk-link-title {
   unicode-bidi: isolate;
 }
 
-.desk-link-honke {
+.desk-link-honke,
+.desk-link-cache {
   flex: none;
   font-size: 12px;
   color: var(--desk-link);
