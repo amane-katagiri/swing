@@ -12,7 +12,10 @@ use crate::proc::{process_alive, process_start_marker};
 
 use super::access::{api_access_path, read_api_access, read_peer_id};
 use super::binary::run;
-use super::config::{default_swarm_addrs, gateway_multiaddr, public_gateways_json};
+use super::config::{
+    GATEWAY_CONTENT_SECURITY_POLICY, PATH_GATEWAY_BLOCKED_HOSTS, default_swarm_addrs,
+    gateway_http_headers_json, gateway_multiaddr, public_gateways_json,
+};
 use super::daemon::is_repo_lock_error;
 use super::orphan::{PidRecord, read_pid_file};
 use super::*;
@@ -60,13 +63,47 @@ fn public_gateways_json_matches_shell_script_shape() {
         json!({
             "a.example.com": {"Paths": [], "UseSubdomains": false, "NoDNSLink": false},
             "b.example.com": {"Paths": [], "UseSubdomains": false, "NoDNSLink": false},
+            "127.0.0.1": {"Paths": [], "UseSubdomains": false, "NoDNSLink": true},
+            "::1": {"Paths": [], "UseSubdomains": false, "NoDNSLink": true},
+            "*.localhost": {"Paths": [], "UseSubdomains": false, "NoDNSLink": true},
         })
     );
 }
 
 #[test]
-fn public_gateways_json_empty_when_no_hosts() {
-    assert_eq!(public_gateways_json(&[]), json!({}));
+fn gateway_config_matches_shell_script() {
+    let script = std::fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("docker/kubo-init.d/001-swing-config.sh"),
+    )
+    .unwrap();
+    assert!(script.contains(GATEWAY_CONTENT_SECURITY_POLICY));
+    let blocked: Vec<String> = PATH_GATEWAY_BLOCKED_HOSTS
+        .iter()
+        .map(|h| {
+            if h.contains('*') {
+                format!("\"{h}\"")
+            } else {
+                h.to_string()
+            }
+        })
+        .collect();
+    let line = format!("for host in {}; do", blocked.join(" "));
+    assert!(script.contains(&line), "{line}");
+}
+
+#[test]
+fn public_gateways_json_only_blocks_path_hosts_when_no_hosts() {
+    let value = public_gateways_json(&[]);
+    let keys: Vec<&str> = value
+        .as_object()
+        .unwrap()
+        .keys()
+        .map(String::as_str)
+        .collect();
+    assert_eq!(keys.len(), PATH_GATEWAY_BLOCKED_HOSTS.len());
+    for host in PATH_GATEWAY_BLOCKED_HOSTS {
+        assert_eq!(value[host]["Paths"], json!([]));
+    }
 }
 
 #[test]
@@ -440,6 +477,7 @@ fn apply_config_writes_its_keys_and_keeps_the_rest() {
             "NoFetch": true,
             "NoDNSLink": true,
             "PublicGateways": public_gateways_json(&["example.com".to_string()]),
+            "HTTPHeaders": gateway_http_headers_json(),
         })
     );
     assert_eq!(api.secret.authorization(), "Bearer abcd");
@@ -857,6 +895,10 @@ async fn full_lifecycle_against_real_kubo() {
     assert_eq!(
         config["Gateway"]["PublicGateways"]["example.com"]["Paths"],
         json!([])
+    );
+    assert_eq!(
+        config["Gateway"]["HTTPHeaders"],
+        gateway_http_headers_json()
     );
     assert_eq!(
         config["Addresses"]["API"],

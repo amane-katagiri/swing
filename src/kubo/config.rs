@@ -47,7 +47,27 @@ pub(super) fn public_gateways_json(hosts: &[String]) -> serde_json::Value {
             }),
         );
     }
+    for host in PATH_GATEWAY_BLOCKED_HOSTS {
+        map.insert(
+            host.to_string(),
+            json!({
+                "Paths": [],
+                "UseSubdomains": false,
+                "NoDNSLink": true,
+            }),
+        );
+    }
     serde_json::Value::Object(map)
+}
+
+// A page served from a loopback hostname reaches other local ports and the LAN without the browser's Local Network Access prompt.
+pub(super) const GATEWAY_CONTENT_SECURITY_POLICY: &str =
+    "connect-src 'self' https: wss:; form-action 'self' https:";
+// Path-style URLs on these hosts would put every site in one origin that shares cookies with the dashboard.
+pub(super) const PATH_GATEWAY_BLOCKED_HOSTS: &[&str] = &["127.0.0.1", "::1", "*.localhost"];
+
+pub(super) fn gateway_http_headers_json() -> serde_json::Value {
+    json!({ "Content-Security-Policy": [GATEWAY_CONTENT_SECURITY_POLICY] })
 }
 
 pub(super) fn default_swarm_addrs(port: u16) -> Vec<String> {
@@ -92,6 +112,7 @@ pub fn apply_config(repo: &Path, s: &KuboSettings) -> Result<()> {
         "PublicGateways".to_string(),
         public_gateways_json(&s.public_gateway_hosts),
     );
+    gateway.insert("HTTPHeaders".to_string(), gateway_http_headers_json());
 
     let addresses = object_entry(root, "Addresses", &path)?;
     addresses.insert("Gateway".to_string(), json!([gateway_multiaddr(s.gateway)]));

@@ -29,7 +29,8 @@ SWING が起動する Kubo のプロセス（`ipfs init`・`ipfs version`・`ipf
 | `Provide.Strategy` | `[kubo].provide_strategy`（文字列） | `mfs` か `all` を含めないと、MFS にしか無いサイトが DHT に告知されない。知らない値を与えると daemon が起動しない |
 | `Gateway.NoFetch` | `true` | 下記「[Kubo の Gateway](#kubo-の-gatewaynofetch)」 |
 | `Gateway.NoDNSLink` | `true` | |
-| `Gateway.PublicGateways` | `[gateway].hosts` を `{"<host>": {"Paths": [], "UseSubdomains": false, "NoDNSLink": false}}` に変換したもの | hosts が空なら `{}` |
+| `Gateway.PublicGateways` | `[gateway].hosts` を `{"<host>": {"Paths": [], "UseSubdomains": false, "NoDNSLink": false}}` に変換したものに、`127.0.0.1`・`::1`・`*.localhost` の `{"Paths": [], "UseSubdomains": false, "NoDNSLink": true}` を足したもの | 下記「[パス形式を返さないホスト](#パス形式を返さないホスト)」 |
+| `Gateway.HTTPHeaders` | `{"Content-Security-Policy": ["connect-src 'self' https: wss:; form-action 'self' https:"]}`（`kubo::config::GATEWAY_CONTENT_SECURITY_POLICY`） | 下記「[応答に付けるヘッダー](#応答に付けるヘッダー)」。オブジェクトごと置き換える |
 | `Addresses.Gateway` | `[kubo].gateway_listen` を multiaddr（`/ip4/.../tcp/...` か `/ip6/.../tcp/...`）にした 1 要素の配列 | |
 | `Addresses.Swarm` | `[kubo].swarm_port` があるときだけ、Kubo の既定の Swarm リスト 8 本（TCP・QUIC・WebTransport・WebRTC の IPv4／IPv6）のポートをすべてこの値にしたもの | 無ければ触らない |
 | `Addresses.API` | `["/ip4/127.0.0.1/tcp/<api_port>"]` | 下記「[動的な API ポート](#動的な-api-ポートと-repoapi)」 |
@@ -43,6 +44,14 @@ compose の外部 Kubo コンテナでの同等の設定は [`docker.md#kubo-の
 ### Kubo の Gateway（`NoFetch`）
 
 `Gateway.NoFetch=true` により、Kubo の Gateway はローカルにあるブロックだけを返し、ネットワークからは取りに行かない。`Gateway.PublicGateways` に入れたホストでは DNSLink（`_dnslink.<host>`）の内容だけを返す。
+
+### パス形式を返さないホスト
+
+`127.0.0.1`・`::1`・`*.localhost`（ラベル 1 つだけ。`foo.localhost` や `ipfs.localhost`）は `Paths` が空なので、`/ipfs/<cid>/` のようなパス形式の URL に 404 を返す。パス形式ではそのホストで開いたすべてのサイトが 1 つの origin になり、`127.0.0.1` と `::1` ではダッシュボードと cookie も共有するため（[`dashboard/security.md#既知の弱点`](dashboard/security.md#既知の弱点)）。`localhost` は Kubo の暗黙の既定のまま残り、`<cid>.ipfs.localhost` のサブドメイン形式へ 301 で転送する。`*.localhost` はラベル 1 つにしか一致しないので、`a.b.localhost` や、ループバックに解決されるそのほかのホスト名・IP ではパス形式のまま返る。`*.*.localhost` を足すと `<cid>.ipfs.localhost` にも一致してサブドメイン形式が 404 になるため、足さない。
+
+### 応答に付けるヘッダー
+
+ゲートウェイのすべての応答に `Content-Security-Policy: connect-src 'self' https: wss:; form-action 'self' https:` を付ける。`localhost` 系のホスト名で開いたページはブラウザにループバックとして扱われ、ほかのローカルのポートや LAN へのリクエストに Local Network Access の確認が出ないので、ページの JavaScript（`fetch`・XHR・WebSocket・`sendBeacon`）とフォームから `http:`・`ws:` の他の origin へ送らせない。同じ origin と `https:`・`wss:` には送れる。`<img>`・`<iframe>`・ページの移動などの GET は止めない。`sandbox` は付けない（opaque な origin が埋め込みの iframe にも引き継がれ、YouTube などのプレーヤーが動かなくなるため）。
 
 Kubo は `Host` と `X-Forwarded-Host` をそのまま信じるので、Kubo の Gateway ポートを外部に直接公開しない。内蔵 gateway（[`gateway.md`](gateway.md)）や compose の `mirror` コンテナを前段に置く。
 
