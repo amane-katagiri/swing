@@ -734,6 +734,27 @@ pub struct PublishResultDto {
     pub pruned: Vec<String>,
     pub prune_error: Option<String>,
     pub gateway_url: Option<String>,
+    pub note: Option<NoteResultDto>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct NoteResultDto {
+    pub relays: Vec<RelayResultDto>,
+    pub error: Option<String>,
+}
+
+pub(super) fn note_result_dto(sent: anyhow::Result<Vec<nostr::RelaySendResult>>) -> NoteResultDto {
+    match sent {
+        Ok(results) => NoteResultDto {
+            error: (!results.iter().any(|r| r.ok))
+                .then(|| crate::publish::NO_RELAY_ACCEPTED_NOTE.to_string()),
+            relays: relay_results_dto(&results),
+        },
+        Err(e) => NoteResultDto {
+            relays: Vec::new(),
+            error: Some(format!("{e:#}")),
+        },
+    }
 }
 
 #[derive(Debug, Serialize)]

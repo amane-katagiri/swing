@@ -167,5 +167,26 @@ pub fn build_site_event_builder(site_event_kind: u16, site: &SiteFields<'_>) -> 
     ))
 }
 
+pub fn site_note_content(title: Option<&str>, url: &str, message: Option<&str>) -> String {
+    [title, Some(url), message]
+        .into_iter()
+        .flatten()
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+pub fn build_site_note_builder(
+    site_event_kind: u16,
+    author: &PublicKey,
+    d: &str,
+    content: &str,
+) -> EventBuilder {
+    EventBuilder::new(Kind::TextNote, content).tag(Tag::custom(
+        "a",
+        [super::site_coordinate(site_event_kind, author, d).to_string()],
+    ))
+}
+
 #[cfg(test)]
 mod tests;

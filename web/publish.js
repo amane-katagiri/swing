@@ -84,6 +84,7 @@ function refreshSubmitState() {
     submitBtn.disabled = true;
     return;
   }
+  publishEls.form.elements.note.disabled = !String(publishEls.form.elements.url.value || '').trim();
   const site = String(publishEls.form.elements.site.value || '').trim();
   if (!site) {
     submitBtn.disabled = true;
@@ -404,6 +405,12 @@ function renderPublishResult(result, errBody) {
       renderRelayResults(relayCell, result.relays);
       dl.append(el('dt', {}, t('resultRelays')), relayCell);
     }
+    if (result.note) {
+      const noteCell = el('dd', {});
+      if (result.note.error) noteCell.append(el('div', { class: 'swing-status', 'data-kind': 'warn' }, result.note.error));
+      renderRelayResults(noteCell, result.note.relays);
+      dl.append(el('dt', {}, t('resultNote')), noteCell);
+    }
     publishEls.result.append(dl);
     if (result.gateway_url) publishEls.result.append(el('p', {}, maybeLink(result.gateway_url, t('openGateway'))));
   } else if (errBody && errBody.nip05) {
@@ -433,12 +440,13 @@ function handlePublishHttpError(err) {
 
 const MODE_FIELDS = ['nip05', 'check_dotfiles', 'check_size', 'check_unchanged'];
 
-function buildUploadFormData({ site, url, title, message, modes, files }) {
+function buildUploadFormData({ site, url, title, message, note, modes, files }) {
   const fd = new FormData();
   fd.append('site', site);
   if (url) fd.append('url', url);
   if (title) fd.append('title', title);
   if (message) fd.append('message', message);
+  if (note) fd.append('note', 'true');
   for (const name of MODE_FIELDS) {
     if (modes[name]) fd.append(name, modes[name]);
   }
@@ -448,7 +456,7 @@ function buildUploadFormData({ site, url, title, message, modes, files }) {
   return fd;
 }
 
-function submitUpload({ site, url, title, message, modes, files }) {
+function submitUpload({ site, url, title, message, note, modes, files }) {
   const submitBtn = publishEls.form.querySelector('button[type="submit"]');
   return new Promise((resolve) => {
     publishing = true;
@@ -481,7 +489,7 @@ function submitUpload({ site, url, title, message, modes, files }) {
         hideProgress();
         renderPublishResult(body, null);
         if (body && body.published !== false) document.dispatchEvent(new CustomEvent('swing:published', { detail: body }));
-        saveLastPublish({ site, url, title, message, ...modes });
+        saveLastPublish({ site, url, title, message, note, ...modes });
         publishEls.uploadInput.value = '';
         updateUploadInfo();
         loadMySites(true);
@@ -493,7 +501,7 @@ function submitUpload({ site, url, title, message, modes, files }) {
       refreshSigner();
       resolve();
     });
-    xhr.send(buildUploadFormData({ site, url, title, message, modes, files }));
+    xhr.send(buildUploadFormData({ site, url, title, message, note, modes, files }));
   });
 
   function finishUpload() {
@@ -595,6 +603,7 @@ export const PublishView = {
   init() {
     publishEls.uploadInput.addEventListener('change', () => updateUploadInfo());
     publishEls.form.elements.site.addEventListener('input', () => refreshSubmitState());
+    publishEls.form.elements.url.addEventListener('input', () => refreshSubmitState());
     document.querySelector('[data-action="reload-my-sites"]').addEventListener('click', (ev) => loadMySites(true, ev.currentTarget));
     publishEls.reconnectSave.addEventListener('click', saveReconnect);
     publishEls.reconnectCancel.addEventListener('click', closeReconnect);
@@ -615,6 +624,7 @@ export const PublishView = {
       if (last.url) form.elements.url.value = last.url;
       if (last.title) form.elements.title.value = last.title;
       if (last.message) form.elements.message.value = last.message;
+      form.elements.note.checked = last.note === true;
       for (const name of MODE_FIELDS) {
         if (last[name]) form.elements[name].value = last[name];
       }
@@ -630,6 +640,7 @@ export const PublishView = {
       const url = String(fd.get('url') || '').trim();
       const title = String(fd.get('title') || '').trim();
       const message = String(fd.get('message') || '').trim();
+      const note = url !== '' && publishEls.form.elements.note.checked;
       const modes = Object.fromEntries(MODE_FIELDS.map((name) => [name, String(fd.get(name) || '')]));
 
       const files = Array.from(publishEls.uploadInput.files || []);
@@ -637,7 +648,7 @@ export const PublishView = {
         setStatus(publishEls.status, 'error', t('chooseFolderToUpload'));
         return;
       }
-      reviewAndPublish({ site, url, title, message, modes, files });
+      reviewAndPublish({ site, url, title, message, note, modes, files });
     });
   },
   onShow() {

@@ -297,7 +297,7 @@ mod tests {
             .map(|(_, v)| v.into_owned());
         assert_eq!(
             perms.as_deref(),
-            Some("get_public_key,sign_event:35981,sign_event:35980,sign_event:30000")
+            Some("get_public_key,sign_event:35981,sign_event:35980,sign_event:30000,sign_event:1")
         );
         assert!(json["qr_svg"].as_str().unwrap().contains("<svg"));
 

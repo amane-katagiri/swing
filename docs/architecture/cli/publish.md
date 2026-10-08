@@ -10,6 +10,7 @@
 - `--url` は任意。指定すると `url` タグになり、条件を満たさなければ `invalid --url: ...` でエラー終了する。省略すると `url` タグを付けない。
 - `--title` は任意。指定すると `title` タグになる。空白のみなら付けない扱いにし、条件を満たさなければ `invalid --title: ...` でエラー終了する。
 - `--message` はサイトイベントの `content` になる（省略時は空文字）。上限を超えたら何もせずに `invalid --message: must not exceed 4096 bytes (got N bytes)` でエラー終了する。
+- `--note` を付けると、サイトイベントの後に[通常の投稿](../publish.md#通常の投稿)もする。`--url` が要り、無ければ clap が引数の誤りとして止める。
 - `--nip05`・`--check-dotfiles`・`--check-size`・`--check-unchanged` は確認のモード（`off`/`warn`/`require`）。省略時は `[publish]` の同名の設定（既定は `check_dotfiles` が `require`・`check_size` が `warn`・`check_unchanged` が `require`）。4 つは表示や処理の前にまとめて解釈し、不正な値は `invalid --<フラグ名>` でエラー終了する。
 - `--yes`（`-y`）は、[増えたファイルの確認](#増えたファイルの確認)を聞かずに通す。
 
@@ -34,8 +35,9 @@
 10. `Nostr` 見出しを出して[署名と送信](../publish.md#署名と送信)を行う。署名アプリを使っているときは、署名の前に `waiting for the signer app to sign the site event...` を表示し、返事を最大 90 秒（`signer::SIGN_TIMEOUT`）待つ。
     - relay ごとの成否（✓/✗）を表示する。断った relay が理由を返していれば `✗ <relay>: <理由>` とし、理由は `format::sanitize_display_text` で 500 文字までにする。
     - どこにも受理されなければ `no relay accepted the site event; old versions were kept` でエラー終了する。
-11. `Old versions (keeping N)` 見出しを出して[古い版の削除](../publish.md#古い版の削除)を行い、消した版ごとに `✓ removed <パス>`、失敗は `! could not remove <パス>: <理由>`、一覧の失敗は `! could not list old versions: <理由>` を出す（どれも終了コードは変えない）。
-12. `Published.` で終わる。
+11. `--note` があれば `Note` 見出しを出して[通常の投稿](../publish.md#通常の投稿)をする。署名アプリを使っているときは、署名の前に `waiting for the signer app to sign the note...` を表示する。relay ごとの成否をサイトイベントと同じ形で出し、どこにも受理されなければ `! no relay accepted the note`、署名や送信に失敗したら `! could not post the note: <理由>` を出す（どれも終了コードは変えない）。
+12. `Old versions (keeping N)` 見出しを出して[古い版の削除](../publish.md#古い版の削除)を行い、消した版ごとに `✓ removed <パス>`、失敗は `! could not remove <パス>: <理由>`、一覧の失敗は `! could not list old versions: <理由>` を出す（どれも終了コードは変えない）。
+13. `Published.` で終わる。
 
 ## 増えたファイルの確認
 

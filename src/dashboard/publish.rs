@@ -17,6 +17,7 @@ pub(super) struct PublishFields {
     pub url: Option<String>,
     pub title: Option<String>,
     pub message: Option<String>,
+    pub note: bool,
     pub modes: publish::ModeOverrides,
 }
 
@@ -75,6 +76,8 @@ pub(super) async fn run_publish(
             ApiError::BadRequest(format!("invalid url: {url} is not an http or https URL"))
         }
     })?;
+    publish::check_note_request(fields.note, fields.url.as_deref())
+        .map_err(|e| ApiError::BadRequest(format!("invalid note: {e}")))?;
     let title = publish::normalize_title(fields.title.as_deref()).map_err(|_| {
         ApiError::BadRequest(
             "invalid title: must not exceed 256 bytes and must not contain control characters"
@@ -139,6 +142,7 @@ pub(super) async fn run_publish(
         relays: Vec::new(),
         pruned: Vec::new(),
         prune_error: None,
+        note: None,
     });
 
     if unchanged.stops_publish() {
@@ -146,20 +150,17 @@ pub(super) async fn run_publish(
         return Ok(PublishOutcome::Success(result));
     }
 
-    let signed = publish::sign_site_event(
-        &relay,
-        &publish::SiteAnnouncement {
-            site_event_kind: state.config.nostr.site_event_kind,
-            d: &result.site,
-            cid: &result.cid,
-            url: result.url.as_deref(),
-            size: result.size,
-            title,
-            message: result.message.as_deref(),
-            created_at,
-        },
-    )
-    .await;
+    let announcement = publish::SiteAnnouncement {
+        site_event_kind: state.config.nostr.site_event_kind,
+        d: &result.site,
+        cid: &result.cid,
+        url: result.url.as_deref(),
+        size: result.size,
+        title,
+        message: result.message.as_deref(),
+        created_at,
+    };
+    let signed = publish::sign_site_event(&relay, &announcement).await;
     let event = match signed {
         Ok(event) => event,
         Err(e) => return Err(upstream(stage.version.fail(e).await)),
@@ -172,6 +173,13 @@ pub(super) async fn run_publish(
         return Err(upstream(publish::no_relay_accepted(&relay_results)));
     }
     state.activity.record_published(created_at.as_secs());
+    let note = if fields.note {
+        Some(dto::note_result_dto(
+            publish::post_site_note(&relay, &announcement).await,
+        ))
+    } else {
+        None
+    };
 
     let site_path = layout.publish_site(&pubkey_hex, &result.site);
     let prune = publish::prune_old_versions_collect(
@@ -187,5 +195,6 @@ pub(super) async fn run_publish(
     result.relays = dto::relay_results_dto(&relay_results);
     result.pruned = prune.pruned().into_iter().map(str::to_string).collect();
     result.prune_error = prune.error_summary();
+    result.note = note;
     Ok(PublishOutcome::Success(result))
 }

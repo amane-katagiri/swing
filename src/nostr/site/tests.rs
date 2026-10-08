@@ -558,3 +558,27 @@ fn select_latest_breaks_created_at_ties_by_the_lowest_id() {
         );
     }
 }
+
+#[test]
+fn a_site_note_joins_title_url_and_message_with_spaces() {
+    assert_eq!(
+        site_note_content(Some("My site"), "https://example.com/", Some("Add posts")),
+        "My site https://example.com/ Add posts"
+    );
+    assert_eq!(
+        site_note_content(None, "https://example.com/", Some("")),
+        "https://example.com/"
+    );
+}
+
+#[test]
+fn a_site_note_is_a_text_note_pointing_at_the_site() {
+    let k = keys();
+    let ev = build_site_note_builder(35980, &k.public_key(), "example.com", "hello")
+        .finalize(&k)
+        .unwrap();
+    assert_eq!(ev.kind, Kind::TextNote);
+    assert_eq!(ev.content, "hello");
+    let a = format!("35980:{}:example.com", k.public_key().to_hex());
+    assert_eq!(tag_value(&ev, "a"), Some(a.as_str()));
+}

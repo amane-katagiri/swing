@@ -22,8 +22,9 @@ pub use report::{
     site_coordinate,
 };
 pub use site::{
-    SiteEvent, SiteFields, build_site_event_builder, canonical_cid, cap_sites_per_author,
-    is_unsafe_char, parse_site_event, select_latest, valid_http_url, valid_title, validate_d_tag,
+    SiteEvent, SiteFields, build_site_event_builder, build_site_note_builder, canonical_cid,
+    cap_sites_per_author, is_unsafe_char, parse_site_event, select_latest, site_note_content,
+    valid_http_url, valid_title, validate_d_tag,
 };
 
 pub const SITE_SUBSCRIPTION_ID: &str = "swing-sites";

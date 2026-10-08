@@ -119,6 +119,7 @@ impl PairingRequest {
                 nostr.replica_event_kind,
                 nostr.site_event_kind,
                 crate::nostr::FOLLOW_SET_KIND,
+                Kind::TextNote.as_u16(),
             ]),
             probe_kind: nostr.replica_event_kind,
             pairing_timeout: PAIRING_TIMEOUT,

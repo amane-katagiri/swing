@@ -4,7 +4,7 @@ CLI の `swing publish`（[`cli/publish.md`](cli/publish.md)）とダッシュ�
 
 ## 段階の順
 
-1. 引数の検証。`d`・`url` は [`nostr.md` の検証](nostr.md#検証)の条件（`validate_site_fields`）、`title` は前後の空白を削り、空なら付けない扱いにしてから同じく検証する（`normalize_title`）。`content`（メッセージ）は `MAX_CONTENT_BYTES`（4096 バイト）まで（`validate_message`）。確認のモード 4 つ（`nip05`・`check_dotfiles`・`check_size`・`check_unchanged`、それぞれ `off`/`warn`/`require`）は省略時に `[publish]` の同名の設定を使う（`resolve_modes`）。
+1. 引数の検証。`d`・`url` は [`nostr.md` の検証](nostr.md#検証)の条件（`validate_site_fields`）、`title` は前後の空白を削り、空なら付けない扱いにしてから同じく検証する（`normalize_title`）。`content`（メッセージ）は `MAX_CONTENT_BYTES`（4096 バイト）まで（`validate_message`）。通常の投稿を頼むなら `url` が要る（`check_note_request`。無ければ `needs a URL`）。確認のモード 4 つ（`nip05`・`check_dotfiles`・`check_size`・`check_unchanged`、それぞれ `off`/`warn`/`require`）は省略時に `[publish]` の同名の設定を使う（`resolve_modes`）。
 2. [保護パスの拒否](#保護パスの拒否)。
 3. NIP-05: モードが `off` でなければ `d` と自分の pubkey で検証する（`check_nip05`。[`nip05.md`](nip05.md)）。`require` で `Verified` 以外（`NotApplicable` を含む）なら add せずに止める。
 4. [サイトの一覧とローカルの確認](#サイトの一覧とローカルの確認)。
@@ -13,7 +13,8 @@ CLI の `swing publish`（[`cli/publish.md`](cli/publish.md)）とダッシュ�
 7. [時計の確認](#時計の確認)をして [`created_at`](#created_at-の決め方) を決め、[add して版を置く](#add-と版の配置)。
 8. [同じ内容かの確認](#同じ内容かの確認)。
 9. [署名と送信](#署名と送信)。
-10. [古い版の削除](#古い版の削除)。
+10. 投稿を頼まれていれば[通常の投稿](#通常の投稿)。
+11. [古い版の削除](#古い版の削除)。
 
 7 以降で失敗したときに MFS に置いた版をどうするかは[告知できなかった版の後始末](#告知できなかった版の後始末)。
 
@@ -87,6 +88,14 @@ relay が持つ自分のサイトイベントが未来ずれの許容を超え�
   - `too late` か `too new` と 2 語が続く
   - `created_at` と `too` の語があり、`early`・`old`・`past` の語が無い
 - 案内を足すときは、全体が 500 文字（`MAX_REJECTION_DISPLAY_CHARS`。CLI が断った理由を表示で切る長さ）に収まるよう、理由を `format::sanitize_display_text` で 429 文字（切ったときは省略記号を足して 430 文字）までにしてから足す（`nostr::with_rejection_hint`）。案内を足さない理由はそのまま返す。
+
+## 通常の投稿
+
+`publish::post_site_note`。サイトイベントがどれかの relay に受理された後だけ行い、[同じ内容](#同じ内容かの確認)で止めたときや受理されなかったときは行わない。
+
+- `kind 1` で、`content` は `title`・`url`・`content`（メッセージ）のうち空でないものをこの順に半角スペース 1 つでつないだもの（`nostr::site_note_content`）。タグはサイトを指す `a`（`<site_event_kind>:<pubkey hex>:<d>`）だけ（`nostr::build_site_note_builder`）。`created_at` は署名する時点の現在時刻。
+- 署名してから全 relay に送り、relay ごとの成否を返す。断った理由への案内の足し方は[署名と送信](#署名と送信)と同じ。
+- 署名・送信の失敗や、どの relay にも受理されなかったこと（`NO_RELAY_ACCEPTED_NOTE`: `no relay accepted the note`）は publish の成否を変えず、古い版の削除も続ける。
 
 ## 告知できなかった版の後始末
 

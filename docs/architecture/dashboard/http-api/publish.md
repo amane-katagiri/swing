@@ -8,7 +8,7 @@
 
 パート:
 
-- `site`（必須）・`url`・`title`・`message`・`nip05`・`check_dotfiles`・`check_size`・`check_unchanged`（省略可）。モードの 4 つは `off`/`warn`/`require` で、省略時は `[publish]` の同名の設定。不正な値は 400 `invalid <パート名>: ...`。
+- `site`（必須）・`url`・`title`・`message`・`note`・`nip05`・`check_dotfiles`・`check_size`・`check_unchanged`（省略可）。`note` は `true`/`false`（省略時は `false`）で、ほかの値は読んだ時点で 400 `invalid note: must be true or false`。モードの 4 つは `off`/`warn`/`require` で、省略時は `[publish]` の同名の設定。不正な値は 400 `invalid <パート名>: ...`。
 - テキストのパートは 1 つあたり `MAX_TEXT_FIELD_BYTES`（64 KiB）までで、超えるか UTF-8 でなければ 400。知らない名前のパートは読み捨てる。
 - `site`/`url`/`title` は[共通の規則](../../publish.md#段階の順)で検証し、違反は 400。`message` は `MAX_CONTENT_BYTES`（4096 バイト）を超えたら、パートを読んだ時点で 400 `invalid message: ...`。
 - `file`（1 個以上）: 各パートの `filename` がサイトルートからの相対パス（`/` 区切り）。`filename` の無い `file` パートは 400。
@@ -31,13 +31,13 @@
 
 1. 多重実行（409 `a publish is already running`）。本体を読む前・一時ディレクトリを作る前に判定するので、409 のときは何もディスクに書かない。排他するのはダッシュボード内で同時に来た publish どうしだけで、同じホスト上の CLI `swing publish` とは排他しない
 2. パートの受信とパスの検証、`site` と `file` の有無（400・413）
-3. `site`/`url`/`title` とモードの 4 つの検証（400）
+3. `site`/`url`・`note` に `url` があるか（400 `invalid note: needs a URL`）・`title`・モードの 4 つの検証（400）
 4. [保護パスの拒否](../../publish.md#保護パスの拒否)（400）
 5. セットアップモード（503 `agent is not configured`）
 6. NIP-05（422）
 7. [ドットファイル・サイズ](../../publish.md#サイトの一覧とローカルの確認)（422）
 8. Kubo と relay の準備（503 `agent is not ready`）→ [前の版と relay の時計](../../publish.md#前の版と-relay-の時計) → [時計の確認](../../publish.md#時計の確認)（400）→ [add](../../publish.md#add-と版の配置)（失敗は 502）
-9. [同じ内容かの確認](../../publish.md#同じ内容かの確認) → [署名と送信](../../publish.md#署名と送信) → [古い版の削除](../../publish.md#古い版の削除)
+9. [同じ内容かの確認](../../publish.md#同じ内容かの確認) → [署名と送信](../../publish.md#署名と送信) → `note` が `true` なら[通常の投稿](../../publish.md#通常の投稿) → [古い版の削除](../../publish.md#古い版の削除)
 
 処理:
 
@@ -54,8 +54,10 @@
     "unchanged": { "status": "changed", "mode": "require", "previous_cid": "bafy…", "previous_created_at": 1780000000, "detail": null } },
   "cid": "bafy…", "size": 12345, "created_at": 1790000000, "mfs_path": "/swing/publish/<hex>/example.com/1790000000",
   "relays": [ { "relay": "wss://…", "ok": true, "error": null } ], "pruned": ["1780000000"], "prune_error": null,
-  "gateway_url": "…", "files": 3 }
+  "gateway_url": "…", "note": { "relays": [ { "relay": "wss://…", "ok": true, "error": null } ], "error": null }, "files": 3 }
 ```
+
+- `note` は通常の投稿をしたときだけオブジェクトで、それ以外（頼まれていない・`published` が `false`）は `null`。`relays` は relay ごとの成否（署名や送信に失敗したときは空）、`error` はどこにも受理されなかったとき `no relay accepted the note`、署名や送信に失敗したときはその理由。どちらでも応答は 200 のまま。
 
 - `nip05.status` は `off`/`verified`/`mismatch`/`not_applicable`/`error`。`detail` は `error` のときだけ粗い分類（`unreachable`/`timeout`/`invalid_response`）が入る（SSRF 対策と合わせて [`../../nip05.md`](../../nip05.md)）。`require` で検証が通らなければ、add する前に 422 を返す: `{ "error": "...", "nip05": { "status": "...", "detail": "..." } }`。
 - `checks`: 各項目の `mode` はその回に使ったモード。判定は[ローカルの確認](../../publish.md#サイトの一覧とローカルの確認)と[同じ内容かの確認](../../publish.md#同じ内容かの確認)。

@@ -310,6 +310,33 @@ pub async fn sign_site_event(
     relay.sign(builder).await.context("signing site event")
 }
 
+pub async fn post_site_note(
+    relay: &RelayClient,
+    announcement: &SiteAnnouncement<'_>,
+) -> Result<Vec<RelaySendResult>> {
+    let url = announcement
+        .url
+        .context("a note needs the URL of the site")?;
+    let content = nostr::site_note_content(announcement.title, url, announcement.message);
+    let builder = nostr::build_site_note_builder(
+        announcement.site_event_kind,
+        &relay.public_key(),
+        announcement.d,
+        &content,
+    );
+    let event = relay.sign(builder).await.context("signing the note")?;
+    send_site_event(relay, &event).await
+}
+
+pub const NO_RELAY_ACCEPTED_NOTE: &str = "no relay accepted the note";
+
+pub fn check_note_request(note: bool, url: Option<&str>) -> Result<(), &'static str> {
+    if note && url.is_none() {
+        return Err("needs a URL");
+    }
+    Ok(())
+}
+
 pub const FUTURE_REJECTION_HINT: &str =
     "the relay thinks the event is dated in the future; check your clock";
 
@@ -590,6 +617,7 @@ async fn announce(
     remote_signer: bool,
     version: StagedVersion,
     announcement: &SiteAnnouncement<'_>,
+    note: bool,
 ) -> Result<()> {
     println!();
     println!("Nostr");
@@ -605,15 +633,48 @@ async fn announce(
         }
     };
     version.keep();
-    let sent = send_site_event(&relay, &event).await;
-    relay.shutdown().await;
-    let results = sent?;
+    let results = match send_site_event(&relay, &event).await {
+        Ok(results) => results,
+        Err(e) => {
+            relay.shutdown().await;
+            return Err(e);
+        }
+    };
 
     nostr::print_relay_send_result_lines(&results);
     if !results.iter().any(|r| r.ok) {
+        relay.shutdown().await;
         anyhow::bail!(NO_RELAY_ACCEPTED);
     }
+    if note {
+        announce_note(&relay, remote_signer, announcement).await;
+    }
+    relay.shutdown().await;
     Ok(())
+}
+
+async fn announce_note(
+    relay: &RelayClient,
+    remote_signer: bool,
+    announcement: &SiteAnnouncement<'_>,
+) {
+    println!();
+    println!("Note");
+    if remote_signer {
+        println!("  waiting for the signer app to sign the note...");
+    }
+    match post_site_note(relay, announcement).await {
+        Ok(results) => {
+            nostr::print_relay_send_result_lines(&results);
+            if !results.iter().any(|r| r.ok) {
+                println!("  ! {NO_RELAY_ACCEPTED_NOTE}");
+            }
+        }
+        Err(e) => println!(
+            "  ! could not post the note: {}",
+            Sanitized(&format!("{e:#}"))
+        ),
+    }
 }
 
 pub const NO_RELAY_ACCEPTED: &str = "no relay accepted the site event; old versions were kept";
@@ -623,6 +684,7 @@ pub struct Request {
     pub url: Option<String>,
     pub title: Option<String>,
     pub message: Option<String>,
+    pub note: bool,
     pub modes: ModeOverrides,
     pub yes: bool,
 }
@@ -633,12 +695,14 @@ pub async fn run(config: Config, dir: &Path, request: Request) -> Result<()> {
         url,
         title,
         message,
+        note,
         modes: overrides,
         yes,
     } = request;
     let url = url.as_deref();
     let message = message.as_deref();
     let title = check_arguments(&d, url, title.as_deref(), message)?;
+    check_note_request(note, url).map_err(|e| anyhow::anyhow!("invalid --note: {e}"))?;
     let modes = resolve_modes(&overrides, &config.publish)
         .map_err(|(name, e)| e.context(format!("invalid --{name}")))?;
     refuse_protected_paths(dir, &config)?;
@@ -708,6 +772,7 @@ pub async fn run(config: Config, dir: &Path, request: Request) -> Result<()> {
             message,
             created_at,
         },
+        note,
     )
     .await?;
 
@@ -1083,6 +1148,7 @@ mod tests {
             url: None,
             title: None,
             message: None,
+            note: false,
             modes: ModeOverrides {
                 nip05: Some("off".into()),
                 check_dotfiles: Some("off".into()),

@@ -136,6 +136,12 @@ enum Command {
         #[arg(short, long, help = "Update note shown to readers (event content)")]
         message: Option<String>,
         #[arg(
+            long,
+            requires = "url",
+            help = "Also post a text note (kind 1) with the title, URL and message"
+        )]
+        note: bool,
+        #[arg(
             short,
             long,
             help = "Publish files that are new since your latest version without asking (required when stdin is not a terminal)"
@@ -537,6 +543,7 @@ async fn run_other(command: Command) -> Result<()> {
             check_unchanged,
             title,
             message,
+            note,
             yes,
             dir,
         } => {
@@ -546,6 +553,7 @@ async fn run_other(command: Command) -> Result<()> {
                 url,
                 title,
                 message,
+                note,
                 modes: publish::ModeOverrides {
                     nip05,
                     check_dotfiles,

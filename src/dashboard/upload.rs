@@ -229,6 +229,7 @@ async fn receive_upload(multipart: &mut Multipart, dest: &Path) -> Result<Parsed
     let mut url: Option<String> = None;
     let mut title: Option<String> = None;
     let mut message: Option<String> = None;
+    let mut note = false;
     let mut modes = crate::publish::ModeOverrides::default();
     let mut seen_paths: HashSet<String> = HashSet::new();
     let mut seen_dirs: HashSet<String> = HashSet::new();
@@ -250,6 +251,17 @@ async fn receive_upload(multipart: &mut Multipart, dest: &Path) -> Result<Parsed
                 crate::publish::validate_message(&text)
                     .map_err(|e| ApiError::BadRequest(format!("invalid message: {e}")))?;
                 message = Some(text);
+            }
+            "note" => {
+                note = match read_text_field(field).await?.as_str() {
+                    "true" => true,
+                    "false" => false,
+                    _ => {
+                        return Err(ApiError::BadRequest(
+                            "invalid note: must be true or false".to_string(),
+                        ));
+                    }
+                };
             }
             name @ ("nip05" | "check_dotfiles" | "check_size" | "check_unchanged") => {
                 let slot = match name {
@@ -342,6 +354,7 @@ async fn receive_upload(multipart: &mut Multipart, dest: &Path) -> Result<Parsed
             url,
             title,
             message,
+            note,
             modes,
         },
         file_count,
@@ -766,6 +779,31 @@ mod tests {
         assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
         let body = error_body(resp).await;
         assert!(body["error"].as_str().unwrap().contains("invalid title"));
+        assert!(upload_dir_entries(dir.path()).is_empty());
+    }
+
+    #[tokio::test]
+    async fn upload_rejects_a_note_without_a_url_before_touching_the_relay() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = test_state_with(dir.path().to_path_buf(), 2 * (1u64 << 30));
+        let boundary = "SwingTestBoundary";
+        let body = multipart_body(
+            boundary,
+            &[
+                ("site", None, b"example.com"),
+                ("note", None, b"true"),
+                ("file", Some("index.html"), b"<html></html>"),
+            ],
+        );
+        let app = router(state);
+        let resp = call(
+            app,
+            multipart_request("/api/publish/upload", boundary, body),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+        let body = error_body(resp).await;
+        assert_eq!(body["error"], "invalid note: needs a URL");
         assert!(upload_dir_entries(dir.path()).is_empty());
     }
 
