@@ -3,7 +3,7 @@ members = ["tray"]
 
 [package]
 name = "swing"
-version = "0.1.2"
+version = "0.1.3"
 edition = "2024"
 license = "MIT"
 
