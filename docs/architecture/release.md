@@ -39,6 +39,19 @@
 
 サードパーティおよび `actions/*`（`actions/checkout`・`actions/upload-artifact`・`actions/download-artifact`）の action はフルコミット SHA に固定し、末尾に `# vN` コメントでタグ相当のバージョンを添える。ziglang は pip の `==` で、Inno Setup は `build.ps1` にバージョンとインストーラーの SHA-256 で固定する。選定理由は [2026-09-25 の log](../log/2026-09-25-release-actions-rationale.md)。どのワークフローも git で push しないので、`actions/checkout` は `persist-credentials: false` にしてトークンを `.git/config` に残さない。
 
+## リリースの手順
+
+`packaging/release/` のスクリプトで行う。どれも POSIX sh で、リポジトリのどこから実行してもリポジトリの直下で動く。`<version>` は `0.1.3` か `v0.1.3`。コミットするスクリプトは、環境変数 `SWING_RELEASE_TRAILER` があればその内容をコミットメッセージの 2 段落目に入れる。
+
+| スクリプト | すること | 止まる条件 |
+|---|---|---|
+| `bump.sh <version>` | `Cargo.toml` と `tray/Cargo.toml` の最初の `version = "..."` を書き換え、`cargo update --workspace --offline` で `Cargo.lock` を合わせて `Bump the version to <version>` をコミットする。push はしない | `main` でない、作業ツリーに変更がある、`origin/main` より遅れている、すでにそのバージョン |
+| `tag.sh <version>` | `main` を push し、注釈付きタグ `v<version>` を打って push する。タグの push で `release.yml` がドラフトのリリースを作る | `bump.sh` と同じ条件、`Cargo.toml` か `tray/Cargo.toml` のバージョンが違う、タグがローカルか `origin` にすでにある |
+| `notes.sh <version> <notes.md>` | ドラフトのリリースの本文を `gh release edit --notes-file` で差し替える。本文のひな形は `notes-template.md` | ファイルが無いか空、リリースが無いかドラフトでない |
+| `update-tap.sh <version>` | リリースに付いた `swing.rb` を取り、tap（`amane-katagiri/homebrew-swing`）の `Formula/swing.rb` を差し替えて `Update the swing formula for v<version>` をコミットして push する。すでに同じ中身なら何もしない | リリースが無いかドラフト、`swing.rb` の URL がそのタグを指していない |
+
+`gh` は GitHub にログイン済みで、このリポジトリと tap に push できる必要がある。
+
 ## macOS の動作確認（`.github/workflows/macos-check.yml`）
 
 手動実行（`workflow_dispatch`）でだけ動く。`macos-latest` のランナー（ロケールと画面の情報は artifact に記録する）で `--workspace` を release ビルドして `swing` の隣に `SWING.app` を作り、`swing.example.toml` の写しを設定ファイルにして、鍵の無いセットアップモード（[`up.md`](up.md#セットアップモード鍵未設定)）で動かす。Kubo も relay も使わない。手順と操作の仕方の正本は [`macos-check.yml`](../../.github/workflows/macos-check.yml)。

@@ -36,7 +36,13 @@ GitHub Actions のワークフロー（`macos-check`・`windows-check`・`window
 
 ## リリース
 
-`v*` のタグを打ったり打ち直したりしたら、そのリリースに付いた `swing.rb` で tap のリポジトリの `Formula/swing.rb` を差し替える（[`docs/architecture/homebrew.md`](docs/architecture/homebrew.md#tap-への公開)）。古い formula のままだと SHA-256 が合わず `brew install` が失敗する。
+リリースは次の順で、`packaging/release/` のスクリプトを使って行う（中身は [`docs/architecture/release.md`](docs/architecture/release.md#リリースの手順)）。手で同じことをしない。各スクリプトは `main` で作業ツリーがきれいなことなどを確かめ、満たさなければ何もせずに止まる。コミットに付ける trailer（`Co-Authored-By:` など）は環境変数 `SWING_RELEASE_TRAILER` に入れて渡す。
+
+1. `packaging/release/bump.sh <version>`: `Cargo.toml`・`tray/Cargo.toml`・`Cargo.lock` のバージョンを上げて `Bump the version to <version>` をコミットする。push はしない。
+2. 利用者に push とタグ打ちの了解を取ってから `packaging/release/tag.sh <version>`: `main` を push し、注釈付きタグ `v<version>` を打って push する。`release` ワークフローがドラフトのリリースを作る。
+3. リリースノートを [`packaging/release/notes-template.md`](packaging/release/notes-template.md) から書く。直前のリリース（`gh release view`）からの変更を `git log` と `docs/log/` で拾い、利用者から見た変更だけを書く。利用者が対応しなければならないこと（設定・手順・互換性）は冒頭で知らせる。
+4. ワークフローが通ってドラフトができたら `packaging/release/notes.sh <version> <notes.md>` で本文を差し替える。リリースはドラフトのまま残し、公開は利用者が行う。
+5. 利用者がリリースを公開したら `packaging/release/update-tap.sh <version>`: リリースの `swing.rb` で tap の `Formula/swing.rb` を差し替えて push する（[`docs/architecture/homebrew.md`](docs/architecture/homebrew.md#tap-への公開)）。ドラフトの添付ファイルはダウンロードできないので、公開前には行わない。タグを打ち直したときも、公開し直した後に必ず行う（古い formula のままだと SHA-256 が合わず `brew install` が失敗する）。
 
 ## コーディング規則
 
