@@ -43,6 +43,8 @@ docker compose cp ipfs:/data/ipfs "$dest/data/kubo"
 
 Windows（PowerShell）でも `docker compose cp` はそのまま使えます（`$dest` を `"$HOME\swing"` などに、最後の行を `Move-Item` に読み替えてください）。コピーしたファイルはコマンドを実行したユーザーの所有になります。
 
+`<dir>` が[ユーザーごとの既定の場所](install.md#設定ファイルとデータの置き場所)でなければ、この後の `swing up`・`swing status`・`swing service install` などは `export SWING_CONFIG="$dest/swing.toml"`（PowerShell では `$env:SWING_CONFIG = "$dest\swing.toml"`）を設定したシェルで実行するか、`--config "$dest/swing.toml"` を付けて実行します。
+
 - `.env` の設定は `<dir>/swing.toml` に移します（サービスとして登録した `swing up` は `.env` を読みません）。キー名の対応は [`swing.example.toml`](../../swing.example.toml) の各行のコメントにあります。`SWING_IPFS_API`・`SWING_STATE_DIR`・`SWING_KUBO_MANAGED`・`SWING_GATEWAY_UPSTREAM`・`SWING_DASHBOARD_LISTEN` は書きません。`SWING_DASHBOARD_BIND`・`SWING_KUBO_GATEWAY_BIND`・`SWING_GATEWAY_BIND` を変えていたら、その値をそれぞれ `[dashboard] listen`・`[kubo] gateway_listen`・`[gateway] listen` に書きます（gateway は `SWING_GATEWAY_LISTEN` を `off` 以外にしていた場合だけ）。`SWING_DASHBOARD_PUBLIC_URL` はホスト側のポートに合わせていただけなら要りません。
 - ホストの `ipfs` は compose のイメージと同じ v0.43.1 にします。古い Kubo は新しい repo を開けず、新しい Kubo は repo を移行するので、その後は compose に戻せません。
 - Kubo の設定は `swing up` が起動のたびに上書きします（API とゲートウェイは `127.0.0.1` で待ち受け直します）。PeerID や `Bootstrap` などはコピーした値のままです。

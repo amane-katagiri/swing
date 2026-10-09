@@ -8,11 +8,12 @@
 
 1. `--config <path>`
 2. 環境変数 `SWING_CONFIG`
-3. `<カレントディレクトリ>/swing.toml`（ファイルがあるときだけ）
-4. ユーザーごとの既定の場所の `swing.toml`（無くても使う）
-5. 4 の場所を決められないときは `<カレントディレクトリ>/swing.toml`（無くても使う）
+3. ユーザーごとの既定の場所の `swing.toml`（無くても使う）
+4. 3 の場所を決められないときだけ `<カレントディレクトリ>/swing.toml`（無くても使う）
 
-4 の場所（`default_config_dir`）は OS で決まる。
+カレントディレクトリに `swing.toml` があっても、3 の場所を決められれば読まない（警告も出さない）。既定の場所以外の設定ファイルを使うときは 1 か 2 で指す。
+
+3 の場所（`default_config_dir`）は OS で決まる。
 
 | OS | 場所 | 決められないとき |
 |---|---|---|
@@ -20,9 +21,9 @@
 | macOS | `$HOME/Library/Application Support/swing` | `HOME` が無い・絶対パスでない・既存のディレクトリでない |
 | Windows | `%LOCALAPPDATA%\swing` | `LOCALAPPDATA` が無い・絶対パスでない・既存のディレクトリでない |
 
-設定ファイルの隣の `data`（状態ファイルと Kubo のリポジトリ）もこの下に入る。ホームディレクトリの無いユーザー（Docker イメージのユーザーなど。[`docker.md`](docker.md)）は 5 になる。空文字の環境変数は未設定として扱う（下記）。
+設定ファイルの隣の `data`（状態ファイルと Kubo のリポジトリ）もこの下に入る。ホームディレクトリの無いユーザー（Docker イメージのユーザーなど。[`docker.md`](docker.md)）は 4 になる。空文字の環境変数は未設定として扱う（下記）。
 
-1 か 2 で指したファイルが無ければ `config file not found: <path>` でエラー終了。3〜5 で決まったファイルが無ければエラーにせず、既定値と環境変数だけで組み立てる（`Config.config_exists = false`）。ダッシュボードのセットアップ・設定編集はこのパスに書く（[設定の書き換え](#設定の書き換えsrcsettingseditrs)）。
+1 か 2 で指したファイルが無ければ `config file not found: <path>` でエラー終了。3 か 4 で決まったファイルが無ければエラーにせず、既定値と環境変数だけで組み立てる（`Config.config_exists = false`）。ダッシュボードのセットアップ・設定編集はこのパスに書く（[設定の書き換え](#設定の書き換えsrcsettingseditrs)）。
 
 TOML の構文や型のエラーは `line <行>, column <桁>: <理由>` の形で報告し、該当行を引用しない。
 
@@ -52,7 +53,7 @@ TOML の構文や型のエラーは `line <行>, column <桁>: <理由>` の形�
 
 カタログの種類が `Path` のもの（`[agent].state_dir`・`[kubo].binary`・`[kubo].repo`・`[dashboard].custom_css`・`desktop_page`・`desktop_page_css`・`desktop_banner`・`mascots_dir`）の相対パスは、値の出どころで起点が変わる。
 
-- 設定ファイルに書いた値と既定値（`state_dir` の `./data`）: 設定ファイルがあるか、パスがユーザーごとの既定の場所（上記の 4）なら、そのディレクトリを起点に `build_config` が絶対パスにする。
+- 設定ファイルに書いた値と既定値（`state_dir` の `./data`）: 設定ファイルがあるか、パスがユーザーごとの既定の場所（上記の 3）なら、そのディレクトリを起点に `build_config` が絶対パスにする。
 - 環境変数で渡した値と、それ以外で設定ファイルが無いときの既定値: そのまま残り、カレントディレクトリが起点になる。
 - 他の値から導く既定値（`[kubo].repo` の `<state_dir>/kubo`）は解決後の `state_dir` に従う。
 

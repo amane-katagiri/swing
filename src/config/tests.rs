@@ -229,24 +229,29 @@ fn cwd() -> PathBuf {
 }
 
 #[test]
-fn locate_config_uses_the_cwd_file_only_when_it_exists() {
-    let cwd = cwd();
-    let in_cwd = cwd.join("swing.toml");
-    let found = locate_config_with(None, &cwd, env_of(HOME_VARS), |p| p == in_cwd, |_| true);
-    assert_eq!(found, (in_cwd, ConfigOrigin::Cwd));
-    let found = locate_config_with(None, &cwd, env_of(HOME_VARS), |_| false, |_| true);
+fn locate_config_uses_the_default_even_with_a_swing_toml_in_cwd() {
+    let cwd = tempfile::tempdir().unwrap();
+    std::fs::write(cwd.path().join("swing.toml"), "").unwrap();
+    let home = tempfile::tempdir().unwrap();
+    let home_str = home.path().to_str().unwrap();
+    let vars = [(HOME_VARS[0].0, home_str)];
+    let found = locate_config_with(None, cwd.path(), env_of(&vars), |p| p.is_dir());
+    assert_eq!(found.1, ConfigOrigin::UserDefault);
+    assert!(found.0.starts_with(home.path()));
+    assert_ne!(found.0, cwd.path().join("swing.toml"));
+    let found = locate_config_with(None, cwd.path(), env_of(HOME_VARS), |_| true);
     assert_eq!(found, (expected_default(), ConfigOrigin::UserDefault));
 }
 
 #[test]
-fn locate_config_prefers_cli_and_env_over_cwd_and_default() {
+fn locate_config_prefers_cli_and_env_over_the_default() {
     let cwd = cwd();
     let mut vars = HOME_VARS.to_vec();
     vars.push(("SWING_CONFIG", "/etc/from-env.toml"));
     let cli = PathBuf::from("/tmp/from-cli.toml");
-    let found = locate_config_with(Some(&cli), &cwd, env_of(&vars), |_| true, |_| true);
+    let found = locate_config_with(Some(&cli), &cwd, env_of(&vars), |_| true);
     assert_eq!(found, (cli, ConfigOrigin::Explicit));
-    let found = locate_config_with(None, &cwd, env_of(&vars), |_| true, |_| true);
+    let found = locate_config_with(None, &cwd, env_of(&vars), |_| true);
     assert_eq!(
         found,
         (PathBuf::from("/etc/from-env.toml"), ConfigOrigin::Explicit)
@@ -257,12 +262,12 @@ fn locate_config_prefers_cli_and_env_over_cwd_and_default() {
 fn locate_config_falls_back_to_cwd_without_a_usable_home() {
     let cwd = cwd();
     let in_cwd = cwd.join("swing.toml");
-    let found = locate_config_with(None, &cwd, env_of(&[]), |_| false, |_| true);
+    let found = locate_config_with(None, &cwd, env_of(&[]), |_| true);
     assert_eq!(found, (in_cwd.clone(), ConfigOrigin::Cwd));
-    let found = locate_config_with(None, &cwd, env_of(HOME_VARS), |_| false, |_| false);
+    let found = locate_config_with(None, &cwd, env_of(HOME_VARS), |_| false);
     assert_eq!(found, (in_cwd.clone(), ConfigOrigin::Cwd));
     let relative = [(HOME_VARS[0].0, "relative")];
-    let found = locate_config_with(None, &cwd, env_of(&relative), |_| false, |_| true);
+    let found = locate_config_with(None, &cwd, env_of(&relative), |_| true);
     assert_eq!(found, (in_cwd, ConfigOrigin::Cwd));
 }
 
@@ -271,7 +276,7 @@ fn locate_config_falls_back_to_cwd_without_a_usable_home() {
 fn locate_config_honors_xdg_data_home() {
     let cwd = cwd();
     let vars = [("HOME", "/home/u"), ("XDG_DATA_HOME", "/srv/xdg")];
-    let found = locate_config_with(None, &cwd, env_of(&vars), |_| false, |_| false);
+    let found = locate_config_with(None, &cwd, env_of(&vars), |_| false);
     assert_eq!(
         found,
         (
@@ -280,7 +285,7 @@ fn locate_config_honors_xdg_data_home() {
         )
     );
     let vars = [("HOME", "/home/u"), ("XDG_DATA_HOME", "xdg")];
-    let found = locate_config_with(None, &cwd, env_of(&vars), |_| false, |_| true);
+    let found = locate_config_with(None, &cwd, env_of(&vars), |_| true);
     assert_eq!(found, (expected_default(), ConfigOrigin::UserDefault));
 }
 

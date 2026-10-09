@@ -370,14 +370,13 @@ pub fn resolve_config_path(cli_path: Option<&Path>) -> PathBuf {
 
 pub fn locate_config(cli_path: Option<&Path>) -> (PathBuf, ConfigOrigin) {
     let cwd = env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-    locate_config_with(cli_path, &cwd, env_var, |p| p.is_file(), |p| p.is_dir())
+    locate_config_with(cli_path, &cwd, env_var, |p| p.is_dir())
 }
 
 fn locate_config_with(
     cli_path: Option<&Path>,
     cwd: &Path,
     env: impl Fn(&str) -> Option<String>,
-    is_file: impl Fn(&Path) -> bool,
     is_dir: impl Fn(&Path) -> bool,
 ) -> (PathBuf, ConfigOrigin) {
     if let Some(p) = cli_path {
@@ -386,13 +385,9 @@ fn locate_config_with(
     if let Some(p) = env("SWING_CONFIG") {
         return (PathBuf::from(p), ConfigOrigin::Explicit);
     }
-    let in_cwd = cwd.join(CONFIG_FILE_NAME);
-    if is_file(&in_cwd) {
-        return (in_cwd, ConfigOrigin::Cwd);
-    }
     match default_config_dir(env, is_dir) {
         Some(dir) => (dir.join(CONFIG_FILE_NAME), ConfigOrigin::UserDefault),
-        None => (in_cwd, ConfigOrigin::Cwd),
+        None => (cwd.join(CONFIG_FILE_NAME), ConfigOrigin::Cwd),
     }
 }
 

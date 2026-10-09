@@ -39,7 +39,7 @@ IPFS ノードの Kubo は同梱していません。Windows のインストー�
 ./swing dashboard open
 ```
 
-セットアップ画面で、鍵の生成（既存の鍵の貼り付けや署名アプリとの接続もできます）・relay・保存の上限を入力して送信すると `swing.toml` ができ、そのまま通常の動作に移ります。`swing.toml` は、カレントディレクトリに `swing.toml` が無ければ次のユーザーごとの既定の場所に作られ、状態ファイルと Kubo のリポジトリもその下の `data` に置かれます。
+セットアップ画面で、鍵の生成（既存の鍵の貼り付けや署名アプリとの接続もできます）・relay・保存の上限を入力して送信すると `swing.toml` ができ、そのまま通常の動作に移ります。`swing.toml` は次のユーザーごとの既定の場所に作られ（`--config` を付けるか `SWING_CONFIG` を設定していればそのパス）、状態ファイルと Kubo のリポジトリもその下の `data` に置かれます。
 
 - Linux: `~/.local/share/swing`（`XDG_DATA_HOME` を設定していれば `$XDG_DATA_HOME/swing`）
 - macOS: `~/Library/Application Support/swing`
@@ -50,7 +50,10 @@ IPFS ノードの Kubo は同梱していません。Windows のインストー�
 ```bash
 ./swing key generate
 cp swing.example.toml swing.toml
+export SWING_CONFIG="$PWD/swing.toml"
 ```
+
+この `swing.toml` は既定の場所に無いので、`SWING_CONFIG` でその場所を伝えます（Windows の PowerShell では `$env:SWING_CONFIG = "$PWD\swing.toml"`）。以下のコマンドはこのシェルで実行するか、各コマンドに `--config <path>` を付けてください。上記の既定の場所に置けば、どちらも要りません。
 
 `swing.toml` を開き、少なくとも次を書き換えてから `./swing up` で起動してください。
 
@@ -66,7 +69,7 @@ cp swing.example.toml swing.toml
 ./swing service install
 ```
 
-Linux では systemd のユーザーユニット、macOS では launchd の LaunchAgent、Windows ではタスクスケジューラに登録します。Windows と macOS では、`swing` と同じ場所にある `swing-tray.exe`・`SWING.app` も一緒に登録して起動します。トレイのアイコンから、ダッシュボードを開く・再起動・停止ができます。トレイが要らなければ `--no-tray` を付けてください。設定ファイルがまだ無ければ、上記の既定の場所に空の `swing.toml` を作ってから登録するので、サービスはセットアップモードで起動します。
+Linux では systemd のユーザーユニット、macOS では launchd の LaunchAgent、Windows ではタスクスケジューラに登録します。Windows と macOS では、`swing` と同じ場所にある `swing-tray.exe`・`SWING.app` も一緒に登録して起動します。トレイのアイコンから、ダッシュボードを開く・再起動・停止ができます。トレイが要らなければ `--no-tray` を付けてください。`SWING_CONFIG` を設定していればその `swing.toml` を登録します。設定していなくて設定ファイルがまだ無ければ、上記の既定の場所に空の `swing.toml` を作ってから登録するので、サービスはセットアップモードで起動します。
 
 Linux でシステムユニットにするときは `sudo ./swing service install --system` とします。サービスは `sudo` を実行したユーザーの権限で動きます（別のユーザーにするなら `--run-as <user>`。root にするなら `--allow-root` も付けます）。`swing` の実行ファイル・設定ファイル・Kubo のバイナリとその親ディレクトリが、root かサービスのユーザーの持ち物で、ほかのユーザーやグループから書き込めないことを確かめ、そうでなければ登録しません。別のユーザーや root で動かすなら、`swing` と設定ファイルは root の持ち物でグループが書き込めないディレクトリ（`/usr/local/lib/swing` や `/etc/swing` など。Debian で `/usr/local` が `root:staff 2775` なら `/opt/swing` など）に置いてください。
 
@@ -74,7 +77,7 @@ Linux でシステムユニットにするときは `sudo ./swing service instal
 
 ## よく使うコマンド
 
-`swing up` を動かしたまま、同じ設定ファイルのディレクトリで実行します（既定の場所の設定ファイルを使っているなら、`swing.toml` の無いディレクトリならどこからでも構いません）。ほとんどの操作はダッシュボードからもできます。
+`swing up` を動かしたまま、同じ設定ファイルを使うように実行します（既定の場所の設定ファイルならどのディレクトリからでもそのまま。それ以外なら `SWING_CONFIG` を設定するか `--config <path>` を付けます）。ほとんどの操作はダッシュボードからもできます。
 
 ```bash
 ./swing mirror add npub1...     # 保存する相手を追加する（remove で外す、list で一覧）

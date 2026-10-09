@@ -197,7 +197,7 @@ fn load_stop_config() -> Option<crate::config::Config> {
     let path = resolve_config_path(None);
     if !path.exists() {
         println!(
-            "Warning: could not find the config file (swing.toml) at {} to stop swing through its dashboard; set SWING_CONFIG or run this from the directory containing swing.toml. Falling back to `schtasks /End`.",
+            "Warning: could not find the config file (swing.toml) at {} to stop swing through its dashboard; set SWING_CONFIG to its path. Falling back to `schtasks /End`.",
             path.display()
         );
         return None;

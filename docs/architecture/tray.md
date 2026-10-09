@@ -22,7 +22,7 @@ swing-tray [--config <path>]
 
 ## 設定ファイル
 
-`--config <path>` を渡すか、渡さなければ他のサブコマンドと同じく `config::resolve_config_path`（`SWING_CONFIG` → カレントディレクトリの `swing.toml` → ユーザーごとの既定の場所。[`config.md`](config.md#設定ファイルの場所)）で決める。ポーリングと操作のたびに `Config::load` で読み直す。
+`--config <path>` を渡すか、渡さなければ他のサブコマンドと同じく `config::resolve_config_path`（`SWING_CONFIG` → ユーザーごとの既定の場所。[`config.md`](config.md#設定ファイルの場所)）で決める。ポーリングと操作のたびに `Config::load` で読み直す。
 
 ## 多重起動の防止
 

@@ -61,7 +61,7 @@ curl -fsSL .../install.sh | sh -s -- --version v0.1.0
 
 インストールと更新では、この検査を `lib/swing` の中のものを実行する前（Kubo の版の確認・持ち主の確認）に済ませる。アンインストールも `lib/swing` について同じ検査で失敗する（下記）。
 
-インストールと更新では、検査の後も `lib/swing` の中のものをパス（`<lib>/ipfs`・`<lib>/swing`・`<lib>/.swing-check.<pid>`）で実行し、書き込みもパスで行う。`swing service stop`・`start`・`install` はカレントディレクトリの `swing.toml` を設定として探す（[`config.md`](config.md#設定ファイルの場所)）ので、カレントディレクトリは変えない。
+インストールと更新では、検査の後も `lib/swing` の中のものをパス（`<lib>/ipfs`・`<lib>/swing`・`<lib>/.swing-check.<pid>`）で実行し、書き込みもパスで行う。カレントディレクトリと環境変数は変えないので、`swing service stop`・`start`・`install` は利用者が直接実行したときと同じ設定ファイル（[`config.md`](config.md#設定ファイルの場所)）を使う。
 
 ## 表示
 

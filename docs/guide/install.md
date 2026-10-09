@@ -23,7 +23,7 @@ OS ごとの入れ方、設定ファイルの置き場所、サービス登録�
 
 ## 設定ファイルとデータの置き場所
 
-`swing` は `--config` → 環境変数 `SWING_CONFIG` → カレントディレクトリの `swing.toml`（あれば）→ 次のユーザーごとの既定の場所の `swing.toml` の順で設定ファイルを決めます。状態ファイルと Kubo のリポジトリは、既定では設定ファイルの隣の `data` に置かれます。
+`swing` は `--config` → 環境変数 `SWING_CONFIG` → 次のユーザーごとの既定の場所の `swing.toml` の順で設定ファイルを決めます。カレントディレクトリに `swing.toml` があっても読みません。それ以外の場所に置いた設定ファイルを使うときは、`--config` を付けるか `SWING_CONFIG` を設定します。状態ファイルと Kubo のリポジトリは、既定では設定ファイルの隣の `data` に置かれます。
 
 - Linux: `~/.local/share/swing`（`XDG_DATA_HOME` を設定していれば `$XDG_DATA_HOME/swing`）
 - macOS: `~/Library/Application Support/swing`
@@ -78,7 +78,7 @@ swing service install
 swing dashboard open
 ```
 
-`swing service install` は、設定ファイルがまだ無ければ[既定の場所](#設定ファイルとデータの置き場所)（`~/Library/Application Support/swing`）に空の `swing.toml` を作り、`swing` とメニューバーのアイコン（`SWING.app`）をログイン時に起動するよう登録して、その場で起動します。`swing.toml` のあるディレクトリで実行するとその設定ファイルが使われるので、ホームディレクトリなどで実行してください。最初はセットアップモードで動くので、`swing dashboard open`（またはメニューバーのアイコンの「ダッシュボードを開く」）で開いたセットアップ画面で鍵と設定を入力します。ログは `~/Library/Logs/swing.log` です。
+`swing service install` は、設定ファイルがまだ無ければ[既定の場所](#設定ファイルとデータの置き場所)（`~/Library/Application Support/swing`）に空の `swing.toml` を作り、`swing` とメニューバーのアイコン（`SWING.app`）をログイン時に起動するよう登録して、その場で起動します。最初はセットアップモードで動くので、`swing dashboard open`（またはメニューバーのアイコンの「ダッシュボードを開く」）で開いたセットアップ画面で鍵と設定を入力します。ログは `~/Library/Logs/swing.log` です。
 
 - `brew upgrade` の後も、動いている `swing` は古いバージョンのままです。`swing service install` をもう一度実行すると新しいバージョンで起動し直します（`swing stop --restart` では入れ替わりません）。
 - アンインストールするときは、先に `swing service uninstall` で登録を消してから `brew uninstall swing` します。設定とデータは残るので、要らなければ手で消してください。
@@ -106,7 +106,10 @@ cargo build --release
 
 ```bash
 cp swing.example.toml swing.toml
+export SWING_CONFIG="$PWD/swing.toml"
 ```
+
+この `swing.toml` はユーザーごとの既定の場所に無いので、`SWING_CONFIG` でその場所を伝えます（Windows の PowerShell では `$env:SWING_CONFIG = "$PWD\swing.toml"`）。以下のコマンドは `SWING_CONFIG` を設定したシェルで実行してください。別のシェルでは設定し直すか、各コマンドに `--config <path>` を付けます。[既定の場所](#設定ファイルとデータの置き場所)に置けば、どちらも要りません。
 
 `swing.toml` を開き、少なくとも次を書き換えてください。
 
@@ -122,7 +125,7 @@ cp swing.example.toml swing.toml
 ./target/release/swing up
 ```
 
-Kubo を初期化・起動し、その上で mirror-agent を動かします。ダッシュボードは `http://127.0.0.1:8082/`、Kubo のゲートウェイは `http://127.0.0.1:8080/` で待ち受けます。Kubo の RPC はループバックのランダムなポートで待ち受けるため外部からは触れず、公開する必要があるのは IPFS swarm 用のポート（`4001/tcp`・`4001/udp`）だけです（詳しくは「[プライバシーと鍵の扱い](security.md)」）。`swing up` を実行している間は、`swing mirror add` や `swing sites` などの他のサブコマンドも同じ設定ファイルを指定するだけで、管理下の Kubo を自動で見つけて使えます。
+Kubo を初期化・起動し、その上で mirror-agent を動かします。ダッシュボードは `http://127.0.0.1:8082/`、Kubo のゲートウェイは `http://127.0.0.1:8080/` で待ち受けます。Kubo の RPC はループバックのランダムなポートで待ち受けるため外部からは触れず、公開する必要があるのは IPFS swarm 用のポート（`4001/tcp`・`4001/udp`）だけです（詳しくは「[プライバシーと鍵の扱い](security.md)」）。`swing up` を実行している間は、`swing mirror add` や `swing sites` などの他のサブコマンドも同じ設定ファイルを使うだけで、管理下の Kubo を自動で見つけて使えます。
 
 ログイン時に自動で起動させたい場合は、OS のサービスとして登録します。
 
@@ -130,4 +133,4 @@ Kubo を初期化・起動し、その上で mirror-agent を動かします。�
 ./target/release/swing service install
 ```
 
-Linux では systemd のユーザーユニット、macOS では launchd の LaunchAgent、Windows ではタスクスケジューラに登録します（Linux はログアウト後も動かし続けるために `loginctl enable-linger` を試み、失敗すれば案内を表示します）。Windows と macOS では、`swing` と同じフォルダに `swing-tray.exe`（macOS は `SWING.app`）があれば、タスクトレイのアイコン（「[ダッシュボード](usage.md#ダッシュボード)」）もログイン時に起動するよう登録し、その場で起動します。トレイが要らなければ `--no-tray` を付けてください。設定ファイルがまだ無いときに（`--config` も `SWING_CONFIG` も付けず、カレントディレクトリに `swing.toml` も無い状態で）実行すると、[ユーザーごとの既定の場所](#設定ファイルとデータの置き場所)に空の `swing.toml` を作ってから登録するので、サービスはセットアップモードで起動します。Linux で systemd のシステムユニットにしたいときは `sudo swing service install --system` とします（設定ファイルは先に用意しておきます）。サービスは `sudo` を実行したユーザーの権限で動きます（別のユーザーで動かすなら `--run-as <user>`。root で動かすには `--allow-root` も要ります）。登録の前に、`swing` の実行ファイル・設定ファイルとそのディレクトリ・Kubo のバイナリと、それらの親ディレクトリが、root かサービスのユーザーの持ち物で、ほかのユーザーやグループから書き込めないことを確かめ、そうでなければ問題のあるパスを示して止まります。別のユーザーや root で動かすなら、`swing` は `install.sh --prefix /usr/local` のように root の持ち物でグループが書き込めない場所に入れ（Debian で `/usr/local` が `root:staff 2775` なら `--prefix /opt/swing` などにします）、設定ファイルは `/etc/swing` のような場所に置いてください。状態確認は `swing service status`、起動は `swing service start`、停止は `swing service stop`、削除は `swing service uninstall` です。詳しくは [`docs/architecture/up.md`](../architecture/up.md) と [`docs/architecture/service.md`](../architecture/service.md) を参照してください。
+Linux では systemd のユーザーユニット、macOS では launchd の LaunchAgent、Windows ではタスクスケジューラに登録します（Linux はログアウト後も動かし続けるために `loginctl enable-linger` を試み、失敗すれば案内を表示します）。登録されるのは、その時点で使われる設定ファイル（上で `SWING_CONFIG` を設定していればその `swing.toml`）です。Windows と macOS では、`swing` と同じフォルダに `swing-tray.exe`（macOS は `SWING.app`）があれば、タスクトレイのアイコン（「[ダッシュボード](usage.md#ダッシュボード)」）もログイン時に起動するよう登録し、その場で起動します。トレイが要らなければ `--no-tray` を付けてください。`--config` も `SWING_CONFIG` も付けずに、設定ファイルがまだ無い状態で実行すると、[ユーザーごとの既定の場所](#設定ファイルとデータの置き場所)に空の `swing.toml` を作ってから登録するので、サービスはセットアップモードで起動します。Linux で systemd のシステムユニットにしたいときは `sudo swing service install --system` とします（設定ファイルは先に用意しておきます）。サービスは `sudo` を実行したユーザーの権限で動きます（別のユーザーで動かすなら `--run-as <user>`。root で動かすには `--allow-root` も要ります）。登録の前に、`swing` の実行ファイル・設定ファイルとそのディレクトリ・Kubo のバイナリと、それらの親ディレクトリが、root かサービスのユーザーの持ち物で、ほかのユーザーやグループから書き込めないことを確かめ、そうでなければ問題のあるパスを示して止まります。別のユーザーや root で動かすなら、`swing` は `install.sh --prefix /usr/local` のように root の持ち物でグループが書き込めない場所に入れ（Debian で `/usr/local` が `root:staff 2775` なら `--prefix /opt/swing` などにします）、設定ファイルは `/etc/swing` のような場所に置いてください。状態確認は `swing service status`、起動は `swing service start`、停止は `swing service stop`、削除は `swing service uninstall` です。詳しくは [`docs/architecture/up.md`](../architecture/up.md) と [`docs/architecture/service.md`](../architecture/service.md) を参照してください。

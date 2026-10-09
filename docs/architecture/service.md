@@ -8,7 +8,7 @@
 - 設定ファイルは `config::locate_config` で決め（[`config.md`](config.md#設定ファイルの場所)）、`canonicalize` して登録する。そのパスにファイルが無いときは決まり方で分かれる。
   - `--config`／`SWING_CONFIG` で指した: `config file not found: <path>` でエラー。
   - ユーザーごとの既定の場所（`--system` でないとき）: ディレクトリ（unix は 0700）と空の設定ファイル（unix は 0600）を作り、`Created an empty config file at <path>` と表示して登録する。サービスはセットアップモード（[`up.md`](up.md#セットアップモード鍵未設定)）で起動する。
-  - それ以外（`--system` での既定の場所、カレントディレクトリ）: `service install needs a config file (swing.toml): pass --config or set SWING_CONFIG` でエラー。環境変数だけで動かす構成は登録できない。
+  - それ以外（`--system` での既定の場所、既定の場所を決められないときのカレントディレクトリ）: `service install needs a config file (swing.toml): pass --config or set SWING_CONFIG` でエラー。環境変数だけで動かす構成は登録できない。
 - 作業ディレクトリは設定ファイルの親ディレクトリ。
 - `--system` は Linux でのみ有効で、他 OS では `--system is only supported on Linux` でエラー。launchd・タスクスケジューラへの登録はログインユーザーのもので、システム全体への登録は無い。
 - unit／plist／タスク XML／トレイの登録内容は `service/templates.rs` の関数（`systemd_unit`・`launchd_plist`・`launchd_tray_plist`・`schtasks_xml`・`tray_run_command`）が正本で、以下の表は動作に効く値だけを挙げる。埋め込むパスとユーザー名に制御文字があるか、パスが UTF-8 でなければエラーにし、何も書き出さない。
@@ -115,7 +115,7 @@ unit に埋め込むパスとユーザー名は、systemd の指定子（`%`）�
 
 - `install`: XML を UTF-16LE（BOM 付き。XML 宣言の `encoding="UTF-16"` に合わせる）で一時ディレクトリの `swing-task-<乱数>.xml` に本人だけが読める形で書き、`schtasks /Create /TN swing /XML <tmpfile> /F` で登録してから一時ファイルを消す。`--no-start` でなければ `schtasks /Run /TN swing` で起動する。
 - `start`: `schtasks /Run /TN swing`。
-- `stop`: 設定ファイルを `resolve_config_path(None)`（`--config` は取らない。`SWING_CONFIG`、カレントディレクトリの `swing.toml`、ユーザーごとの既定の場所の順）で探して読み、`stop::run`（[`cli.md#stop`](cli.md#stop)）を 60 秒（`service::GRACEFUL_STOP_TIMEOUT`）のタイムアウトで呼ぶ。設定ファイルが無い・読めない・`stop::run` が失敗したときは、理由を `Warning: …` として出し、`schtasks /End /TN swing` にフォールバックする（`conhost.exe` が終わり、`swing` は `--exit-with-parent` でグレースフルに止まる）。タスクの登録は残る。
+- `stop`: 設定ファイルを `resolve_config_path(None)`（`--config` は取らない。`SWING_CONFIG`、ユーザーごとの既定の場所の順）で探して読み、`stop::run`（[`cli.md#stop`](cli.md#stop)）を 60 秒（`service::GRACEFUL_STOP_TIMEOUT`）のタイムアウトで呼ぶ。設定ファイルが無い・読めない・`stop::run` が失敗したときは、理由を `Warning: …` として出し、`schtasks /End /TN swing` にフォールバックする（`conhost.exe` が終わり、`swing` は `--exit-with-parent` でグレースフルに止まる）。タスクの登録は残る。
 - `uninstall`: トレイの登録を消した後、`stop` と同じグレースフルな停止を試み（失敗しても `Warning: …` を出して続ける）、`schtasks /End /TN swing`（失敗は無視）→ `schtasks /Delete /TN swing /F`。
 - 登録の判定（`is_installed` と `status`）: `schtasks /Query /TN swing` が成功すれば登録済み。失敗したら `schtasks /Query /FO CSV /NH` で全タスクを列挙し、それが成功して先頭列に `"\swing"`（大文字小文字は区別しない。サブフォルダのタスクは含めない）が無いときだけ未登録とする。どちらかの起動の失敗やタイムアウトは「分からない」（`None`）。
 - `status`: 未登録なら `not installed`、分からなければエラー終了する。登録済みなら `schtasks /Query /TN swing /FO LIST /V` の標準出力をそのまま表示する。
