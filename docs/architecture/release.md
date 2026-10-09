@@ -46,7 +46,8 @@
 | スクリプト | すること | 止まる条件 |
 |---|---|---|
 | `bump.sh <version>` | `Cargo.toml` と `tray/Cargo.toml` の最初の `version = "..."` を書き換え、`cargo update --workspace --offline` で `Cargo.lock` を合わせて `Bump the version to <version>` をコミットする。push はしない | `main` でない、作業ツリーに変更がある、`origin/main` より遅れている、すでにそのバージョン |
-| `tag.sh <version>` | `main` を push し、注釈付きタグ `v<version>` を打って push する。タグの push で `release.yml` がドラフトのリリースを作る | `bump.sh` と同じ条件、`Cargo.toml` か `tray/Cargo.toml` のバージョンが違う、タグがローカルか `origin` にすでにある |
+| `check.sh <version>` | 今のコミットを作業ブランチ `release-<version>` に push し（あれば上書き）、`release`・`macos-check`・`windows-check`・`windows-installer-check`・`homebrew-check` をそのブランチで手動実行して、全部が終わるまで待つ。終わったらブランチを消す。`release` をブランチで動かすので、イメージが `release-<version>` のタグで push される | `bump.sh` と同じ条件（すでにそのバージョン、を除く）、バージョンが違う、どれかのワークフローが失敗した（ブランチは消してから止まる） |
+| `tag.sh <version>` | 同じコミットで、上の 5 つのワークフローの最新の手動実行がすべて成功していることを確かめてから、`main` を push し、注釈付きタグ `v<version>` を打って push する。タグの push で `release.yml` がドラフトのリリースを作る | `bump.sh` と同じ条件、`Cargo.toml` か `tray/Cargo.toml` のバージョンが違う、`check.sh` の 5 つのどれかが通っていない、タグがローカルか `origin` にすでにある |
 | `notes.sh <version> <notes.md>` | ドラフトのリリースの本文を `gh release edit --notes-file` で差し替える。本文のひな形は `notes-template.md` | ファイルが無いか空、リリースが無いかドラフトでない |
 | `update-tap.sh <version>` | リリースに付いた `swing.rb` を取り、tap（`amane-katagiri/homebrew-swing`）の `Formula/swing.rb` を差し替えて `Update the swing formula for v<version>` をコミットして push する。すでに同じ中身なら何もしない | リリースが無いかドラフト、`swing.rb` の URL がそのタグを指していない |
 

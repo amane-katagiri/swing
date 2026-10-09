@@ -92,7 +92,7 @@
 | `packaging/linux/` | Linux 向けの `install.sh` とそのテスト（`test-install.sh`）。[install-sh.md](architecture/install-sh.md) |
 | `packaging/homebrew/` | Homebrew の formula のひな形と書き出しスクリプト。[homebrew.md](architecture/homebrew.md) |
 | `packaging/windows/` | Windows のインストーラーの Inno Setup スクリプト（`swing.iss`）、それを組み立てる `build.ps1`、同梱する Kubo の固定したチェックサム（`kubo.sha512`）、動作確認の `check-installer.ps1`。[installer-windows.md](architecture/installer-windows.md) |
-| `packaging/release/` | リリースの手順のスクリプト（`bump.sh`・`tag.sh`・`notes.sh`・`update-tap.sh`）とリリースノートのひな形。[release.md](architecture/release.md#リリースの手順) |
+| `packaging/release/` | リリースの手順のスクリプト（`bump.sh`・`check.sh`・`tag.sh`・`notes.sh`・`update-tap.sh`）とリリースノートのひな形。[release.md](architecture/release.md#リリースの手順) |
 | `.github/workflows/` | `release.yml`・`macos-check.yml`・`homebrew-check.yml`・`windows-check.yml`・`windows-installer-check.yml`。[release.md](architecture/release.md)・[installer-windows.md](architecture/installer-windows.md) |
 | `docs/` | 役割は AGENTS.md |
 

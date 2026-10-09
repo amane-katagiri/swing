@@ -41,3 +41,16 @@ release_is_draft() {
   draft=$(gh release view "$tag" --json isDraft --jq .isDraft 2>/dev/null) || die "there is no release $tag"
   [ "$draft" = true ]
 }
+
+check_workflows="release macos-check windows-check windows-installer-check homebrew-check"
+
+require_versions() {
+  for f in Cargo.toml tray/Cargo.toml; do
+    [ "$(package_version "$f")" = "$version" ] || die "$f is not $version; run bump.sh first"
+  done
+}
+
+latest_check_run() {
+  gh run list --workflow "$1.yml" --commit "$2" --event workflow_dispatch --limit 1 \
+    --json databaseId,status,conclusion --jq '.[0] | "\(.databaseId) \(.status) \(.conclusion)"'
+}
