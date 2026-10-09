@@ -113,6 +113,7 @@ pub async fn login_code(State(state): State<Arc<AppState>>) -> Json<dto::LoginCo
 pub async fn rotate_token(
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
+    let _rotation = state.locks.token_rotation().await;
     let state_dir = state.config.agent.state_dir.clone();
     let token = tokio::task::spawn_blocking(move || auth::write_new_token(&state_dir))
         .await
@@ -396,6 +397,29 @@ mod tests {
         )
         .await;
         assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn concurrent_rotations_leave_the_file_and_memory_in_agreement() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = test_state_with(dir.path().to_path_buf(), 1 << 20);
+        let handles: Vec<_> = (0..8)
+            .map(|_| {
+                let state = Arc::clone(&state);
+                tokio::spawn(async move {
+                    assert!(
+                        super::rotate_token(axum::extract::State(state))
+                            .await
+                            .is_ok()
+                    );
+                })
+            })
+            .collect();
+        for handle in handles {
+            handle.await.unwrap();
+        }
+        let on_disk = crate::auth::read_token(dir.path()).unwrap().unwrap();
+        assert_eq!(state.token(), on_disk);
     }
 
     #[tokio::test]

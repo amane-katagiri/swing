@@ -112,7 +112,7 @@
 `up::run` は最初に `lock::acquire(state_dir)` で `<state_dir>/swing.lock` を取る。下の `lock::try_acquire(state_dir, file_name)` は、ほかのプロセスが持っていれば `Held { pid }` を返し、`swing-tray` も `swing-tray.lock` に使う（[`tray.md`](tray.md#多重起動の防止)）。
 
 - `state_dir` が無ければ `0700` で作る。
-- ロックファイルを作成（無ければ）・読み書きで開き、`std::fs::File::try_lock()`（advisory lock。プロセスが `kill -9` で消えても OS が外す）を取る。
+- ロックファイルを作成（無ければ）・読み書きで開く。Unix では `O_NOFOLLOW` で開くので、シンボリックリンクならエラーになり、開いたあとに通常ファイルでなければ（ディレクトリなど）エラーにする。その上で `std::fs::File::try_lock()`（advisory lock。プロセスが `kill -9` で消えても OS が外す）を取る。
 - 取れたら中身を空にして自分の PID を書く。
 - 既に別のプロセスが取っていれば、ファイルの中身（相手の PID）を読んで `another swing instance is already running on <state_dir> (pid N)` でエラーにする（PID が読めなければ `(pid N)` を省く。Windows ではロックがファイル全体への強制ロックなので常に省かれる）。
 - `InstanceLock` を drop してもロックファイル自体は消さない。次回の `acquire` はロックが外れていれば中身を上書きして取り直す。

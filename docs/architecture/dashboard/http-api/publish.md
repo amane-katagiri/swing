@@ -69,7 +69,7 @@
 - add の後、署名できるまでに失敗したら（`dag/stat` の失敗、署名できない）502 を返す。add した版の扱いは[告知できなかった版の後始末](../../publish.md#告知できなかった版の後始末)（打ち切りのときの削除は応答の後になりうる）。
 - `created_at` は[共通の決め方](../../publish.md#created_at-の決め方)。[時計の確認](../../publish.md#時計の確認)に当たったら何も add せずに 400 `{ "error": "..." }`（`publish::ClockError`）、そのための MFS の一覧に失敗したら 502 を返す。
 - どの relay にも受理されなければ 502 `no relay accepted the site event; old versions were kept (<relay>: <理由>; …)` を返す（理由を返した relay だけを並べる）。
-- `relays[].error` は relay が断った理由。未来すぎる `created_at` を理由に断られたときは[案内](../../publish.md#署名と送信)が後ろに付く。
+- `relays[].error` は relay が断った理由。未来すぎる `created_at` を理由に断られたときは[案内](../../publish.md#署名と送信)が後ろに付く。制御文字などを除き、500 文字を超える分は `…` に切り詰める（CLI の表示と同じ）。
 - 古い版の削除に失敗したときは `prune_error` に理由が入るだけで、応答は成功のまま。
 - `files` は受け取ったファイル数。
 

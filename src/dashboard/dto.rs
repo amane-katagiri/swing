@@ -30,12 +30,17 @@ pub struct RelayResultDto {
     pub error: Option<String>,
 }
 
+const MAX_RELAY_ERROR_CHARS: usize = 500;
+
 impl From<&nostr::RelaySendResult> for RelayResultDto {
     fn from(r: &nostr::RelaySendResult) -> Self {
         Self {
             relay: r.relay.clone(),
             ok: r.ok,
-            error: r.error.clone(),
+            error: r
+                .error
+                .as_deref()
+                .map(|e| crate::format::sanitize_display_text(e, MAX_RELAY_ERROR_CHARS)),
         }
     }
 }
@@ -911,5 +916,17 @@ mod tests {
         assert!(invalid.path.is_none());
         assert!(invalid.size.is_none());
         assert!(invalid.created_at.is_none());
+    }
+
+    #[test]
+    fn relay_errors_are_sanitized_and_bounded() {
+        let result = nostr::RelaySendResult {
+            relay: "wss://r".into(),
+            ok: false,
+            error: Some(format!("bad\x1b[31m{}", "x".repeat(2000))),
+        };
+        let error = RelayResultDto::from(&result).error.unwrap();
+        assert!(!error.contains('\x1b'));
+        assert_eq!(error.chars().count(), MAX_RELAY_ERROR_CHARS + 1);
     }
 }

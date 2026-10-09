@@ -53,7 +53,11 @@ impl RemoteSignerFile {
     pub fn load(state_dir: &Path) -> Result<Option<Self>> {
         let path = remote_signer_path(state_dir);
         let raw = match std::fs::read_to_string(&path) {
-            Ok(raw) => Zeroizing::new(raw),
+            Ok(raw) => {
+                #[cfg(unix)]
+                crate::auth::warn_if_readable_by_others(&path, "the remote signer file");
+                Zeroizing::new(raw)
+            }
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
             Err(e) => return Err(e).with_context(|| format!("reading {}", path.display())),
         };
@@ -194,7 +198,14 @@ impl Channel {
 
     async fn start(&self) -> Result<()> {
         self.started
-            .get_or_try_init(|| listen(&self.client, &self.relays, self.app_keys.public_key()))
+            .get_or_try_init(|| {
+                listen(
+                    &self.client,
+                    &self.relays,
+                    self.app_keys.public_key(),
+                    Some(self.signer),
+                )
+            })
             .await?;
         Ok(())
     }
@@ -307,7 +318,20 @@ fn read_response(
     ResponseResult::parse(method, result).context("reading the signer app's answer")
 }
 
-async fn listen(client: &Client, relays: &[String], app: PublicKey) -> Result<()> {
+fn answer_filter(app: PublicKey, author: Option<PublicKey>) -> Filter {
+    let filter = Filter::new().kind(Kind::NostrConnect).pubkey(app).limit(0);
+    match author {
+        Some(author) => filter.author(author),
+        None => filter,
+    }
+}
+
+async fn listen(
+    client: &Client,
+    relays: &[String],
+    app: PublicKey,
+    author: Option<PublicKey>,
+) -> Result<()> {
     for relay in relays {
         client
             .add_relay(relay.as_str())
@@ -316,7 +340,7 @@ async fn listen(client: &Client, relays: &[String], app: PublicKey) -> Result<()
     }
     client.connect().await;
     // `since` would drop answers from a signer whose clock runs behind this one.
-    let filter = Filter::new().kind(Kind::NostrConnect).pubkey(app).limit(0);
+    let filter = answer_filter(app, author);
     client
         .subscribe(filter)
         .await
@@ -402,6 +426,17 @@ fn check_signed(event: &Event, user: PublicKey, expected_id: EventId) -> Result<
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn answer_filter_pins_the_author_only_once_the_signer_is_known() {
+        let app = Keys::generate().public_key();
+        let signer = Keys::generate().public_key();
+        assert_eq!(answer_filter(app, None).authors, None);
+        assert_eq!(
+            answer_filter(app, Some(signer)).authors,
+            Some(std::collections::BTreeSet::from([signer]))
+        );
+    }
 
     #[test]
     fn remote_signer_file_round_trips_and_hides_the_app_key() {

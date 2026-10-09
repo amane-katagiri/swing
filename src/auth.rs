@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 use hmac::{Hmac, Mac};
 use sha2::Sha256;
 
@@ -26,8 +26,19 @@ pub fn read_token(state_dir: &Path) -> Result<Option<String>> {
     match std::fs::read_to_string(&path) {
         Ok(s) => {
             #[cfg(unix)]
-            warn_if_readable_by_others(&path);
-            Ok(Some(s.trim().to_string()).filter(|t| !t.is_empty()))
+            warn_if_readable_by_others(&path, "the dashboard token file");
+            let token = s.trim();
+            if token.is_empty() {
+                return Ok(None);
+            }
+            if !is_token(token) {
+                bail!(
+                    "{} does not hold a dashboard token ({} lowercase hex characters); run `swing dashboard rotate-token` or delete the file and restart",
+                    path.display(),
+                    TOKEN_BYTES * 2
+                );
+            }
+            Ok(Some(token.to_string()))
         }
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
         Err(e) => Err(e).with_context(|| format!("reading {}", path.display())),
@@ -42,12 +53,12 @@ fn broader_than(path: &Path, allowed: u32) -> Option<u32> {
 }
 
 #[cfg(unix)]
-fn warn_if_readable_by_others(token_file: &Path) {
-    if let Some(mode) = broader_than(token_file, 0o600) {
+pub(crate) fn warn_if_readable_by_others(file: &Path, what: &str) {
+    if let Some(mode) = broader_than(file, 0o600) {
         tracing::warn!(
-            path = %token_file.display(),
+            path = %file.display(),
             mode = format_args!("{mode:o}"),
-            "the dashboard token file is accessible to other users; restrict it to 0600"
+            "{what} is accessible to other users; restrict it to 0600"
         );
     }
 }
@@ -243,6 +254,13 @@ pub struct LoginCodes {
     codes: Mutex<HashMap<String, Instant>>,
 }
 
+fn is_token(token: &str) -> bool {
+    token.len() == TOKEN_BYTES * 2
+        && token
+            .bytes()
+            .all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+}
+
 pub fn is_login_code(code: &str) -> bool {
     code.len() == LOGIN_CODE_BYTES * 2
         && code.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
@@ -411,6 +429,24 @@ mod tests {
         let rotated = write_new_token(dir.path()).unwrap();
         assert_ne!(rotated, first);
         assert_eq!(read_token(dir.path()).unwrap(), Some(rotated));
+    }
+
+    #[test]
+    fn malformed_token_file_is_rejected_with_guidance() {
+        let dir = tempfile::tempdir().unwrap();
+        for bad in [
+            "garbage",
+            &"A".repeat(64),
+            &"a".repeat(63),
+            &"a\u{1b}".repeat(32),
+        ] {
+            std::fs::write(token_path(dir.path()), format!("{bad}\n")).unwrap();
+            let err = read_token(dir.path()).unwrap_err().to_string();
+            assert!(err.contains("rotate-token"), "{err}");
+            assert!(load_or_create_token(dir.path()).is_err());
+        }
+        std::fs::write(token_path(dir.path()), "  \n").unwrap();
+        assert_eq!(read_token(dir.path()).unwrap(), None);
     }
 
     #[test]

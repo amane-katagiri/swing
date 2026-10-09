@@ -201,7 +201,7 @@ async fn pair(
     let client = crate::nostr::bounded_client(MAX_SIGNER_EVENT_BYTES);
     let notifications = client.notifications();
     let connected = async {
-        super::listen(&client, &relays, app_keys.public_key()).await?;
+        super::listen(&client, &relays, app_keys.public_key(), None).await?;
         let signer = tokio::time::timeout(
             request.pairing_timeout,
             await_connect(&app_keys, &secret, notifications),

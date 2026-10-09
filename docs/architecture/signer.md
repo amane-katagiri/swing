@@ -19,7 +19,8 @@ SWING が出すイベント（サイトイベント・Follow Set・レプリカ�
 
 ## 署名アプリへのリクエスト（`RemoteSigner`）
 
-- `RemoteSigner` は最初のリクエストのときに `remote-signer.json` の `relays` にだけつなぎ（`[nostr].relays` とは別の接続）、アプリ鍵宛ての kind 24133 を `since` 無し・`limit(0)`（保存済みのイベントは受け取らない）で購読する。
+- `RemoteSigner` は最初のリクエストのときに `remote-signer.json` の `relays` にだけつなぎ（`[nostr].relays` とは別の接続）、アプリ鍵宛てで、署名アプリの公開鍵が書いた kind 24133 を `since` 無し・`limit(0)`（保存済みのイベントは受け取らない）で購読する（ペアリング中は署名アプリの鍵がまだ分からないので送り主を絞らない）。
+- `RemoteSignerFile::load` は Unix でファイルのパーミッションが `0600` より広ければ `warn` を出す（変えはしない）。
 - リクエストは `NostrConnectRequest::SignEvent` を `NostrConnectMessage` にして NIP-44 で暗号化し（`NostrConnectEventBuilder`）、署名アプリの公開鍵宛てに送る。返事は、署名アプリの公開鍵から来た kind 24133 のうち、復号できて、送ったリクエストのどれかと同じ `id` の応答だけを待つ。
 - 副作用のないリクエスト（`get_public_key` と `ping`。今送るのはペアリング中の `get_public_key` だけ）は、返事が来るまで `RESEND_INTERVAL`（5 秒）ごとに送り直す。送り直すたびに新しい `id` の新しいイベントにし、どの `id` への返事も受け付ける。送り直しに失敗しても待ち続け、待ち時間は送り直しで延びない。`sign_event` は送り直さない。
 - 返事の判定は次の順。`result` が `auth_url` ならエラー（`error` の URL をメッセージに入れる）。`error` が空でなければ `the signer app refused the request: <error>`。`result` が無いか空なら `the signer app answered without a result`、`result` が `error` なら `the signer app refused the request`。残りは `result` をメソッドに応じて読み、読めなければ `reading the signer app's answer`。`error` と URL は `format::sanitize_display_text` を通して `MAX_SIGNER_ERROR_CHARS`（500 文字）で切る。

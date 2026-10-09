@@ -38,13 +38,23 @@ pub fn acquire(state_dir: &Path) -> Result<InstanceLock> {
 pub fn try_acquire(state_dir: &Path, file_name: &str) -> Result<TryAcquire> {
     crate::auth::create_private_dir_all(state_dir)?;
     let path = state_dir.join(file_name);
-    let mut file = OpenOptions::new()
-        .read(true)
-        .write(true)
-        .create(true)
-        .truncate(false)
+    let mut options = OpenOptions::new();
+    options.read(true).write(true).create(true).truncate(false);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.custom_flags(libc::O_NOFOLLOW);
+    }
+    let mut file = options
         .open(&path)
         .with_context(|| format!("opening {}", path.display()))?;
+    let is_regular = file
+        .metadata()
+        .with_context(|| format!("inspecting {}", path.display()))?
+        .is_file();
+    if !is_regular {
+        bail!("{} is not a regular file", path.display());
+    }
 
     match file.try_lock() {
         Ok(()) => {}
@@ -124,6 +134,25 @@ mod tests {
             TryAcquire::Held { .. }
         ));
         let _other = acquire(&state_dir).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn acquire_refuses_a_symlinked_lock_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("victim");
+        std::fs::write(&target, "keep").unwrap();
+        std::os::unix::fs::symlink(&target, dir.path().join("swing.lock")).unwrap();
+        assert!(acquire(dir.path()).is_err());
+        assert_eq!(std::fs::read_to_string(&target).unwrap(), "keep");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn acquire_refuses_a_lock_path_that_is_not_a_regular_file() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir(dir.path().join("swing.lock")).unwrap();
+        assert!(acquire(dir.path()).is_err());
     }
 
     #[cfg(unix)]

@@ -32,7 +32,8 @@
 - 書き込み（`auth::write_new_token`）は `auth::write_private_file` で行う。同じディレクトリの一時ファイルに `create_new` で書き、`sync_all` してから rename する。失敗したら一時ファイルを消す。Unix では `0600` で作る。Windows は `state_dir` の ACL を継承する。
 - `state_dir` を swing が新しく作るとき（`auth::create_private_dir_all`）は Unix なら `0700` で作る。すでにあるディレクトリのパーミッションは変えず、確かめもしない。
 - Unix では `auth::read_token` が読むたびに、ファイルのパーミッションが `0600` より広ければ `warn` を出す（変えはしない）。
-- `POST /api/token/rotate` はファイルを書き換えてメモリ上の値も差し替え、未使用のログインコードを捨てる。HMAC の鍵が変わるので既存のセッション cookie はすべて無効になる。
+- `auth::read_token` は、空でない中身が小文字 hex 64 文字（生成するトークンの形）でなければエラーにする。メッセージは `swing dashboard rotate-token` で作り直すか、ファイルを消して再起動するよう案内する。空のファイルは無いものとして扱い、新しく作る。
+- `POST /api/token/rotate` は専用のロック（`Locks::token_rotation`）の下で、ファイルを書き換えてメモリ上の値も差し替え、未使用のログインコードを捨てる。HMAC の鍵が変わるので既存のセッション cookie はすべて無効になる。
 
 ### CLI と `swing-tray`（`ApiClient`）
 

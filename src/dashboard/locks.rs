@@ -18,6 +18,7 @@ pub(super) struct Locks {
     publish: Mutex<()>,
     mirror_writes: Mutex<()>,
     config_writes: Mutex<ConfigWriteState>,
+    token_rotation: Mutex<()>,
 }
 
 impl Locks {
@@ -32,6 +33,10 @@ impl Locks {
         MirrorWrites {
             _guard: self.mirror_writes.lock().await,
         }
+    }
+
+    pub(super) async fn token_rotation(&self) -> MutexGuard<'_, ()> {
+        self.token_rotation.lock().await
     }
 
     pub(super) async fn config_writes(&self) -> MutexGuard<'_, ConfigWriteState> {
