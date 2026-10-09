@@ -2,7 +2,14 @@
 
 [`../architecture.md`](../architecture.md) の一部。bind・起動・終了の順序と待ち時間は `agent::run_until` の [全体の流れ](agent.md#全体の流れ) と [シグナルと終了](agent.md#シグナルと終了)、managed Kubo 側の設定は [`kubo.md`](kubo.md#適用する-kubo-設定kuboapply_config)、compose の外部 Kubo コンテナでの同等設定は [`docker.md`](docker.md#kubo-の設定)。
 
-ホスト名での振り分けと Kubo gateway へのプロキシを axum で agent プロセス内に持つ。許可ホストの判定以外の挙動（応答の中身）は Kubo の gateway のもので、その設定と公開の注意は [`kubo.md#kubo-の-gatewaynofetch`](kubo.md#kubo-の-gatewaynofetch)。gateway のサーバタスクが先に終了（panic 等）しても、error ログを出すだけで agent は止めない。
+ホスト名での振り分けと Kubo gateway へのプロキシを axum で agent プロセス内に持つ。許可ホスト・メソッド・パスの判定（下記）以外の挙動（応答の中身）は Kubo の gateway のもので、その設定と公開の注意は [`kubo.md#kubo-の-gatewaynofetch`](kubo.md#kubo-の-gatewaynofetch)。gateway のサーバタスクが先に終了（panic 等）しても、error ログを出すだけで agent は止めない。
+
+## 上流の Kubo に要る設定
+
+このゲートウェイは許可ホスト・メソッド・パスを絞るだけで、DNSLink の解決と応答の中身は上流の Kubo の gateway の設定で決まる。
+
+- `[kubo].managed = true` と compose（外部 Kubo コンテナ）では、SWING が Kubo に `Gateway.NoFetch=true` と、`hosts` を DNSLink だけ返す（`Paths: []`）ホストとして入れた `Gateway.PublicGateways` を設定する（[`kubo.md#適用する-kubo-設定kuboapply_config`](kubo.md#適用する-kubo-設定kuboapply_config)、[`docker.md#kubo-の設定`](docker.md#kubo-の設定)）。
+- それ以外（`[kubo].managed = false` で自分で用意した Kubo）では SWING は Kubo の設定に触らない。Kubo の既定は `Gateway.NoFetch=false` なので、DNSLink の解決結果やサイト内のリンク先がローカルに無ければネットワークから取りに行く。ローカルにあるデータだけを返させるには、利用者が `Gateway.NoFetch=true` を設定し、`hosts` を `Gateway.PublicGateways` に `{"Paths": [], "UseSubdomains": false, "NoDNSLink": false}` として入れる。
 
 ## 設定（`[gateway]`）
 
@@ -29,7 +36,23 @@
 
 1. `Host` ヘッダが無ければ空ボディの 404。
 2. `Host` を `host::split_host_port`（ダッシュボードのガードと共有。`[...]` の後ろが `:<数字>` 以外ならヘッダ全体をホスト名として扱う）でホスト名とポートに分け、ホスト名が `hosts` のいずれとも一致しなければ（大文字小文字は区別しない）空ボディの 404。
-3. 一致すれば `upstream` + 元のパス・クエリへ、元のメソッド・ボディのまま（ストリーミング）転送する。
+3. メソッドが `GET`・`HEAD` 以外なら、`Allow: GET, HEAD` を付けた空ボディの 405。`OPTIONS` も 405 にする（下記）。
+4. パスがコンテンツパス（下記）なら空ボディの 404。
+5. どれにも当たらなければ `upstream` + 元のパス・クエリへ、元のメソッド・ボディのまま（ストリーミング）転送する。パスは正規化せず、受け取った綴りのまま渡す。
+
+### コンテンツパスの判定（`is_content_path`）
+
+Kubo のパス形式（`/ipfs/<cid>`・`/ipns/<name>`）で任意の CID や名前を開かせないための判定。クエリは見ない。
+
+1. パスのパーセントエンコードを、結果が変わらなくなるまで繰り返しデコードする（`%` の後ろが 16 進 2 桁でなければその `%` はそのまま残す）。
+2. `/` と `\` で区切り、空のセグメントと `.` を捨て、`..` は直前のセグメントを取り除く（先頭より上には行かない）。
+3. 残った最初のセグメントが `ipfs` か `ipns`（大文字小文字は区別しない）ならコンテンツパス。
+
+`/ipfs`・`/ipfs/`・`//ipfs/x`・`/a/../ipfs/x`・`/%69pfs/x`・`/ipfs%2Fx`・`/%2e%2e/ipfs/x`・`/%2569pfs/x`・`/IPNS/x` はすべて 404。`/ipfsx/`・`/blog/ipfs/x` のように最初のセグメントが違うものは通す。サイトの最上位に `ipfs`・`ipns` という名前のファイルやディレクトリを置いても、このゲートウェイからは開けない。
+
+### OPTIONS を通さない理由
+
+サイト自身のページから同じ origin へのリクエストには CORS のプリフライトが要らない。プリフライトが要るのは、他の origin のページが単純でないリクエスト（独自ヘッダー付きなど）でこのホストの内容を読むときだけで、自分のサイトを配信するという用途には含めない。
 
 ### 転送するヘッダー・捨てるヘッダー
 

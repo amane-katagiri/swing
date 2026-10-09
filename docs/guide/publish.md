@@ -169,6 +169,8 @@ SWING_GATEWAY_HOSTS=example.com,blog.example.net
 
 `hosts` にはダッシュボードを開くホスト名（`localhost`・`127.0.0.1` と `SWING_DASHBOARD_ALLOWED_HOSTS`）を入れられません。同じ名前にすると、配信するサイトとダッシュボードの cookie が混ざるためで、設定の読み込みがエラーになります。
 
-各ホストの DNS に `_dnslink.<ホスト名>` の TXT レコード（`dnslink=/ipfs/<cid>`）を置きます。ゲートウェイは Kubo のゲートウェイにそのまま中継するだけで、ローカルにあるデータしか返しません。CID は `swing publish` でこのノードに置いたものにしてください。publish のたびに TXT レコードも更新します。
+各ホストの DNS に `_dnslink.<ホスト名>` の TXT レコード（`dnslink=/ipfs/<cid>`）を置きます。ゲートウェイは受け取ったリクエストを Kubo のゲートウェイに中継します。CID は `swing publish` でこのノードに置いたものにしてください。publish のたびに TXT レコードも更新します。
 
-設定したホスト名以外、および `/ipfs/<cid>` のようなパスでのアクセスには 404 を返します。詳しくは [`docs/architecture/gateway.md`](../architecture/gateway.md) を参照してください。
+設定したホスト名以外、および `/ipfs/<cid>`・`/ipns/<name>` のようなパスでのアクセスには 404 を、`GET`・`HEAD` 以外のメソッドには 405 を返します。サイトの最上位に `ipfs`・`ipns` という名前のファイルやディレクトリがあると、このゲートウェイからは開けません。
+
+SWING に Kubo を管理させている場合（既定の `[kubo] managed = true`）と Docker Compose では、SWING が Kubo のゲートウェイを、ローカルにあるデータだけを返し、設定したホスト名では DNSLink の内容だけを返すように設定します。`managed = false` で自分で用意した Kubo を使う場合、SWING は Kubo の設定に触らないので、Kubo の既定のまま、ローカルに無いデータをネットワークから取りに行きます。そうさせたくなければ、Kubo の `Gateway.NoFetch` を `true` にし、ホスト名を `Gateway.PublicGateways` に入れるなど、Kubo 側を自分で設定してください。必要な設定は [`docs/architecture/gateway.md`](../architecture/gateway.md#上流の-kubo-に要る設定) を参照してください。
