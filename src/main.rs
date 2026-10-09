@@ -12,6 +12,52 @@ use tracing::info;
 use tracing_subscriber::EnvFilter;
 
 #[derive(Args)]
+struct PublishModeArgs {
+    #[arg(
+        long,
+        value_name = "MODE",
+        help = "NIP-05 check: off, warn, require (default: config or warn)"
+    )]
+    nip05: Option<String>,
+    #[arg(
+        long,
+        value_name = "MODE",
+        help = "Dotfile check: off, warn, require (default: config or require)"
+    )]
+    check_dotfiles: Option<String>,
+    #[arg(
+        long,
+        value_name = "MODE",
+        help = "Size check (over 512 MiB): off, warn, require (default: config or warn)"
+    )]
+    check_size: Option<String>,
+    #[arg(
+        long,
+        value_name = "MODE",
+        help = "Compatibility check for gateways and IPFS (reserved names, root-relative and broken links, insecure scripts): off, warn, require (default: config or warn)"
+    )]
+    check_links: Option<String>,
+    #[arg(
+        long,
+        value_name = "MODE",
+        help = "Same-CID check against your latest version on the relays: off, warn, require (default: config or require; require stops without publishing and exits 0)"
+    )]
+    check_unchanged: Option<String>,
+}
+
+impl From<PublishModeArgs> for publish::ModeOverrides {
+    fn from(m: PublishModeArgs) -> Self {
+        Self {
+            nip05: m.nip05,
+            check_dotfiles: m.check_dotfiles,
+            check_size: m.check_size,
+            check_links: m.check_links,
+            check_unchanged: m.check_unchanged,
+        }
+    }
+}
+
+#[derive(Args)]
 struct ConfigArg {
     #[arg(
         long,
@@ -104,30 +150,8 @@ enum Command {
             help = "Canonical HTTP(S) URL of the site; omit for an IPFS-only site"
         )]
         url: Option<String>,
-        #[arg(
-            long,
-            value_name = "MODE",
-            help = "NIP-05 check: off, warn, require (default: config or warn)"
-        )]
-        nip05: Option<String>,
-        #[arg(
-            long,
-            value_name = "MODE",
-            help = "Dotfile check: off, warn, require (default: config or require)"
-        )]
-        check_dotfiles: Option<String>,
-        #[arg(
-            long,
-            value_name = "MODE",
-            help = "Size check (over 512 MiB): off, warn, require (default: config or warn)"
-        )]
-        check_size: Option<String>,
-        #[arg(
-            long,
-            value_name = "MODE",
-            help = "Same-CID check against your latest version on the relays: off, warn, require (default: config or require; require stops without publishing and exits 0)"
-        )]
-        check_unchanged: Option<String>,
+        #[command(flatten)]
+        modes: Box<PublishModeArgs>,
         #[arg(
             long,
             help = "Display title of the site (self-claimed, shown to readers)"
@@ -537,10 +561,7 @@ async fn run_other(command: Command) -> Result<()> {
             config,
             site,
             url,
-            nip05,
-            check_dotfiles,
-            check_size,
-            check_unchanged,
+            modes,
             title,
             message,
             note,
@@ -554,12 +575,7 @@ async fn run_other(command: Command) -> Result<()> {
                 title,
                 message,
                 note,
-                modes: publish::ModeOverrides {
-                    nip05,
-                    check_dotfiles,
-                    check_size,
-                    check_unchanged,
-                },
+                modes: (*modes).into(),
                 yes,
             };
             publish::run(cfg, &dir, request).await
@@ -622,5 +638,34 @@ async fn run_other(command: Command) -> Result<()> {
                 Ok(())
             }
         },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn publish_takes_the_check_mode_flags() {
+        let cli = Cli::try_parse_from([
+            "swing",
+            "publish",
+            "--site",
+            "example.com",
+            "--check-links",
+            "require",
+            "--check-size",
+            "off",
+            "site",
+        ])
+        .unwrap();
+        let Command::Publish { modes, dir, .. } = cli.command else {
+            panic!("not publish");
+        };
+        let modes: publish::ModeOverrides = (*modes).into();
+        assert_eq!(modes.check_links.as_deref(), Some("require"));
+        assert_eq!(modes.check_size.as_deref(), Some("off"));
+        assert_eq!(modes.check_dotfiles, None);
+        assert_eq!(dir, PathBuf::from("site"));
     }
 }

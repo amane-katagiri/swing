@@ -336,6 +336,36 @@ function describeSizeCheck(size) {
   return t(size.status === 'over' ? 'sizeOver' : 'sizeOk', params);
 }
 
+const LINK_KIND_KEYS = {
+  reserved: 'linksReserved',
+  root_relative: 'linksRootRelative',
+  broken: 'linksBroken',
+  insecure_script: 'linksInsecureScript',
+  post_form: 'linksPostForm',
+  worker: 'linksWorker',
+  insecure_request: 'linksInsecureRequest',
+  external: 'linksExternal',
+  own_site: 'linksOwnSite',
+};
+
+function describeLinks(links, published) {
+  if (links.status === 'off') return t('checkOff');
+  const skipped = links.skipped ? t('linksSkipped', { n: links.skipped }) : '';
+  if (links.status === 'ok') return t('linksNone') + skipped;
+  const summary = links.blocking
+    ? t('linksFoundBreaking', { count: links.count, blocking: links.blocking })
+    : t('linksFoundWarnings', { count: links.count });
+  const cell = [el('div', {}, summary + skipped + (published && links.blocking ? t('dotfilesPublishedAnyway') : ''))];
+  for (const kind of links.kinds) {
+    const label = kind.kind === 'broken' && links.redirects ? t('linksBrokenRedirects') : t(LINK_KIND_KEYS[kind.kind] || kind.kind);
+    const items = kind.items.map((item) => (item.reference ? `${item.file}: ${item.reference}` : item.file)).join(', ');
+    const more = kind.count > kind.items.length ? t('dotfilesMore', { n: kind.count - kind.items.length }) : '';
+    cell.push(el('div', {}, `${label} (${kind.count}): ${items}${more}`));
+  }
+  if (links.guide) cell.push(el('div', {}, maybeLink(links.guide, t('linksGuide'))));
+  return cell;
+}
+
 function describeUnchanged(unchanged, published) {
   switch (unchanged.status) {
     case 'off':
@@ -357,6 +387,7 @@ function describeCheckBlock(checks) {
   const reasons = [];
   if (checks.dotfiles && checks.dotfiles.mode === 'require' && checks.dotfiles.status === 'found') reasons.push(t('siteCheckDotfilesBlocked'));
   if (checks.size && checks.size.mode === 'require' && checks.size.status === 'over') reasons.push(t('siteCheckSizeBlocked'));
+  if (checks.links && checks.links.mode === 'require' && checks.links.blocking > 0) reasons.push(t('siteCheckLinksBlocked'));
   return reasons.join(' ');
 }
 
@@ -364,6 +395,7 @@ function addCheckRows(addRow, checks, published) {
   if (!checks) return;
   addRow(t('resultDotfiles'), describeDotfiles(checks.dotfiles, published));
   addRow(t('resultSizeCheck'), describeSizeCheck(checks.size));
+  if (checks.links) addRow(t('resultLinks'), describeLinks(checks.links, published));
   if (checks.unchanged) addRow(t('resultUnchanged'), describeUnchanged(checks.unchanged, published));
 }
 
@@ -438,7 +470,7 @@ function handlePublishHttpError(err) {
   }
 }
 
-const MODE_FIELDS = ['nip05', 'check_dotfiles', 'check_size', 'check_unchanged'];
+const MODE_FIELDS = ['nip05', 'check_dotfiles', 'check_size', 'check_links', 'check_unchanged'];
 
 function buildUploadFormData({ site, url, title, message, note, modes, files }) {
   const fd = new FormData();

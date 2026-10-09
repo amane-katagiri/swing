@@ -345,6 +345,7 @@ fn publish_checks_default_to_require_warn_require_with_the_default_allow_list() 
     let cfg = build_config(minimal_file(), None, |_| None).unwrap();
     assert_eq!(cfg.publish.check_dotfiles, CheckMode::Require);
     assert_eq!(cfg.publish.check_size, CheckMode::Warn);
+    assert_eq!(cfg.publish.check_links, CheckMode::Warn);
     assert_eq!(cfg.publish.check_unchanged, CheckMode::Require);
     assert_eq!(cfg.publish.dotfiles_allow, DEFAULT_DOTFILES_ALLOW);
     assert_eq!(
@@ -359,10 +360,12 @@ fn publish_check_env_overrides_file_which_overrides_default() {
     file.publish = PublishFile {
         check_dotfiles: Some("warn".into()),
         check_size: Some("require".into()),
+        check_links: Some("off".into()),
         ..Default::default()
     };
     let cfg = build_config(file, None, |k| match k {
         "SWING_PUBLISH_CHECK_DOTFILES" => Some("off".into()),
+        "SWING_PUBLISH_CHECK_LINKS" => Some("require".into()),
         _ => None,
     })
     .unwrap();
@@ -370,6 +373,8 @@ fn publish_check_env_overrides_file_which_overrides_default() {
     assert_eq!(cfg.source_of("publish.check_dotfiles"), Some(Source::Env));
     assert_eq!(cfg.publish.check_size, CheckMode::Require);
     assert_eq!(cfg.source_of("publish.check_size"), Some(Source::File));
+    assert_eq!(cfg.publish.check_links, CheckMode::Require);
+    assert_eq!(cfg.source_of("publish.check_links"), Some(Source::Env));
     assert_eq!(cfg.publish.check_unchanged, CheckMode::Require);
     assert_eq!(
         cfg.source_of("publish.check_unchanged"),

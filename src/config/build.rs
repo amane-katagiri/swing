@@ -418,6 +418,12 @@ fn resolve_publish<E: Fn(&str) -> Option<String>>(
         parse_check_mode,
         CheckMode::Warn,
     )?;
+    let check_links = r.parse(
+        "publish.check_links",
+        file.check_links,
+        parse_check_mode,
+        CheckMode::Warn,
+    )?;
     let check_unchanged = r.parse(
         "publish.check_unchanged",
         file.check_unchanged,
@@ -440,6 +446,7 @@ fn resolve_publish<E: Fn(&str) -> Option<String>>(
         keep_versions,
         check_dotfiles,
         check_size,
+        check_links,
         check_unchanged,
         dotfiles_allow,
     })

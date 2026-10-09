@@ -10,7 +10,7 @@
 ## フォーム
 
 - 常にフォルダアップロード（`<input type="file" webkitdirectory multiple>`）。ファイル数・合計サイズを表示し、`max_upload` を超えれば送信ボタンを無効にする。各ファイルの送信名は `webkitRelativePath` から選んだフォルダ名を除いたもの。
-- NIP-05 の下に、同じ形のセレクトを「ドットファイルの確認」（`check_dotfiles`）・「サイズの確認」（`check_size`）・「同じ内容の確認」（`check_unchanged`）の順に並べる。どれも先頭の選択肢は値が空（パートを送らず設定の既定値に任せる）で、残りは `off`・`warn`・`require`（NIP-05 も同じ）。空でなければ同名のパートで送る（`publish.js::MODE_FIELDS`）。
+- NIP-05 の下に、同じ形のセレクトを「ドットファイルの確認」（`check_dotfiles`）・「サイズの確認」（`check_size`）・「動作性の確認」（`check_links`）・「前回のデプロイとの差分の確認」（`check_unchanged`）の順に並べる。どれも先頭の選択肢は値が空（パートを送らず設定の既定値に任せる）で、残りは `off`・`warn`・`require`（NIP-05 も同じ）。空でなければ同名のパートで送る（`publish.js::MODE_FIELDS`）。
 - メッセージの下に「サイトイベントに加えて更新情報をノート（kind 1）として投稿する」チェックボックス（`note`。`.swing-field` の中の `.swing-checkbox` と、URL が要る旨の `.swing-hint`）を置く。URL 欄が空白だけの間は無効にし（`publish.js::refreshSubmitState`）、送信するのは URL があってチェックされているときだけ（パート `note=true`）。
 - 最後に使ったフォーム内容（チェックボックスの状態を含む）は `swing:publish:last` に保存し、次に開いたときに入れる。
 
@@ -25,12 +25,13 @@
 
 - 送信は `XMLHttpRequest` で、進捗を `.swing-progress`/`.swing-progress-bar`（`data-state`）に出す。署名アプリのときは処理中の表示に、承認を求められたら承認するよう案内を出す。
 - 成功したら進捗バーを隠し、`#publish-status` に結果（relay N つのうち M つが受け付けたか。全部なら `ok`、一部だけなら `warn`）を出す。結果のパネルには応答の各項目（サイトの確認の行は `publish.js::addCheckRows`、署名の行は署名アプリのときだけ、投稿の行は応答の `note` があるときだけで、`error` があれば `warn` の `swing-status` の後に relay ごとの成否）とゲートウェイのリンクを並べる。
+- リンクの行（`publish.js::describeLinks`）は、`off` なら確認していない旨、`ok` なら無い旨を 1 行で出す。`found` なら、件数（`blocking` が 1 以上ならそのうち崩れる件数も）の 1 行の後に、種別ごとに 1 行ずつ「種別の説明（件数）: `<file>: <reference>` を `, ` でつないだもの（残りは「ほか N 件」）」を並べ、最後に `guide` へのリンク（「修正ガイド」。`maybeLink` で `target="_blank" rel="noopener noreferrer"`）を 1 行だけ出す。どれも `dd` の中の `div` で、ほかの行と同じく余白を足さない。4 MiB を超えて読まなかったファイルがあれば 1 行目にその数を足す。`_redirects` があるときの `broken` は、補えるかもしれない旨を説明に付ける。
 - 応答の `published` が `false`（`check_unchanged` が `require` で同じ内容だった）なら、`#publish-status` に同じ内容なので publish しなかった旨を `ok` で出し、結果のパネルから署名・作成日時・MFS パス・relay の行を省く。`swing:published` イベントは投げない。
 
 ## エラーの表示
 
 - 413: 上限を超えた旨。
-- 422 で本文に `checks` があるもの（ドットファイル・サイズの `require`）: `require` で引っかかった項目ごとに、画面の選択と設定のキーで直し方を案内する文を出し（どれにも当たらなければ API のエラー文）、結果のパネルに NIP-05 とドットファイル・サイズの行だけを出す。
+- 422 で本文に `checks` があるもの（ドットファイル・サイズ・リンクの `require`）: `require` で引っかかった項目ごとに、画面の選択と設定のキーで直し方を案内する文を出し（どれにも当たらなければ API のエラー文。リンクは `blocking` が 1 以上のとき）、結果のパネルに NIP-05 とドットファイル・サイズ・リンクの行だけを出す。
 - 422 で本文に `nip05` があるもの: NIP-05 の確認に失敗した旨を出し、結果のパネルに NIP-05 の行を出す。
 - 409: 別の publish を実行中である旨。
 - それ以外: API のエラー文。

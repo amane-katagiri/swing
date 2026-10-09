@@ -1,10 +1,10 @@
-# publish の共通処理（`src/publish.rs`, `src/publish/checks.rs`, `src/publish/clock.rs`, `src/publish/new_files.rs`, `src/publish/staged.rs`）
+# publish の共通処理（`src/publish.rs`, `src/publish/checks.rs`, `src/publish/links.rs`, `src/publish/clock.rs`, `src/publish/new_files.rs`, `src/publish/staged.rs`）
 
 CLI の `swing publish`（[`cli/publish.md`](cli/publish.md)）とダッシュボードの `POST /api/publish/upload`（[`dashboard/http-api/publish.md`](dashboard/http-api/publish.md#post-apipublishupload)）が共有する段階。ここには表示に依存しない判定と処理だけを書き、出力の文言・ステータスコード・JSON はそれぞれのページに置く。
 
 ## 段階の順
 
-1. 引数の検証。`d`・`url` は [`nostr.md` の検証](nostr.md#検証)の条件（`validate_site_fields`）、`title` は前後の空白を削り、空なら付けない扱いにしてから同じく検証する（`normalize_title`）。`content`（メッセージ）は `MAX_CONTENT_BYTES`（4096 バイト）まで（`validate_message`）。通常の投稿を頼むなら `url` が要る（`check_note_request`。無ければ `needs a URL`）。確認のモード 4 つ（`nip05`・`check_dotfiles`・`check_size`・`check_unchanged`、それぞれ `off`/`warn`/`require`）は省略時に `[publish]` の同名の設定を使う（`resolve_modes`）。
+1. 引数の検証。`d`・`url` は [`nostr.md` の検証](nostr.md#検証)の条件（`validate_site_fields`）、`title` は前後の空白を削り、空なら付けない扱いにしてから同じく検証する（`normalize_title`）。`content`（メッセージ）は `MAX_CONTENT_BYTES`（4096 バイト）まで（`validate_message`）。通常の投稿を頼むなら `url` が要る（`check_note_request`。無ければ `needs a URL`）。確認のモード 5 つ（`nip05`・`check_dotfiles`・`check_size`・`check_links`・`check_unchanged`、それぞれ `off`/`warn`/`require`）は省略時に `[publish]` の同名の設定を使う（`resolve_modes`）。
 2. [保護パスの拒否](#保護パスの拒否)。
 3. NIP-05: モードが `off` でなければ `d` と自分の pubkey で検証する（`check_nip05`。[`nip05.md`](nip05.md)）。`require` で `Verified` 以外（`NotApplicable` を含む）なら add せずに止める。
 4. [サイトの一覧とローカルの確認](#サイトの一覧とローカルの確認)。
@@ -29,10 +29,11 @@ CLI の `swing publish`（[`cli/publish.md`](cli/publish.md)）とダッシュ�
 
 サイトのディレクトリを 1 回だけ一覧し（`ipfs::SiteListing`。シンボリックリンクを辿り、ドットファイルも含める。リンク先がディレクトリの外ならこの時点でエラー。[`mfs.md`](mfs.md#rpc)）、以降の確認と add はこの一覧を使う。一覧の後にディレクトリへ増えたファイルは公開しない。
 
-`LocalChecks::evaluate` が、モードが `off` でない項目だけを判定する。
+`check_links` が `off` でなければ、一覧したファイルの中身を読んで[リンクの確認](publish/links.md)をする（`publish::scan_links`）。続けて `LocalChecks::evaluate` が、モードが `off` でない項目だけを判定する。
 
 - ドットファイル（`find_dotfiles`）: 各パスをルートから順にセグメントごとに見て、名前が `.` で始まり `[publish].dotfiles_allow` のどれとも一致しない最初のセグメントまでを 1 件とする（ディレクトリは 1 回だけ数え、その下は見ない）。一致するセグメントはそれ自身だけを見逃し、その下は続けて見る（`.well-known/.env` は `.well-known/.env` を 1 件とする）。表示や応答に並べるのは先頭 `LISTED_DOTFILES`（10）件。
 - サイズ: ファイルの大きさの合計（ブロックの共有やディレクトリのノードは数えない）が `SIZE_GUIDELINE`（512 MiB、固定）を超えたら引っかかる（ちょうどは超えない扱い）。ミラーが保存するかは各ミラーの `max_update_size` で決まるので、これは目安。
+- リンク: [`publish/links.md`](publish/links.md) の判定で、確実に崩れるもの（最上位の `ipfs`・`ipns`、`/` で始まる参照、一覧に無いものへの参照、`http://` のスクリプト）があれば引っかかる。崩れるかもしれないもの（GET 以外のフォーム・Worker・`http://`/`ws://` への通信・外部の資源・元のサイトへの絶対 URL）は表示だけで、`require` でも止めない。
 - `require` の項目が引っかかったら、項目ごとの対処の案内を `; ` でつないだメッセージ（`abort_message`）で、add せずに止める。
 
 ## 前の版と relay の時計

@@ -162,6 +162,7 @@ pub fn raw_value(config: &Config, key: &str) -> Option<RawValue> {
         "publish.check_dotfiles" => RawValue::Str(config.publish.check_dotfiles.name().to_string()),
         "publish.dotfiles_allow" => RawValue::List(config.publish.dotfiles_allow.clone()),
         "publish.check_size" => RawValue::Str(config.publish.check_size.name().to_string()),
+        "publish.check_links" => RawValue::Str(config.publish.check_links.name().to_string()),
         "publish.check_unchanged" => {
             RawValue::Str(config.publish.check_unchanged.name().to_string())
         }
@@ -187,8 +188,8 @@ mod tests {
     }
 
     #[test]
-    fn catalog_has_exactly_24_editable_keys() {
-        assert_eq!(SETTINGS.iter().filter(|s| s.editable).count(), 24);
+    fn catalog_has_exactly_25_editable_keys() {
+        assert_eq!(SETTINGS.iter().filter(|s| s.editable).count(), 25);
     }
 
     // raw_value() lists editable keys by hand, so a key missing there would silently read as None.

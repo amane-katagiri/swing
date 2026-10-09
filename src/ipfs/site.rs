@@ -179,6 +179,26 @@ fn open_listed(root: &Path, file: &ListedFile) -> std::io::Result<std::fs::File>
     Ok(opened)
 }
 
+pub struct SiteFile<'a> {
+    root: &'a Path,
+    path: &'a str,
+    file: &'a ListedFile,
+}
+
+impl SiteFile<'_> {
+    pub fn path(&self) -> &str {
+        self.path
+    }
+
+    pub fn size(&self) -> u64 {
+        self.file.size
+    }
+
+    pub fn open(&self) -> std::io::Result<std::fs::File> {
+        open_listed(self.root, self.file)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SiteEntry {
     pub path: String,
@@ -240,6 +260,17 @@ impl SiteListing {
                 },
             })
             .collect()
+    }
+
+    pub fn files(&self) -> impl Iterator<Item = SiteFile<'_>> {
+        self.entries.iter().filter_map(|entry| match entry {
+            Entry::File(path, file) => Some(SiteFile {
+                root: &self.root,
+                path,
+                file,
+            }),
+            Entry::Dir(_) => None,
+        })
     }
 
     pub(super) fn into_multipart(

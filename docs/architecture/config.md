@@ -104,7 +104,7 @@ TOML の構文や型のエラーは `line <行>, column <桁>: <理由>` の形�
 | `policy.max_sites_per_account` / `keep_versions` / `keep_days` | integer |
 | `policy.min_update_interval` / `nip05_cache_ttl` | duration |
 | `policy.remove_on_unfollow` | bool |
-| `policy.nip05` / `publish.nip05` / `publish.check_dotfiles` / `publish.check_size` / `publish.check_unchanged` | mode（`off`/`warn`/`require`） |
+| `policy.nip05` / `publish.nip05` / `publish.check_dotfiles` / `publish.check_size` / `publish.check_links` / `publish.check_unchanged` | mode（`off`/`warn`/`require`） |
 | `agent.poll_interval` / `report_ttl` | duration |
 | `agent.concurrency` | integer |
 | `publish.keep_versions` | integer |

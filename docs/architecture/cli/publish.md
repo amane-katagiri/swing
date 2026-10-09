@@ -11,7 +11,7 @@
 - `--title` は任意。指定すると `title` タグになる。空白のみなら付けない扱いにし、条件を満たさなければ `invalid --title: ...` でエラー終了する。
 - `--message` はサイトイベントの `content` になる（省略時は空文字）。上限を超えたら何もせずに `invalid --message: must not exceed 4096 bytes (got N bytes)` でエラー終了する。
 - `--note` を付けると、サイトイベントの後に[通常の投稿](../publish.md#通常の投稿)もする。`--url` が要り、無ければ clap が引数の誤りとして止める。
-- `--nip05`・`--check-dotfiles`・`--check-size`・`--check-unchanged` は確認のモード（`off`/`warn`/`require`）。省略時は `[publish]` の同名の設定（既定は `check_dotfiles` が `require`・`check_size` が `warn`・`check_unchanged` が `require`）。4 つは表示や処理の前にまとめて解釈し、不正な値は `invalid --<フラグ名>` でエラー終了する。
+- `--nip05`・`--check-dotfiles`・`--check-size`・`--check-links`・`--check-unchanged` は確認のモード（`off`/`warn`/`require`）。省略時は `[publish]` の同名の設定（既定は `check_dotfiles` が `require`・`check_size` が `warn`・`check_links` が `warn`・`check_unchanged` が `require`）。5 つは表示や処理の前にまとめて解釈し、不正な値は `invalid --<フラグ名>` でエラー終了する。
 - `--yes`（`-y`）は、[増えたファイルの確認](#増えたファイルの確認)を聞かずに通す。
 
 各値の条件は[共通処理の段階の順](../publish.md#段階の順)の 1。
@@ -23,10 +23,12 @@
 1. 引数とモードを解釈し、[保護パスの拒否](../publish.md#保護パスの拒否)に当たれば何も表示せずにエラー終了する。
 2. `Site: <d>`、`--url` があれば `URL:`、`--title` があれば `Title:`、`--message` があれば `Message:` を表示する。秘密鍵も署名アプリの接続情報も無ければここでエラー終了する（`Signer::require`）。
 3. `--nip05` が `off` でなければ `NIP-05` 見出しの下に結果を出す（`✓ verified` / `! mismatch: ...` / `- not applicable (d is not a domain)` / `! error: ...`）。
-4. `DIR` を一覧し、`--check-dotfiles` と `--check-size` のどちらかが `off` でなければ `Checks` 見出しの下に[ローカルの確認](../publish.md#サイトの一覧とローカルの確認)の結果を 1 行ずつ出す。
-   - `off` の項目は `- dotfiles: off` / `- size: off`。
+4. `DIR` を一覧し（`--check-links` が `off` でなければ続けて[リンクの確認](../publish/links.md)のためにファイルを読み）、`--check-dotfiles`・`--check-size`・`--check-links` のどれかが `off` でなければ `Checks` 見出しの下に[ローカルの確認](../publish.md#サイトの一覧とローカルの確認)の結果を 1 行ずつ出す。
+   - `off` の項目は `- dotfiles: off` / `- size: off` / `- links: off`。
    - ドットファイルは `✓ dotfiles: none` か、`! dotfiles: N found (not in [publish].dotfiles_allow)` の後に先頭 10 件のパスを字下げして並べ、残りは `… and N more` にまとめる。
    - サイズは `✓ size: <合計> (guideline 512 MiB)` か `! size: <合計> is over the 512 MiB guideline; each mirror decides by its own limits (max_update_size, default 2 GiB)`。
+   - リンクは、何も無ければ `✓ links: no problems found`（4 MiB を超えて読まなかったファイルがあれば `; N files not read (over 4 MiB)` を続ける）。あれば、止める件数があれば `! links: N found (M break on gateways)`、無ければ `! links: N found (may break on some gateways)` の後に、種別の順（[種別](../publish/links.md#種別)の表の順）に `    <参照元ファイル>: <参照> (<種別の短い説明>)`（`reserved` は `    <名前> (<説明>)`）を種別ごとに先頭 5 件まで並べ、残りは `    … and N more (<種別>)` にまとめる。続けて読まなかったファイルがあれば `    N files not read (over 4 MiB)`、最後に手引きのページの URL（[結果](../publish/links.md#結果)）を `    see <URL>` の 1 行で出す。
+   - `require` の項目が引っかかったら、各項目の対処の案内を `; ` でつないでエラー終了する。リンクの案内は `links that break on gateways found: rename top-level ipfs/ipns entries, make links inside the site relative and point them at files in it, load scripts over https, or set --check-links / [publish].check_links to warn or off`。
 5. Kubo の RPC クライアントを `Config::ipfs_client` で作る（[`kubo.md`](../kubo.md#rpc-クライアントの作り方configipfs_client)）。relay に接続し、以降も同じ接続を使う。以降でエラー終了するときは relay の接続を閉じてから終わる。
 6. [前の版と relay の時計](../publish.md#前の版と-relay-の時計)を取り、[時計の確認](../publish.md#時計の確認)を一度先に行う。当たれば増えたファイルの確認の前に、何も add せずにエラー終了する。
 7. [増えたファイルの確認](#増えたファイルの確認)。

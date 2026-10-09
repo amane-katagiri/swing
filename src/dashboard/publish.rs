@@ -101,10 +101,15 @@ pub(super) async fn run_publish(
     let site = crate::ipfs::SiteListing::read_async(dir)
         .await
         .map_err(|e| internal("listing the uploaded files failed", e))?;
+    let (site, links) = publish::scan_links(site, modes.check_links, fields.url.as_deref())
+        .await
+        .map_err(|e| internal("checking the links of the uploaded files failed", e))?;
     let local = publish::LocalChecks::evaluate(
         &site.entries(),
         modes.check_dotfiles,
         modes.check_size,
+        modes.check_links,
+        links,
         &state.config.publish.dotfiles_allow,
     );
     if let Some(abort) = local.abort_message() {

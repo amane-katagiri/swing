@@ -7,7 +7,7 @@
 | このファイル | 構成要素、リポジトリ構成、CLI の一覧、設定と環境変数、テストと各ファイルへの索引 |
 | [`architecture/config.md`](architecture/config.md) | 設定ファイルと環境変数の読み込み・解決、設定キーのカタログ（`settings/`）とダッシュボードからの書き込み |
 | [`architecture/cli.md`](architecture/cli.md) | 各サブコマンドの動作と出力。子ページは `publish` の [`cli/publish.md`](architecture/cli/publish.md) と、表示系と Follow Set の操作の [`cli/views.md`](architecture/cli/views.md) |
-| [`architecture/publish.md`](architecture/publish.md) | `swing publish` とダッシュボードの公開が共有する処理: 保護パス・ローカルの確認・時計の確認と `created_at`・版の配置と後始末・古い版の削除 |
+| [`architecture/publish.md`](architecture/publish.md) | `swing publish` とダッシュボードの公開が共有する処理: 保護パス・ローカルの確認（リンクの確認は子ページ [`publish/links.md`](architecture/publish/links.md)）・時計の確認と `created_at`・版の配置と後始末・古い版の削除 |
 | [`architecture/mirror.md`](architecture/mirror.md) | `mirror list`/`add`/`remove`・`sites` とダッシュボードの API が共有する処理: 使う Follow Set の選び方・Follow Set の書き換え・sites の集計（レプリカ数、unfollow の一覧） |
 | [`architecture/webring.md`](architecture/webring.md) | `webring` と `/api/webring` が共有する処理: Follow Set のたどり方・グラフ・ノードの名前 |
 | [`architecture/health.md`](architecture/health.md) | 版の検査と MFS の突き合わせ: agent の起動時の突き合わせと sweep、`status` と `/api/status` が共有する判定と集計 |
@@ -62,7 +62,7 @@
 | `agent/` | mirror-agent のループ。[agent.md](architecture/agent.md) |
 | `policy.rs`・`state.rs` | 保存ポリシーの判定（純粋関数）・`state.json` の永続化。[agent.md](architecture/agent.md) |
 | `health.rs` | 版と MFS の突き合わせ（agent と `status` で共通）と `status`。[health.md](architecture/health.md)、CLI の表示は [cli/views.md](architecture/cli/views.md#status) |
-| `publish.rs`・`publish/checks.rs`・`publish/clock.rs`・`publish/new_files.rs`・`publish/staged.rs` | `publish` と、その前後の確認（ドットファイル・保護パス・サイズ・同じ内容・増えたファイル・時計）、告知できなかった版の後始末。[publish.md](architecture/publish.md)、CLI の表示は [cli/publish.md](architecture/cli/publish.md) |
+| `publish.rs`・`publish/checks.rs`・`publish/links.rs`（と `publish/links/`）・`publish/clock.rs`・`publish/new_files.rs`・`publish/staged.rs` | `publish` と、その前後の確認（ドットファイル・保護パス・サイズ・リンク・同じ内容・増えたファイル・時計）、告知できなかった版の後始末。[publish.md](architecture/publish.md)、CLI の表示は [cli/publish.md](architecture/cli/publish.md) |
 | `mirror/` | `mirror list`/`add`/`remove`・`sites`（`set.rs`: Follow Set の編集、`print.rs`・`time.rs`: 表示）。[mirror.md](architecture/mirror.md)、CLI の表示は [cli/views.md](architecture/cli/views.md#mirror-list--add--remove) |
 | `replicas.rs` | レプリカ報告の集計と `replicas`。[nostr.md](architecture/nostr.md#一覧の集計replicascollect)、表示は [cli/views.md](architecture/cli/views.md#replicas) |
 | `webring/` | Follow Set のたどり方とグラフ、`webring`（`render.rs`: テキスト・DOT・Mermaid）。[webring.md](architecture/webring.md)、CLI の表示は [cli/views.md](architecture/cli/views.md#webring) |
@@ -110,7 +110,7 @@ swing service stop      [--system]
 swing service status    [--system] [--points-into <dir>]
 swing dashboard open         [--config <path>] [--no-browser]
 swing dashboard rotate-token [--config <path>]
-swing publish [--config <path>] --site <d-tag> [--url <URL>] [--nip05 <off|warn|require>] [--check-dotfiles <off|warn|require>] [--check-size <off|warn|require>] [--check-unchanged <off|warn|require>] [--title <TEXT>] [-m, --message <TEXT>] [-y, --yes] <DIR>
+swing publish [--config <path>] --site <d-tag> [--url <URL>] [--nip05 <off|warn|require>] [--check-dotfiles <off|warn|require>] [--check-size <off|warn|require>] [--check-links <off|warn|require>] [--check-unchanged <off|warn|require>] [--title <TEXT>] [-m, --message <TEXT>] [-y, --yes] <DIR>
 swing mirror list                      [--config <path>]
 swing mirror add <key>...              [--config <path>]
 swing mirror remove <key>...           [--config <path>]

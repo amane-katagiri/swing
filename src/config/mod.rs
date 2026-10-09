@@ -119,6 +119,7 @@ pub struct PublishFile {
     pub keep_versions: Option<usize>,
     pub check_dotfiles: Option<String>,
     pub check_size: Option<String>,
+    pub check_links: Option<String>,
     pub check_unchanged: Option<String>,
     pub dotfiles_allow: Option<Vec<String>>,
 }
@@ -280,6 +281,7 @@ pub struct PublishConfig {
     pub keep_versions: usize,
     pub check_dotfiles: CheckMode,
     pub check_size: CheckMode,
+    pub check_links: CheckMode,
     pub check_unchanged: CheckMode,
     pub dotfiles_allow: Vec<String>,
 }

@@ -8,7 +8,7 @@
 
 パート:
 
-- `site`（必須）・`url`・`title`・`message`・`note`・`nip05`・`check_dotfiles`・`check_size`・`check_unchanged`（省略可）。`note` は `true`/`false`（省略時は `false`）で、ほかの値は読んだ時点で 400 `invalid note: must be true or false`。モードの 4 つは `off`/`warn`/`require` で、省略時は `[publish]` の同名の設定。不正な値は 400 `invalid <パート名>: ...`。
+- `site`（必須）・`url`・`title`・`message`・`note`・`nip05`・`check_dotfiles`・`check_size`・`check_links`・`check_unchanged`（省略可）。`note` は `true`/`false`（省略時は `false`）で、ほかの値は読んだ時点で 400 `invalid note: must be true or false`。モードの 5 つは `off`/`warn`/`require` で、省略時は `[publish]` の同名の設定。不正な値は 400 `invalid <パート名>: ...`。
 - テキストのパートは 1 つあたり `MAX_TEXT_FIELD_BYTES`（64 KiB）までで、超えるか UTF-8 でなければ 400。知らない名前のパートは読み捨てる。
 - `site`/`url`/`title` は[共通の規則](../../publish.md#段階の順)で検証し、違反は 400。`message` は `MAX_CONTENT_BYTES`（4096 バイト）を超えたら、パートを読んだ時点で 400 `invalid message: ...`。
 - `file`（1 個以上）: 各パートの `filename` がサイトルートからの相対パス（`/` 区切り）。`filename` の無い `file` パートは 400。
@@ -31,11 +31,11 @@
 
 1. 多重実行（409 `a publish is already running`）。本体を読む前・一時ディレクトリを作る前に判定するので、409 のときは何もディスクに書かない。排他するのはダッシュボード内で同時に来た publish どうしだけで、同じホスト上の CLI `swing publish` とは排他しない
 2. パートの受信とパスの検証、`site` と `file` の有無（400・413）
-3. `site`/`url`・`note` に `url` があるか（400 `invalid note: needs a URL`）・`title`・モードの 4 つの検証（400）
+3. `site`/`url`・`note` に `url` があるか（400 `invalid note: needs a URL`）・`title`・モードの 5 つの検証（400）
 4. [保護パスの拒否](../../publish.md#保護パスの拒否)（400）
 5. セットアップモード（503 `agent is not configured`）
 6. NIP-05（422）
-7. [ドットファイル・サイズ](../../publish.md#サイトの一覧とローカルの確認)（422）
+7. [ドットファイル・サイズ・リンク](../../publish.md#サイトの一覧とローカルの確認)（422。リンクの確認でファイルを読めなければ 500）
 8. Kubo と relay の準備（503 `agent is not ready`）→ [前の版と relay の時計](../../publish.md#前の版と-relay-の時計) → [時計の確認](../../publish.md#時計の確認)（400）→ [add](../../publish.md#add-と版の配置)（失敗は 502）
 9. [同じ内容かの確認](../../publish.md#同じ内容かの確認) → [署名と送信](../../publish.md#署名と送信) → `note` が `true` なら[通常の投稿](../../publish.md#通常の投稿) → [古い版の削除](../../publish.md#古い版の削除)
 
@@ -51,6 +51,10 @@
   "checks": {
     "dotfiles": { "status": "ok", "mode": "require", "count": 0, "paths": [] },
     "size": { "status": "ok", "mode": "warn", "bytes": 12000, "threshold": 536870912 },
+    "links": { "status": "found", "mode": "warn", "count": 1, "blocking": 0, "redirects": false, "skipped": 0,
+      "kinds": [ { "kind": "external", "blocks": false, "count": 1,
+        "items": [ { "file": "index.html", "reference": "https://cdn.example/a.css" } ] } ],
+      "guide": "https://github.com/amane-katagiri/swing/blob/main/docs/site-guide.md" },
     "unchanged": { "status": "changed", "mode": "require", "previous_cid": "bafy…", "previous_created_at": 1780000000, "detail": null } },
   "cid": "bafy…", "size": 12345, "created_at": 1790000000, "mfs_path": "/swing/publish/<hex>/example.com/1790000000",
   "relays": [ { "relay": "wss://…", "ok": true, "error": null } ], "pruned": ["1780000000"], "prune_error": null,
@@ -63,8 +67,9 @@
 - `checks`: 各項目の `mode` はその回に使ったモード。判定は[ローカルの確認](../../publish.md#サイトの一覧とローカルの確認)と[同じ内容かの確認](../../publish.md#同じ内容かの確認)。
   - `dotfiles`: `status` は `off`（`count` は 0、`paths` は空）/`ok`/`found`。`count` は見つかった件数、`paths` はその先頭 `LISTED_DOTFILES`（10）件。
   - `size`: `status` は `off`（`bytes` は `null`）/`ok`/`over`。`bytes` はファイルの大きさの合計、`threshold` は `SIZE_GUIDELINE`（512 MiB）。上の `size`（`dag/stat` の値）とは別物。
+  - `links`: `status` は `off`（`count`・`blocking`・`skipped` は 0、`redirects` は `false`、`kinds` は空、`guide` は `null`）/`ok`/`found`。`count` は見つかった件数、`blocking` はそのうち `require` で止める件数、`redirects` はサイト最上位に `_redirects` があるか、`skipped` は 4 MiB を超えて読まなかったファイルの数。`kinds` は見つかった種別だけを[種別](../../publish/links.md#種別)の表の順に並べ、`kind` は種別の名前、`blocks` はその種別が `require` で止めるか、`count` は件数、`items` は先頭 `LISTED_LINKS`（5）件の参照元ファイル（`file`）と参照（`reference`、`reserved` では空文字）。`guide` は `found` のときだけ直し方の手引きのページの URL（[結果](../../publish/links.md#結果)）で、それ以外は `null`。
   - `unchanged`: `status` は `off`/`changed`/`unchanged`/`no_previous`（relay に前の版が無い）/`unknown`（relay から取れなかった。理由が `detail`）。`previous_cid`・`previous_created_at` は前の版が見つかったときだけ入る。
-- ドットファイル・サイズの `require` が引っかかったら、add する前に 422 を返す: `{ "error": "...", "nip05": {...}, "checks": { "dotfiles": {...}, "size": {...}, "unchanged": null } }`。NIP-05 の 422 には `checks` が付かない。
+- ドットファイル・サイズ・リンクの `require` が引っかかったら、add する前に 422 を返す: `{ "error": "...", "nip05": {...}, "checks": { "dotfiles": {...}, "size": {...}, "links": {...}, "unchanged": null } }`。NIP-05 の 422 には `checks` が付かない。
 - `unchanged` が `unchanged` で `check_unchanged` が `require` なら、add した版を消して 200 を返す。このとき `published` は `false`、`created_at` と `mfs_path` は `null`、`relays` と `pruned` は空、`prune_error` は `null`。`cid`・`size`・`gateway_url` は通常どおり入る。[`/api/activity`](status.md#get-apiactivity) の `latest_published_at` は進まない。版を消せなければ 502。
 - add の後、署名できるまでに失敗したら（`dag/stat` の失敗、署名できない）502 を返す。add した版の扱いは[告知できなかった版の後始末](../../publish.md#告知できなかった版の後始末)（打ち切りのときの削除は応答の後になりうる）。
 - `created_at` は[共通の決め方](../../publish.md#created_at-の決め方)。[時計の確認](../../publish.md#時計の確認)に当たったら何も add せずに 400 `{ "error": "..." }`（`publish::ClockError`）、そのための MFS の一覧に失敗したら 502 を返す。

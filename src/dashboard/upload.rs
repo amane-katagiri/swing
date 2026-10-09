@@ -263,11 +263,13 @@ async fn receive_upload(multipart: &mut Multipart, dest: &Path) -> Result<Parsed
                     }
                 };
             }
-            name @ ("nip05" | "check_dotfiles" | "check_size" | "check_unchanged") => {
+            name @ ("nip05" | "check_dotfiles" | "check_size" | "check_links"
+            | "check_unchanged") => {
                 let slot = match name {
                     "nip05" => &mut modes.nip05,
                     "check_dotfiles" => &mut modes.check_dotfiles,
                     "check_size" => &mut modes.check_size,
+                    "check_links" => &mut modes.check_links,
                     _ => &mut modes.check_unchanged,
                 };
                 *slot = Some(read_text_field(field).await?);
@@ -879,8 +881,75 @@ mod tests {
         assert_eq!(dotfiles["paths"], serde_json::json!([".env", ".git"]));
         assert_eq!(body["checks"]["size"]["status"], "ok");
         assert_eq!(body["checks"]["size"]["bytes"], 13 + 2 + 8 + 3 + 1);
+        assert_eq!(body["checks"]["links"]["status"], "ok");
+        assert_eq!(body["checks"]["links"]["mode"], "warn");
+        assert!(body["checks"]["links"]["guide"].is_null());
         assert!(body["checks"]["unchanged"].is_null());
         assert_eq!(body["nip05"]["status"], "off");
+    }
+
+    #[tokio::test]
+    async fn upload_with_breaking_links_under_require_is_422_with_the_link_results() {
+        let (status, body) = upload_with(&[
+            ("site", None, b"example.com"),
+            ("check_links", None, b"require"),
+            (
+                "file",
+                Some("index.html"),
+                br#"<link rel="stylesheet" href="/style.css"><form method="post"></form>"#,
+            ),
+        ])
+        .await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+        assert!(body["error"].as_str().unwrap().contains("--check-links"));
+        let links = &body["checks"]["links"];
+        assert_eq!(links["status"], "found");
+        assert_eq!(links["mode"], "require");
+        assert_eq!(links["count"], 3);
+        assert_eq!(links["blocking"], 2);
+        let kinds: Vec<&str> = links["kinds"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|k| k["kind"].as_str().unwrap())
+            .collect();
+        assert_eq!(kinds, ["root_relative", "broken", "post_form"]);
+        assert_eq!(links["kinds"][0]["blocks"], true);
+        assert_eq!(links["kinds"][2]["blocks"], false);
+        assert_eq!(
+            links["kinds"][0]["items"],
+            serde_json::json!([{"file": "index.html", "reference": "/style.css"}])
+        );
+        assert!(links["guide"].as_str().unwrap() == crate::publish::links::SITE_GUIDE_URL);
+    }
+
+    #[tokio::test]
+    async fn upload_with_breaking_links_under_warn_goes_on_to_ipfs() {
+        let (status, body) = upload_with(&[
+            ("site", None, b"example.com"),
+            ("check_links", None, b"warn"),
+            ("file", Some("index.html"), br#"<a href="/x">x</a>"#),
+        ])
+        .await;
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(body["error"], "agent is not ready");
+    }
+
+    #[tokio::test]
+    async fn upload_rejects_an_invalid_check_links_part() {
+        let (status, body) = upload_with(&[
+            ("site", None, b"example.com"),
+            ("check_links", None, b"strict"),
+            ("file", Some("index.html"), b"<html></html>"),
+        ])
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert!(
+            body["error"]
+                .as_str()
+                .unwrap()
+                .contains("invalid check_links")
+        );
     }
 
     #[tokio::test]

@@ -179,6 +179,10 @@ fn config_value(
             ConfigValue::Str(config.publish.check_size.name().to_string()),
             None,
         ),
+        "publish.check_links" => (
+            ConfigValue::Str(config.publish.check_links.name().to_string()),
+            None,
+        ),
         "publish.check_unchanged" => (
             ConfigValue::Str(config.publish.check_unchanged.name().to_string()),
             None,

@@ -11,7 +11,7 @@ use crate::mfs;
 
 mod site;
 
-pub use site::{SiteEntry, SiteListing};
+pub use site::{SiteEntry, SiteFile, SiteListing};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FetchLimits {

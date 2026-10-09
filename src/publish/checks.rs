@@ -8,6 +8,8 @@ use crate::format::{format_bytes, format_bytes_approx};
 use crate::ipfs::SiteEntry;
 use crate::nostr::SiteEvent;
 
+use super::links::LinkReport;
+
 pub const SIZE_GUIDELINE: u64 = 512 << 20;
 pub const LISTED_DOTFILES: usize = 10;
 
@@ -117,6 +119,8 @@ pub struct LocalChecks {
     pub dotfiles: Option<Vec<String>>,
     pub size_mode: CheckMode,
     pub bytes: Option<u64>,
+    pub links_mode: CheckMode,
+    pub links: Option<LinkReport>,
 }
 
 impl LocalChecks {
@@ -124,6 +128,8 @@ impl LocalChecks {
         entries: &[SiteEntry],
         dotfiles_mode: CheckMode,
         size_mode: CheckMode,
+        links_mode: CheckMode,
+        links: Option<LinkReport>,
         allow: &[String],
     ) -> Self {
         let dotfiles = (dotfiles_mode != CheckMode::Off)
@@ -134,11 +140,15 @@ impl LocalChecks {
             dotfiles,
             size_mode,
             bytes,
+            links: links.filter(|_| links_mode != CheckMode::Off),
+            links_mode,
         }
     }
 
     pub fn all_off(&self) -> bool {
-        self.dotfiles_mode == CheckMode::Off && self.size_mode == CheckMode::Off
+        self.dotfiles_mode == CheckMode::Off
+            && self.size_mode == CheckMode::Off
+            && self.links_mode == CheckMode::Off
     }
 
     pub fn dotfiles_found(&self) -> bool {
@@ -184,6 +194,10 @@ impl LocalChecks {
                 format_bytes(DEFAULT_MAX_UPDATE_SIZE)
             )),
         }
+        match &self.links {
+            None => lines.push("- links: off".to_string()),
+            Some(report) => lines.extend(report.lines()),
+        }
         lines
     }
 
@@ -200,6 +214,11 @@ impl LocalChecks {
                 "the site is larger than {}: make it smaller, or set --check-size / [publish].check_size to warn or off",
                 format_bytes(SIZE_GUIDELINE)
             ));
+        }
+        if self.links_mode == CheckMode::Require
+            && let Some(reason) = self.links.as_ref().and_then(LinkReport::abort_reason)
+        {
+            reasons.push(reason);
         }
         (!reasons.is_empty()).then(|| reasons.join("; "))
     }
@@ -470,6 +489,8 @@ mod tests {
             &entries(dir.path()),
             CheckMode::Require,
             CheckMode::Warn,
+            CheckMode::Off,
+            None,
             &allow(),
         );
         assert_eq!(
@@ -495,6 +516,8 @@ mod tests {
             &entries(dir.path()),
             CheckMode::Warn,
             CheckMode::Warn,
+            CheckMode::Off,
+            None,
             &allow(),
         );
         assert_eq!(
@@ -515,15 +538,23 @@ mod tests {
                 size: Some(1),
             })
             .collect();
-        let checks = LocalChecks::evaluate(&entries, CheckMode::Warn, CheckMode::Off, &[]);
+        let checks = LocalChecks::evaluate(
+            &entries,
+            CheckMode::Warn,
+            CheckMode::Off,
+            CheckMode::Off,
+            None,
+            &[],
+        );
         let lines = checks.lines();
         assert_eq!(
             lines[0],
             "! dotfiles: 12 found (not in [publish].dotfiles_allow)"
         );
-        assert_eq!(lines.len(), 1 + LISTED_DOTFILES + 1 + 1);
+        assert_eq!(lines.len(), 1 + LISTED_DOTFILES + 1 + 1 + 1);
         assert_eq!(lines[LISTED_DOTFILES + 1], "    \u{2026} and 2 more");
-        assert_eq!(lines.last().unwrap(), "- size: off");
+        assert_eq!(lines[LISTED_DOTFILES + 2], "- size: off");
+        assert_eq!(lines.last().unwrap(), "- links: off");
     }
 
     #[test]
@@ -546,16 +577,64 @@ mod tests {
                 size: None,
             },
         ];
-        let checks = LocalChecks::evaluate(&at, CheckMode::Off, CheckMode::Require, &[]);
+        let checks = LocalChecks::evaluate(
+            &at,
+            CheckMode::Off,
+            CheckMode::Require,
+            CheckMode::Off,
+            None,
+            &[],
+        );
         assert!(!checks.size_over());
         assert!(checks.abort_message().is_none());
-        let checks = LocalChecks::evaluate(&over, CheckMode::Off, CheckMode::Require, &[]);
+        let checks = LocalChecks::evaluate(
+            &over,
+            CheckMode::Off,
+            CheckMode::Require,
+            CheckMode::Off,
+            None,
+            &[],
+        );
         assert_eq!(checks.bytes, Some(SIZE_GUIDELINE + 1));
         assert!(checks.size_over());
         assert!(checks.abort_message().unwrap().contains("--check-size"));
-        let checks = LocalChecks::evaluate(&over, CheckMode::Off, CheckMode::Warn, &[]);
+        let checks = LocalChecks::evaluate(
+            &over,
+            CheckMode::Off,
+            CheckMode::Warn,
+            CheckMode::Off,
+            None,
+            &[],
+        );
         assert!(checks.abort_message().is_none());
         assert!(checks.lines()[1].contains("guideline"));
+    }
+
+    #[test]
+    fn link_check_stops_only_under_require_with_breaking_links() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("index.html"), br#"<a href="/about/">a</a>"#).unwrap();
+        let site = crate::ipfs::SiteListing::read(dir.path()).unwrap();
+        let report = super::super::links::scan(&site, None).unwrap();
+        let evaluate = |mode| {
+            LocalChecks::evaluate(
+                &site.entries(),
+                CheckMode::Off,
+                CheckMode::Off,
+                mode,
+                Some(report.clone()),
+                &[],
+            )
+        };
+        let require = evaluate(CheckMode::Require);
+        assert!(!require.all_off());
+        assert!(require.abort_message().unwrap().contains("--check-links"));
+        assert!(require.lines()[2].starts_with("! links: 2 found"));
+        assert!(evaluate(CheckMode::Warn).abort_message().is_none());
+        let off = evaluate(CheckMode::Off);
+        assert!(off.all_off());
+        assert_eq!(off.links, None);
+        assert_eq!(off.lines()[2], "- links: off");
     }
 
     #[test]
@@ -564,7 +643,14 @@ mod tests {
             path: ".env".into(),
             size: Some(SIZE_GUIDELINE * 2),
         }];
-        let checks = LocalChecks::evaluate(&entries, CheckMode::Off, CheckMode::Off, &[]);
+        let checks = LocalChecks::evaluate(
+            &entries,
+            CheckMode::Off,
+            CheckMode::Off,
+            CheckMode::Off,
+            None,
+            &[],
+        );
         assert!(checks.all_off());
         assert_eq!(checks.dotfiles, None);
         assert_eq!(checks.bytes, None);

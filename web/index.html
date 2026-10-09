@@ -727,7 +727,15 @@
             <option value="require" data-i18n="modeRequire">require</option>
           </select>
         </label>
-        <label class="swing-field"><span data-i18n="checkUnchangedLabel">Unchanged check</span>
+        <label class="swing-field"><span data-i18n="checkLinksLabel">Compatibility check</span>
+          <select name="check_links" class="swing-input">
+            <option value="" data-i18n="modeDefault">Use configured default</option>
+            <option value="off" data-i18n="modeOff">off</option>
+            <option value="warn" data-i18n="modeWarn">warn</option>
+            <option value="require" data-i18n="modeRequire">require</option>
+          </select>
+        </label>
+        <label class="swing-field"><span data-i18n="checkUnchangedLabel">Diff from last deploy</span>
           <select name="check_unchanged" class="swing-input">
             <option value="" data-i18n="modeDefault">Use configured default</option>
             <option value="off" data-i18n="modeOff">off</option>

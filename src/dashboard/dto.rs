@@ -661,6 +661,74 @@ pub struct SizeCheckDto {
 }
 
 #[derive(Debug, Serialize)]
+pub struct LinkItemDto {
+    pub file: String,
+    pub reference: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct LinkKindDto {
+    pub kind: &'static str,
+    pub blocks: bool,
+    pub count: usize,
+    pub items: Vec<LinkItemDto>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct LinksCheckDto {
+    pub status: &'static str,
+    pub mode: &'static str,
+    pub count: usize,
+    pub blocking: usize,
+    pub redirects: bool,
+    pub skipped: usize,
+    pub kinds: Vec<LinkKindDto>,
+    pub guide: Option<&'static str>,
+}
+
+fn links_check_dto(local: &crate::publish::LocalChecks) -> LinksCheckDto {
+    let mode = local.links_mode.name();
+    let Some(report) = &local.links else {
+        return LinksCheckDto {
+            status: "off",
+            mode,
+            count: 0,
+            blocking: 0,
+            redirects: false,
+            skipped: 0,
+            kinds: Vec::new(),
+            guide: None,
+        };
+    };
+    let count = report.total();
+    LinksCheckDto {
+        status: if count == 0 { "ok" } else { "found" },
+        mode,
+        count,
+        blocking: report.blocking(),
+        redirects: report.redirects,
+        skipped: report.skipped.len(),
+        kinds: report
+            .kinds()
+            .map(|(kind, findings)| LinkKindDto {
+                kind: kind.name(),
+                blocks: report.blocks(kind),
+                count: findings.len(),
+                items: findings
+                    .iter()
+                    .take(crate::publish::links::LISTED_LINKS)
+                    .map(|f| LinkItemDto {
+                        file: f.file.clone(),
+                        reference: f.reference.clone(),
+                    })
+                    .collect(),
+            })
+            .collect(),
+        guide: (count > 0).then_some(crate::publish::links::SITE_GUIDE_URL),
+    }
+}
+
+#[derive(Debug, Serialize)]
 pub struct UnchangedCheckDto {
     pub status: &'static str,
     pub mode: &'static str,
@@ -673,6 +741,7 @@ pub struct UnchangedCheckDto {
 pub struct PublishChecksDto {
     pub dotfiles: DotfilesCheckDto,
     pub size: SizeCheckDto,
+    pub links: LinksCheckDto,
     pub unchanged: Option<UnchangedCheckDto>,
 }
 
@@ -718,6 +787,7 @@ pub fn publish_checks_dto(
     PublishChecksDto {
         dotfiles,
         size,
+        links: links_check_dto(local),
         unchanged,
     }
 }

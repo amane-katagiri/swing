@@ -101,7 +101,7 @@ CSS の読み込み順と上書きの仕方は [`css.md#読み込み順`](css.md
 | `swing:sites:sort` | `updated` / `name` / `pubkey` | Sites の並び順（既定 `updated`） |
 | `swing:sites:stored-filter` | `"all"` / `"true"` / `"pending"` / `"false"` | Sites の保存状態のフィルター |
 | `swing:webring:query` | JSON `{root, depth}` | Webring の最後のクエリ（起動時に復元） |
-| `swing:publish:last` | JSON `{site, url, title, message, nip05, check_dotfiles, check_size, check_unchanged}` | Publish フォームの最後の入力（起動時にプリフィル） |
+| `swing:publish:last` | JSON `{site, url, title, message, nip05, check_dotfiles, check_size, check_links, check_unchanged}` | Publish フォームの最後の入力（起動時にプリフィル） |
 | `swing:nav:collapsed` | `"1"` / `"0"` | サイドナビを畳んでいるか（既定 `0`） |
 | `swing:theme` | `auto` / `light` / `dark` | 表示テーマ |
 | `swing:lang` | `auto` / `en` / `ja` | 表示言語 |

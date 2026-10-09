@@ -14,6 +14,7 @@ use crate::signer::Signer;
 
 mod checks;
 mod clock;
+pub mod links;
 mod new_files;
 mod staged;
 
@@ -439,6 +440,7 @@ pub struct ModeOverrides {
     pub nip05: Option<String>,
     pub check_dotfiles: Option<String>,
     pub check_size: Option<String>,
+    pub check_links: Option<String>,
     pub check_unchanged: Option<String>,
 }
 
@@ -447,6 +449,7 @@ pub struct Modes {
     pub nip05: CheckMode,
     pub check_dotfiles: CheckMode,
     pub check_size: CheckMode,
+    pub check_links: CheckMode,
     pub check_unchanged: CheckMode,
 }
 
@@ -465,6 +468,7 @@ pub fn resolve_modes(
             defaults.check_dotfiles,
         )?,
         check_size: one("check-size", &overrides.check_size, defaults.check_size)?,
+        check_links: one("check-links", &overrides.check_links, defaults.check_links)?,
         check_unchanged: one(
             "check-unchanged",
             &overrides.check_unchanged,
@@ -544,11 +548,30 @@ async fn run_nip05_check(mode: CheckMode, d: &str, pubkey_hex: &str) -> Result<(
     Ok(())
 }
 
-fn run_local_checks(entries: &[SiteEntry], modes: &Modes, dotfiles_allow: &[String]) -> Result<()> {
+pub async fn scan_links(
+    site: SiteListing,
+    mode: CheckMode,
+    url: Option<&str>,
+) -> Result<(SiteListing, Option<links::LinkReport>)> {
+    if mode == CheckMode::Off {
+        return Ok((site, None));
+    }
+    let (site, report) = links::scan_async(site, url.map(str::to_string)).await?;
+    Ok((site, Some(report)))
+}
+
+fn run_local_checks(
+    entries: &[SiteEntry],
+    modes: &Modes,
+    links: Option<links::LinkReport>,
+    dotfiles_allow: &[String],
+) -> Result<()> {
     let local = LocalChecks::evaluate(
         entries,
         modes.check_dotfiles,
         modes.check_size,
+        modes.check_links,
+        links,
         dotfiles_allow,
     );
     if local.all_off() {
@@ -721,8 +744,9 @@ pub async fn run(config: Config, dir: &Path, request: Request) -> Result<()> {
 
     run_nip05_check(modes.nip05, &d, &pubkey_hex).await?;
     let site = SiteListing::read_async(dir).await?;
+    let (site, links) = scan_links(site, modes.check_links, url).await?;
     let entries = site.entries();
-    run_local_checks(&entries, &modes, &config.publish.dotfiles_allow)?;
+    run_local_checks(&entries, &modes, links, &config.publish.dotfiles_allow)?;
 
     let ipfs = config.ipfs_client().await?;
     let remote_signer = signer.is_remote();
@@ -1201,6 +1225,7 @@ mod tests {
                 nip05: CheckMode::Warn,
                 check_dotfiles: CheckMode::Require,
                 check_size: CheckMode::Warn,
+                check_links: CheckMode::Warn,
                 check_unchanged: CheckMode::Require,
             }
         );
@@ -1218,6 +1243,20 @@ mod tests {
         };
         let (name, _) = resolve_modes(&bad, &defaults).unwrap_err();
         assert_eq!(name, "check-size");
+        let bad = ModeOverrides {
+            check_links: Some("strict".into()),
+            ..Default::default()
+        };
+        let (name, _) = resolve_modes(&bad, &defaults).unwrap_err();
+        assert_eq!(name, "check-links");
+        let overrides = ModeOverrides {
+            check_links: Some("require".into()),
+            ..Default::default()
+        };
+        assert_eq!(
+            resolve_modes(&overrides, &defaults).unwrap().check_links,
+            CheckMode::Require
+        );
     }
 
     #[tokio::test]
@@ -1237,6 +1276,7 @@ mod tests {
                 nip05: Some("off".into()),
                 check_dotfiles: Some("off".into()),
                 check_size: Some("off".into()),
+                check_links: Some("off".into()),
                 check_unchanged: Some("off".into()),
             },
             yes: false,

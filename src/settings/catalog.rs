@@ -383,6 +383,19 @@ pub const SETTINGS: &[Setting] = &[
         },
     },
     Setting {
+        key: "publish.check_links",
+        section: "publish",
+        field: "check_links",
+        env: "SWING_PUBLISH_CHECK_LINKS",
+        kind: Kind::Mode,
+        example: Example::Value("\"warn\""),
+        editable: true,
+        description: Text {
+            en: "What swing publish does when the site has links that break on gateways and IPFS: top-level ipfs/ipns names, root-relative or missing targets, or http:// scripts (off / warn / require); the --check-links CLI flag takes precedence.",
+            ja: "サイトにゲートウェイや IPFS で崩れる参照（最上位の ipfs・ipns という名前のファイル・ディレクトリ、/ で始まる参照、無いファイルへの参照、http:// のスクリプト）があったときの swing publish の扱い（off / warn / require、--check-links が優先）",
+        },
+    },
+    Setting {
         key: "publish.check_unchanged",
         section: "publish",
         field: "check_unchanged",
