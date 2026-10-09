@@ -950,7 +950,7 @@ mod tests {
             )
             .route(
                 "/api/v0/add",
-                post(|| async {
+                post(|_upload: axum::body::Bytes| async {
                     r#"{"Name":"x","Hash":"bafybeicwrird3ditgfyu4snq6i3x6i564gfcywffrwcgumnjhyiva3p2ra","Size":"3"}"#
                 }),
             )
