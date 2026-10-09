@@ -167,6 +167,17 @@ jobs:
           sysev 'get {size, position} of every menu bar item of menu bar 1' > "$OUT/menubar-item.txt" 2>&1 || true
           shot 01-running-light
 
+      - name: Reinstall the service over the running one
+        run: |
+          . "$W/lib.sh"
+          "$W/bin/swing" service install --config "$W/swing.toml" | tee "$OUT/service-reinstall.txt"
+          wait_up
+          sleep 8
+          for label in jp.ne.ama.swing jp.ne.ama.swing-tray; do
+            launchctl print "gui/$(id -u)/$label" > "$OUT/launchctl-reinstall-$label.txt" 2>&1
+          done
+          pgrep -x swing-tray
+
       - name: Finder
         continue-on-error: true
         run: |

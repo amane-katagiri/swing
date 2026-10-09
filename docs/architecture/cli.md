@@ -30,7 +30,7 @@ Kubo（`[kubo].managed` なら子プロセス）と mirror-agent を 1 プロセ
 
 ## stop
 
-動いている `swing up` に正常終了、または `--restart` でプロセス内再起動を要求する（[`up.md#終了要求と-exit-codeshutdownexitrequest-shutdownexit`](up.md#終了要求と-exit-codeshutdownexitrequest-shutdownexit)）。`--timeout`（秒、既定 60。`service::GRACEFUL_STOP_TIMEOUT`）は下記のポーリングの上限で、超えたら `swing did not stop within Ns`（`--restart` なら `did not come back`）でエラー終了する。実装は `src/stop.rs` で、ダッシュボード API だけを使う。
+動いている `swing up` に正常終了、または `--restart` でプロセス内再起動を要求する（[`up.md#終了要求と-exit-codeshutdownexitrequest-shutdownexit`](up.md#終了要求と-exit-codeshutdownexitrequest-shutdownexit)）。`--timeout`（秒、既定 60。`service::GRACEFUL_STOP_TIMEOUT`）は identity・停止要求の POST・ポーリングを合わせた全体の上限（開始時に期限を決め、各リクエストもその期限で打ち切る。大きすぎて期限を作れない値は `--timeout is too large` のエラー）で、超えたら `swing did not stop within Ns`（`--restart` なら `did not come back`）でエラー終了する。実装は `src/stop.rs` で、ダッシュボード API だけを使う。
 
 1. トークンを送らない [`POST /api/identity`](dashboard/http-api/session.md#post-apiidentity)（`ApiClient::identity`）で今の `instance` を読む。接続できなければ `not running` で正常終了し、相手がトークンを知っていると確かめられなければエラー終了する。
 2. `POST /api/shutdown`（`--restart` なら `/api/restart`）を叩く。接続できなければ `not running` を出して正常終了する。

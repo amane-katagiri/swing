@@ -1,6 +1,8 @@
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
-use anyhow::{Result, bail};
+use tokio::time::Instant;
+
+use anyhow::{Result, anyhow, bail};
 
 use crate::api_client::{ApiClient, ApiClientError};
 use crate::config::Config;
@@ -27,7 +29,21 @@ async fn wait(
     timeout: Duration,
     interval: Duration,
 ) -> Result<()> {
-    let before = match client.identity().await {
+    let deadline = Instant::now()
+        .checked_add(timeout)
+        .ok_or_else(|| anyhow!("--timeout is too large"))?;
+    let expired = || {
+        if restart {
+            anyhow!("swing did not come back within {}s", timeout.as_secs())
+        } else {
+            anyhow!("swing did not stop within {}s", timeout.as_secs())
+        }
+    };
+
+    let before = match tokio::time::timeout_at(deadline, client.identity())
+        .await
+        .map_err(|_| expired())?
+    {
         Ok(instance) => instance,
         Err(ApiClientError::Unreachable(_)) => {
             println!("not running");
@@ -36,36 +52,35 @@ async fn wait(
         Err(other) => bail!("{other}"),
     };
 
-    if let Err(e) = post_dashboard_action(client, restart).await {
-        match e {
-            ApiClientError::Unreachable(_) => {
-                println!("not running");
-                return Ok(());
-            }
-            other => bail!("{other}"),
+    match tokio::time::timeout_at(deadline, post_dashboard_action(client, restart))
+        .await
+        .map_err(|_| expired())?
+    {
+        Ok(()) => {}
+        Err(ApiClientError::Unreachable(_)) => {
+            println!("not running");
+            return Ok(());
         }
+        Err(other) => bail!("{other}"),
     }
 
-    let deadline = Instant::now() + timeout;
     loop {
-        match client.identity().await {
-            Err(ApiClientError::Unreachable(_)) if !restart => {
+        let polled = tokio::time::timeout_at(deadline, client.identity()).await;
+        match polled {
+            Ok(Err(ApiClientError::Unreachable(_))) if !restart => {
                 println!("stopped");
                 return Ok(());
             }
-            Ok(instance) if restart && instance != before => {
+            Ok(Ok(instance)) if restart && instance != before => {
                 println!("restarted");
                 return Ok(());
             }
             _ => {}
         }
         if Instant::now() >= deadline {
-            if restart {
-                bail!("swing did not come back within {}s", timeout.as_secs());
-            }
-            bail!("swing did not stop within {}s", timeout.as_secs());
+            return Err(expired());
         }
-        tokio::time::sleep(interval).await;
+        tokio::time::sleep_until((Instant::now() + interval).min(deadline)).await;
     }
 }
 
@@ -168,6 +183,32 @@ mod tests {
         wait(&client, true, Duration::from_secs(5), FAST)
             .await
             .unwrap();
+    }
+
+    #[tokio::test]
+    async fn unresponsive_server_does_not_outlast_the_timeout() {
+        let router = axum::Router::new().route(
+            "/api/identity",
+            post(|| async {
+                tokio::time::sleep(Duration::from_secs(60)).await;
+                Json(serde_json::json!({}))
+            }),
+        );
+        let addr = serve_router(router).await;
+        let client = ApiClient::new(addr, Some(TOKEN.to_string()));
+        let started = std::time::Instant::now();
+        let err = wait(&client, false, Duration::from_millis(300), FAST)
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("did not stop"), "{err}");
+        assert!(started.elapsed() < Duration::from_secs(5));
+    }
+
+    #[tokio::test]
+    async fn huge_timeout_is_an_error_not_a_panic() {
+        let client = ApiClient::new("127.0.0.1:1".parse().unwrap(), None);
+        let err = wait(&client, false, Duration::MAX, FAST).await.unwrap_err();
+        assert!(err.to_string().contains("too large"), "{err}");
     }
 
     #[tokio::test]

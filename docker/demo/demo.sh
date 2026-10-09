@@ -6,12 +6,13 @@ env_file="$root/docker/demo/demo.env"
 seeded="$root/docker/demo/.seeded"
 
 compose() {
-  files="-f $root/compose.yaml -f $root/docker/demo/compose.yaml"
   if [ "${SWING_DEMO_NIP05:-0}" = 1 ]; then
-    files="$files -f $root/docker/demo/nip05.yaml"
+    set -- -f "$root/compose.yaml" -f "$root/docker/demo/compose.yaml" -f "$root/docker/demo/nip05.yaml" "$@"
+  else
+    set -- -f "$root/compose.yaml" -f "$root/docker/demo/compose.yaml" "$@"
   fi
   # --env-file keeps the repository's real .env out of compose interpolation.
-  docker compose --project-directory "$root" --env-file "$env_file" $files "$@"
+  docker compose --project-directory "$root" --env-file "$env_file" "$@"
 }
 
 write_env() {

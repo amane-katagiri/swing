@@ -31,7 +31,7 @@
 セットアップモードの間は、ダッシュボードと管理下の Kubo の gateway のポートを、空いているものにずらして設定ファイルに書き込む。
 
 - ずらさない条件: `swing up --no-port-shift`（`SWING_NO_PORT_SHIFT`。`up::run` の `port_shift = false`。Docker イメージの既定は [`docker.md#dockerfile`](docker.md#dockerfile)）のときは両方ともずらさず、書き込みもしない。値が環境変数由来のキー（`ports::may_shift`）は、キーごとにずらさず書き込みもしない。設定ファイルに書いてある値はずらす対象に含める。
-- ずらし方（`ports::bind_shifting`）: 設定のアドレスから始めて、同じ IP でポートを 1 ずつ上げながら最大 20 個（`ports::PROBE_COUNT`）先まで bind を試し、それでも駄目ならポート 0（OS が選ぶ空きポート）で bind する。次の候補に進むのは bind が `AddrInUse` か `PermissionDenied`（Windows の除外ポート範囲）で失敗したときだけで、それ以外の失敗はそのままエラーにする。
+- ずらし方（`ports::bind_shifting`）: 設定のアドレスから始めて、同じ IP でポートを 1 ずつ上げながら最大 20 個（`ports::PROBE_COUNT`）先まで bind を試し、それでも駄目ならポート 0（OS が選ぶ空きポート）で bind する。次の候補に進むのは bind が `AddrInUse`、または Windows でだけ `PermissionDenied`（除外ポート範囲）で失敗したときだけで、それ以外の失敗はそのままエラーにする。
 - ダッシュボード: この手順で bind し、ずらしたときは warn（`dashboard port is in use; listening on another port`）を出す。
 - Kubo の gateway: `[kubo].managed = true` なら、`[kubo].gateway_listen` から同じ手順で空いているアドレスを探す（`ports::free_addr`。bind してすぐ閉じる）。ずらしたときは warn（`Kubo gateway port is in use; using another port`）を出す。探すこと自体に失敗したら warn を出して、このキーは書き込まない。
 - 対象になったアドレスは、ずらしたかどうかに関わらず `settings::pin_addrs` で 1 回で書き込み、書き込んだ後の設定を読み直して `AppState` を作る。`[dashboard].gateway` が既定値のままなら、そのリンク先のポートもずらした Kubo の gateway のポートになる（[`dashboard.md#設定dashboard`](dashboard.md#設定dashboard)）。書き込みに失敗したら warn を出し、メモリ上の設定のダッシュボードのアドレスだけを bind したものに直して続ける。

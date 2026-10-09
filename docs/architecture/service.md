@@ -30,7 +30,7 @@
 | OS | 登録先 | 直後の起動 | 登録を消すとき |
 |---|---|---|---|
 | Windows | `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` の値 `swing-tray`。中身は `"<swing-tray.exe>" --config "<config>"`（`\\?\` は外し、`\\?\UNC\` は `\\` に戻す） | `CreateProcessW` でハンドルを継承させずに起動し、待たない | 値を消す。動いているトレイには触らない（トレイが閉じる条件は [`tray.md`](tray.md#サービスの登録が消えたら終了する)） |
-| macOS | `~/Library/LaunchAgents/jp.ne.ama.swing-tray.plist`。`ProgramArguments` は `SWING.app` の中の `swing-tray` を直接指す。`RunAtLoad = true`・`LimitLoadToSessionType = Aqua`・`ProcessType = Interactive`・`AssociatedBundleIdentifiers = [jp.ne.ama.swing]`、`KeepAlive` は無し | 書く前に `launchctl bootout gui/<uid>/jp.ne.ama.swing-tray`（失敗は無視）し、書いた後に `launchctl bootstrap gui/<uid> <plist>` | `bootout`（失敗は無視）して plist を消す。動いているトレイも止まる |
+| macOS | `~/Library/LaunchAgents/jp.ne.ama.swing-tray.plist`。`ProgramArguments` は `SWING.app` の中の `swing-tray` を直接指す。`RunAtLoad = true`・`LimitLoadToSessionType = Aqua`・`ProcessType = Interactive`・`AssociatedBundleIdentifiers = [jp.ne.ama.swing]`、`KeepAlive` は無し | plist を書いた後に `launchctl bootout gui/<uid>/jp.ne.ama.swing-tray`（失敗は無視）し、続けて `launchctl bootstrap gui/<uid> <plist>` | `bootout`（失敗は無視）して plist を消す。動いているトレイも止まる |
 
 ## Linux（systemd）
 
@@ -49,7 +49,7 @@
 
 unit に埋め込むパスとユーザー名は、systemd の指定子（`%`）と、`ExecStart` では環境変数の展開（`$`）も効かないようにエスケープする。
 
-- `install`: `--system` なら実行ユーザーを決めて検査し（下記）、unit を書き出し → `systemctl [--user] daemon-reload` → `systemctl [--user] enable [--now] swing`（`--no-start` なら `--now` なし）。`--system` でなければ続けて `loginctl enable-linger <uid>` を試み、失敗したら `` Warning: could not run `loginctl enable-linger`. ... `` を出す（インストールは失敗にしない）。
+- `install`: `--system` なら実行ユーザーを決めて検査し（下記）、unit を書き出し（同じディレクトリの一時ファイルに書いて flush してから rename する。plist も同じ）→ `systemctl [--user] daemon-reload` → `systemctl [--user] enable [--now] swing`（`--no-start` なら `--now` なし）。`--system` でなければ続けて `loginctl enable-linger <uid>` を試み、失敗したら `` Warning: could not run `loginctl enable-linger`. ... `` を出す（インストールは失敗にしない）。
 - `start`: `systemctl [--user] start swing`。
 - `stop`: `systemctl [--user] stop swing`。SIGTERM で停止シーケンス（[`up.md#shutdownshutdownrs`](up.md#shutdownshutdownrs)）に入り、登録は残る。watchdog や 2 回目のシグナルで終了コードが 1 になっても、systemd の停止操作なので再起動しない。
 - `uninstall`: `systemctl [--user] disable --now swing`（失敗は注記を出すだけ）→ unit ファイル削除 → `systemctl [--user] daemon-reload`。
@@ -90,7 +90,7 @@ unit に埋め込むパスとユーザー名は、systemd の指定子（`%`）�
 
 パス・値は XML エスケープする。
 
-- `install`: ロード済み（`launchctl print gui/<uid>/jp.ne.ama.swing` が成功する）なら先に `bootout` してから plist を書き出し、`--no-start` でなければ `launchctl bootstrap gui/<uid> <plist>` でロードする。
+- `install`: plist を書き出してから、ロード済み（`launchctl print gui/<uid>/jp.ne.ama.swing` が成功する）なら `bootout` し、`--no-start` でなければ `launchctl bootstrap gui/<uid> <plist>` でロードする。
 - `start`: ロード済みなら `launchctl kickstart gui/<uid>/jp.ne.ama.swing`、ロードされていなければ `launchctl bootstrap gui/<uid> <plist>`（plist が無ければ `swing is not registered as a service` でエラー）。
 - `stop`: `launchctl kill SIGTERM gui/<uid>/jp.ne.ama.swing`（停止シーケンスは [`up.md#shutdownshutdownrs`](up.md#shutdownshutdownrs)）。停止シーケンスが終われば exit 0 なので `KeepAlive` により止まったままになり、次のログインで再び起動する。watchdog に打ち切られたときと、停止中にもう一度 SIGINT/SIGTERM を受けたときだけ exit 1 になり、launchd が再起動しうる。
 - `uninstall`: `launchctl bootout gui/<uid>/jp.ne.ama.swing`（失敗は無視）→ plist ファイル削除。

@@ -116,7 +116,31 @@ fn ensure_parent_dir(path: &Path) -> Result<()> {
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 fn write_service_file(path: &Path, content: impl AsRef<[u8]>) -> Result<()> {
-    std::fs::write(path, content).with_context(|| format!("writing {}", path.display()))
+    write_atomic(path, content.as_ref()).with_context(|| format!("writing {}", path.display()))
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn write_atomic(path: &Path, content: &[u8]) -> std::io::Result<()> {
+    use std::io::Write;
+    use std::os::unix::fs::OpenOptionsExt;
+
+    let dir = path.parent().unwrap_or_else(|| Path::new("."));
+    let name = path.file_name().unwrap_or_default().to_string_lossy();
+    let tmp = dir.join(format!(".{name}.{}.tmp", std::process::id()));
+    let written = (|| {
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o644)
+            .open(&tmp)?;
+        file.write_all(content)?;
+        file.sync_all()?;
+        std::fs::rename(&tmp, path)
+    })();
+    if written.is_err() {
+        let _ = std::fs::remove_file(&tmp);
+    }
+    written
 }
 
 const TRAY_RELATIVE_PATH: &str = if cfg!(windows) {
@@ -272,6 +296,17 @@ pub fn status(system: bool) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[test]
+    fn service_file_is_replaced_whole_without_leftovers() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("swing.service");
+        write_service_file(&path, "old contents that are longer").unwrap();
+        write_service_file(&path, "new").unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "new");
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1);
+    }
 
     #[test]
     fn tray_exe_is_found_only_next_to_swing() {

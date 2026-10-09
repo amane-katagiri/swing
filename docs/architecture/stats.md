@@ -10,7 +10,7 @@
   - `swing`: 自分のプロセスの CPU 使用率（`cpu_percent`）とメモリ（`rss_bytes`）。
   - `kubo`: Kubo のプロセスの同じ 2 つ。`[kubo].managed = true` で PID が分かるときだけ測る。
   - `traffic`: Kubo の RPC `stats/bw` の `TotalIn`・`TotalOut`（Kubo の起動からの累計バイト数、`total_in`・`total_out`）と、前回の測定との差から出した毎秒のバイト数（`in_per_sec`・`out_per_sec`）。Kubo が libp2p でほかの IPFS ノードとやりとりした量だけで、Nostr relay との通信と内蔵 gateway の HTTP は含まない。
-- Kubo の対象は supervisor が `Recorder::set_kubo` で伝える。渡すのは `KuboTarget`（`pid` と RPC の `IpfsClient`）。管理下の Kubo なら起動してヘルスチェックが通った時点で PID と、その起動の RPC の秘密付きのクライアントを渡し、落ちたら外す。外部の Kubo なら RPC が応答した時点でクライアントだけを渡す（PID は `None`）。
+- Kubo の対象は supervisor が `Recorder::set_kubo` で伝える。渡すのは `KuboTarget`（`pid` と RPC の `IpfsClient`）。管理下の Kubo なら起動してヘルスチェックが通った時点で PID と、その起動の RPC の秘密付きのクライアントを渡し、落ちたら外す。入れ替えるとき（`set_kubo`）は前回の測定のうち Kubo の値（`kubo` と帯域の累計）を捨てるので、入れ替え直後の最初の測定は `cpu_percent`・`in_per_sec`・`out_per_sec` が `null` になる。外部の Kubo なら RPC が応答した時点でクライアントだけを渡す（PID は `None`）。
 - CPU 使用率は前回の測定からの CPU 時間（ユーザー + カーネル）の増分を経過時間で割った値で、1 コアを 100% とする（マルチコアでは 100% を超える）。
 - 直近 `HISTORY_LEN`（1440 件、60 秒間隔で 24 時間分）だけを持ち、古いものから捨てる。ファイルには書かないので、プロセスを再起動すると（`POST /api/restart` でのプロセス内の再起動を含む）履歴は消える。
 

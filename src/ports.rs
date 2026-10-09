@@ -20,10 +20,8 @@ fn candidates(addr: SocketAddr) -> impl Iterator<Item = SocketAddr> {
 }
 
 fn is_taken(e: &io::Error) -> bool {
-    matches!(
-        e.kind(),
-        io::ErrorKind::AddrInUse | io::ErrorKind::PermissionDenied
-    )
+    matches!(e.kind(), io::ErrorKind::AddrInUse)
+        || (cfg!(windows) && matches!(e.kind(), io::ErrorKind::PermissionDenied))
 }
 
 pub async fn bind_shifting(addr: SocketAddr) -> io::Result<TcpListener> {
@@ -45,6 +43,16 @@ pub async fn free_addr(addr: SocketAddr) -> io::Result<SocketAddr> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn permission_denied_is_taken_only_on_windows() {
+        assert!(is_taken(&io::ErrorKind::AddrInUse.into()));
+        assert_eq!(
+            is_taken(&io::ErrorKind::PermissionDenied.into()),
+            cfg!(windows)
+        );
+        assert!(!is_taken(&io::ErrorKind::AddrNotAvailable.into()));
+    }
 
     #[tokio::test]
     async fn keeps_a_free_port() {

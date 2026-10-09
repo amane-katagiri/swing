@@ -46,6 +46,7 @@
 確かめること（多くは判定せずに画面とテキストを残し、artifact で確かめる）:
 
 - `swing service install` で本体とトレイの LaunchAgent が登録されて動き、トレイが Dock に出ないこと。Finder と「ログイン項目と機能拡張」での名前と署名。
+- 動いている状態でもう一度 `swing service install` しても、本体とトレイが登録し直されて動くこと。
 - メニューの項目と有効・無効（動作中と停止中、ライトとダーク、英語と日本語）。
 - `swing stop` と、メニューからの起動・停止・終了。確認のダイアログの文言とボタン、各ボタンで `swing up` とトレイが止まる・残ること。
 - 「ダッシュボードを開く」で Safari がログインリンクを開き、ログインできること。
@@ -53,7 +54,7 @@
 
 失敗時の見方:
 
-- `service install`・`swing stop`・日本語への切り替え・`service uninstall` 以外の段階は失敗しても続ける（`continue-on-error`）ので、ジョブの成否だけでなく各ステップの結果を見る。
+- `service install`（入れ直しを含む）・`swing stop`・日本語への切り替え・`service uninstall` 以外の段階は失敗しても続ける（`continue-on-error`）ので、ジョブの成否だけでなく各ステップの結果を見る。
 - 各段階の画面（全体とメニューバー）・保存したテキスト・`~/Library/Logs/swing*.log`・TCC の許可の一覧は artifact `macos-check` に残る。
 - 入力 `ssh` を true にすると、最後に `mxschmitt/action-tmate` で実行した本人だけが入れる tmate のセッションを開く。
 - ログインし直したときの自動起動と、Retina での表示は、ランナーでは確かめられない。

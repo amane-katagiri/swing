@@ -80,12 +80,12 @@ pub fn install(exe: &Path, config: &Path, workdir: &Path, opts: &InstallOptions<
     ensure_parent_dir(&log)?;
     ensure_parent_dir(&path)?;
 
+    write_service_file(&path, plist)?;
+    println!("Wrote launchd agent to {}.", path.display());
+
     if is_loaded() {
         bootout(MACOS_LABEL);
     }
-
-    write_service_file(&path, plist)?;
-    println!("Wrote launchd agent to {}.", path.display());
 
     if !opts.no_start {
         bootstrap(&path)?;
@@ -104,8 +104,8 @@ pub fn install(exe: &Path, config: &Path, workdir: &Path, opts: &InstallOptions<
 pub fn register_tray(tray: &Path, config: &Path, workdir: &Path, no_start: bool) -> Result<()> {
     let path = agent_plist_path(MACOS_TRAY_LABEL)?;
     let plist = launchd_tray_plist(tray, config, workdir)?;
-    bootout(MACOS_TRAY_LABEL);
     write_service_file(&path, plist)?;
+    bootout(MACOS_TRAY_LABEL);
     println!(
         "Registered swing-tray to start at login ({}).",
         path.display()

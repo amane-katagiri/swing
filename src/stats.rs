@@ -71,7 +71,12 @@ pub struct Recorder {
 
 impl Recorder {
     pub fn set_kubo(&self, target: Option<KuboTarget>) {
-        self.inner.lock().expect("stats lock").kubo = target;
+        let mut inner = self.inner.lock().expect("stats lock");
+        inner.kubo = target;
+        if let Some(last) = inner.last.as_mut() {
+            last.kubo = None;
+            last.bandwidth = None;
+        }
     }
 
     pub fn since(&self, after: u64) -> Vec<Sample> {
