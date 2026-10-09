@@ -42,7 +42,7 @@ async fn wait(
 
     let before = match tokio::time::timeout_at(deadline, client.identity())
         .await
-        .map_err(|_| expired())?
+        .map_err(|_| anyhow!("swing did not answer within {}s", timeout.as_secs()))?
     {
         Ok(instance) => instance,
         Err(ApiClientError::Unreachable(_)) => {
@@ -200,7 +200,7 @@ mod tests {
         let err = wait(&client, false, Duration::from_millis(300), FAST)
             .await
             .unwrap_err();
-        assert!(err.to_string().contains("did not stop"), "{err}");
+        assert!(err.to_string().contains("did not answer"), "{err}");
         assert!(started.elapsed() < Duration::from_secs(5));
     }
 
@@ -217,7 +217,8 @@ mod tests {
         let addr = listener.local_addr().unwrap();
         drop(listener);
         let client = ApiClient::new(addr, Some(TOKEN.to_string()));
-        wait(&client, false, Duration::from_secs(1), FAST)
+        // Windows retries a refused connection for about 2s before reporting it.
+        wait(&client, false, Duration::from_secs(10), FAST)
             .await
             .unwrap();
     }
