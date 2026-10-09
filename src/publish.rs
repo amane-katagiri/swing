@@ -255,14 +255,21 @@ pub async fn add_and_measure(
     site: SiteListing,
 ) -> Result<IpfsStage> {
     let site_path = layout.publish_site(pubkey_hex, d);
-    let created_at = plan_version(ipfs, &site_path, relays).await?;
-    let path = layout.publish_version(pubkey_hex, d, created_at);
-    let added = ipfs.add_site(site, &path).await?;
-    let version = StagedVersion::new(ipfs, path);
-    let cid = match nostr::canonical_cid(&added).context("Kubo returned an invalid cid") {
-        Ok(cid) => cid,
-        Err(e) => return Err(version.fail(e).await),
+    let mut created_at = plan_version(ipfs, &site_path, relays).await?;
+    let added = ipfs.add_site(site).await?;
+    let cid = nostr::canonical_cid(&added).context("Kubo returned an invalid cid")?;
+    let path = loop {
+        let path = layout.publish_version(pubkey_hex, d, created_at);
+        if ipfs
+            .mfs_place(&cid, &path)
+            .await
+            .with_context(|| format!("placing {cid} at {path}"))?
+        {
+            break path;
+        }
+        created_at += 1;
     };
+    let version = StagedVersion::new(ipfs, path);
     // add with pin=false doesn't hold Kubo's GC lock, so this verifies nothing was dropped before MFS linked it.
     let size = match ipfs
         .dag_size_local(&[cid.as_str()])
@@ -922,6 +929,83 @@ mod tests {
             "{err}"
         );
         assert!(!added);
+    }
+
+    #[tokio::test]
+    async fn add_and_measure_moves_past_a_version_path_another_publish_took() {
+        use axum::extract::RawQuery;
+        use axum::http::StatusCode;
+        use axum::routing::post;
+        type Calls = std::sync::Arc<std::sync::Mutex<Vec<String>>>;
+
+        let newest = Timestamp::now().as_secs() + 5;
+        let taken = newest + 1;
+        let copied: Calls = Calls::default();
+        let removed: Calls = Calls::default();
+        let (cp_log, rm_log) = (copied.clone(), removed.clone());
+        let router = axum::Router::new()
+            .route(
+                "/api/v0/files/ls",
+                post(move || async move { ls_answer(&[newest]) }),
+            )
+            .route(
+                "/api/v0/add",
+                post(|| async {
+                    r#"{"Name":"x","Hash":"bafybeicwrird3ditgfyu4snq6i3x6i564gfcywffrwcgumnjhyiva3p2ra","Size":"3"}"#
+                }),
+            )
+            .route("/api/v0/files/mkdir", post(|| async { "" }))
+            .route(
+                "/api/v0/files/cp",
+                post(move |RawQuery(q): RawQuery| async move {
+                    let q = q.unwrap_or_default();
+                    cp_log.lock().unwrap().push(q.clone());
+                    if q.contains(&format!("/{taken}&")) {
+                        let body = format!(
+                            r#"{{"Message":"cp: cannot put node in path /x/{taken}: directory already has entry by that name","Code":0,"Type":"error"}}"#
+                        );
+                        return (StatusCode::INTERNAL_SERVER_ERROR, body);
+                    }
+                    (StatusCode::OK, String::new())
+                }),
+            )
+            .route(
+                "/api/v0/files/rm",
+                post(move |RawQuery(q): RawQuery| async move {
+                    rm_log.lock().unwrap().push(q.unwrap_or_default());
+                    ""
+                }),
+            )
+            .route(
+                "/api/v0/dag/stat",
+                post(|| async { r#"{"TotalSize":42}"# }),
+            );
+        let addr = crate::test_support::serve_router(router).await;
+        let ipfs = IpfsClient::new(format!("http://{addr}"));
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("index.html"), b"hi").unwrap();
+        let site = SiteListing::read_async(dir.path()).await.unwrap();
+        let layout = MfsLayout::new("/swing".to_string());
+
+        let stage = add_and_measure(
+            &ipfs,
+            &layout,
+            "k",
+            "example.com",
+            &relay_state(None, Vec::new()),
+            site,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(stage.created_at.as_secs(), taken + 1);
+        assert_eq!(stage.size, 42);
+        assert_eq!(
+            stage.version.keep(),
+            format!("/swing/publish/k/example.com/{}", taken + 1)
+        );
+        assert_eq!(copied.lock().unwrap().len(), 2);
+        assert!(removed.lock().unwrap().is_empty());
     }
 
     #[tokio::test]

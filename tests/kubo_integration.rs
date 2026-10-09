@@ -110,6 +110,37 @@ async fn add_dir_into_mfs_round_trip() {
 
 #[tokio::test]
 #[ignore]
+async fn mfs_place_refuses_a_taken_path_and_leaves_it_alone() {
+    let client = IpfsClient::new(kubo_api());
+    let root = unique_root("place");
+    let path = format!("{root}/site/100");
+    let one = version_fixture(5, b"one\n");
+    let two = version_fixture(5, b"two\n");
+    let first = client
+        .add_site(ipfs::SiteListing::read_async(one.path()).await.unwrap())
+        .await
+        .expect("add first");
+    let second = client
+        .add_site(ipfs::SiteListing::read_async(two.path()).await.unwrap())
+        .await
+        .expect("add second");
+    assert_ne!(first, second);
+    assert!(client.mfs_list(&root).await.unwrap().is_empty());
+
+    assert!(client.mfs_place(&first, &path).await.expect("place first"));
+    assert!(
+        !client
+            .mfs_place(&second, &path)
+            .await
+            .expect("place second")
+    );
+    assert_eq!(client.mfs_stat_cid(&path).await.unwrap(), Some(first));
+
+    client.mfs_remove(&root).await.unwrap();
+}
+
+#[tokio::test]
+#[ignore]
 async fn mfs_put_links_the_same_cid_and_replaces_existing_entries() {
     let client = IpfsClient::new(kubo_api());
     let root = unique_root("put");

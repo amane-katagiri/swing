@@ -172,6 +172,7 @@ struct LsLink {
 const UNIXFS_DIRECTORY: u8 = 1;
 
 const MFS_MISSING: &str = "file does not exist";
+const MFS_ENTRY_EXISTS: &str = "directory already has entry by that name";
 const BLOCK_MISSING: &str = "ipld: could not find";
 
 pub fn is_block_missing(e: &anyhow::Error) -> bool {
@@ -273,21 +274,20 @@ impl IpfsClient {
     }
 
     pub async fn add_dir(&self, dir: &Path, mfs_path: &str) -> Result<String> {
-        self.add_site(SiteListing::read_async(dir).await?, mfs_path)
-            .await
+        let cid = self.add_site(SiteListing::read_async(dir).await?).await?;
+        self.mfs_put(&cid, mfs_path).await?;
+        Ok(cid)
     }
 
-    pub async fn add_site(&self, site: SiteListing, mfs_path: &str) -> Result<String> {
+    // Not added with to-files: Kubo answers success without placing anything when the path already exists.
+    pub async fn add_site(&self, site: SiteListing) -> Result<String> {
         if site.is_empty() {
             bail!("directory is empty: {}", site.dir().display());
         }
         let boundary = crate::auth::random_hex(16);
-        self.mfs_mkdir(mfs::parent(mfs_path)).await?;
-        self.mfs_remove(mfs_path).await?;
-        let url = self.url(&format!(
-            "/api/v0/add?recursive=true&cid-version=1&pin=false&quieter=true&wrap-with-directory=false&to-files={}",
-            percent_encode_relative_path(mfs_path)
-        ));
+        let url = self.url(
+            "/api/v0/add?recursive=true&cid-version=1&pin=false&quieter=true&wrap-with-directory=false",
+        );
         let last_progress = std::sync::Arc::new(std::sync::Mutex::new(tokio::time::Instant::now()));
         let progress = std::sync::Arc::clone(&last_progress);
         let request = self
@@ -384,6 +384,19 @@ impl IpfsClient {
     pub async fn mfs_put(&self, cid: &str, path: &str) -> Result<()> {
         self.mfs_mkdir(mfs::parent(path)).await?;
         self.mfs_remove(path).await?;
+        self.mfs_copy(cid, path).await
+    }
+
+    pub async fn mfs_place(&self, cid: &str, path: &str) -> Result<bool> {
+        self.mfs_mkdir(mfs::parent(path)).await?;
+        match self.mfs_copy(cid, path).await {
+            Ok(()) => Ok(true),
+            Err(e) if format!("{e:#}").contains(MFS_ENTRY_EXISTS) => Ok(false),
+            Err(e) => Err(e),
+        }
+    }
+
+    async fn mfs_copy(&self, cid: &str, path: &str) -> Result<()> {
         // offline=true: callers place content already fetched and check completeness afterwards, so a missing root fails fast instead of searching the network.
         self.call(
             "files/cp",

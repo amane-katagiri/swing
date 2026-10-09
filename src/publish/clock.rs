@@ -77,7 +77,6 @@ fn refuse_previous_ahead(previous: u64, now: u64) -> Result<(), ClockError> {
     ))
 }
 
-// Reusing a same-second path would let add_site or a cancelled publish's deferred removal delete the other version.
 pub(super) fn version_time(
     site_path: &str,
     newest: Option<u64>,

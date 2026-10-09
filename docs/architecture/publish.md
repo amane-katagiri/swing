@@ -68,11 +68,11 @@ relay が持つ自分のサイトイベントが未来ずれの許容を超え�
 
 ## `created_at` の決め方
 
-`clock::version_time`。現在時刻・MFS の最大の版 + 1・前の版の `created_at` + 1 の最大。前の版を取れなかったときはそれを使わない。同じ秒の版のパスを使い回さないので、別の publish の版を add や後始末で消すことはない。
+`clock::version_time`。現在時刻・MFS の最大の版 + 1・前の版の `created_at` + 1 の最大。前の版を取れなかったときはそれを使わない。別の publish（CLI とダッシュボードのような別のプロセスを含む）と同じ秒を選んだときは、[配置](#add-と版の配置)で 1 秒ずつ進めて空いているパスを取る。
 
 ## add と版の配置
 
-`publish::add_and_measure`。add の直前に[時計の確認](#時計の確認)をして `created_at` を決め、サイトの一覧を CIDv1・pin なしで add し、`<mfs_root>/publish/<pubkey hex>/<site>/<created_at>` に置く（既存の項目は先に消す。[`mfs.md`](mfs.md#rpc)）。続けて `dag/stat`（`offline=true`）の `TotalSize` をサイトイベントの `size` タグにする。pin なしの add は Kubo の GC を止めないので、この `dag/stat` がブロックの欠けを確かめる役も持つ。
+`publish::add_and_measure`。add の直前に[時計の確認](#時計の確認)をして `created_at` を決め、サイトの一覧を CIDv1・pin なしで add し（MFS にはまだ置かない）、その CID を `<mfs_root>/publish/<pubkey hex>/<site>/<created_at>` に置く（`IpfsClient::mfs_place`。[`mfs.md`](mfs.md#rpc)）。そのパスに既に項目があれば Kubo が配置を断るので、既存の項目は消さずに `created_at` を 1 秒進めて置き直す。置けたパスだけがこの publish の版になり、[後始末](#告知できなかった版の後始末)もこのパスだけを消すので、並行する別の publish の版を上書きしたり消したりしない。続けて `dag/stat`（`offline=true`）の `TotalSize` をサイトイベントの `size` タグにする。pin なしの add は Kubo の GC を止めないので、この `dag/stat` がブロックの欠けを確かめる役も持つ（add から配置までの間にルートのブロックが消されていれば、配置が `offline=true` で失敗する）。
 
 ## 同じ内容かの確認
 
@@ -99,7 +99,7 @@ relay が持つ自分のサイトイベントが未来ずれの許容を超え�
 
 ## 告知できなかった版の後始末
 
-置いた版は `publish::StagedVersion` が持ち、署名できるまでの失敗では MFS から消す。
+置いた版（[配置](#add-と版の配置)で置けたパス）は `publish::StagedVersion` が持ち、署名できるまでの失敗では MFS から消す。
 
 - 消す: CID が読めない、`dag/stat` の失敗、署名できない、[同じ内容](#同じ内容かの確認)で止めるとき。消せなければその理由も元のエラーに続ける。
 - 処理が途中で打ち切られた（ダッシュボードのタイムアウトやクライアントの切断）ときも、後から削除を始める（失敗は警告のログだけ）。
