@@ -167,8 +167,11 @@ pub fn build_site_event_builder(site_event_kind: u16, site: &SiteFields<'_>) -> 
     ))
 }
 
+const SITE_NOTE_HASHTAG: &str = "swingpublish";
+
 pub fn site_note_content(title: Option<&str>, url: &str, message: Option<&str>) -> String {
-    [title, Some(url), message]
+    let hashtag = format!("#{SITE_NOTE_HASHTAG}");
+    [title, Some(url), message, Some(hashtag.as_str())]
         .into_iter()
         .flatten()
         .filter(|part| !part.is_empty())
@@ -182,10 +185,12 @@ pub fn build_site_note_builder(
     d: &str,
     content: &str,
 ) -> EventBuilder {
-    EventBuilder::new(Kind::TextNote, content).tag(Tag::custom(
-        "a",
-        [super::site_coordinate(site_event_kind, author, d).to_string()],
-    ))
+    EventBuilder::new(Kind::TextNote, content)
+        .tag(Tag::custom(
+            "a",
+            [super::site_coordinate(site_event_kind, author, d).to_string()],
+        ))
+        .tag(Tag::hashtag(SITE_NOTE_HASHTAG))
 }
 
 #[cfg(test)]

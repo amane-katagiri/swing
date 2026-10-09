@@ -93,7 +93,7 @@ relay が持つ自分のサイトイベントが未来ずれの許容を超え�
 
 `publish::post_site_note`。サイトイベントがどれかの relay に受理された後だけ行い、[同じ内容](#同じ内容かの確認)で止めたときや受理されなかったときは行わない。
 
-- `kind 1` で、`content` は `title`・`url`・`content`（メッセージ）のうち空でないものをこの順に半角スペース 1 つでつないだもの（`nostr::site_note_content`）。タグはサイトを指す `a`（`<site_event_kind>:<pubkey hex>:<d>`）だけ（`nostr::build_site_note_builder`）。`created_at` は署名する時点の現在時刻。
+- `kind 1` で、`content` は `title`・`url`・`content`（メッセージ）のうち空でないものと、ハッシュタグ `#swingpublish` をこの順に半角スペース 1 つでつないだもの（`nostr::site_note_content`）。タグはサイトを指す `a`（`<site_event_kind>:<pubkey hex>:<d>`）と、NIP-24 のハッシュタグ `t`（`swingpublish`）（`nostr::build_site_note_builder`）。`created_at` は署名する時点の現在時刻。
 - 署名してから全 relay に送り、relay ごとの成否を返す。断った理由への案内の足し方は[署名と送信](#署名と送信)と同じ。
 - 署名・送信の失敗や、どの relay にも受理されなかったこと（`NO_RELAY_ACCEPTED_NOTE`: `no relay accepted the note`）は publish の成否を変えず、古い版の削除も続ける。
 
