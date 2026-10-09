@@ -90,10 +90,11 @@ unit に埋め込むパスとユーザー名は、systemd の指定子（`%`）�
 
 パス・値は XML エスケープする。
 
-- `install`: plist を書き出してから、ロード済み（`launchctl print gui/<uid>/jp.ne.ama.swing` が成功する）なら `bootout` し、`--no-start` でなければ `launchctl bootstrap gui/<uid> <plist>` でロードする。
+- `install`: plist を書き出してから、ロード済み（`launchctl print gui/<uid>/jp.ne.ama.swing` が成功する）なら `bootout` し（下記の「`bootout` の待ち」）、`--no-start` でなければ `launchctl bootstrap gui/<uid> <plist>` でロードする。
 - `start`: ロード済みなら `launchctl kickstart gui/<uid>/jp.ne.ama.swing`、ロードされていなければ `launchctl bootstrap gui/<uid> <plist>`（plist が無ければ `swing is not registered as a service` でエラー）。
 - `stop`: `launchctl kill SIGTERM gui/<uid>/jp.ne.ama.swing`（停止シーケンスは [`up.md#shutdownshutdownrs`](up.md#shutdownshutdownrs)）。停止シーケンスが終われば exit 0 なので `KeepAlive` により止まったままになり、次のログインで再び起動する。watchdog に打ち切られたときと、停止中にもう一度 SIGINT/SIGTERM を受けたときだけ exit 1 になり、launchd が再起動しうる。
 - `uninstall`: `launchctl bootout gui/<uid>/jp.ne.ama.swing`（失敗は無視）→ plist ファイル削除。
+- `bootout` の待ち（`macos::bootout`。本体・トレイとも）: `launchctl bootout` が成功したら、`launchctl print gui/<uid>/<label>` が失敗する（ジョブが消える）まで 200 ms ごとに確かめ、`STOP_TIMEOUT` + 10 秒で打ち切る。`bootout` はプロセスが終わる前に返り、ジョブが残っている間に同じラベルを `bootstrap` すると `5: Input/output error` で失敗するため。
 - `status`: plist が無ければ `not installed`。あれば `launchctl print gui/<uid>/jp.ne.ama.swing` をそのまま実行する。
 
 ## Windows（タスクスケジューラ）

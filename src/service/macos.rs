@@ -1,5 +1,6 @@
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
+use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
 
@@ -7,7 +8,7 @@ use super::ownership::{Part, Registration, exe_from_launchd_plist};
 use super::process::run_command;
 use super::templates::{launchd_plist, launchd_tray_plist};
 use super::{
-    InstallOptions, MACOS_LABEL, MACOS_TRAY_LABEL, ensure_parent_dir, install_tray,
+    InstallOptions, MACOS_LABEL, MACOS_TRAY_LABEL, STOP_TIMEOUT, ensure_parent_dir, install_tray,
     write_service_file,
 };
 
@@ -65,12 +66,23 @@ fn bootstrap(plist: &Path) -> Result<()> {
     Ok(())
 }
 
+// launchctl bootout returns before the job's process has exited, and bootstrapping the same label while it is still loaded fails with "5: Input/output error".
 fn bootout(label: &str) {
-    launchctl_succeeds(&["bootout", &service_target(label)]);
+    if !launchctl_succeeds(&["bootout", &service_target(label)]) {
+        return;
+    }
+    let deadline = Instant::now() + STOP_TIMEOUT + Duration::from_secs(10);
+    while is_label_loaded(label) && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(200));
+    }
+}
+
+fn is_label_loaded(label: &str) -> bool {
+    launchctl_succeeds(&["print", &service_target(label)])
 }
 
 fn is_loaded() -> bool {
-    launchctl_succeeds(&["print", &service_target(MACOS_LABEL)])
+    is_label_loaded(MACOS_LABEL)
 }
 
 pub fn install(exe: &Path, config: &Path, workdir: &Path, opts: &InstallOptions<'_>) -> Result<()> {
