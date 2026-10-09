@@ -121,6 +121,7 @@ IPFS はファイルをブロックに分けて、中身のハッシュで管理
 - アクセス解析や広告のスクリプトは、ミラー経由の閲覧ではたいてい意味を持たず、読者を外部に送るだけなので、入れるなら元のサイトにだけ入れることも考える
 - コメント欄・フォーム・サイト内検索など、サーバーの処理が要る機能はミラーでは動かない。本文の表示がそれに頼らないようにする
 - ミラーのローカルのゲートウェイは、JavaScript（`fetch`・XHR・WebSocket・`sendBeacon`）とフォームから `http://`・`ws://` の他のサイトへの送信を CSP で止める（[`architecture/kubo.md`](architecture/kubo.md#応答に付けるヘッダー)）。外部の API を使うなら `https://`・`wss://` にする。画像や iframe の読み込みは止めない
+- 同じ CSP で、`http://` の他のサイトからの `<script>` の読み込みと、Service Worker・Web Worker・SharedWorker も止める（[`architecture/kubo.md`](architecture/kubo.md#応答に付けるヘッダー)）。Worker が無くても表示できる作りにする
 
 ## リンクとパス
 

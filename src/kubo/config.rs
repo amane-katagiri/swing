@@ -61,8 +61,7 @@ pub(super) fn public_gateways_json(hosts: &[String]) -> serde_json::Value {
 }
 
 // A page served from a loopback hostname reaches other local ports and the LAN without the browser's Local Network Access prompt.
-pub(super) const GATEWAY_CONTENT_SECURITY_POLICY: &str =
-    "connect-src 'self' https: wss:; form-action 'self' https:";
+pub(super) const GATEWAY_CONTENT_SECURITY_POLICY: &str = "connect-src 'self' https: wss:; form-action 'self' https:; script-src 'self' https: blob: data: 'unsafe-inline' 'unsafe-eval'; worker-src 'none'";
 // Path-style URLs on these hosts would put every site in one origin that shares cookies with the dashboard.
 pub(super) const PATH_GATEWAY_BLOCKED_HOSTS: &[&str] = &["127.0.0.1", "::1", "*.localhost"];
 

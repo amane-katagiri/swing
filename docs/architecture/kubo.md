@@ -30,7 +30,7 @@ SWING が起動する Kubo のプロセス（`ipfs init`・`ipfs version`・`ipf
 | `Gateway.NoFetch` | `true` | 下記「[Kubo の Gateway](#kubo-の-gatewaynofetch)」 |
 | `Gateway.NoDNSLink` | `true` | |
 | `Gateway.PublicGateways` | `[gateway].hosts` を `{"<host>": {"Paths": [], "UseSubdomains": false, "NoDNSLink": false}}` に変換したものに、`127.0.0.1`・`::1`・`*.localhost` の `{"Paths": [], "UseSubdomains": false, "NoDNSLink": true}` を足したもの | 下記「[パス形式を返さないホスト](#パス形式を返さないホスト)」 |
-| `Gateway.HTTPHeaders` | `{"Content-Security-Policy": ["connect-src 'self' https: wss:; form-action 'self' https:"]}`（`kubo::config::GATEWAY_CONTENT_SECURITY_POLICY`） | 下記「[応答に付けるヘッダー](#応答に付けるヘッダー)」。オブジェクトごと置き換える |
+| `Gateway.HTTPHeaders` | `{"Content-Security-Policy": ["connect-src 'self' https: wss:; form-action 'self' https:; script-src 'self' https: blob: data: 'unsafe-inline' 'unsafe-eval'; worker-src 'none'"]}`（`kubo::config::GATEWAY_CONTENT_SECURITY_POLICY`） | 下記「[応答に付けるヘッダー](#応答に付けるヘッダー)」。オブジェクトごと置き換える |
 | `Addresses.Gateway` | `[kubo].gateway_listen` を multiaddr（`/ip4/.../tcp/...` か `/ip6/.../tcp/...`）にした 1 要素の配列 | |
 | `Addresses.Swarm` | `[kubo].swarm_port` があるときだけ、Kubo の既定の Swarm リスト 8 本（TCP・QUIC・WebTransport・WebRTC の IPv4／IPv6）のポートをすべてこの値にしたもの | 無ければ触らない |
 | `Addresses.API` | `["/ip4/127.0.0.1/tcp/<api_port>"]` | 下記「[動的な API ポート](#動的な-api-ポートと-repoapi)」 |
@@ -51,7 +51,7 @@ compose の外部 Kubo コンテナでの同等の設定は [`docker.md#kubo-の
 
 ### 応答に付けるヘッダー
 
-ゲートウェイのすべての応答に `Content-Security-Policy: connect-src 'self' https: wss:; form-action 'self' https:` を付ける。`localhost` 系のホスト名で開いたページはブラウザにループバックとして扱われ、ほかのローカルのポートや LAN へのリクエストに Local Network Access の確認が出ないので、ページの JavaScript（`fetch`・XHR・WebSocket・`sendBeacon`）とフォームから `http:`・`ws:` の他の origin へ送らせない。同じ origin と `https:`・`wss:` には送れる。`<img>`・`<iframe>`・ページの移動などの GET は止めない。`sandbox` は付けない（opaque な origin が埋め込みの iframe にも引き継がれ、YouTube などのプレーヤーが動かなくなるため）。
+ゲートウェイのすべての応答に `Content-Security-Policy: connect-src 'self' https: wss:; form-action 'self' https:; script-src 'self' https: blob: data: 'unsafe-inline' 'unsafe-eval'; worker-src 'none'` を付ける。`localhost` 系のホスト名で開いたページはブラウザにループバックとして扱われ、ほかのローカルのポートや LAN へのリクエストに Local Network Access の確認が出ないので、ページの JavaScript（`fetch`・XHR・WebSocket・`sendBeacon`）とフォームから `http:`・`ws:` の他の origin へ送らせない。同じ origin と `https:`・`wss:` には送れる。スクリプトは同じ origin・`https:`・`data:`・`blob:` とインラインと `eval` だけを許し、`http:` の他の origin からは読み込ませない（ローカルのポートや LAN の JSONP などを `<script>` で読み込んで中身を持ち出させないため）。Service Worker を含む Worker は登録させない（Service Worker が作って返した文書には応答ヘッダーの CSP が付かず、そこから制限なしに送れてしまうため。CSP には Service Worker だけを止める指定が無いので、`Worker`・`SharedWorker` も動かない）。CSP を付ける前のゲートウェイで登録された Service Worker は残る。`<img>`・`<iframe>`・ページの移動などの GET は止めない。`sandbox` は付けない（opaque な origin が埋め込みの iframe にも引き継がれ、YouTube などのプレーヤーが動かなくなるため）。
 
 Kubo は `Host` と `X-Forwarded-Host` をそのまま信じるので、Kubo の Gateway ポートを外部に直接公開しない。内蔵 gateway（[`gateway.md`](gateway.md)）や compose の `mirror` コンテナを前段に置く。
 
