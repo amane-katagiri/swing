@@ -201,8 +201,16 @@ fn detect_worker(s: &str, word: &str, next: usize, out: &mut Vec<String>) {
     let b = s.as_bytes();
     match word {
         "new" => {
-            let j = skip_space(b, next);
-            let (name, after) = word_at(s, j);
+            let mut j = skip_space(b, next);
+            let (mut name, mut after) = word_at(s, j);
+            if matches!(name, "self" | "window" | "globalThis") {
+                let dot = skip_space(b, after);
+                if b.get(dot) != Some(&b'.') {
+                    return;
+                }
+                j = skip_space(b, dot + 1);
+                (name, after) = word_at(s, j);
+            }
             if matches!(name, "Worker" | "SharedWorker") {
                 let k = skip_space(b, after);
                 if b.get(k) == Some(&b'(') {
@@ -229,6 +237,8 @@ fn detect_worker(s: &str, word: &str, next: usize, out: &mut Vec<String>) {
 
 const URL_END: &[char] = &['"', '\'', '`', '<', '>', ')', '(', '\\', ' ', '{', '}'];
 
+const NAMESPACES: [&str; 2] = ["http://www.w3.org/", "http://json-schema.org/"];
+
 pub(super) fn insecure_urls(literal: &str, out: &mut Vec<String>) {
     let text = literal.replace("\\/", "/");
     let lower = text.to_ascii_lowercase();
@@ -244,7 +254,17 @@ pub(super) fn insecure_urls(literal: &str, out: &mut Vec<String>) {
             if !host.is_some_and(|h| h.is_ascii_alphanumeric() || *h == b'[') {
                 continue;
             }
-            if lower[at..].starts_with("http://www.w3.org/") {
+            if NAMESPACES.iter().any(|ns| lower[at..].starts_with(ns)) {
+                continue;
+            }
+            // A host without a dot (`new URL(path, "http://n")`) is a placeholder base, not a request; localhost is kept.
+            let host_end = lower[from..]
+                .find(|c: char| {
+                    matches!(c, '/' | ':' | '?' | '#') || URL_END.contains(&c) || c.is_whitespace()
+                })
+                .map_or(lower.len(), |p| from + p);
+            let host = &lower[from..host_end];
+            if !host.contains('.') && !host.starts_with('[') && host != "localhost" {
                 continue;
             }
             let rest = &text[at..];

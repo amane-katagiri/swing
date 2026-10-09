@@ -662,7 +662,7 @@ fn many_distinct_attributes_scan_in_linear_time() {
 fn a_long_string_of_urls_scans_in_linear_time() {
     let mut text = String::from("const s = \"");
     while text.len() < LINK_SCAN_MAX_FILE as usize - 16 {
-        text.push_str("http://a/");
+        text.push_str("http://a.b/");
     }
     text.push_str("\";");
     let mut s = scanner(&[], None);
@@ -670,4 +670,267 @@ fn a_long_string_of_urls_scans_in_linear_time() {
     let found = s.report.of(LinkKind::InsecureRequest);
     assert_eq!(found.len(), 1);
     assert!(found[0].reference.ends_with('\u{2026}'));
+}
+
+#[test]
+fn backslashes_are_read_as_slashes() {
+    let report = html(
+        &["images/a.png"],
+        "index.html",
+        r#"<img src="images\a.png"><img src="\\cdn.example\x.png"><a href="sub\missing.html">x</a>"#,
+        None,
+    );
+    assert_eq!(refs(&report, LinkKind::Broken), ["sub\\missing.html"]);
+    assert_eq!(
+        refs(&report, LinkKind::External),
+        ["\\\\cdn.example\\x.png"]
+    );
+}
+
+#[test]
+fn markup_inside_templates_never_stops_a_publish() {
+    let report = html(
+        &[],
+        "index.html",
+        r#"<template><img src="{{src}}"><template><a href="/x/${u}">x</a></template>
+           <div style="background:url(/t.png)"></div><style>a{background:url(/s.png)}</style>
+           <base href="https://cdn.example/"></template><img src="/after.png">"#,
+        None,
+    );
+    assert_eq!(refs(&report, LinkKind::RootRelative), ["/after.png"]);
+    assert_eq!(refs(&report, LinkKind::Broken), ["/after.png"]);
+}
+
+#[test]
+fn empty_segments_in_the_middle_are_skipped() {
+    let report = html(
+        &["images/a.png"],
+        "index.html",
+        r#"<img src="images//a.png"><img src="images///b.png">"#,
+        None,
+    );
+    assert_eq!(refs(&report, LinkKind::Broken), ["images///b.png"]);
+}
+
+#[test]
+fn css_bad_strings_and_bad_urls_are_dropped() {
+    let mut s = scanner(&["a.css"], None);
+    s.text(
+        FileType::Css,
+        "a.css",
+        "@import \"missing.css\n;\na{background:url(\"bad\n.png\")}\nb{background:url(a b.png)}\nc{background:url(a\"b.png)}\nd{background:url(a(b.png)}\ne{background:url(  /ok.png  )}\n@namespace svg url(/ns);",
+    );
+    assert_eq!(refs(&s.report, LinkKind::RootRelative), ["/ok.png"]);
+}
+
+#[test]
+fn only_css_typed_style_elements_are_read() {
+    let report = html(
+        &[],
+        "index.html",
+        r#"<style type="text/x-template">a{background:url(/tpl.png)}</style>
+           <style type="TEXT/CSS">a{background:url(/css.png)}</style>
+           <style type="">a{background:url(/empty.png)}</style>"#,
+        None,
+    );
+    assert_eq!(
+        refs(&report, LinkKind::RootRelative),
+        ["/css.png", "/empty.png"]
+    );
+}
+
+#[test]
+fn unfinished_tags_cdata_and_plaintext_follow_the_browser() {
+    let report = html(
+        &[],
+        "index.html",
+        r#"<img src="/ok.png"><a href="/cut"#,
+        None,
+    );
+    assert_eq!(refs(&report, LinkKind::RootRelative), ["/ok.png"]);
+    let report = html(
+        &[],
+        "index.html",
+        r#"<a href="/x.png">x</a><img src="/y.png"#,
+        None,
+    );
+    assert_eq!(refs(&report, LinkKind::RootRelative), ["/x.png"]);
+    let report = html(
+        &[],
+        "index.html",
+        r#"<svg><![CDATA[ a > b <img src="/in-cdata.png"> ]]></svg><plaintext><img src="/in-plaintext.png">"#,
+        None,
+    );
+    assert_eq!(report.total(), 0, "{report:?}");
+}
+
+#[test]
+fn short_comments_inside_a_script_leave_the_escaped_state() {
+    for open in ["<!-->", "<!--->"] {
+        let report = html(
+            &[],
+            "index.html",
+            &format!("<script>{open}<script></script><img src=\"/after.png\">"),
+            None,
+        );
+        assert_eq!(
+            refs(&report, LinkKind::RootRelative),
+            ["/after.png"],
+            "{open}"
+        );
+    }
+}
+
+#[test]
+fn xhtml_files_are_not_read() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("page.xhtml"),
+        br#"<script src="a.js"/><img src="/x.png"/>"#,
+    )
+    .unwrap();
+    let site = SiteListing::read(dir.path()).unwrap();
+    assert_eq!(scan(&site, None).unwrap().total(), 0);
+}
+
+#[test]
+fn srcset_units_are_lower_case_without_a_plus() {
+    let report = html(
+        &["ok.png"],
+        "index.html",
+        r#"<img srcset="/plus.png +1x, /upper.png 2X, /wide.png 100W, /ok.png 3x, ok.png 1e1x">"#,
+        None,
+    );
+    assert_eq!(refs(&report, LinkKind::RootRelative), ["/ok.png"]);
+}
+
+#[test]
+fn namespace_and_placeholder_urls_are_not_requests() {
+    let mut s = scanner(&[], None);
+    s.text(
+        FileType::Js,
+        "a.js",
+        r#"const a = "http://json-schema.org/draft-07/schema#"; new URL(p, "http://n");
+           fetch("http://localhost:3000/api"); fetch("http://api.example/x");"#,
+    );
+    assert_eq!(
+        refs(&s.report, LinkKind::InsecureRequest),
+        ["http://localhost:3000/api", "http://api.example/x"]
+    );
+}
+
+#[test]
+fn external_references_are_grouped_across_files() {
+    let mut s = scanner(&[], Some("https://example.com/"));
+    for file in ["a.html", "b.html", "c.html"] {
+        s.html(
+            r#"<link rel="stylesheet" href="https://cdn.example/a.css"><a href="https://example.com/">home</a>"#,
+            file,
+        );
+    }
+    let external = s.report.of(LinkKind::External);
+    assert_eq!(external.len(), 1);
+    assert_eq!(external[0].file, "a.html");
+    assert_eq!(external[0].files, 3);
+    assert_eq!(s.report.of(LinkKind::OwnSite)[0].files, 3);
+    assert!(
+        s.report.lines().contains(
+            &"    a.html and 2 other files: https://cdn.example/a.css (loads from another host)"
+                .to_string()
+        )
+    );
+}
+
+#[test]
+fn control_characters_are_shown_escaped() {
+    let report = html(
+        &[],
+        "index.html",
+        "<img src=\"/a&#27;b.png\"><img src=\"/c&#11;d.png\">",
+        None,
+    );
+    assert_eq!(
+        refs(&report, LinkKind::RootRelative),
+        ["/a\\u{1b}b.png", "/c\\u{b}d.png"]
+    );
+}
+
+#[test]
+fn workers_behind_global_objects_are_found() {
+    let mut s = scanner(&[], None);
+    s.text(
+        FileType::Js,
+        "a.js",
+        "new self.Worker(u); new window . SharedWorker(u); new globalThis.Worker(u); new foo.Worker(u);",
+    );
+    assert_eq!(
+        refs(&s.report, LinkKind::Worker),
+        ["new Worker(", "new SharedWorker("]
+    );
+}
+
+#[test]
+fn findings_are_ordered_like_the_new_files_list() {
+    let dir = tempfile::tempdir().unwrap();
+    for (path, body) in [
+        (
+            "blog/2026/post.html",
+            r#"<img src="/b26-1.png"><img src="/b26-2.png">"#,
+        ),
+        ("blog/index.html", r#"<img src="/b-1.png">"#),
+        (
+            "css/a.css",
+            "a{background:url(/c-1.png)} b{background:url(/c-2.png)}",
+        ),
+        ("index.html", r#"<img src="/i-2.png"><img src="/i-1.png">"#),
+        ("about.html", r#"<img src="/a-1.png">"#),
+        (
+            "x.html",
+            r#"<link rel="stylesheet" href="https://cdn.example/s.css">"#,
+        ),
+        (
+            "blog/x.html",
+            r#"<link rel="stylesheet" href="https://cdn.example/s.css">"#,
+        ),
+    ] {
+        let full = dir.path().join(path);
+        std::fs::create_dir_all(full.parent().unwrap()).unwrap();
+        std::fs::write(full, body).unwrap();
+    }
+    let site = SiteListing::read(dir.path()).unwrap();
+    let report = scan(&site, None).unwrap();
+    let order: Vec<(&str, &str)> = report
+        .of(LinkKind::RootRelative)
+        .iter()
+        .map(|f| (f.file.as_str(), f.reference.as_str()))
+        .collect();
+    assert_eq!(
+        order,
+        [
+            ("about.html", "/a-1.png"),
+            ("index.html", "/i-2.png"),
+            ("index.html", "/i-1.png"),
+            ("blog/index.html", "/b-1.png"),
+            ("blog/2026/post.html", "/b26-1.png"),
+            ("blog/2026/post.html", "/b26-2.png"),
+            ("css/a.css", "/c-1.png"),
+            ("css/a.css", "/c-2.png"),
+        ]
+    );
+    let lines = report.lines();
+    let first = lines
+        .iter()
+        .position(|l| l.contains("starts with /"))
+        .unwrap();
+    assert_eq!(
+        lines[first + LISTED_LINKS - 1],
+        "    blog/2026/post.html: /b26-1.png (starts with /: breaks on path gateways)"
+    );
+    assert_eq!(
+        lines[first + LISTED_LINKS],
+        "    \u{2026} and 3 more (root_relative)"
+    );
+    let external = report.of(LinkKind::External);
+    assert_eq!(external[0].file, "x.html");
+    assert_eq!(external[0].files, 2);
 }

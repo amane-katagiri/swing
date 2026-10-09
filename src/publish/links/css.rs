@@ -96,19 +96,58 @@ pub(super) fn unescape(raw: &str) -> String {
     out
 }
 
-fn string_at(s: &str, i: usize) -> (String, usize) {
+// A string cut by a newline is a bad-string token, which the declaration drops.
+fn string_at(s: &str, i: usize) -> (Option<String>, usize) {
     let b = s.as_bytes();
     let quote = b[i];
     let mut j = i + 1;
     while j < b.len() && b[j] != quote && b[j] != b'\n' {
         j += if b[j] == b'\\' { 2 } else { 1 };
     }
+    if b.get(j) == Some(&b'\n') {
+        return (None, j);
+    }
     let end = j.min(b.len());
     let end = (0..=end)
         .rev()
         .find(|&e| s.is_char_boundary(e))
         .unwrap_or(i + 1);
-    (unescape(&s[i + 1..end]), (end + 1).min(b.len()))
+    (Some(unescape(&s[i + 1..end])), (end + 1).min(b.len()))
+}
+
+fn bad_url_char(c: u8) -> bool {
+    matches!(c, b'"' | b'\'' | b'(' | 0..=8 | 0x0b | 0x0e..=0x1f | 0x7f)
+}
+
+// An unquoted url( with a quote, `(`, inner whitespace or a broken escape is a bad-url token, which the declaration drops.
+fn unquoted_url_at(s: &str, start: usize) -> (Option<String>, usize) {
+    let b = s.as_bytes();
+    let mut j = start;
+    let mut bad = false;
+    while j < b.len() && b[j] != b')' {
+        match b[j] {
+            b'\\' if b.get(j + 1).is_some_and(|&n| n != b'\n') => j += 2,
+            b'\\' => {
+                bad = true;
+                j += 1;
+            }
+            c if is_space(c) => {
+                let k = (j..b.len()).find(|&k| !is_space(b[k])).unwrap_or(b.len());
+                if k < b.len() && b[k] != b')' {
+                    bad = true;
+                }
+                j = k;
+            }
+            c if bad_url_char(c) => {
+                bad = true;
+                j += 1;
+            }
+            _ => j += 1,
+        }
+    }
+    let end = j.min(b.len());
+    let value = (!bad).then(|| unescape(s[start..end].trim_end()));
+    (value, end)
 }
 
 pub(super) fn urls(source: &str) -> Vec<String> {
@@ -131,11 +170,16 @@ pub(super) fn urls(source: &str) -> Vec<String> {
                     let j = skip_space_and_comments(b, after);
                     if j < len && (b[j] == b'"' || b[j] == b'\'') {
                         let (value, next) = string_at(s, j);
-                        out.push(value);
+                        out.extend(value);
                         i = next;
                     } else {
                         i = j;
                     }
+                } else if name.eq_ignore_ascii_case("namespace") {
+                    i = b[after..]
+                        .iter()
+                        .position(|&c| c == b';')
+                        .map_or(len, |p| after + p + 1);
                 }
             }
             _ if starts_name(s, i) => {
@@ -148,15 +192,11 @@ pub(super) fn urls(source: &str) -> Vec<String> {
                     }
                     if j < len && (b[j] == b'"' || b[j] == b'\'') {
                         let (value, next) = string_at(s, j);
-                        out.push(value);
+                        out.extend(value);
                         i = next;
                     } else {
-                        let start = j;
-                        while j < len && b[j] != b')' {
-                            j += if b[j] == b'\\' { 2 } else { 1 };
-                        }
-                        let end = j.min(len);
-                        out.push(unescape(s[start..end].trim()));
+                        let (value, end) = unquoted_url_at(s, j);
+                        out.extend(value);
                         i = end;
                     }
                 }

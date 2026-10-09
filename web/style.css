@@ -1528,6 +1528,10 @@ pre.swing-pre {
   word-break: break-all;
 }
 
+#publish-confirm .swing-result-grid {
+  margin: 0 0 var(--swing-space-4);
+}
+
 .swing-file-list ul {
   margin: 0;
   padding-left: var(--swing-space-5);

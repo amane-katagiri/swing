@@ -43,6 +43,9 @@ const publishEls = {
   uploadInfo: document.getElementById('publish-upload-info'),
   progress: document.getElementById('publish-progress'),
   confirm: document.getElementById('publish-confirm'),
+  confirmChecks: document.getElementById('publish-confirm-checks'),
+  confirmCheckRows: document.getElementById('publish-confirm-check-rows'),
+  confirmNew: document.getElementById('publish-confirm-new'),
   confirmBasis: document.getElementById('publish-confirm-basis'),
   confirmFiles: document.getElementById('publish-confirm-files'),
   confirmOk: document.getElementById('publish-confirm-ok'),
@@ -358,9 +361,13 @@ function describeLinks(links, published) {
   const cell = [el('div', {}, summary + skipped + (published && links.blocking ? t('dotfilesPublishedAnyway') : ''))];
   for (const kind of links.kinds) {
     const label = kind.kind === 'broken' && links.redirects ? t('linksBrokenRedirects') : t(LINK_KIND_KEYS[kind.kind] || kind.kind);
-    const items = kind.items.map((item) => (item.reference ? `${item.file}: ${item.reference}` : item.file)).join(', ');
-    const more = kind.count > kind.items.length ? t('dotfilesMore', { n: kind.count - kind.items.length }) : '';
-    cell.push(el('div', {}, `${label} (${kind.count}): ${items}${more}`));
+    const items = kind.items.map((item) => {
+      const from = item.files > 1 ? item.file + t('linksOtherFiles', { n: item.files - 1 }) : item.file;
+      return item.reference ? `${from}: ${item.reference}` : from;
+    });
+    if (kind.count > kind.items.length && items.length) items[items.length - 1] += t('dotfilesMore', { n: kind.count - kind.items.length });
+    cell.push(el('div', {}, `${label} (${kind.count})`));
+    cell.push(el('ul', { class: 'swing-file-list' }, items.map((text) => el('li', {}, text))));
   }
   if (links.guide) cell.push(el('div', {}, maybeLink(links.guide, t('linksGuide'))));
   return cell;
@@ -586,20 +593,83 @@ function describeNewFilesBasis(previous, n) {
   }
 }
 
-function showNewFiles(previous, newFiles, request) {
-  pendingPublish = request;
-  publishEls.confirmBasis.textContent = describeNewFilesBasis(previous, newFiles.length);
-  publishEls.confirmFiles.replaceChildren(...buildFileList(newFiles));
-  publishEls.confirm.hidden = false;
-  setFormDisabled(publishEls.form, true);
-  setStatus(publishEls.status, 'warn', t('newFilesConfirm'));
-  publishEls.confirmOk.focus();
+const PRECHECK_MODES = ['check_dotfiles', 'check_size', 'check_links'];
+const LINK_SCAN_EXTENSIONS = ['html', 'htm', 'css', 'js', 'mjs'];
+const LINK_SCAN_MAX_FILE = 4 * 1024 * 1024;
+
+function readByLinkCheck(path, size) {
+  const name = path.slice(path.lastIndexOf('/') + 1);
+  const dot = name.lastIndexOf('.');
+  return dot !== -1 && LINK_SCAN_EXTENSIONS.includes(name.slice(dot + 1).toLowerCase()) && size <= LINK_SCAN_MAX_FILE;
 }
 
-function closeNewFiles() {
+function buildCheckFormData({ site, url, modes, files }) {
+  const fd = new FormData();
+  fd.append('site', site);
+  if (url) fd.append('url', url);
+  for (const name of PRECHECK_MODES) {
+    if (modes[name]) fd.append(name, modes[name]);
+  }
+  const listed = files.map((file) => ({ path: computeRelativePath(file), size: file.size }));
+  fd.append('files', JSON.stringify(listed));
+  files.forEach((file, i) => {
+    if (readByLinkCheck(listed[i].path, file.size)) fd.append('file', file, listed[i].path);
+  });
+  return fd;
+}
+
+async function loadChecks(request) {
+  const path = '/api/publish/check';
+  let res;
+  try {
+    res = await fetch(path, { method: 'POST', headers: { 'X-Swing-Dashboard': '1' }, body: buildCheckFormData(request) });
+  } catch {
+    const err = new Error(t('unreachable'));
+    err.status = 0;
+    throw err;
+  }
+  const body = parseApiBody(await res.text());
+  const err = apiResponseError(path, res.status, body);
+  if (err) throw err;
+  return body.checks;
+}
+
+function checksFoundProblems(checks) {
+  return checks.dotfiles.status === 'found' || checks.size.status === 'over' || checks.links.status === 'found';
+}
+
+function showConfirm({ previous, newFiles, checks, request }) {
+  const problems = checks && checksFoundProblems(checks);
+  const blocked = problems ? describeCheckBlock(checks) : '';
+  pendingPublish = blocked ? null : request;
+  publishEls.confirmChecks.hidden = !problems;
+  publishEls.confirmCheckRows.replaceChildren();
+  if (problems) {
+    addCheckRows((k, v) => publishEls.confirmCheckRows.append(el('dt', {}, k), el('dd', {}, v)), checks, false);
+  }
+  publishEls.confirmNew.hidden = newFiles.length === 0;
+  if (newFiles.length > 0) {
+    publishEls.confirmBasis.textContent = describeNewFilesBasis(previous, newFiles.length);
+    publishEls.confirmFiles.replaceChildren(...buildFileList(newFiles));
+  }
+  publishEls.confirmOk.hidden = !!blocked;
+  publishEls.confirmOk.textContent = t(problems ? 'precheckPublishAnyway' : 'newFilesPublish');
+  publishEls.confirm.hidden = false;
+  setFormDisabled(publishEls.form, true);
+  if (blocked) {
+    setStatus(publishEls.status, 'error', t('precheckBlocked', { detail: blocked }));
+    publishEls.confirmCancel.focus();
+  } else {
+    setStatus(publishEls.status, 'warn', t(problems ? 'precheckConfirm' : 'newFilesConfirm'));
+    publishEls.confirmOk.focus();
+  }
+}
+
+function closeConfirm() {
   pendingPublish = null;
   publishEls.confirm.hidden = true;
   publishEls.confirmFiles.replaceChildren();
+  publishEls.confirmCheckRows.replaceChildren();
   setFormDisabled(publishEls.form, false);
   refreshSubmitState();
 }
@@ -610,10 +680,11 @@ async function reviewAndPublish(request) {
   setFormDisabled(publishEls.form, true);
   setBusy(submitBtn, true);
   publishEls.result.hidden = true;
-  setStatus(publishEls.status, 'loading', t('newFilesComparing'));
+  setStatus(publishEls.status, 'loading', t('precheckChecking'));
   let previous;
+  let checks;
   try {
-    previous = await loadPreviousFiles(request.site);
+    [previous, checks] = await Promise.all([loadPreviousFiles(request.site), loadChecks(request)]);
   } catch (err) {
     setStatus(publishEls.status, 'error', describeError(err));
     return;
@@ -624,11 +695,11 @@ async function reviewAndPublish(request) {
     refreshSubmitState();
   }
   const newFiles = findNewFiles(previous, request.files);
-  if (newFiles.length === 0) {
+  if (newFiles.length === 0 && !checksFoundProblems(checks)) {
     submitUpload(request);
     return;
   }
-  showNewFiles(previous, newFiles, request);
+  showConfirm({ previous, newFiles, checks, request });
 }
 
 export const PublishView = {
@@ -641,11 +712,11 @@ export const PublishView = {
     publishEls.reconnectCancel.addEventListener('click', closeReconnect);
     publishEls.confirmOk.addEventListener('click', () => {
       const request = pendingPublish;
-      closeNewFiles();
+      closeConfirm();
       if (request) submitUpload(request);
     });
     publishEls.confirmCancel.addEventListener('click', () => {
-      closeNewFiles();
+      closeConfirm();
       setStatus(publishEls.status, 'ok', t('publishCancelled'));
     });
 

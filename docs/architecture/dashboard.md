@@ -49,7 +49,7 @@ HTTP サーバー（axum 0.8）で、ブラウザ向けの管理画面（`[dashb
 - `custom_css`: `/custom.css` として配信する CSS ファイルのパス。
 - `desktop_page` / `desktop_page_css` / `desktop_banner`: Desktop 画面のリンク集ページ（`/desktop-page.html`）・その CSS（`/desktop-page.css`）・88×31 バナー（`/desktop-banner`）を差し替えるファイルのパス。未設定なら同梱のものを使う。読めないパスや、`desktop_banner` の拡張子が `.png` `.gif` `.jpg` `.jpeg` `.webp` `.svg` 以外なら、同梱版に戻さず `swing up` の起動をエラーで止める。
 - `mascots_dir`: ユーザー定義の Desktop マスコットパックを置くディレクトリ（1 サブディレクトリ = 1 パック）。未設定なら同梱の 3 パック（`yureko`・`mochi`・`neko`）だけを配信する。読み込みの規則は [`dashboard/mascot/pack.md#配信`](dashboard/mascot/pack.md#配信srcdashboardmascots)。
-- `max_upload`: `POST /api/publish/upload` のリクエストボディの上限。
+- `max_upload`: `POST /api/publish/upload` と `POST /api/publish/check` のリクエストボディの上限。
 
 `desktop_page`・`desktop_page_css`・`desktop_banner`・`mascots_dir` は `ui = true` のときだけ `AppState::new` で 1 回読むので、ファイルの差し替え・追加の反映には `swing up` の再起動が要る。
 
@@ -57,7 +57,7 @@ HTTP サーバー（axum 0.8）で、ブラウザ向けの管理画面（`[dashb
 
 `tower_http::timeout::TimeoutLayer` を `router()` に掛けている。タイムアウトすると空ボディの `408 Request Timeout` を返す。
 
-- `POST /api/publish/upload`: 30 分（後片付けは [`dashboard/http-api/publish.md#post-apipublishupload`](dashboard/http-api/publish.md#post-apipublishupload)）。
+- `POST /api/publish/upload`・`POST /api/publish/check`: 30 分（後片付けは [`dashboard/http-api/publish.md#post-apipublishupload`](dashboard/http-api/publish.md#post-apipublishupload)）。
 - ほかの全ルート: 120 秒。
 - ヘッダ読み取りのタイムアウトは無い（[`dashboard/security.md#既知の弱点`](dashboard/security.md#既知の弱点)）。
 

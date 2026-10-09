@@ -185,8 +185,8 @@ pub struct SiteFile<'a> {
     file: &'a ListedFile,
 }
 
-impl SiteFile<'_> {
-    pub fn path(&self) -> &str {
+impl<'a> SiteFile<'a> {
+    pub fn path(&self) -> &'a str {
         self.path
     }
 

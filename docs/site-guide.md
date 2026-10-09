@@ -160,6 +160,7 @@ IPFS はファイルをブロックに分けて、中身のハッシュで管理
 - `require` で止めるのは確実に崩れるもの: 最上位の `ipfs`・`ipns`、`/` で始まるサイト内の参照（`<base href="/">` を含む）、サイトに無いファイルへの参照、`http://` の `<script>`。最上位に `_redirects` があるときは、サイトに無いファイルへの参照は止めずに表示だけにする
 - 表示だけのもの: `POST` などのフォーム、Worker の登録、JavaScript の文字列の中の `http://`・`ws://` の URL、他のホストからの画像・CSS・スクリプト・iframe などの読み込み、`--url` のサイトへの絶対 URL（`<link rel="canonical">` と `<meta>` は除く）
 - 見つけないもの: JavaScript が実行時に組み立てる URL、SVG の中の参照、`<meta http-equiv="refresh">`、4 MiB を超えるファイルの中身。崩れないことの保証ではないので、ゲートウェイで開いて確かめる
+- `@font-face` の `src` に並べた代わりの形式（`.woff2` だけを置いて `.woff` への参照を残したものなど）も、サイトに無いファイルへの参照として止まる。使わない形式の参照は消す
 
 細かい判定は [`architecture/publish/links.md`](architecture/publish/links.md)。
 

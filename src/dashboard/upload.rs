@@ -142,7 +142,7 @@ async fn create_private_file(path: &Path) -> std::io::Result<tokio::fs::File> {
 }
 
 // status() gives 500 when the request body stream itself fails (e.g. the client drops mid-upload); that is not a server fault.
-fn multipart_error_to_api(err: axum::extract::multipart::MultipartError) -> ApiError {
+pub(super) fn multipart_error_to_api(err: axum::extract::multipart::MultipartError) -> ApiError {
     if err.status() == StatusCode::PAYLOAD_TOO_LARGE {
         ApiError::PayloadTooLarge(err.to_string())
     } else {
@@ -152,20 +152,29 @@ fn multipart_error_to_api(err: axum::extract::multipart::MultipartError) -> ApiE
 
 pub const MAX_TEXT_FIELD_BYTES: usize = 64 * 1024;
 
-async fn read_text_field(
-    mut field: axum::extract::multipart::Field<'_>,
+pub(super) async fn read_text_field(
+    field: axum::extract::multipart::Field<'_>,
 ) -> Result<String, ApiError> {
+    let name = field.name().unwrap_or("").to_string();
+    let buf = read_field_bytes(field, MAX_TEXT_FIELD_BYTES).await?;
+    String::from_utf8(buf).map_err(|_| ApiError::BadRequest(format!("{name} must be UTF-8")))
+}
+
+pub(super) async fn read_field_bytes(
+    mut field: axum::extract::multipart::Field<'_>,
+    max: usize,
+) -> Result<Vec<u8>, ApiError> {
     let name = field.name().unwrap_or("").to_string();
     let mut buf = Vec::new();
     while let Some(chunk) = field.chunk().await.map_err(multipart_error_to_api)? {
-        if buf.len() + chunk.len() > MAX_TEXT_FIELD_BYTES {
+        if buf.len() + chunk.len() > max {
             return Err(ApiError::BadRequest(format!(
-                "{name} must be at most {MAX_TEXT_FIELD_BYTES} bytes"
+                "{name} must be at most {max} bytes"
             )));
         }
         buf.extend_from_slice(&chunk);
     }
-    String::from_utf8(buf).map_err(|_| ApiError::BadRequest(format!("{name} must be UTF-8")))
+    Ok(buf)
 }
 
 fn path_conflict_or_internal(filename: &str, e: std::io::Error) -> ApiError {
@@ -219,6 +228,30 @@ impl Drop for UploadDirGuard {
     }
 }
 
+#[derive(Default)]
+pub(super) struct PathRules {
+    seen_paths: HashSet<String>,
+    seen_dirs: HashSet<String>,
+}
+
+impl PathRules {
+    pub(super) fn add(&mut self, filename: &str) -> Result<(), ApiError> {
+        validate_relative_path(filename).map_err(ApiError::BadRequest)?;
+        let key = filename.to_lowercase();
+        let parents: Vec<&str> = key.match_indices('/').map(|(i, _)| &key[..i]).collect();
+        if self.seen_dirs.contains(&key) || parents.iter().any(|p| self.seen_paths.contains(*p)) {
+            return Err(path_conflict(filename));
+        }
+        self.seen_dirs.extend(parents.iter().map(|p| p.to_string()));
+        if !self.seen_paths.insert(key) {
+            return Err(ApiError::BadRequest(format!(
+                "duplicate file path: {filename}"
+            )));
+        }
+        Ok(())
+    }
+}
+
 struct ParsedUpload {
     fields: PublishFields,
     file_count: usize,
@@ -231,8 +264,7 @@ async fn receive_upload(multipart: &mut Multipart, dest: &Path) -> Result<Parsed
     let mut message: Option<String> = None;
     let mut note = false;
     let mut modes = crate::publish::ModeOverrides::default();
-    let mut seen_paths: HashSet<String> = HashSet::new();
-    let mut seen_dirs: HashSet<String> = HashSet::new();
+    let mut rules = PathRules::default();
     let mut created_dirs: HashSet<PathBuf> = HashSet::from([dest.to_path_buf()]);
     let mut file_count = 0usize;
 
@@ -285,18 +317,7 @@ async fn receive_upload(multipart: &mut Multipart, dest: &Path) -> Result<Parsed
                         "file part is missing a filename".to_string(),
                     ));
                 };
-                validate_relative_path(&filename).map_err(ApiError::BadRequest)?;
-                let key = filename.to_lowercase();
-                let parents: Vec<&str> = key.match_indices('/').map(|(i, _)| &key[..i]).collect();
-                if seen_dirs.contains(&key) || parents.iter().any(|p| seen_paths.contains(*p)) {
-                    return Err(path_conflict(&filename));
-                }
-                seen_dirs.extend(parents.iter().map(|p| p.to_string()));
-                if !seen_paths.insert(key) {
-                    return Err(ApiError::BadRequest(format!(
-                        "duplicate file path: {filename}"
-                    )));
-                }
+                rules.add(&filename)?;
                 let target = dest.join(&filename);
                 if !target.starts_with(dest) {
                     return Err(ApiError::BadRequest(format!(
@@ -543,46 +564,6 @@ mod tests {
     use super::super::router;
     use super::super::test_support::*;
     use axum::http::StatusCode;
-
-    fn multipart_body(boundary: &str, parts: &[(&str, Option<&str>, &[u8])]) -> Vec<u8> {
-        let mut body = Vec::new();
-        for (name, filename, content) in parts {
-            body.extend_from_slice(format!("--{boundary}\r\n").as_bytes());
-            match filename {
-                Some(fname) => body.extend_from_slice(
-                    format!(
-                        "Content-Disposition: form-data; name=\"{name}\"; filename=\"{fname}\"\r\nContent-Type: application/octet-stream\r\n\r\n"
-                    )
-                    .as_bytes(),
-                ),
-                None => body.extend_from_slice(
-                    format!("Content-Disposition: form-data; name=\"{name}\"\r\n\r\n").as_bytes(),
-                ),
-            }
-            body.extend_from_slice(content);
-            body.extend_from_slice(b"\r\n");
-        }
-        body.extend_from_slice(format!("--{boundary}--\r\n").as_bytes());
-        body
-    }
-
-    fn multipart_request(
-        uri: &str,
-        boundary: &str,
-        body: Vec<u8>,
-    ) -> axum::http::Request<axum::body::Body> {
-        axum::http::Request::builder()
-            .method("POST")
-            .uri(uri)
-            .header("Host", "127.0.0.1:8082")
-            .header("x-swing-dashboard", "1")
-            .header(
-                "content-type",
-                format!("multipart/form-data; boundary={boundary}"),
-            )
-            .body(axum::body::Body::from(body))
-            .unwrap()
-    }
 
     fn upload_dir_entries(state_dir: &Path) -> Vec<PathBuf> {
         match std::fs::read_dir(state_dir.join(crate::publish::DASHBOARD_UPLOAD_DIR)) {
@@ -918,7 +899,7 @@ mod tests {
         assert_eq!(links["kinds"][2]["blocks"], false);
         assert_eq!(
             links["kinds"][0]["items"],
-            serde_json::json!([{"file": "index.html", "reference": "/style.css"}])
+            serde_json::json!([{"file": "index.html", "reference": "/style.css", "files": 1}])
         );
         assert!(links["guide"].as_str().unwrap() == crate::publish::links::SITE_GUIDE_URL);
     }

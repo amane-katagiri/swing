@@ -747,9 +747,15 @@
       </form>
 
       <div id="publish-confirm" class="swing-panel" hidden>
-        <h2 data-i18n="newFilesHeading">New files</h2>
-        <p class="swing-hint" id="publish-confirm-basis"></p>
-        <ul class="swing-file-list" id="publish-confirm-files"></ul>
+        <div id="publish-confirm-checks" hidden>
+          <h2 data-i18n="precheckHeading">Checks before publishing</h2>
+          <dl class="swing-result-grid" id="publish-confirm-check-rows"></dl>
+        </div>
+        <div id="publish-confirm-new" hidden>
+          <h2 data-i18n="newFilesHeading">New files</h2>
+          <p class="swing-hint" id="publish-confirm-basis"></p>
+          <ul class="swing-file-list" id="publish-confirm-files"></ul>
+        </div>
         <div class="swing-css-actions">
           <button type="button" class="swing-btn swing-btn-accent" id="publish-confirm-ok" data-i18n="newFilesPublish">Publish with these files</button>
           <button type="button" class="swing-btn" id="publish-confirm-cancel" data-i18n="cancel">Cancel</button>

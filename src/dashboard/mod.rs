@@ -6,6 +6,7 @@ mod error;
 pub mod guard;
 mod locks;
 mod mascots;
+mod precheck;
 mod publish;
 mod session;
 mod setup;
@@ -176,6 +177,7 @@ pub fn router(state: Arc<AppState>) -> Router {
 
     let upload_route = Router::new()
         .route("/api/publish/upload", post(upload::publish_upload))
+        .route("/api/publish/check", post(precheck::publish_check))
         .layer(DefaultBodyLimit::max(max_upload))
         .layer(TimeoutLayer::with_status_code(
             StatusCode::REQUEST_TIMEOUT,

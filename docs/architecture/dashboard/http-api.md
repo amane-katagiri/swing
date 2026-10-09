@@ -1,4 +1,4 @@
-# ダッシュボード HTTP API（`src/dashboard/api.rs`, `src/dashboard/error.rs`, `src/dashboard/publish.rs`, `src/dashboard/setup.rs`, `src/dashboard/session.rs`, `src/dashboard/upload.rs`, `src/dashboard/dto.rs`, `src/dashboard/config_dto.rs`）
+# ダッシュボード HTTP API（`src/dashboard/api.rs`, `src/dashboard/error.rs`, `src/dashboard/publish.rs`, `src/dashboard/precheck.rs`, `src/dashboard/setup.rs`, `src/dashboard/session.rs`, `src/dashboard/upload.rs`, `src/dashboard/dto.rs`, `src/dashboard/config_dto.rs`）
 
 [`../dashboard.md`](../dashboard.md) の子ページ。ガードと認証は [`security.md`](security.md)、画面側からの使い方は [`views.md`](views.md)（Publish は [`views/publish.md`](views/publish.md)）を参照。各エンドポイントの入出力は [一覧](#エンドポイント一覧)から辿る子ページにある。API を叩く CLI サブコマンドの一覧は [`../cli.md#共通`](../cli.md#共通)。
 
@@ -6,12 +6,12 @@
 
 ### 形式とエラー
 
-- すべて JSON。公開鍵は `pubkey`（小文字 hex）と `npub` を併記する。時刻は epoch 秒の整数。無い値は `null`（例外は `GET /api/config` の `display`・`raw`・`options` で、無いときはフィールドごと出ない）。`POST /api/publish/upload` だけ `multipart/form-data` を受ける。
+- すべて JSON。公開鍵は `pubkey`（小文字 hex）と `npub` を併記する。時刻は epoch 秒の整数。無い値は `null`（例外は `GET /api/config` の `display`・`raw`・`options` で、無いときはフィールドごと出ない）。`POST /api/publish/upload` と `POST /api/publish/check` だけ `multipart/form-data` を受ける。
 - ハンドラが返すエラーは `{ "error": "<メッセージ>" }` とステータスコード。
 
 | ステータス | 条件 |
 |---|---|
-| 400 | 入力不正。JSON の構文エラー・必須フィールド欠落・`Content-Type` 不一致も 400（422 にはしない）。`POST /api/publish/upload` に multipart でない `Content-Type` を送ったときは axum の素の 400（本文は JSON ではない） |
+| 400 | 入力不正。JSON の構文エラー・必須フィールド欠落・`Content-Type` 不一致も 400（422 にはしない）。`POST /api/publish/upload`・`POST /api/publish/check` に multipart でない `Content-Type` を送ったときは axum の素の 400（本文は JSON ではない） |
 | 401 | 認証が通らない（[`security.md#ガード`](security.md#ガード)）。認証の要る `/api/*` は、存在しないパスでも 401 |
 | 403 | ガードの Host・`X-Swing-Dashboard`・Origin の検証に通らない。Bearer 限定のエンドポイントをセッション cookie で呼んだ |
 | 404 | 存在しないルート（空ボディ）。`/api/*` では認証を通った後だけ |
@@ -19,7 +19,7 @@
 | 408 | リクエストタイムアウト（空ボディ。[`../dashboard.md#タイムアウトsrcdashboardmodrs`](../dashboard.md#タイムアウトsrcdashboardmodrs)） |
 | 409 | publish の多重実行、セットアップ・ペアリング・つなぎ直しを使えない状態、`mirror/add` で Follow Set が上限を超える（各エンドポイント） |
 | 413 | ボディが大きすぎる |
-| 422 | publish の NIP-05・ドットファイル・サイズの確認の `require` 失敗だけ |
+| 422 | publish の NIP-05・ドットファイル・サイズ・リンクの確認の `require` 失敗だけ |
 | 500 | ファイルの読み書きなど内部の失敗。詳細はログにだけ出し、本文は常に `{"error": "internal error; see the swing log for details"}` |
 | 502 | relay・Kubo・Nostr 発行・署名アプリの失敗 |
 | 503 | agent の未準備・セットアップモード・relay を引く API の同時実行数の上限（下記） |
@@ -58,6 +58,7 @@ API は `swing up` の寿命で動き続ける（[`../up.md`](../up.md)）。
 | GET | `/api/webring` | フォローのグラフ（`swing webring` と同じ） | [nostr.md](http-api/nostr.md#get-apiwebringrootkeydepthn) |
 | GET | `/api/replicas` | レプリカ報告の集計（`swing replicas` と同じ） | [nostr.md](http-api/nostr.md#get-apireplicaskeykey) |
 | POST | `/api/publish/upload` | フォルダをアップロードして publish | [publish.md](http-api/publish.md#post-apipublishupload) |
+| POST | `/api/publish/check` | アップロードする前の確認（ドットファイル・サイズ・リンク。何も保存しない） | [publish.md](http-api/publish.md#post-apipublishcheck) |
 | GET | `/api/publish/sites` | 自分が公開したサイトの一覧 | [publish.md](http-api/publish.md#get-apipublishsites) |
 | GET | `/api/publish/previous-files` | 自分のサイトの最新版に入っているファイルの一覧（増えたファイルの確認用） | [publish.md](http-api/publish.md#get-apipublishprevious-filessited) |
 | GET | `/api/config` | 設定の一覧 | [config.md](http-api/config.md#get-apiconfig) |

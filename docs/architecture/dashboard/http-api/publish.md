@@ -1,4 +1,4 @@
-# publish（`src/dashboard/upload.rs`, `src/dashboard/publish.rs`, `src/dashboard/api.rs`, `src/dashboard/dto.rs`）
+# publish（`src/dashboard/upload.rs`, `src/dashboard/precheck.rs`, `src/dashboard/publish.rs`, `src/dashboard/api.rs`, `src/dashboard/dto.rs`）
 
 [`../http-api.md`](../http-api.md) の子ページ。共通の形式・エラー・準備状態は親ページを参照。
 
@@ -53,7 +53,7 @@
     "size": { "status": "ok", "mode": "warn", "bytes": 12000, "threshold": 536870912 },
     "links": { "status": "found", "mode": "warn", "count": 1, "blocking": 0, "redirects": false, "skipped": 0,
       "kinds": [ { "kind": "external", "blocks": false, "count": 1,
-        "items": [ { "file": "index.html", "reference": "https://cdn.example/a.css" } ] } ],
+        "items": [ { "file": "index.html", "reference": "https://cdn.example/a.css", "files": 3 } ] } ],
       "guide": "https://github.com/amane-katagiri/swing/blob/main/docs/site-guide.md" },
     "unchanged": { "status": "changed", "mode": "require", "previous_cid": "bafy…", "previous_created_at": 1780000000, "detail": null } },
   "cid": "bafy…", "size": 12345, "created_at": 1790000000, "mfs_path": "/swing/publish/<hex>/example.com/1790000000",
@@ -67,7 +67,7 @@
 - `checks`: 各項目の `mode` はその回に使ったモード。判定は[ローカルの確認](../../publish.md#サイトの一覧とローカルの確認)と[同じ内容かの確認](../../publish.md#同じ内容かの確認)。
   - `dotfiles`: `status` は `off`（`count` は 0、`paths` は空）/`ok`/`found`。`count` は見つかった件数、`paths` はその先頭 `LISTED_DOTFILES`（10）件。
   - `size`: `status` は `off`（`bytes` は `null`）/`ok`/`over`。`bytes` はファイルの大きさの合計、`threshold` は `SIZE_GUIDELINE`（512 MiB）。上の `size`（`dag/stat` の値）とは別物。
-  - `links`: `status` は `off`（`count`・`blocking`・`skipped` は 0、`redirects` は `false`、`kinds` は空、`guide` は `null`）/`ok`/`found`。`count` は見つかった件数、`blocking` はそのうち `require` で止める件数、`redirects` はサイト最上位に `_redirects` があるか、`skipped` は 4 MiB を超えて読まなかったファイルの数。`kinds` は見つかった種別だけを[種別](../../publish/links.md#種別)の表の順に並べ、`kind` は種別の名前、`blocks` はその種別が `require` で止めるか、`count` は件数、`items` は先頭 `LISTED_LINKS`（5）件の参照元ファイル（`file`）と参照（`reference`、`reserved` では空文字）。`guide` は `found` のときだけ直し方の手引きのページの URL（[結果](../../publish/links.md#結果)）で、それ以外は `null`。
+  - `links`: `status` は `off`（`count`・`blocking`・`skipped` は 0、`redirects` は `false`、`kinds` は空、`guide` は `null`）/`ok`/`found`。`count` は見つかった件数、`blocking` はそのうち `require` で止める件数、`redirects` はサイト最上位に `_redirects` があるか、`skipped` は 4 MiB を超えて読まなかったファイルの数。`kinds` は見つかった種別だけを[種別](../../publish/links.md#種別)の表の順に並べ、`kind` は種別の名前、`blocks` はその種別が `require` で止めるか、`count` は件数、`items` は先頭 `LISTED_LINKS`（5）件の参照元ファイル（`file`）と参照（`reference`、`reserved` では空文字）と、その参照の参照元の数（`files`。`external`・`own_site` は参照ごとにまとめるので 2 以上になりうる。ほかは 1）。`guide` は `found` のときだけ直し方の手引きのページの URL（[結果](../../publish/links.md#結果)）で、それ以外は `null`。
   - `unchanged`: `status` は `off`/`changed`/`unchanged`/`no_previous`（relay に前の版が無い）/`unknown`（relay から取れなかった。理由が `detail`）。`previous_cid`・`previous_created_at` は前の版が見つかったときだけ入る。
 - ドットファイル・サイズ・リンクの `require` が引っかかったら、add する前に 422 を返す: `{ "error": "...", "nip05": {...}, "checks": { "dotfiles": {...}, "size": {...}, "links": {...}, "unchanged": null } }`。NIP-05 の 422 には `checks` が付かない。
 - `unchanged` が `unchanged` で `check_unchanged` が `require` なら、add した版を消して 200 を返す。このとき `published` は `false`、`created_at` と `mfs_path` は `null`、`relays` と `pruned` は空、`prune_error` は `null`。`cid`・`size`・`gateway_url` は通常どおり入る。[`/api/activity`](status.md#get-apiactivity) の `latest_published_at` は進まない。版を消せなければ 502。
@@ -77,6 +77,25 @@
 - `relays[].error` は relay が断った理由。未来すぎる `created_at` を理由に断られたときは[案内](../../publish.md#署名と送信)が後ろに付く。制御文字などを除き、500 文字を超える分は `…` に切り詰める（CLI の表示と同じ）。
 - 古い版の削除に失敗したときは `prune_error` に理由が入るだけで、応答は成功のまま。
 - `files` は受け取ったファイル数。
+
+## POST /api/publish/check
+
+公開画面が、アップロードする前にドットファイル・サイズ・リンクの確認の結果を出すために使う。ファイルの中身は走査するものだけを受け取り、何も保存せず、Kubo にも relay にも触らない。判定は upload と同じ関数（[ローカルの確認](../../publish.md#サイトの一覧とローカルの確認)。リンクは `links::evaluate`）で、upload は自分でもう一度判定する（この API を経たかどうかは見ない）。多重実行の排他（409）は無い。
+
+`multipart/form-data`。パート:
+
+- `site`（必須）・`url`・`check_dotfiles`・`check_size`・`check_links`（省略可）。モードの省略時は `[publish]` の同名の設定。`site`・`url` とモードは upload と同じ規則で検証して 400（`invalid site: ...`・`invalid url: ...`・`invalid check_links: ...` など）。知らない名前のパートは読み捨てる。
+- `files`（必須）: 全ファイルの送信名と大きさの JSON 配列 `[{"path": "index.html", "size": 1234}, …]`。`MAX_UPLOAD_FILES × (MAX_PATH_LEN + 64)` バイトまで。形が違えば 400 `invalid files: ...`。空なら 400。`MAX_UPLOAD_FILES`（10,000）件まで。各 `path` は upload と同じ[パスの検証](#post-apipublishupload)（`upload::PathRules`。空・`/` 始まり・`..`・空のセグメント・予約デバイス名・大文字小文字だけ違う重複・ファイルとディレクトリの衝突）で、違反は 400。`size` の合計が `[dashboard].max_upload` を超えたら 413。
+- `file`（任意、複数）: `filename` が `files` の `path` で、そのファイルの中身。`files` に無いもの、[リンクの確認が読まない](../../publish/links.md#読むファイル)もの（拡張子が対象外か `size` が 4 MiB 超）、1 つが 4 MiB を超えるもの、同じ名前の 2 つ目は 400。リンクの確認が読むファイルの中身が無ければ、そのファイルは読まなかった（`skipped`）として数える。
+
+ディレクトリは `files` のパスの親から作る。並び順はセグメントごとの比較で、upload の一覧と同じ順になる。ボディの上限とタイムアウトは upload と同じ（`[dashboard].max_upload`、30 分）。
+
+```json
+{ "checks": { "dotfiles": {…}, "size": {…}, "links": {…}, "unchanged": null }, "abort": null }
+```
+
+- `checks` は[upload の応答](#post-apipublishupload)の `checks` と同じ形で、`unchanged` は常に `null`。
+- `abort` は `require` の項目が引っかかったときに upload が返す止める理由（`LocalChecks::abort_message`）、無ければ `null`。
 
 ## GET /api/publish/sites
 

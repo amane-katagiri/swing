@@ -1,10 +1,10 @@
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::io::Read;
 
 use anyhow::{Context, Result};
 
 use crate::format::format_bytes;
-use crate::ipfs::SiteListing;
+use crate::ipfs::{SiteEntry, SiteListing};
 
 mod css;
 mod html;
@@ -79,6 +79,13 @@ impl LinkKind {
 pub struct LinkFinding {
     pub file: String,
     pub reference: String,
+    pub files: usize,
+}
+
+#[derive(Debug, Default)]
+struct Seen {
+    found: HashSet<(LinkKind, String, String)>,
+    grouped: HashMap<(LinkKind, String), usize>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -136,10 +143,15 @@ impl LinkReport {
         for (kind, findings) in self.kinds() {
             let label = kind.label(self.redirects);
             for f in findings.iter().take(LISTED_LINKS) {
+                let from = match f.files {
+                    0 | 1 => f.file.clone(),
+                    2 => format!("{} and 1 other file", f.file),
+                    n => format!("{} and {} other files", f.file, n - 1),
+                };
                 lines.push(if f.reference.is_empty() {
-                    format!("    {} ({label})", f.file)
+                    format!("    {from} ({label})")
                 } else {
-                    format!("    {}: {} ({label})", f.file, f.reference)
+                    format!("    {from}: {} ({label})", f.reference)
                 });
             }
             if findings.len() > LISTED_LINKS {
@@ -163,18 +175,48 @@ impl LinkReport {
         })
     }
 
-    fn push(
-        &mut self,
-        seen: &mut HashSet<(LinkKind, String, String)>,
-        kind: LinkKind,
-        file: &str,
-        reference: &str,
-    ) {
-        if seen.insert((kind, file.to_string(), reference.to_string())) {
-            self.found.entry(kind).or_default().push(LinkFinding {
-                file: file.to_string(),
-                reference: shorten(reference, MAX_SHOWN),
-            });
+    // The same external URL tends to sit in every page's template, so it is listed once with the number of files.
+    fn push(&mut self, seen: &mut Seen, kind: LinkKind, file: &str, reference: &str) {
+        if !seen
+            .found
+            .insert((kind, file.to_string(), reference.to_string()))
+        {
+            return;
+        }
+        let list = self.found.entry(kind).or_default();
+        if matches!(kind, LinkKind::External | LinkKind::OwnSite) {
+            match seen.grouped.get(&(kind, reference.to_string())) {
+                Some(&idx) => {
+                    let entry = &mut list[idx];
+                    entry.files += 1;
+                    if folder_order(file) < folder_order(&entry.file) {
+                        entry.file = printable(file);
+                    }
+                    return;
+                }
+                None => {
+                    seen.grouped
+                        .insert((kind, reference.to_string()), list.len());
+                }
+            }
+        }
+        list.push(LinkFinding {
+            file: printable(file),
+            reference: printable(&shorten(reference, MAX_SHOWN)),
+            files: 1,
+        });
+    }
+}
+
+// Same order as the new files list (`new_files::group_by_folder`): top-level files first, then folder by folder.
+fn folder_order(path: &str) -> (&str, &str) {
+    path.rsplit_once('/').unwrap_or(("", path))
+}
+
+impl LinkReport {
+    fn sort_by_folder(&mut self) {
+        for findings in self.found.values_mut() {
+            findings.sort_by(|a, b| folder_order(&a.file).cmp(&folder_order(&b.file)));
         }
     }
 }
@@ -185,6 +227,21 @@ fn count_files(n: usize) -> String {
     } else {
         format!("{n} files")
     }
+}
+
+fn printable(s: &str) -> String {
+    if !s.chars().any(char::is_control) {
+        return s.to_string();
+    }
+    s.chars()
+        .map(|c| {
+            if c.is_control() {
+                c.escape_default().to_string()
+            } else {
+                c.to_string()
+            }
+        })
+        .collect()
 }
 
 fn shorten(s: &str, max: usize) -> String {
@@ -205,7 +262,7 @@ fn file_type(path: &str) -> Option<FileType> {
     let name = path.rsplit('/').next().unwrap_or(path);
     let ext = name.rsplit_once('.')?.1.to_ascii_lowercase();
     match ext.as_str() {
-        "html" | "htm" | "xhtml" => Some(FileType::Html),
+        "html" | "htm" => Some(FileType::Html),
         "css" => Some(FileType::Css),
         "js" | "mjs" => Some(FileType::Js),
         _ => None,
@@ -224,6 +281,15 @@ enum Role {
 enum BaseDir {
     Dir(String),
     Elsewhere(Option<String>),
+}
+
+// Browsers read `\` as `/` in http(s) URLs, and the built-in gateway splits paths on both.
+fn clean_url(shown: &str) -> String {
+    shown
+        .chars()
+        .filter(|c| !matches!(c, '\t' | '\n' | '\r'))
+        .map(|c| if c == '\\' { '/' } else { c })
+        .collect()
 }
 
 fn parent(path: &str) -> &str {
@@ -330,6 +396,7 @@ fn resolve(reference: &str, dir: &str) -> Resolved {
                 dir_only |= last;
             }
             "" if last => dir_only = true,
+            "" => {}
             _ => segs.push(seg),
         }
     }
@@ -366,7 +433,7 @@ struct Scanner {
     index: Index,
     own_host: Option<String>,
     report: LinkReport,
-    seen: HashSet<(LinkKind, String, String)>,
+    seen: Seen,
 }
 
 impl Scanner {
@@ -384,7 +451,7 @@ impl Scanner {
             redirects: files.contains("_redirects"),
             ..Default::default()
         };
-        let mut seen = HashSet::new();
+        let mut seen = Seen::default();
         let mut top: Vec<&String> = files
             .iter()
             .chain(dirs.iter())
@@ -411,10 +478,7 @@ impl Scanner {
     // Breaking kinds are only reported when the scanner is sure of the URL, so an unknown character reference never stops a publish.
     fn reference(&mut self, role: Role, raw: &str, file: &str, base: &BaseDir, certain: bool) {
         let shown = raw.trim_matches(|c: char| c.is_ascii_whitespace());
-        let cleaned: String = shown
-            .chars()
-            .filter(|c| !matches!(c, '\t' | '\n' | '\r'))
-            .collect();
+        let cleaned = clean_url(shown);
         let u = cleaned.as_str();
         if u.is_empty() || u.starts_with('#') {
             return;
@@ -484,16 +548,15 @@ impl Scanner {
     fn base_dir(&mut self, nodes: &[html::Node<'_>], file: &str) -> BaseDir {
         let doc_dir = BaseDir::Dir(parent(file).to_string());
         let Some((href, certain)) = nodes.iter().find_map(|n| match n {
-            html::Node::Tag(t) if t.name == "base" => t.attr_with_certainty("href"),
+            html::Node::Tag(t) if t.name == "base" && !t.in_template => {
+                t.attr_with_certainty("href")
+            }
             _ => None,
         }) else {
             return doc_dir;
         };
         let shown = href.trim_matches(|c: char| c.is_ascii_whitespace());
-        let cleaned: String = shown
-            .chars()
-            .filter(|c| !matches!(c, '\t' | '\n' | '\r'))
-            .collect();
+        let cleaned = clean_url(shown);
         let href = cleaned.as_str();
         if href.is_empty() {
             return doc_dir;
@@ -532,29 +595,39 @@ impl Scanner {
         let nodes = html::parse(text);
         let base = self.base_dir(&nodes, file);
         let mut script_is_js = false;
+        let mut style_is_css = false;
+        let mut in_template = false;
         for node in &nodes {
             match node {
                 html::Node::Tag(tag) => {
-                    if tag.name == "script" {
-                        script_is_js = is_js_type(tag.attr("type"));
+                    match tag.name.as_str() {
+                        "script" => script_is_js = is_js_type(tag.attr("type")),
+                        "style" => style_is_css = is_css_type(tag.attr("type")),
+                        _ => {}
                     }
+                    in_template = tag.in_template;
                     self.tag(tag, file, &base);
                 }
                 html::Node::Script(text) if script_is_js => self.js(text, file),
                 html::Node::Script(_) => {}
-                html::Node::Style(text) => self.css(text, file, &base, true),
+                html::Node::Style(text) if style_is_css => {
+                    self.css(text, file, &base, !in_template)
+                }
+                html::Node::Style(_) => {}
             }
         }
     }
 
+    // Markup inside <template> is often filled in by scripts (`{{src}}`, `${u}`), so it never stops a publish.
     fn tag(&mut self, tag: &html::Tag, file: &str, base: &BaseDir) {
+        let sure = !tag.in_template;
         if let Some((style, certain)) = tag.attr_with_certainty("style") {
-            self.css(style, file, base, certain);
+            self.css(style, file, base, certain && sure);
         }
         let name = tag.name.as_str();
         let check = |this: &mut Self, role: Role, attr: &str| {
             if let Some((value, certain)) = tag.attr_with_certainty(attr) {
-                this.reference(role, value, file, base, certain);
+                this.reference(role, value, file, base, certain && sure);
             }
         };
         match name {
@@ -582,7 +655,7 @@ impl Scanner {
             && let Some((srcset, certain)) = tag.attr_with_certainty("srcset")
         {
             for url in srcset_urls(srcset) {
-                self.reference(Role::Resource, url, file, base, certain);
+                self.reference(Role::Resource, url, file, base, certain && sure);
             }
         }
         if name == "video" {
@@ -610,6 +683,13 @@ impl Scanner {
             }
         }
     }
+}
+
+fn is_css_type(t: Option<&str>) -> bool {
+    t.is_none_or(|t| {
+        let t = t.trim();
+        t.is_empty() || t.eq_ignore_ascii_case("text/css")
+    })
 }
 
 fn is_js_type(t: Option<&str>) -> bool {
@@ -699,7 +779,10 @@ fn valid_descriptors(descriptors: &str) -> bool {
         };
         let number = &token[..token.len() - unit.len_utf8()];
         let integer = !number.is_empty() && number.bytes().all(|c| c.is_ascii_digit());
-        match unit.to_ascii_lowercase() {
+        if number.starts_with('+') {
+            return false;
+        }
+        match unit {
             'w' if !w && !x && integer && number.parse::<u64>().is_ok_and(|n| n > 0) => w = true,
             'h' if !h && !x && integer && number.parse::<u64>().is_ok_and(|n| n > 0) => h = true,
             'x' if !x
@@ -734,27 +817,52 @@ fn read_limited(file: &crate::ipfs::SiteFile<'_>) -> Result<Option<String>> {
     Ok(Some(String::from_utf8_lossy(&buf).into_owned()))
 }
 
-pub fn scan(site: &SiteListing, own_url: Option<&str>) -> Result<LinkReport> {
-    let entries = site.entries();
+pub fn scanned(path: &str, size: u64) -> bool {
+    file_type(path).is_some() && size <= LINK_SCAN_MAX_FILE
+}
+
+// Judges from the whole listing plus the text of the files it reads, so the dashboard can check a site before uploading it.
+pub fn evaluate(
+    entries: &[SiteEntry],
+    mut read: impl FnMut(&str) -> Result<Option<String>>,
+    own_url: Option<&str>,
+) -> Result<LinkReport> {
     let mut scanner = Scanner::new(
         entries.iter().map(|e| (e.path.as_str(), e.size.is_none())),
         own_url,
     );
-    for file in site.files() {
-        let Some(kind) = file_type(file.path()) else {
+    for entry in entries {
+        let Some(size) = entry.size else {
             continue;
         };
-        if file.size() > LINK_SCAN_MAX_FILE {
-            scanner.report.skipped.push(file.path().to_string());
+        let Some(kind) = file_type(&entry.path) else {
             continue;
+        };
+        let text = if size > LINK_SCAN_MAX_FILE {
+            None
+        } else {
+            read(&entry.path)?
+        };
+        match text {
+            Some(text) => scanner.text(kind, &entry.path, &text),
+            None => scanner.report.skipped.push(entry.path.clone()),
         }
-        let Some(text) = read_limited(&file)? else {
-            scanner.report.skipped.push(file.path().to_string());
-            continue;
-        };
-        scanner.text(kind, file.path(), &text);
     }
+    scanner.report.sort_by_folder();
     Ok(scanner.report)
+}
+
+pub fn scan(site: &SiteListing, own_url: Option<&str>) -> Result<LinkReport> {
+    let files: HashMap<&str, crate::ipfs::SiteFile<'_>> =
+        site.files().map(|f| (f.path(), f)).collect();
+    evaluate(
+        &site.entries(),
+        |path| match files.get(path) {
+            Some(file) => read_limited(file),
+            None => Ok(None),
+        },
+        own_url,
+    )
 }
 
 impl Scanner {

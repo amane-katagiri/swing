@@ -31,7 +31,7 @@
 | Sites | `swing-site` `swing-site-row` `swing-site-badges` `swing-site-meta-cid` `swing-site-meta-info` `swing-account` |
 | 共通部品 | `swing-badge` `swing-btn`（`swing-btn-accent`/`swing-btn-danger`/`swing-btn-small`） `swing-copy-btn` `swing-icon-btn` `swing-status` `swing-hint` `swing-table`（セル用に `swing-nowrap` `swing-break-anywhere`） `swing-table-scroll`（表 1 つだけを包む横スクロール用ラッパー） `swing-mono` `swing-pre` `swing-relay-results` `swing-page-footer` |
 | Webring | `swing-graph` `swing-node` `swing-edge` `swing-arrow-oneway-fill` `swing-arrow-mutual-fill` `swing-legend` `swing-webring-layout` `swing-node-detail` `swing-source-block` |
-| Publish | `swing-my-sites` `swing-progress` `swing-progress-bar` `swing-identity` `swing-file-list`（増えたファイルの一覧。高さを抑えてスクロールし、フォルダは入れ子の `ul`） |
+| Publish | `swing-my-sites` `swing-progress` `swing-progress-bar` `swing-identity` `swing-file-list`（増えたファイルの一覧と、動作性の確認の種別ごとの参照の一覧。高さを抑えてスクロールし、フォルダは入れ子の `ul`） |
 | Setup・Publish | `swing-signer-qr`（署名アプリ接続用の QR と注記・コピーボタンを縦に並べる `<figure>`。Setup 画面と Publish 画面のつなぎ直しで使う） |
 
 ## 状態を表す data 属性

@@ -664,6 +664,7 @@ pub struct SizeCheckDto {
 pub struct LinkItemDto {
     pub file: String,
     pub reference: String,
+    pub files: usize,
 }
 
 #[derive(Debug, Serialize)]
@@ -720,6 +721,7 @@ fn links_check_dto(local: &crate::publish::LocalChecks) -> LinksCheckDto {
                     .map(|f| LinkItemDto {
                         file: f.file.clone(),
                         reference: f.reference.clone(),
+                        files: f.files,
                     })
                     .collect(),
             })

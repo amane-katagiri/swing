@@ -11,6 +11,7 @@ pub(super) struct Attr {
 pub(super) struct Tag {
     pub name: String,
     pub attrs: Vec<Attr>,
+    pub in_template: bool,
 }
 
 impl Tag {
@@ -33,8 +34,16 @@ pub(super) enum Node<'a> {
     Style(&'a str),
 }
 
-const RAW_TEXT: [&str; 8] = [
-    "script", "style", "textarea", "title", "xmp", "iframe", "noembed", "noframes",
+const RAW_TEXT: [&str; 9] = [
+    "script",
+    "style",
+    "textarea",
+    "title",
+    "xmp",
+    "iframe",
+    "noembed",
+    "noframes",
+    "plaintext",
 ];
 
 fn is_space(b: u8) -> bool {
@@ -84,7 +93,7 @@ fn find_script_end(b: &[u8], from: usize) -> usize {
             State::Data => {
                 if b[i..].starts_with(b"<!--") {
                     state = State::Escaped;
-                    i += 4;
+                    i += 2;
                     continue;
                 }
                 if b[i..].starts_with(b"</") && tag_name_at(b, i + 2, "script") {
@@ -144,6 +153,7 @@ pub(super) fn parse(s: &str) -> Vec<Node<'_>> {
     let b = s.as_bytes();
     let len = b.len();
     let mut out = Vec::new();
+    let mut templates = 0usize;
     let mut i = 0;
     while let Some(p) = b[i..].iter().position(|&c| c == b'<') {
         i += p;
@@ -157,11 +167,19 @@ pub(super) fn parse(s: &str) -> Vec<Node<'_>> {
             };
             continue;
         }
+        if b[i..].starts_with(b"<![CDATA[") {
+            i = find(b, i + 9, b"]]>").map_or(len, |p| p + 3);
+            continue;
+        }
         let Some(&next) = b.get(i + 1) else {
             break;
         };
         if next == b'/' && b.get(i + 2).is_some_and(u8::is_ascii_alphabetic) {
-            i = parse_tag(s, i + 2).1;
+            let (tag, after) = parse_tag(s, i + 2);
+            if tag.is_some_and(|t| t.name == "template") {
+                templates = templates.saturating_sub(1);
+            }
+            i = after;
             continue;
         }
         if matches!(next, b'!' | b'?' | b'/') {
@@ -177,11 +195,18 @@ pub(super) fn parse(s: &str) -> Vec<Node<'_>> {
         }
         let (tag, after) = parse_tag(s, i + 1);
         i = after;
+        let Some(mut tag) = tag else {
+            break;
+        };
+        tag.in_template = templates > 0;
+        if tag.name == "template" {
+            templates += 1;
+        }
         if RAW_TEXT.contains(&tag.name.as_str()) {
-            let end = if tag.name == "script" {
-                find_script_end(b, i)
-            } else {
-                find_end_tag(b, i, &tag.name)
+            let end = match tag.name.as_str() {
+                "script" => find_script_end(b, i),
+                "plaintext" => len,
+                name => find_end_tag(b, i, name),
             };
             let text = &s[i..end];
             let name = tag.name.clone();
@@ -199,7 +224,8 @@ pub(super) fn parse(s: &str) -> Vec<Node<'_>> {
     out
 }
 
-fn parse_tag(s: &str, from: usize) -> (Tag, usize) {
+// A tag cut off by the end of the file is dropped, as browsers do.
+fn parse_tag(s: &str, from: usize) -> (Option<Tag>, usize) {
     let b = s.as_bytes();
     let len = b.len();
     let mut j = from;
@@ -214,7 +240,7 @@ fn parse_tag(s: &str, from: usize) -> (Tag, usize) {
             j += 1;
         }
         if j >= len {
-            break;
+            return (None, len);
         }
         if b[j] == b'>' {
             j += 1;
@@ -239,10 +265,13 @@ fn parse_tag(s: &str, from: usize) -> (Tag, usize) {
             if k < len && (b[k] == b'"' || b[k] == b'\'') {
                 let quote = b[k];
                 let vstart = k + 1;
-                let vend = b[vstart..]
+                let Some(vend) = b[vstart..]
                     .iter()
                     .position(|&c| c == quote)
-                    .map_or(len, |p| vstart + p);
+                    .map(|p| vstart + p)
+                else {
+                    return (None, len);
+                };
                 value = &s[vstart..vend];
                 k = (vend + 1).min(len);
             } else {
@@ -263,7 +292,14 @@ fn parse_tag(s: &str, from: usize) -> (Tag, usize) {
             });
         }
     }
-    (Tag { name, attrs }, j)
+    (
+        Some(Tag {
+            name,
+            attrs,
+            in_template: false,
+        }),
+        j,
+    )
 }
 
 fn named_entity(name: &str) -> Option<char> {

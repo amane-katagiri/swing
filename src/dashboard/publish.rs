@@ -55,6 +55,26 @@ fn stage_error(e: anyhow::Error) -> ApiError {
     }
 }
 
+pub(super) fn validate_site_and_url(site: &str, url: Option<&str>) -> Result<(), ApiError> {
+    publish::validate_site_fields(site, url).map_err(|e| match e {
+        publish::SiteFieldError::InvalidD(err) => {
+            ApiError::BadRequest(format!("invalid site: {err:#}"))
+        }
+        publish::SiteFieldError::InvalidUrl(url) => {
+            ApiError::BadRequest(format!("invalid url: {url} is not an http or https URL"))
+        }
+    })
+}
+
+pub(super) fn resolve_modes(
+    overrides: &publish::ModeOverrides,
+    defaults: &config::PublishConfig,
+) -> Result<publish::Modes, ApiError> {
+    publish::resolve_modes(overrides, defaults).map_err(|(name, e)| {
+        ApiError::BadRequest(format!("invalid {}: {e:#}", name.replace('-', "_")))
+    })
+}
+
 pub(super) fn try_lock_publish(state: &AppState) -> Result<PublishLock<'_>, ApiError> {
     state
         .locks
@@ -68,14 +88,7 @@ pub(super) async fn run_publish(
     dir: &std::path::Path,
     fields: PublishFields,
 ) -> Result<PublishOutcome, ApiError> {
-    publish::validate_site_fields(&fields.site, fields.url.as_deref()).map_err(|e| match e {
-        publish::SiteFieldError::InvalidD(err) => {
-            ApiError::BadRequest(format!("invalid site: {err:#}"))
-        }
-        publish::SiteFieldError::InvalidUrl(url) => {
-            ApiError::BadRequest(format!("invalid url: {url} is not an http or https URL"))
-        }
-    })?;
+    validate_site_and_url(&fields.site, fields.url.as_deref())?;
     publish::check_note_request(fields.note, fields.url.as_deref())
         .map_err(|e| ApiError::BadRequest(format!("invalid note: {e}")))?;
     let title = publish::normalize_title(fields.title.as_deref()).map_err(|_| {
@@ -84,10 +97,7 @@ pub(super) async fn run_publish(
                 .to_string(),
         )
     })?;
-    let modes =
-        publish::resolve_modes(&fields.modes, &state.config.publish).map_err(|(name, e)| {
-            ApiError::BadRequest(format!("invalid {}: {e:#}", name.replace('-', "_")))
-        })?;
+    let modes = resolve_modes(&fields.modes, &state.config.publish)?;
     publish::refuse_protected_paths(dir, &state.config)
         .map_err(|e| ApiError::BadRequest(format!("{e:#}")))?;
 

@@ -29,7 +29,7 @@ CLI の `swing publish`（[`cli/publish.md`](cli/publish.md)）とダッシュ�
 
 サイトのディレクトリを 1 回だけ一覧し（`ipfs::SiteListing`。シンボリックリンクを辿り、ドットファイルも含める。リンク先がディレクトリの外ならこの時点でエラー。[`mfs.md`](mfs.md#rpc)）、以降の確認と add はこの一覧を使う。一覧の後にディレクトリへ増えたファイルは公開しない。
 
-`check_links` が `off` でなければ、一覧したファイルの中身を読んで[リンクの確認](publish/links.md)をする（`publish::scan_links`）。続けて `LocalChecks::evaluate` が、モードが `off` でない項目だけを判定する。
+`check_links` が `off` でなければ、一覧したファイルの中身を読んで[リンクの確認](publish/links.md)をする（`publish::scan_links`）。ダッシュボードの公開画面は、アップロードする前に同じ判定を [`POST /api/publish/check`](dashboard/http-api/publish.md#post-apipublishcheck) でも行う（一覧とファイルの中身はブラウザから受け取る）。続けて `LocalChecks::evaluate` が、モードが `off` でない項目だけを判定する。
 
 - ドットファイル（`find_dotfiles`）: 各パスをルートから順にセグメントごとに見て、名前が `.` で始まり `[publish].dotfiles_allow` のどれとも一致しない最初のセグメントまでを 1 件とする（ディレクトリは 1 回だけ数え、その下は見ない）。一致するセグメントはそれ自身だけを見逃し、その下は続けて見る（`.well-known/.env` は `.well-known/.env` を 1 件とする）。表示や応答に並べるのは先頭 `LISTED_DOTFILES`（10）件。
 - サイズ: ファイルの大きさの合計（ブロックの共有やディレクトリのノードは数えない）が `SIZE_GUIDELINE`（512 MiB、固定）を超えたら引っかかる（ちょうどは超えない扱い）。ミラーが保存するかは各ミラーの `max_update_size` で決まるので、これは目安。
