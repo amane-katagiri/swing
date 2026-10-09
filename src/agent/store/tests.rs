@@ -308,6 +308,26 @@ async fn the_sweep_leaves_a_version_that_is_being_stored() {
 }
 
 #[tokio::test]
+async fn the_sweep_keeps_what_was_recorded_while_it_listed() {
+    let fx = Fixture::new(default_policy(), FakeKubo::default());
+    let path = fx.path(D, 200);
+    let stale = fx
+        .agent
+        .layout
+        .agent_version(&Keys::generate().public_key().to_hex(), D, 100);
+    fx.kubo().mfs.insert(path.clone(), "bafy-new".into());
+    fx.kubo().mfs.insert(stale.clone(), "bafy-stale".into());
+
+    let snapshot = fx.agent.state.lock().await.clone();
+    let garbage = crate::health::find_garbage(&fx.agent.ipfs, &fx.agent.layout, &snapshot).await;
+    fx.seed(D, "bafy-new", 1, 200).await;
+    fx.agent.remove_garbage(&garbage).await;
+
+    assert_eq!(fx.kubo().paths(), vec![path]);
+    assert_eq!(fx.cids(D).await, vec!["bafy-new"]);
+}
+
+#[tokio::test]
 async fn unfollow_leaves_an_account_with_a_version_being_stored_to_the_sweep() {
     let fx = Fixture::new(default_policy(), FakeKubo::default());
     fx.seed(D, "bafy-old", 1, 100).await;

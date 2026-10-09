@@ -102,10 +102,9 @@ Follow Set が決まった tick で行う。Follow Set の更新はこれより�
 
 ## sweep
 
-state のロックの中で行う。
-
-1. すべてのサイトに `policy::retention_evictions`（`max_per_site`・`keep_versions`・`keep_days`。最新版は残す）を適用する。evict があれば `sites` から消して state を保存し、パスを消す。evict が無ければ state は保存しない。
-2. `health::find_garbage` が返す、state の版に対応しない MFS の項目を消す（集め方は [`health.md`](health.md#state-に無いパスhealthfind_garbage)）。一覧に失敗したディレクトリの下は消さない。
+1. state のロックの中で、すべてのサイトに `policy::retention_evictions`（`max_per_site`・`keep_versions`・`keep_days`。最新版は残す）を適用する。evict があれば `sites` から消して state を保存し、パスを消す。evict が無ければ state は保存しない。終わったら state を複製してロックを放す。
+2. ロックの外で、複製した state を使って `health::find_garbage` で state の版に対応しない MFS の項目を集める（集め方は [`health.md`](health.md#state-に無いパスhealthfind_garbage)）。一覧に失敗したディレクトリの下は消さない。
+3. 項目があれば state のロックを取り直し、今の state の版のパスか保存中のパスにあたる項目、またはそれらを下に持つディレクトリの項目を除いて消す。一覧の間に保存を終えた版は今の state にあり、保存中の版は保存中として登録済みなので、どちらも消さない。消し終えるまでロックを持つので、保存の順序の 6 は消した後に登録するか、登録を見て残されるかのどちらかになる。
 
 ## 起動時の突き合わせ
 
@@ -117,7 +116,7 @@ state のロックの中で行う。
 - 「保存の順序」を同時に実行するタスクは最大 `concurrency` 個。
 - 同じ pubkey のタスクは同時に `max_sites_per_account` 個まで。超えたイベントは捨て、次の poll で拾い直す。
 - 同じサイト（`pubkey:d`）のタスクは同時に 1 つ。実行中に来たイベントは、実行中・待機中のものより `created_at` が新しいときだけ待機に置き（1 件、上書き）、実行後に同じタスクで続けて処理する。
-- 保存の順序の 6 と 9〜10 の state の更新、sweep、unfollow、突き合わせは state のロックの中で直列に行う。保存の順序の Kubo への書き込み（7 と、9・10 のパスの削除）はロックの外で行う。レプリカ報告の同期どうしは報告用のロックで直列になる（取る順は報告用 → state）。取得中の一時的なディスク使用量は最大で `concurrency` × `fetch_limit`。
+- 保存の順序の 6 と 9〜10 の state の更新、sweep の 1 と 3、unfollow、突き合わせは state のロックの中で直列に行う。sweep の 2（MFS の一覧）はロックの外で行う。保存の順序の Kubo への書き込み（7 と、9・10 のパスの削除）はロックの外で行う。レプリカ報告の同期どうしは報告用のロックで直列になる（取る順は報告用 → state）。取得中の一時的なディスク使用量は最大で `concurrency` × `fetch_limit`。
 
 ## state.json（state.rs）
 

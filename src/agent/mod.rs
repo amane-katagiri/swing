@@ -155,38 +155,46 @@ impl<C: KuboStore, N: Nip05Verify, R: ReportRelay> Agent<C, N, R> {
     }
 
     async fn sweep(&self) {
-        let mut state = self.state.lock().await;
-        let now = now_secs();
-        let keys: Vec<SiteKey> = state.sites.keys().cloned().collect();
-        let mut removed = Vec::new();
-        for key in keys {
-            let cids = policy::retention_evictions(
-                &store::version_infos(&state, &key),
-                &self.config.policy,
-                now,
-            );
-            if !cids.is_empty() {
-                info!(site_key = %key, count = cids.len(), "evicting versions past retention");
-                removed.push((key.clone(), state.remove_versions(&key, &cids)));
+        let snapshot = {
+            let mut state = self.state.lock().await;
+            let now = now_secs();
+            let keys: Vec<SiteKey> = state.sites.keys().cloned().collect();
+            let mut removed = Vec::new();
+            for key in keys {
+                let cids = policy::retention_evictions(
+                    &store::version_infos(&state, &key),
+                    &self.config.policy,
+                    now,
+                );
+                if !cids.is_empty() {
+                    info!(site_key = %key, count = cids.len(), "evicting versions past retention");
+                    removed.push((key.clone(), state.remove_versions(&key, &cids)));
+                }
             }
-        }
-        if !removed.is_empty() {
-            self.save(&state, "retention").await;
-            for (key, versions) in &removed {
-                self.remove_versions(key, versions).await;
+            if !removed.is_empty() {
+                self.save(&state, "retention").await;
+                for (key, versions) in &removed {
+                    self.remove_versions(key, versions).await;
+                }
             }
-        }
-        self.collect_garbage(&state).await;
+            state.clone()
+        };
+        let garbage = health::find_garbage(&self.ipfs, &self.layout, &snapshot).await;
+        self.remove_garbage(&garbage).await;
     }
 
-    async fn collect_garbage(&self, state: &State) {
-        let garbage = health::find_garbage(&self.ipfs, &self.layout, state).await;
+    async fn remove_garbage(&self, garbage: &health::Garbage) {
         for (path, error) in &garbage.unlisted {
             warn!(path = %path, error = %error, "listing MFS failed");
         }
+        if garbage.paths.is_empty() {
+            return;
+        }
+        let state = self.state.lock().await;
+        let expected = health::expected_paths(&self.layout, &state);
         let storing = self.storing.lock().unwrap().clone();
         for path in &garbage.paths {
-            if being_stored(&storing, path) {
+            if covers(&expected, path) || covers(&storing, path) {
                 continue;
             }
             self.remove_path(path).await;
@@ -259,7 +267,7 @@ impl<C: KuboStore, N: Nip05Verify, R: ReportRelay> Agent<C, N, R> {
         let storing = self.storing.lock().unwrap().clone();
         for pubkey_hex in &unfollowed {
             let path = self.layout.agent_account(pubkey_hex);
-            if being_stored(&storing, &path) {
+            if covers(&storing, &path) {
                 info!(path = %path, "a version is being stored under the unfollowed account; leaving its removal to the sweep");
                 continue;
             }
@@ -268,9 +276,9 @@ impl<C: KuboStore, N: Nip05Verify, R: ReportRelay> Agent<C, N, R> {
     }
 }
 
-fn being_stored(storing: &HashSet<String>, path: &str) -> bool {
+fn covers(paths: &HashSet<String>, path: &str) -> bool {
     let prefix = format!("{path}/");
-    storing.iter().any(|p| p == path || p.starts_with(&prefix))
+    paths.iter().any(|p| p == path || p.starts_with(&prefix))
 }
 
 #[cfg(test)]

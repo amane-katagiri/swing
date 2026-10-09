@@ -150,8 +150,8 @@ async fn list_dir<C: KuboStore>(
 }
 
 // Everything under the agent root belongs to SWING, so an entry the state doesn't reference is a leftover.
-pub async fn find_garbage<C: KuboStore>(ipfs: &C, layout: &MfsLayout, state: &State) -> Garbage {
-    let expected: HashSet<String> = state
+pub fn expected_paths(layout: &MfsLayout, state: &State) -> HashSet<String> {
+    state
         .sites
         .iter()
         .flat_map(|(key, versions)| {
@@ -159,7 +159,11 @@ pub async fn find_garbage<C: KuboStore>(ipfs: &C, layout: &MfsLayout, state: &St
                 .iter()
                 .filter_map(|v| version_path(layout, key, v.created_at))
         })
-        .collect();
+        .collect()
+}
+
+pub async fn find_garbage<C: KuboStore>(ipfs: &C, layout: &MfsLayout, state: &State) -> Garbage {
+    let expected = expected_paths(layout, state);
     let mut garbage = Garbage::default();
     let root = layout.agent_root();
     let Some(accounts) = list_dir(ipfs, &root, &mut garbage).await else {
