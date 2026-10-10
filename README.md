@@ -157,3 +157,5 @@ SWING は普段使いの PC で、使っている間だけ動かしても構い�
 ただし、同梱のマスコット「ゆれ子」（[`web/mascots/yureko/`](web/mascots/yureko/) のキャラクターとその画像）は MIT License の対象外で、Copyright (c) 2026 Amane Katagiri, all rights reserved とします。SWING とその改変版・再配布物（フォーク・パッケージ・コンテナイメージなど）の一部としてなら、ゆれ子のファイルを改変せずに複製・配布・表示できます。それ以外の利用（改変、別の作品やサービスでの使用など）には許諾が要ります。
 
 ダッシュボードの Desktop 画面は同梱フォント PixelMplus12（[M+ FONT LICENSE](web/fonts/LICENSE-PixelMplus.txt)、Copyright (C) 2002-2013 M+ FONTS PROJECT）を使用しています。
+
+ダッシュボードのアカウントの絵文字のフィンガープリントは Twemoji の画像（Twemoji graphics by Twitter, Inc and other contributors、[CC-BY 4.0](web/emoji/LICENSE-twemoji.txt)、<https://github.com/jdecked/twemoji>）を使用しています。

@@ -436,7 +436,7 @@ do_install() {
       fi
     done
   fi
-  for f in LICENSE LICENSE-PixelMplus.txt swing.example.toml README.md; do
+  for f in LICENSE LICENSE-PixelMplus.txt LICENSE-twemoji.txt swing.example.toml README.md; do
     if [ -f "$src/$f" ]; then
       put "$src/$f" "$f" 644
     fi
@@ -447,7 +447,7 @@ do_install() {
 
   new_files=$(
     cd "$LIB"
-    for f in swing ipfs LICENSE-kubo-APACHE LICENSE-kubo-MIT LICENSE LICENSE-PixelMplus.txt swing.example.toml README.md swing-uninstall.sh; do
+    for f in swing ipfs LICENSE-kubo-APACHE LICENSE-kubo-MIT LICENSE LICENSE-PixelMplus.txt LICENSE-twemoji.txt swing.example.toml README.md swing-uninstall.sh; do
       if [ -f "$f" ]; then
         printf '%s\n' "$f"
       fi

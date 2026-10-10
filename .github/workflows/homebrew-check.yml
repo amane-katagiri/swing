@@ -49,7 +49,7 @@ jobs:
           for tag in "v$version" "v$version.1"; do
             name="swing-$tag-aarch64-apple-darwin"
             mkdir -p "$W/dist/$name"
-            cp LICENSE swing.example.toml web/fonts/LICENSE-PixelMplus.txt "$W/dist/$name/"
+            cp LICENSE swing.example.toml web/fonts/LICENSE-PixelMplus.txt web/emoji/LICENSE-twemoji.txt "$W/dist/$name/"
             cp docs/release/README.md "$W/dist/$name/README.md"
             cp target/release/swing "$W/dist/$name/"
             tray/macos/bundle.sh target/release/swing-tray "$W/dist/$name"

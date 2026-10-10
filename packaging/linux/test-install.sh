@@ -121,6 +121,7 @@ EOF
   chmod +x "$stage/swing"
   echo "license" >"$stage/LICENSE"
   echo "fonts" >"$stage/LICENSE-PixelMplus.txt"
+  echo "emoji" >"$stage/LICENSE-twemoji.txt"
   echo "example" >"$stage/swing.example.toml"
   echo "readme $tag" >"$stage/README.md"
   tar -C "$ROOT/stage-$tag" -czf "$dir/swing-$tag-$TARGET.tar.gz" "swing-$tag-$TARGET"

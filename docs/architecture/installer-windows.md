@@ -56,7 +56,7 @@ Kubo の版を上げるときの手順は [`kubo.md#kubo-のバージョン`](ku
 
 - `swing.exe`・`swing-tray.exe`・`ipfs.exe`（`ipfs.exe` は `swing.exe` の隣で見つかる。[`kubo.md`](kubo.md#バイナリの検出kubolocate_binary)）
 - `swing.example.toml`・`README.md`（`docs/release/README.md`）
-- `LICENSE`・`LICENSE-PixelMplus.txt`・`LICENSE-Kubo.txt`・`LICENSE-Kubo-APACHE.txt`・`LICENSE-Kubo-MIT.txt`
+- `LICENSE`・`LICENSE-PixelMplus.txt`・`LICENSE-twemoji.txt`・`LICENSE-Kubo.txt`・`LICENSE-Kubo-APACHE.txt`・`LICENSE-Kubo-MIT.txt`
 - `unins000.exe`・`unins000.dat`
 
 ほかに作るもの:

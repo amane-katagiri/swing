@@ -16,7 +16,7 @@
 - workspace には `swing` と `swing-tray`（`tray/`）がある。fmt は `cargo fmt --all --check`、clippy / test は `--workspace` で回し、いずれもワークスペース全体（`tray/` を含む）を対象にする。Linux は `-p swing` だけをビルドし、Windows と macOS は `--workspace` でビルドする。
 - Windows 向けのビルドでは、`build.rs`（`swing` と `swing-tray` の両方）が `winresource` でファイルアイコン（`swing` は `assets/swing.ico`、`swing-tray` は `tray/assets/swing-tray.ico`）とバージョン情報（`Cargo.toml` の `name`・`version`）を exe に埋め込む。他の target では何もしない。
 - macOS の `swing` は素の実行ファイルで、ファイルアイコンは付かない。`swing-tray` は `tray/macos/bundle.sh` で `SWING.app` にまとめ、アイコンと名前はバンドルが持つ（[`tray.md`](tray.md#macos-のアプリバンドルswingapp)）。
-- 成果物は `swing-<ref>-<target>.tar.gz`（Windows は `.zip`）で、中身は `swing`（`swing.exe`）・`LICENSE`・`web/fonts/LICENSE-PixelMplus.txt`・`swing.example.toml` と、`docs/release/README.md` を `README.md` に改名したもの。Windows には `swing-tray.exe`、macOS には `SWING.app` も入れる。Kubo は同梱しない。
+- 成果物は `swing-<ref>-<target>.tar.gz`（Windows は `.zip`）で、中身は `swing`（`swing.exe`）・`LICENSE`・`web/fonts/LICENSE-PixelMplus.txt`・`web/emoji/LICENSE-twemoji.txt`・`swing.example.toml` と、`docs/release/README.md` を `README.md` に改名したもの。Windows には `swing-tray.exe`、macOS には `SWING.app` も入れる。Kubo は同梱しない。
 - `release` ジョブは、`packaging/linux/install.sh`（[`install-sh.md`](install-sh.md)）を `install.sh` としてアーカイブと並べてリリースに添える。`SHA256SUMS` はこれを含めて作る。
 - `windows-installer` ジョブ（windows-latest）が `build` の後に、`x86_64-pc-windows-msvc` の zip と Kubo から `packaging/windows/build.ps1` でインストーラー `swing-<ref>-x86_64-pc-windows-msvc-setup.exe` を作り、artifact `x86_64-pc-windows-msvc-setup` に置く（[`installer-windows.md`](installer-windows.md#組み立てbuildps1)）。
 - `homebrew` ジョブが macOS の 2 つのアーカイブから Homebrew の formula（`swing.rb`）を書き出し、artifact `homebrew` に置く（[`homebrew.md`](homebrew.md#tap-への公開)）。

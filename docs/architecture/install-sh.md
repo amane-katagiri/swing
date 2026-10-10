@@ -73,7 +73,7 @@ curl -fsSL .../install.sh | sh -s -- --version v0.1.0
 
 | ファイル | 元 |
 |---|---|
-| `swing`・`LICENSE`・`LICENSE-PixelMplus.txt`・`swing.example.toml`・`README.md` | リリースのアーカイブ |
+| `swing`・`LICENSE`・`LICENSE-PixelMplus.txt`・`LICENSE-twemoji.txt`・`swing.example.toml`・`README.md` | リリースのアーカイブ |
 | `ipfs`・`LICENSE-kubo-APACHE`・`LICENSE-kubo-MIT` | Kubo のアーカイブ（`LICENSE-APACHE`・`LICENSE-MIT`） |
 | `swing-uninstall.sh` | `install.sh` のコピー |
 

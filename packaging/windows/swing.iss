@@ -70,6 +70,7 @@ Source: "{#StageDir}\swing.example.toml"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#StageDir}\README.md"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#StageDir}\LICENSE"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#StageDir}\LICENSE-PixelMplus.txt"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#StageDir}\LICENSE-twemoji.txt"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#StageDir}\LICENSE-Kubo.txt"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#StageDir}\LICENSE-Kubo-APACHE.txt"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#StageDir}\LICENSE-Kubo-MIT.txt"; DestDir: "{app}"; Flags: ignoreversion

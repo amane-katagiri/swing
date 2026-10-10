@@ -11,7 +11,7 @@ SWING (Static-site Webring by IPFS and Nostr Generator) は、個人サイトの
 - `swing`（Windows は `swing.exe`）: 本体
 - `swing-tray.exe`（Windows）・`SWING.app`（macOS）: タスクトレイ（macOS はメニューバー）のアイコン
 - `swing.example.toml`: 設定ファイルの見本。すべての設定項目・対応する環境変数・既定値が載っています
-- `LICENSE`・`LICENSE-PixelMplus.txt`: ライセンス
+- `LICENSE`・`LICENSE-PixelMplus.txt`・`LICENSE-twemoji.txt`: ライセンス
 
 IPFS ノードの Kubo は同梱していません。Windows のインストーラー（`-setup.exe`）か Linux の `install.sh` で入れた場合は、Kubo の `ipfs`（`ipfs.exe`）とそのライセンスも同じ場所に入っていて、下記の Kubo の用意は済んでいます。Windows のインストーラーはサービスの登録も済ませています。
 
@@ -97,6 +97,6 @@ Linux でシステムユニットにするときは `sudo ./swing service instal
 
 ## ライセンス
 
-MIT License（`LICENSE`）。ダッシュボードの Desktop 画面は同梱フォント PixelMplus12（M+ FONT LICENSE、`LICENSE-PixelMplus.txt`、Copyright (C) 2002-2013 M+ FONTS PROJECT）を使用しています。
+MIT License（`LICENSE`）。ダッシュボードの Desktop 画面は同梱フォント PixelMplus12（M+ FONT LICENSE、`LICENSE-PixelMplus.txt`、Copyright (C) 2002-2013 M+ FONTS PROJECT）を使用しています。アカウントの絵文字のフィンガープリントには Twemoji の画像（Twemoji graphics by Twitter, Inc and other contributors、CC-BY 4.0、`LICENSE-twemoji.txt`）を使用しています。
 
 ただし、ダッシュボードに同梱のマスコット「ゆれ子」（`yureko` のキャラクターとその画像）は MIT License の対象外で、Copyright (c) 2026 Amane Katagiri, all rights reserved とします。SWING とその改変版・再配布物（フォーク・パッケージ・コンテナイメージなど）の一部としてなら、ゆれ子のファイルを改変せずに複製・配布・表示できます。それ以外の利用（改変、別の作品やサービスでの使用など）には許諾が要ります。

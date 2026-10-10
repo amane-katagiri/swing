@@ -16,7 +16,7 @@ $UninstallKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\{E8A9
 $Shortcut = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\SWING.lnk'
 $Files = @(
   'swing.exe', 'swing-tray.exe', 'ipfs.exe', 'swing.example.toml', 'README.md', 'LICENSE',
-  'LICENSE-PixelMplus.txt', 'LICENSE-Kubo.txt', 'LICENSE-Kubo-APACHE.txt', 'LICENSE-Kubo-MIT.txt', 'unins000.exe'
+  'LICENSE-PixelMplus.txt', 'LICENSE-twemoji.txt', 'LICENSE-Kubo.txt', 'LICENSE-Kubo-APACHE.txt', 'LICENSE-Kubo-MIT.txt', 'unins000.exe'
 )
 $Silent = @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART')
 

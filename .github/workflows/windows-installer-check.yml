@@ -45,7 +45,7 @@ jobs:
       - name: Package
         run: |
           New-Item -ItemType Directory -Force "dist\$env:ARCHIVE", $env:OUT | Out-Null
-          Copy-Item LICENSE, swing.example.toml, web\fonts\LICENSE-PixelMplus.txt "dist\$env:ARCHIVE\"
+          Copy-Item LICENSE, swing.example.toml, web\fonts\LICENSE-PixelMplus.txt, web\emoji\LICENSE-twemoji.txt "dist\$env:ARCHIVE\"
           Copy-Item docs\release\README.md "dist\$env:ARCHIVE\README.md"
           Copy-Item target\release\swing.exe, target\release\swing-tray.exe "dist\$env:ARCHIVE\"
           Compress-Archive -Path "dist\$env:ARCHIVE" -DestinationPath "dist\$env:ARCHIVE.zip"

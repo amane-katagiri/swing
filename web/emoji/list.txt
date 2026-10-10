@@ -1,0 +1,256 @@
+1f40e horse
+1f404 cow
+1f416 pig
+1f411 sheep
+1f42a dromedary camel
+1f999 llama
+1f418 elephant
+1f99b hippopotamus
+1f992 giraffe face
+1f993 zebra face
+1f98c deer
+1f998 kangaroo
+1f412 monkey
+1f415 dog
+1f408 cat
+1f405 tiger
+1f981 lion face
+1f98a fox face
+1f43b bear face
+1f43c panda face
+1f99d raccoon
+1f9a1 badger
+1f994 hedgehog
+1f43f chipmunk
+1f407 rabbit
+1f401 mouse
+1f987 bat
+1f984 unicorn face
+1f43e paw prints
+1f413 rooster
+1f423 hatching chick
+1f986 duck
+1f9a2 swan
+1f427 penguin
+1f989 owl
+1f99c parrot
+1f99a peacock
+1f422 turtle
+1f40a crocodile
+1f40d snake
+1f996 t-rex
+1f409 dragon
+1f438 frog face
+1f40b whale
+1f42c dolphin
+1f988 shark
+1f41f fish
+1f421 blowfish
+1f419 octopus
+1f980 crab
+1f990 shrimp
+1f41a spiral shell
+1f40c snail
+1f41d honeybee
+1f41e lady beetle
+1f98b butterfly
+1f331 seedling
+1f33f herb
+1f340 four leaf clover
+1f341 maple leaf
+1f332 evergreen tree
+1f334 palm tree
+1f335 cactus
+1f337 tulip
+1f338 cherry blossom
+1f33b sunflower
+1f490 bouquet
+1f344 mushroom
+1f330 chestnut
+2600 black sun with rays
+2601 cloud
+2614 umbrella with rain drops
+2744 snowflake
+26c4 snowman without snow
+1f300 cyclone
+1f308 rainbow
+1f319 crescent moon
+1f320 shooting star
+2728 sparkles
+1f525 fire
+1f4a7 droplet
+1f30a water wave
+1f30b volcano
+1f305 sunrise
+1f30d earth globe europe-africa
+1f5fa world map
+1f34a tangerine
+1f34b lemon
+1f34c banana
+1f349 watermelon
+1f347 grapes
+1f353 strawberry
+1f352 cherries
+1f34d pineapple
+1f965 coconut
+1f95d kiwifruit
+1f951 avocado
+1f966 broccoli
+1f955 carrot
+1f952 cucumber
+1f33d ear of maize
+1f360 roasted sweet potato
+1f95c peanuts
+1f950 croissant
+1f968 pretzel
+1f9c0 cheese wedge
+1f953 bacon
+1f356 meat on bone
+1f95a egg
+1f373 cooking
+1f354 hamburger
+1f35f french fries
+1f355 slice of pizza
+1f32d hot dog
+1f32e taco
+1f32f burrito
+1f96b canned food
+1f371 bento box
+1f359 rice ball
+1f363 sushi
+1f35c steaming bowl
+1f35d spaghetti
+1f95f dumpling
+1f961 takeout box
+1f361 dango
+1f366 soft ice cream
+1f369 doughnut
+1f36a cookie
+1f382 birthday cake
+1f9c1 cupcake
+1f36e custard
+1f36b chocolate bar
+1f36d lollipop
+1f36f honey pot
+1f37f popcorn
+2615 hot beverage
+1f964 cup with straw
+1f37c baby bottle
+1f374 fork and knife
+1f388 balloon
+1f389 party popper
+1f381 wrapped present
+1f380 ribbon
+1f38f carp streamer
+1f386 fireworks
+2764 heavy black heart
+1f3aa circus tent
+1f3a0 carousel horse
+1f3a1 ferris wheel
+1f3a2 roller coaster
+1f3ab ticket
+1f3a8 artist palette
+1f3ac clapper board
+1f4f7 camera
+1f3a4 microphone
+1f3a7 headphone
+1f3b5 musical note
+1f3b8 guitar
+1f941 drum with drumsticks
+1f4fb radio
+1f4bf optical disc
+1f3ae video game
+1f3b2 game die
+1f9e9 jigsaw puzzle piece
+1f004 mahjong tile red dragon
+265f black chess pawn
+2660 black spade suit
+2663 black club suit
+1f3af direct hit
+1f52e crystal ball
+267e permanent paper sign
+303d part alternation mark
+2668 hot springs
+26bd soccer ball
+1f3c8 american football
+1f3f8 badminton racquet and shuttlecock
+1f3d2 ice hockey stick and puck
+1f945 goal net
+1f94c curling stone
+1f3b3 bowling
+1f3bf ski and ski boot
+1f6f9 skateboard
+1f94f flying disc
+1f3a3 fishing pole and fish
+1f3c6 trophy
+1f455 t-shirt
+1f9e6 socks
+1f45f athletic shoe
+1f460 high-heeled shoe
+1f3a9 top hat
+1f393 graduation cap
+1f451 crown
+1f453 eyeglasses
+1f48d ring
+1f48e gem stone
+1f484 lipstick
+1f45c handbag
+1f9f3 luggage
+1f6aa door
+1f6cb couch and lamp
+1f5bc frame with picture
+1f6c1 bathtub
+1f9fc bar of soap
+1f9f9 broom
+1f9fa basket
+1f9f8 teddy bear
+1f9f6 ball of yarn
+1f4a1 electric light bulb
+1f526 electric torch
+1f50c electric plug
+1f4bb personal computer
+1f5b1 three button mouse
+231a watch
+23f0 alarm clock
+1f6d2 shopping trolley
+1f4e6 package
+1f4ee postbox
+1f4da books
+1f4dc scroll
+270f pencil
+2702 black scissors
+1f4ce paperclip
+1f4d0 triangular ruler
+1f9ee abacus
+1f9ed compass
+1f9f2 magnet
+1f9ea test tube
+1f9ec dna double helix
+269b atom symbol
+1f52d telescope
+1f528 hammer
+1f5dc clamp
+1f9f1 brick
+1f3e0 house building
+1f3e2 office building
+1f3ed factory
+1f3ef japanese castle
+1f5fc tokyo tower
+1f3df stadium
+26f2 fountain
+1f3fa amphora
+1f3ee izakaya lantern
+1f488 barber pole
+1f4ba seat
+1f697 automobile
+1f6b2 bicycle
+1f682 steam locomotive
+1f6a1 aerial tramway
+26f5 sailboat
+1f6f6 canoe
+2693 anchor
+1f6eb airplane departure
+1f681 helicopter
+1f680 rocket
+1f6f8 flying saucer
+1f6f0 satellite
