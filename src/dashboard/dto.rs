@@ -1,6 +1,7 @@
 use nostr_sdk::prelude::PublicKey;
 use serde::{Deserialize, Serialize};
 
+use crate::fingerprint::fingerprint;
 use crate::health;
 use crate::mirror;
 use crate::nostr;
@@ -212,6 +213,7 @@ pub struct PreviousVersionDto {
 pub struct AccountSitesDto {
     pub pubkey: String,
     pub npub: String,
+    pub fingerprint: Vec<String>,
     pub sites: Vec<SiteDto>,
 }
 
@@ -245,6 +247,7 @@ fn account_sites_dto(account: &mirror::AccountSites, gateway: Option<&str>) -> A
     AccountSitesDto {
         pubkey: account.pubkey.to_hex(),
         npub: mirror::npub(&account.pubkey),
+        fingerprint: fingerprint(&account.pubkey),
         sites: account.sites.iter().map(|s| site_dto(s, gateway)).collect(),
     }
 }
@@ -290,6 +293,7 @@ pub fn sites_dto(view: &mirror::SitesView, gateway: Option<&str>) -> SitesDto {
 pub struct VersionStatusDto {
     pub pubkey: Option<String>,
     pub npub: Option<String>,
+    pub fingerprint: Option<Vec<String>>,
     pub d: Option<String>,
     pub path: Option<String>,
     pub cid: Option<String>,
@@ -317,6 +321,7 @@ fn version_status_dto(v: &health::VersionStatus) -> VersionStatusDto {
     VersionStatusDto {
         pubkey: Some(v.pubkey.to_hex()),
         npub: Some(mirror::npub(&v.pubkey)),
+        fingerprint: Some(fingerprint(&v.pubkey)),
         d: Some(v.d.clone()),
         path: Some(v.path.clone()),
         cid: Some(v.cid.clone()),
@@ -331,6 +336,7 @@ fn invalid_key_status_dto(key: &str, cid: &str) -> VersionStatusDto {
     VersionStatusDto {
         pubkey: None,
         npub: None,
+        fingerprint: None,
         d: None,
         path: None,
         cid: Some(cid.to_string()),
@@ -352,6 +358,7 @@ pub struct GarbageDto {
 pub struct SiteSizeDto {
     pub pubkey: String,
     pub npub: String,
+    pub fingerprint: Vec<String>,
     pub d: String,
     pub path: String,
     pub actual: Option<u64>,
@@ -402,6 +409,7 @@ pub fn status_dto(report: &health::StatusReport) -> StatusDto {
         .map(|s| SiteSizeDto {
             pubkey: s.pubkey.to_hex(),
             npub: mirror::npub(&s.pubkey),
+            fingerprint: fingerprint(&s.pubkey),
             d: s.d.clone(),
             path: s.path.clone(),
             actual: s.actual,
@@ -466,8 +474,10 @@ pub struct WebringNodeDto {
     pub pubkey: String,
     pub npub: String,
     pub short_npub: String,
+    pub fingerprint: Vec<String>,
     pub names: Vec<String>,
     pub label: String,
+    pub more_sites: usize,
     pub depth: usize,
     pub root: bool,
     pub has_follow_set: bool,
@@ -481,8 +491,25 @@ pub struct WebringEdgeDto {
 }
 
 #[derive(Debug, Serialize)]
+pub struct AccountDto {
+    pub pubkey: String,
+    pub npub: String,
+    pub fingerprint: Vec<String>,
+}
+
+impl AccountDto {
+    pub fn new(pk: &PublicKey) -> Self {
+        Self {
+            pubkey: pk.to_hex(),
+            npub: mirror::npub(pk),
+            fingerprint: fingerprint(pk),
+        }
+    }
+}
+
+#[derive(Debug, Serialize)]
 pub struct ReferencingDto {
-    pub accounts: Vec<PubkeyDto>,
+    pub accounts: Vec<AccountDto>,
     pub more: usize,
 }
 
@@ -500,20 +527,30 @@ pub struct WebringDto {
 }
 
 pub fn webring_dto(view: &webring::WebringView) -> WebringDto {
-    let labels = webring::text_labels(&view.graph.nodes, &view.names);
+    let first_names = view
+        .name_lists
+        .iter()
+        .filter_map(|(pk, ds)| ds.first().map(|d| (*pk, d.clone())))
+        .collect();
+    let labels = webring::text_labels(&view.graph.nodes, &first_names);
     let mut nodes: Vec<(&PublicKey, &usize)> = view.graph.nodes.iter().collect();
     nodes.sort_by_key(|(pk, depth)| (**depth, labels[*pk].clone()));
     let node_dtos = nodes
         .into_iter()
-        .map(|(pk, depth)| WebringNodeDto {
-            pubkey: pk.to_hex(),
-            npub: mirror::npub(pk),
-            short_npub: webring::short_npub(pk),
-            names: view.name_lists.get(pk).cloned().unwrap_or_default(),
-            label: labels[pk].clone(),
-            depth: *depth,
-            root: *depth == 0,
-            has_follow_set: !view.graph.without_follow_set.contains(pk),
+        .map(|(pk, depth)| {
+            let names = view.name_lists.get(pk).cloned().unwrap_or_default();
+            WebringNodeDto {
+                pubkey: pk.to_hex(),
+                npub: mirror::npub(pk),
+                short_npub: webring::short_npub(pk),
+                fingerprint: fingerprint(pk),
+                more_sites: names.len().saturating_sub(1),
+                names,
+                label: labels[pk].clone(),
+                depth: *depth,
+                root: *depth == 0,
+                has_follow_set: !view.graph.without_follow_set.contains(pk),
+            }
         })
         .collect();
 
@@ -540,7 +577,7 @@ pub fn webring_dto(view: &webring::WebringView) -> WebringDto {
         beyond: view.graph.beyond,
         over_budget: view.graph.over_budget,
         referencing: ReferencingDto {
-            accounts: view.referencing.iter().map(PubkeyDto::new).collect(),
+            accounts: view.referencing.iter().map(AccountDto::new).collect(),
             more: view.referencing_dropped,
         },
         text: webring::render_text(
@@ -560,6 +597,7 @@ pub fn webring_dto(view: &webring::WebringView) -> WebringDto {
 pub struct ReporterDto {
     pub pubkey: String,
     pub npub: String,
+    pub fingerprint: Vec<String>,
     pub latest: bool,
     pub tier: String,
 }
@@ -610,6 +648,7 @@ pub fn replicas_dto(authors: &[replicas::AuthorReplicas]) -> ReplicasDto {
                             .map(|r| ReporterDto {
                                 pubkey: r.pubkey.to_hex(),
                                 npub: mirror::npub(&r.pubkey),
+                                fingerprint: fingerprint(&r.pubkey),
                                 latest: r.latest,
                                 tier: r.tier.as_str().to_string(),
                             })
@@ -988,6 +1027,45 @@ mod tests {
         assert!(invalid.path.is_none());
         assert!(invalid.size.is_none());
         assert!(invalid.created_at.is_none());
+    }
+
+    #[test]
+    fn webring_nodes_label_the_first_site_and_count_the_rest() {
+        use std::collections::{BTreeMap, BTreeSet, HashMap};
+        let k: Vec<PublicKey> = (0..2).map(|_| Keys::generate().public_key()).collect();
+        let name_lists = HashMap::from([
+            (k[0], vec!["a.example".to_string(), "b.example".to_string()]),
+            (k[1], vec!["a.example".to_string()]),
+        ]);
+        let view = webring::WebringView {
+            graph: webring::Graph {
+                nodes: BTreeMap::from([(k[0], 0), (k[1], 1)]),
+                without_follow_set: BTreeSet::new(),
+                edges: BTreeSet::new(),
+                beyond: 0,
+                over_budget: 0,
+            },
+            names: webring::site_labels(&name_lists),
+            name_lists,
+            mirror_set: "swing".to_string(),
+            depth: 1,
+            referencing: vec![],
+            referencing_dropped: 0,
+        };
+
+        let dto = webring_dto(&view);
+
+        let root = &dto.nodes[0];
+        assert_eq!(root.pubkey, k[0].to_hex());
+        assert_eq!(root.more_sites, 1);
+        assert_eq!(root.names, ["a.example", "b.example"]);
+        assert_eq!(
+            root.label,
+            format!("a.example ({})", webring::short_npub(&k[0]))
+        );
+        assert_eq!(root.fingerprint, fingerprint(&k[0]));
+        assert_eq!(dto.nodes[1].more_sites, 0);
+        assert!(dto.text.contains("  a.example (+1)  "));
     }
 
     #[test]

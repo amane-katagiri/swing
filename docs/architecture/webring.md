@@ -22,4 +22,6 @@ CLI の `swing webring`（[`cli/views.md#webring`](cli/views.md#webring)）と�
 
 ## ノードの名前
 
-ノードのアカウントのサイトイベントを取得し、サイトごとの最新（`nostr::select_latest`）の `d` を、1 アカウントあたり `d` の昇順で先頭 `MAX_SITES_PER_AUTHOR_LISTED` 件まで名前にする（`webring::site_name_lists`）。表示名はそれを `, ` でつないだもの。サイトイベントの無いアカウントは名前を持たない（表示側で縮めた npub（`webring::short_npub`。先頭 12 文字と末尾 6 文字）を使う）。
+ノードのアカウントのサイトイベントを取得し、サイトごとの最新（`nostr::select_latest`）の `d` を、1 アカウントあたり `d` の昇順で先頭 `MAX_SITES_PER_AUTHOR_LISTED` 件まで名前にする（`webring::site_name_lists`）。サイトイベントの無いアカウントは名前を持たない（表示側で縮めた npub（`webring::short_npub`。先頭 12 文字と末尾 6 文字）を使う）。
+
+表示名は先頭（昇順で最初）の `d` だけにし、残りは件数で添える（`webring::site_label` / `site_labels`）。CLI の出力では `blog.example.com (+2)`、サイトが 1 つなら `d` そのまま。ダッシュボードは先頭の `d` と残りの件数を別のフィールドで受け取り、`blog.example.com +2` のように出す（[`dashboard/http-api/nostr.md`](dashboard/http-api/nostr.md#get-apiwebringrootkeydepthn)）。すべての `d` は名前の一覧（API の `names`、ダッシュボードの詳細パネル）に残る。

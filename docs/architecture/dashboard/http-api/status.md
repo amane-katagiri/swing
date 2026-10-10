@@ -46,11 +46,12 @@
 
 ```json
 { "follow_set": { "found": true, "note": null },
-  "accounts": [ { "pubkey": "…", "npub": "…", "sites": [ { "d": "example.com", "cid": "bafy…", "url": "…", "size": 12345, "stored_size": 12300, "stored_at": 1790000100, "created_at": 1790000000, "title": "…", "message": "…", "nip05": "verified", "replicas": 3, "unverified_replicas": 0, "stored": true, "gateway_url": "…", "previous": null } ] } ],
+  "accounts": [ { "pubkey": "…", "npub": "…", "fingerprint": ["1f40b", "1f353", "1f680", "1f9e9"], "sites": [ { "d": "example.com", "cid": "bafy…", "url": "…", "size": 12345, "stored_size": 12300, "stored_at": 1790000100, "created_at": 1790000000, "title": "…", "message": "…", "nip05": "verified", "replicas": 3, "unverified_replicas": 0, "stored": true, "gateway_url": "…", "previous": null } ] } ],
   "replicas_error": null,
   "unfollowed": { "remove_on_unfollow": true, "accounts": [ { "...": "同じ形。ただし url・title・message・replicas・unverified_replicas は常に null、stored は常に true、stored_size は size と同じ値、previous は常に null" } ] } }
 ```
 
+- `fingerprint`（`accounts` と `unfollowed.accounts` の各要素）: 絵文字のフィンガープリント。4 つの Twemoji のコードポイント（16 進の小文字）の配列（[`../fingerprint.md`](../fingerprint.md)）。
 - `follow_set.note`: [使う Follow Set](../../mirror.md#使う-follow-set) の注記から括弧を外した文字列。無ければ `null`。
 - `nip05`・`title`・`message`・`size`・`stored_size`・`stored_at` は値が無ければ `null`。`title` は作者の自己申告で受信側は信頼しない（[`protocol.md` 第 4 節](../../../protocol.md#4-サイトイベント)）。`title` と `message`（生の `content`）のサニタイズ・切り詰めはフロントの責務。
 - 版ごとの重複排除込みの実測合計は `/api/status` の `sites[].actual` にしかない。
@@ -64,14 +65,15 @@
 
 ```json
 { "versions": [
-    { "pubkey": "…", "npub": "…", "d": "example.com", "path": "/swing/…", "cid": "bafy…", "size": 123, "created_at": 1, "health": "ok", "detail": null },
-    { "pubkey": null, "npub": null, "d": null, "path": null, "cid": "bafy…", "size": null, "created_at": null, "health": "invalid_key", "detail": "<state.json の生のキー>" } ],
-  "sites": [ { "pubkey": "…", "npub": "…", "d": "example.com", "path": "/swing/…", "actual": 123 } ],
+    { "pubkey": "…", "npub": "…", "fingerprint": ["1f40b", "1f353", "1f680", "1f9e9"], "d": "example.com", "path": "/swing/…", "cid": "bafy…", "size": 123, "created_at": 1, "health": "ok", "detail": null },
+    { "pubkey": null, "npub": null, "fingerprint": null, "d": null, "path": null, "cid": "bafy…", "size": null, "created_at": null, "health": "invalid_key", "detail": "<state.json の生のキー>" } ],
+  "sites": [ { "pubkey": "…", "npub": "…", "fingerprint": ["1f40b", "1f353", "1f680", "1f9e9"], "d": "example.com", "path": "/swing/…", "actual": 123 } ],
   "actual_bytes": 123,
   "garbage": [ { "path": "/swing/…", "list_failed": false, "list_failed_reason": null } ], "problems": 0 }
 ```
 
 - `sites[].actual`: サイトの実容量。測れなかったサイトは `null`。`actual_bytes` はその合計で、`null` のサイトが 1 つでもあれば `null`。
-- `health`: `ok`/`missing`/`cid_mismatch`/`incomplete`/`check_failed`/`invalid_key`。`ok` 以外は `detail` に理由が入る。`invalid_key` はキーが `<pubkey hex>:<d>` として読めなかった版で、`pubkey`・`npub`・`d`・`path`・`size`・`created_at` は `null`、`cid` にはその版の CID、`detail` に元のキー文字列が入る。
+- `health`: `ok`/`missing`/`cid_mismatch`/`incomplete`/`check_failed`/`invalid_key`。`ok` 以外は `detail` に理由が入る。`invalid_key` はキーが `<pubkey hex>:<d>` として読めなかった版で、`pubkey`・`npub`・`fingerprint`・`d`・`path`・`size`・`created_at` は `null`、`cid` にはその版の CID、`detail` に元のキー文字列が入る。
 - 問題があっても HTTP は常に 200（`problems` の件数で分かる）。
+- `fingerprint`（`versions` と `sites` の各要素）: 絵文字のフィンガープリント。形は `/api/sites` と同じ（[`../fingerprint.md`](../fingerprint.md)）。CLI の `swing status` もこの応答を読むので、項目を足すと新しい CLI は古い `swing up` の応答を読めない（再起動すれば揃う）。
 - `garbage[].list_failed_reason`: 一覧に失敗したディレクトリ（`list_failed: true`）だけ理由の文字列が入る。

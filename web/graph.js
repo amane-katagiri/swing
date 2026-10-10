@@ -1,6 +1,8 @@
 import { clamp, sanitizeDisplayText } from './util.js';
+import { EMOJI_SPRITE, fingerprintIds } from './ui.js';
 
 const NODE_RADIUS = 10;
+const NODE_EMOJI_SIZE = 14;
 const ARROW_LEN = 8;
 const LABEL_MAX = 16;
 const LINK_DISTANCE = 130;
@@ -11,6 +13,24 @@ const SVG_NS = 'http://www.w3.org/2000/svg';
 function truncateLabel(label) {
   if (label.length <= LABEL_MAX) return label;
   return label.slice(0, LABEL_MAX - 1) + '…';
+}
+
+function moreSuffix(node) {
+  return node.more_sites > 0 ? ` +${node.more_sites}` : '';
+}
+
+function buildNodeEmoji(node) {
+  const [id] = fingerprintIds(node.fingerprint, 1);
+  if (!id) return null;
+  const use = document.createElementNS(SVG_NS, 'use');
+  use.setAttribute('class', 'swing-node-emoji');
+  use.setAttribute('href', `${EMOJI_SPRITE}#e-${id}`);
+  use.setAttribute('x', String(-NODE_EMOJI_SIZE / 2));
+  use.setAttribute('y', String(-NODE_EMOJI_SIZE / 2));
+  use.setAttribute('width', String(NODE_EMOJI_SIZE));
+  use.setAttribute('height', String(NODE_EMOJI_SIZE));
+  use.setAttribute('aria-hidden', 'true');
+  return use;
 }
 
 function reducedMotion() {
@@ -185,22 +205,26 @@ export function createWebringGraph(container, { nodes, edges, onSelect, selected
       g.dataset.depth = String(s.data.depth);
       g.dataset.pubkey = s.data.pubkey;
       const label = sanitizeDisplayText(s.data.label);
+      const more = moreSuffix(s.data);
       g.setAttribute('tabindex', '0');
       g.setAttribute('role', 'button');
-      g.setAttribute('aria-label', label);
+      g.setAttribute('aria-label', label + more);
 
       const circle = document.createElementNS(SVG_NS, 'circle');
       circle.setAttribute('r', String(NODE_RADIUS));
 
       const title = document.createElementNS(SVG_NS, 'title');
-      title.textContent = label;
+      title.textContent = label + more;
 
       const text = document.createElementNS(SVG_NS, 'text');
       text.setAttribute('x', String(NODE_RADIUS + 4));
       text.setAttribute('y', '4');
-      text.textContent = truncateLabel(label);
+      text.textContent = truncateLabel(label) + more;
 
-      g.append(circle, title, text);
+      g.append(circle);
+      const emoji = buildNodeEmoji(s.data);
+      if (emoji) g.append(emoji);
+      g.append(title, text);
       labelEls.push(text);
       g.addEventListener('pointerdown', (ev) => startNodeDrag(ev, s, g));
       g.addEventListener('keydown', (ev) => {

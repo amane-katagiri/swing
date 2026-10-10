@@ -16,7 +16,9 @@ NIP-05 の検証結果はバッジで `OK`（`verified`）/ `NG`（`mismatch`）
 
 サイズの表示（`util.js::formatSiteSize`）: `stored_size` があればそのまま（1024 基数の `KiB`・`MiB`… で小数 1 桁）、無ければ `size` を `(12.3 MiB)` のように括弧書きで、どちらも無ければ `–`（値の意味は [`http-api/status.md#get-apisites`](http-api/status.md#get-apisites)）。
 
-Storage check は [`/api/status`](http-api/status.md#get-apistatus) をボタンを押したときだけ呼び、版ごとの判定の表と、サイトごとの実容量・合計の表を出す。
+アカウントの見出し（カード表示・テーブル表示とも、`Unfollowed but still stored` も含む）は、縮めた npub の前に絵文字のフィンガープリント（4 つ。[`fingerprint.md`](fingerprint.md)）を出す。
+
+Storage check は [`/api/status`](http-api/status.md#get-apistatus) をボタンを押したときだけ呼び、版ごとの判定の表と、サイトごとの実容量・合計の表を出す。どちらの表もアカウント列の縮めた npub の前にフィンガープリントの先頭 1 つを出す。フィンガープリントは `/api/status` の各行の `fingerprint` を使う。
 
 表の折り返しは [`web.md#共通の-ui-部品`](web.md#共通の-ui-部品)。
 
@@ -29,13 +31,15 @@ Storage check は [`/api/status`](http-api/status.md#get-apistatus) をボタン
 - root/depth のクエリは `swing:webring:query` に保存し、次に開いたときに復元する。
 - `document` に `swing:show-self-in-webring`（名前は `notify-settings.js::SHOW_SELF_IN_WEBRING`）を投げると、Webring 画面に移って自分（`cache.overview.pubkey`）のノードを選んだ状態にする。今のクエリのグラフを読み込み（キャッシュがあればそれ）、自分のノードがあればそれを選ぶ。無ければ root を空（＝自分）にしてクエリを保存し直し、読み込み直してから選ぶ（depth は変えない）。ブラウザの通知のクリックが使う（[`notices.md#おしらせの出し分け`](notices.md#おしらせの出し分け)）。
 - 再取得中は既存の表示を消さず `aria-busy="true"` で薄く表示する。表示中の内容が無いときだけ「Loading webring…」になる。
+- ノードの名前は `label` に、`more_sites` が 0 より大きければ ` +N` を添えたもの（[`../webring.md#ノードの名前`](../webring.md#ノードの名前)）。グラフ・`list` 表示・詳細パネルの見出しで使う。詳細パネルの名前の一覧には `names` のすべてを出す。
+- 絵文字のフィンガープリント（[`fingerprint.md`](fingerprint.md)）: `list` 表示のアカウントの行・Mutual と One-way の行（両端それぞれ）・`referencing` の行と、詳細パネルの見出し（名前の上の行）・報告者一覧に 4 つ出す。グラフでは先頭の 1 つをノードの円の中に出す（下記）。
 - ノードの選択で [`/api/replicas?key=`](http-api/nostr.md#get-apireplicaskeykey) を引き、詳細パネルを出す。報告者一覧は npub の後ろに最新版か古い版かのタグと tier のタグ（`author` は `[author]`、`chosen` は `[chosen]`、それ以外は `[unverified]`。日本語表示では `[作者]`・`[フォロー中]`・`[未検証]`）を付け、`site.dropped` が 0 より大きければ末尾に「…and N more」相当のヒント文を出す（[`../nostr/fetch.md`](../nostr/fetch.md)）。レプリカ数のバッジは `unverified` が 0 より大きければ未検証の件数も添える。
 - 詳細パネルには「ルートにする」ボタン（root をそのノードに替えて depth はそのままで読み込み直す）と、ミラー操作を置く。ミラー操作は、選んだノードが自分自身ならボタン無し、ミラー済みなら削除ボタン、未ミラーなら追加ボタン。判定はキャッシュ済みの `/api/sites` か `/api/mirror` の pubkey 集合。
 - `beyond` と `over_budget`（意味は [`../webring.md`](../webring.md#グラフwebringbuild_graph)）は、0 より大きければ画面下部にヒント文を 1 行ずつ出す。`list` 表示では `referencing`（起点を名指ししているだけでクロールには加えていないアカウント）を「Mutual」「One-way」と並ぶグループとして出し、`more` が 0 より大きければ末尾に件数のヒント文を添える（[`../webring.md`](../webring.md#たどり方webringcrawl)）。
 
 ### グラフ（`web/graph.js`）
 
-外部ライブラリを使わない自前の force-directed layout。ドラッグでノードを固定でき、クリックで選択して詳細パネルを開く。キーボード操作（Tab で移動、Enter/Space で選択）に対応する。パン・ホイールズーム（0.15〜4 倍）と全体表示（Fit）ができる。`prefers-reduced-motion: reduce` ではアニメーションせず 1 回だけ描画する。ノード・辺は class と `data-*` だけを持ち、色は CSS 側で当てる（[`css.md`](css.md)）。
+外部ライブラリを使わない自前の force-directed layout。ドラッグでノードを固定でき、クリックで選択して詳細パネルを開く。キーボード操作（Tab で移動、Enter/Space で選択）に対応する。パン・ホイールズーム（0.15〜4 倍）と全体表示（Fit）ができる。`prefers-reduced-motion: reduce` ではアニメーションせず 1 回だけ描画する。ノード・辺は class と `data-*` だけを持ち、色は CSS 側で当てる（[`css.md`](css.md)）。各ノードの円（半径 10）の中央にフィンガープリントの先頭の絵文字を 14px の `<use class="swing-node-emoji">` で重ねる。`aria-hidden` でポインタのイベントも受けないので、選択・ドラッグ・フォーカスはノードの `<g>` が受ける。ラベル（16 文字で切り詰める）・`<title>`・`aria-label` には ` +N` を切り詰めずに添える。
 
 ## Settings 画面（`settings.js`）
 

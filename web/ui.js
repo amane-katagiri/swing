@@ -11,6 +11,37 @@ export function copyButton(text, ariaLabel) {
   return el('button', attrs, t('copy'));
 }
 
+const SVG_NS = 'http://www.w3.org/2000/svg';
+const EMOJI_ID_RE = /^[0-9a-f]{4,5}$/;
+export const EMOJI_SPRITE = '/emoji.svg';
+
+export function fingerprintIds(ids, count) {
+  const valid = Array.isArray(ids) ? ids.filter((id) => typeof id === 'string' && EMOJI_ID_RE.test(id)) : [];
+  return count ? valid.slice(0, count) : valid;
+}
+
+// Some entries default to text presentation; VS16 makes them read as emoji and is harmless on the rest.
+export function emojiChar(id) {
+  return `${String.fromCodePoint(parseInt(id, 16))}\ufe0f`;
+}
+
+export function fingerprintBadge(ids, count) {
+  const shown = fingerprintIds(ids, count);
+  if (shown.length === 0) return null;
+  const chars = shown.map(emojiChar).join(' ');
+  const wrap = el('span', { class: 'swing-fingerprint', role: 'img', 'aria-label': chars, title: t('fingerprintTitle', { emoji: chars }) });
+  for (const id of shown) {
+    const svg = document.createElementNS(SVG_NS, 'svg');
+    svg.setAttribute('aria-hidden', 'true');
+    svg.setAttribute('focusable', 'false');
+    const use = document.createElementNS(SVG_NS, 'use');
+    use.setAttribute('href', `${EMOJI_SPRITE}#e-${id}`);
+    svg.append(use);
+    wrap.append(svg);
+  }
+  return wrap;
+}
+
 export function storedState(site) {
   if (site.stored) return 'true';
   return site.previous ? 'pending' : 'false';

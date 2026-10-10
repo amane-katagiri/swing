@@ -16,7 +16,7 @@ import {
   wireStyleSwitch,
   createLoadGuard,
 } from './util.js';
-import { copyButton, buildRemoveControl } from './ui.js';
+import { copyButton, buildRemoveControl, fingerprintBadge } from './ui.js';
 import { createWebringGraph } from './graph.js';
 import { SHOW_SELF_IN_WEBRING } from './notify-settings.js';
 
@@ -69,9 +69,24 @@ function webringQueryKey(q) {
   return params.toString();
 }
 
-function labelOf(map, pk) {
+function nodeLabel(n) {
+  return `${sanitizeDisplayText(n.label)}${n.more_sites > 0 ? ` +${n.more_sites}` : ''}`;
+}
+
+function accountLabel(map, pk) {
   const n = map.get(pk);
-  return n ? sanitizeDisplayText(n.label) : shortenMiddle(pk, 8, 4);
+  if (!n) return el('span', {}, shortenMiddle(pk, 8, 4));
+  const badge = fingerprintBadge(n.fingerprint);
+  return el('span', { dir: 'auto' }, [badge, badge ? ' ' : null, nodeLabel(n)]);
+}
+
+function reporterItem(r) {
+  const badge = fingerprintBadge(r.fingerprint);
+  return el('li', {}, [badge, badge ? ' ' : null, `${r.npub} ${r.latest ? t('tagLatest') : t('tagOlderVersion')}${tierTag(r.tier)}`]);
+}
+
+function linkRow(map, e, arrow) {
+  return el('div', { class: 'swing-webring-account-row' }, el('span', {}, [accountLabel(map, e.from), ` ${arrow} `, accountLabel(map, e.to)]));
 }
 
 function tierTag(tier) {
@@ -111,7 +126,8 @@ function renderListStyle(data) {
   for (const n of sorted) {
     accounts.append(
       el('div', { class: 'swing-webring-account-row' }, [
-        el('button', { type: 'button', dir: 'auto', onclick: () => selectNode(n.pubkey) }, sanitizeDisplayText(n.label)),
+        fingerprintBadge(n.fingerprint),
+        el('button', { type: 'button', dir: 'auto', onclick: () => selectNode(n.pubkey) }, nodeLabel(n)),
         el('span', { class: 'swing-hint' }, ` ${t('depthPrefix', { n: n.depth })}${n.root ? ` ${t('tagRoot')}` : ''}${!n.has_follow_set ? ` ${t('tagNoFollowSet')}` : ''}`),
       ]),
     );
@@ -123,18 +139,18 @@ function renderListStyle(data) {
 
   const mutualGroup = el('div', { class: 'swing-webring-group' }, el('h3', {}, t('mutualHeading', { n: mutual.length })));
   if (mutual.length === 0) mutualGroup.append(el('p', { class: 'swing-hint' }, t('none')));
-  for (const e of mutual) mutualGroup.append(el('div', { class: 'swing-webring-account-row', dir: 'auto' }, `${labelOf(nodeByKey, e.from)} ↔ ${labelOf(nodeByKey, e.to)}`));
+  for (const e of mutual) mutualGroup.append(linkRow(nodeByKey, e, '↔'));
   wrap.append(mutualGroup);
 
   const onewayGroup = el('div', { class: 'swing-webring-group' }, el('h3', {}, t('onewayHeading', { n: oneway.length })));
   if (oneway.length === 0) onewayGroup.append(el('p', { class: 'swing-hint' }, t('none')));
-  for (const e of oneway) onewayGroup.append(el('div', { class: 'swing-webring-account-row', dir: 'auto' }, `${labelOf(nodeByKey, e.from)} → ${labelOf(nodeByKey, e.to)}`));
+  for (const e of oneway) onewayGroup.append(linkRow(nodeByKey, e, '→'));
   wrap.append(onewayGroup);
 
   const referencing = data.referencing || { accounts: [], more: 0 };
   const referencingGroup = el('div', { class: 'swing-webring-group' }, el('h3', {}, t('referencingHeading', { n: referencing.accounts.length })));
   if (referencing.accounts.length === 0) referencingGroup.append(el('p', { class: 'swing-hint' }, t('none')));
-  for (const acct of referencing.accounts) referencingGroup.append(el('div', { class: 'swing-webring-account-row' }, acct.npub));
+  for (const acct of referencing.accounts) referencingGroup.append(el('div', { class: 'swing-webring-account-row' }, [fingerprintBadge(acct.fingerprint), acct.npub]));
   if (referencing.more > 0) referencingGroup.append(el('p', { class: 'swing-hint' }, t('referencingMoreHint', { more: referencing.more })));
   wrap.append(referencingGroup);
 
@@ -198,7 +214,7 @@ function renderNodeDetail(node, pubkey, replicasResp, memberSet) {
   const isMirrored = memberSet.has(pubkey);
   webringEls.detail.append(
     el('div', { class: 'swing-heading-row' }, [
-      el('h2', { dir: 'auto' }, node ? sanitizeDisplayText(node.label) : t('tableAccount')),
+      el('h2', { dir: 'auto' }, node ? [fingerprintBadge(node.fingerprint), ' ', nodeLabel(node)] : t('tableAccount')),
       isMirrored ? el('span', { class: 'swing-badge', 'data-mirrored': 'true' }, t('mirroredBadge')) : null,
     ]),
   );
@@ -235,7 +251,7 @@ function renderNodeDetail(node, pubkey, replicasResp, memberSet) {
       const reporters = el('ul', { class: 'swing-plain-list' });
       for (const r of site.reporters) {
         reporters.append(
-          el('li', {}, `${r.npub} ${r.latest ? t('tagLatest') : t('tagOlderVersion')}${tierTag(r.tier)}`),
+          reporterItem(r),
         );
       }
       block.append(reporters);

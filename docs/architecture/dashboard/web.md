@@ -4,6 +4,7 @@
 
 - [`views.md`](views.md): Sites・Webring・Publish・Settings・Setup・Login の各画面（Publish は子ページ [`views/publish.md`](views/publish.md)）
 - [`css.md`](css.md): CSS カスタマイズのインターフェース
+- [`fingerprint.md`](fingerprint.md): アカウントの絵文字のフィンガープリント（`web/emoji/`・`web/emoji.svg`）
 
 ## 構成
 
@@ -14,8 +15,8 @@
 | `storage.js` | `localStorage` の薄いラッパー | なし |
 | `i18n.js` | 多言語辞書と `t()` | `storage.js` |
 | `util.js` | 画面間で共有するキャッシュ（`cache`）・DOM と fetch の部品・表示スタイルと並び順の切替・非同期ロードのガード（`createLoadGuard`）・`pollUntil`（1 秒間隔・最大 120 回）・cookie を付けない確認と失敗時の間隔（[下記](#止まっている間の呼び出し)）・表示前のサニタイズ（[下記](#表示前のサニタイズ)）・表示の整形 | `storage.js`・`i18n.js` |
-| `ui.js` | 複数画面で共有する UI 部品（コピーボタン、バッジ、relay 結果表示、サイト名の行 `buildSiteNameRow` など） | `util.js`・`i18n.js` |
-| `graph.js` | webring 用の自前 force-directed layout（[`views.md#グラフwebgraphjs`](views.md#グラフwebgraphjs)） | `util.js` |
+| `ui.js` | 複数画面で共有する UI 部品（コピーボタン、バッジ、relay 結果表示、サイト名の行 `buildSiteNameRow`、絵文字のフィンガープリント `fingerprintBadge` など） | `util.js`・`i18n.js` |
+| `graph.js` | webring 用の自前 force-directed layout（[`views.md#グラフwebgraphjs`](views.md#グラフwebgraphjs)） | `util.js`・`ui.js` |
 | `pairing.js` | 署名アプリ（NIP-46）とのペアリングの部品（`createPairing`）。Setup 画面と Publish 画面の「つなぎ直す」が使う | `util.js`・`i18n.js` |
 | `notify-settings.js` | おしらせの設定（[`notices.md#設定`](notices.md#設定)）と `swing:desktop:mascot` 全体の読み書き、ブラウザの通知の許可、種類を確認するかどうか（`kindWanted`）、イベント名 `SHOW_SELF_IN_WEBRING`。Settings 画面・Webring 画面・Desktop 画面が使う | `storage.js` |
 | `stats.js` | Settings 画面のリソース使用量のパネル（`loadStats`・`renderStats`） | `util.js`・`i18n.js` |
@@ -79,6 +80,7 @@ CSS の読み込み順と上書きの仕方は [`css.md#読み込み順`](css.md
 
 ## 共通の UI 部品
 
+- 絵文字のフィンガープリント（`ui.js::fingerprintBadge(ids, count)`）: `.swing-fingerprint`（`role="img"`）の中に、絵文字ごとの `<svg><use href="/emoji.svg#e-<コードポイント>"/></svg>` を並べる。`count` を渡すと先頭からその数だけ。`aria-label` は絵文字の文字そのもの（既定がテキスト表示のものも絵文字として読まれるよう、それぞれに異体字セレクタ U+FE0F を付ける）を空白でつないだもの、`title` はそれに「本人の証明ではない」旨を添えた文言（`fingerprintTitle`）。形式に合わない ID は捨て、1 つも残らなければ何も出さない（[`fingerprint.md`](fingerprint.md)）。
 - busy 表示: `setBusy(button, bool)` で `disabled`・`aria-busy`・`.is-busy` を切り替える。
 - コピー（`util.js::copyWithFeedback`）: 押すと `data-copied` と `data-copy-failed` の両方を付け（成功なら `"true"`/`"false"`、失敗なら逆）、1.5 秒後に両方外す。文言はどのボタンも共通の `copy`（押した後は `copied`・`copyFailed`）で、対象の違いは `aria-label` 側で表す。
 - サイドナビ: 下端のトグル（`#nav-toggle`）で畳むとアイコンだけの幅（`--swing-nav-collapsed-width`）になり、各リンクの `title` にラベルを入れる。状態は `localStorage["swing:nav:collapsed"]` に保存し、`<body data-nav="collapsed">` で表す。フッタ（`.swing-nav-footer`）はミラーセット名とバージョン（`publish.js::updateNavFooter`）と、<https://yureko.samoyed.moe/> への「ゆれ子のSWING日記」のリンク（`index.html` に固定で書き、`[data-home-link]` を付ける。新しいタブで開く）を出す。リンクは最初は隠しておき、`updateNavFooter` で出し、ログイン画面に移ったら `app.js::showRoute` で隠すので、ログイン画面には出ない。

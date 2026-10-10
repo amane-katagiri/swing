@@ -37,13 +37,14 @@ Follow Set の書き換え（`mirror::apply_add` / `apply_remove`）は [`../../
 
 ```json
 { "depth": 2,
-  "nodes": [ { "pubkey": "…", "npub": "…", "short_npub": "npub1abc…uvwxyz", "names": ["example.com"], "label": "example.com", "depth": 0, "root": true, "has_follow_set": true } ],
+  "nodes": [ { "pubkey": "…", "npub": "…", "short_npub": "npub1abc…uvwxyz", "fingerprint": ["1f40b", "1f353", "1f680", "1f9e9"], "names": ["blog.example.com", "example.com"], "label": "blog.example.com", "more_sites": 1, "depth": 0, "root": true, "has_follow_set": true } ],
   "edges": [ { "from": "<hex>", "to": "<hex>", "mutual": true } ], "beyond": 0, "over_budget": 0,
-  "referencing": { "accounts": [ { "pubkey": "…", "npub": "…" } ], "more": 0 },
+  "referencing": { "accounts": [ { "pubkey": "…", "npub": "…", "fingerprint": ["…", "…", "…", "…"] } ], "more": 0 },
   "text": "…swing webring と同じ text 出力…", "dot": "…同じ dot 出力…", "mermaid": "…同じ mermaid 出力…" }
 ```
 
-- `root: true` は `depth == 0` のノード。ノードの並びは（深さ、ラベル）順。`names` は[ノードの名前](../../webring.md#ノードの名前)、`label` は `swing webring` の `text` と同じ表示名。
+- `root: true` は `depth == 0` のノード。ノードの並びは（深さ、ラベル）順。`names` は[ノードの名前](../../webring.md#ノードの名前)のすべての `d`、`label` は先頭の `d`（サイトが無ければ縮めた npub。同じものが複数あれば ` (<縮めた npub>)` を添える）、`more_sites` は `names` の残りの件数（`names.length - 1`、名前が無ければ 0）。`text`・`dot`・`mermaid` の表示名は `(+N)` 付きでこれと別。
+- `fingerprint`（ノードと `referencing.accounts` の各要素）: 絵文字のフィンガープリント。4 つの Twemoji のコードポイント（16 進の小文字）の配列（[`../fingerprint.md`](../fingerprint.md)）。
 - 双方向の組は `mutual: true` の辺 1 本、片方向は `mutual: false` の辺。
 - `beyond`・`over_budget`・`referencing` の意味は [`../../webring.md`](../../webring.md)。`referencing.more` は `referencing_dropped`。`referencing` は `nodes`・`edges`・`dot`・`mermaid` には含まれない。
 - `has_follow_set: false` は Follow Set を取得できなかったノード。`text`・`dot`・`mermaid` は `swing webring` の各 `--format` の出力（[`../../cli/views.md#webring`](../../cli/views.md#webring)）と同じ。
@@ -54,10 +55,11 @@ Follow Set の書き換え（`mirror::apply_add` / `apply_remove`）は [`../../
 
 ```json
 { "authors": [ { "pubkey": "…", "npub": "…", "sites": [
-  { "d": "example.com", "cid": "bafy…", "replicas": 2, "unverified": 1, "reports": 3, "dropped": 0, "reporters": [ { "pubkey": "…", "npub": "…", "latest": true, "tier": "chosen" } ] }
+  { "d": "example.com", "cid": "bafy…", "replicas": 2, "unverified": 1, "reports": 3, "dropped": 0, "reporters": [ { "pubkey": "…", "npub": "…", "fingerprint": ["…", "…", "…", "…"], "latest": true, "tier": "chosen" } ] }
 ] } ] }
 ```
 
+- `reporters[].fingerprint`: 報告者の絵文字のフィンガープリント（[`../fingerprint.md`](../fingerprint.md)）。
 - `tier`: `"author"` / `"chosen"` / `"other"` のいずれか（定義は [`../../nostr.md#レプリカ報告の信頼度replicastier`](../../nostr.md#レプリカ報告の信頼度replicastier)）。`"other"` が CLI の `[unverified]` に相当する。
 - `replicas` は最新版を持つ報告者のうち tier が `author`・`chosen` の数、`unverified` は tier が `other` の数。
 - `reports`（＝ `reporters.length`）は切り詰めた後の件数、`dropped` は切り詰めで落ちた件数。`reporters` の並びは [`replicas_of`](../../nostr.md#レプリカ報告の信頼度replicastier) の順。

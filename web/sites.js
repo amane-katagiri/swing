@@ -19,7 +19,7 @@ import {
   wireSortSwitch,
   createLoadGuard,
 } from './util.js';
-import { copyButton, storedBadge, storedState, appendLinksAndMessage, renderMirrorOpResult, renderOpError, buildRemoveControl, buildSiteNameRow, parseMirrorKeys, MAX_MIRROR_KEYS } from './ui.js';
+import { copyButton, fingerprintBadge, storedBadge, storedState, appendLinksAndMessage, renderMirrorOpResult, renderOpError, buildRemoveControl, buildSiteNameRow, parseMirrorKeys, MAX_MIRROR_KEYS } from './ui.js';
 
 const SITE_FIELD_DEFAULTS = { url: null, title: null, message: null, nip05: null, replicas: null, unverified_replicas: null, stored: null, stored_size: null, gateway_url: null, previous: null };
 
@@ -161,6 +161,11 @@ const sitesEls = {
   statusCheckResult: document.getElementById('status-check-result'),
 };
 
+function accountCell(fingerprint, npub) {
+  if (!npub) return el('td', { class: 'swing-nowrap' }, '–');
+  return el('td', { class: 'swing-nowrap' }, [fingerprintBadge(fingerprint, 1), ' ', shortenMiddle(npub, 10, 4)]);
+}
+
 export function renderStatusCheck(status) {
   sitesEls.statusCheckResult.replaceChildren();
   sitesEls.statusCheckResult.append(el('p', {}, status.problems === 0 ? t('noProblemsFound') : t('problemsFound', { n: status.problems })));
@@ -171,7 +176,7 @@ export function renderStatusCheck(status) {
     const tbody = el('tbody');
     for (const v of status.versions) {
       const tr = el('tr', { 'data-health': v.health });
-      tr.append(el('td', { class: 'swing-nowrap' }, v.npub ? shortenMiddle(v.npub, 10, 4) : '–'));
+      tr.append(accountCell(v.fingerprint, v.npub));
       tr.append(el('td', { dir: 'auto' }, v.d ? sanitizeDisplayText(v.d) : '–'));
       tr.append(el('td', { class: 'swing-mono swing-break-anywhere' }, v.path || '–'));
       tr.append(el('td', { class: 'swing-mono swing-nowrap' }, v.cid ? shortenMiddle(v.cid, 8, 6) : '–'));
@@ -197,7 +202,7 @@ export function renderStatusCheck(status) {
     const tbody = el('tbody');
     for (const site of status.sites) {
       const tr = el('tr');
-      tr.append(el('td', { class: 'swing-nowrap' }, shortenMiddle(site.npub, 10, 4)));
+      tr.append(accountCell(site.fingerprint, site.npub));
       tr.append(el('td', { dir: 'auto' }, sanitizeDisplayText(site.d)));
       tr.append(el('td', { class: 'swing-nowrap' }, site.actual == null ? '–' : formatBytes(site.actual)));
       tbody.append(tr);
@@ -227,6 +232,7 @@ function buildAccountElement(acct, opts) {
   if (filtering && sites.length === 0) return null;
 
   const head = el('div', { class: 'swing-account-head' }, [
+    fingerprintBadge(acct.fingerprint),
     el('span', { class: 'swing-account-key' }, shortenMiddle(acct.npub, 14, 6)),
     copyButton(acct.npub, t('copyNpub')),
   ]);

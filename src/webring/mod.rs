@@ -234,6 +234,22 @@ pub fn site_name_lists(
         .collect()
 }
 
+pub fn site_label(ds: &[String]) -> Option<String> {
+    let (first, rest) = ds.split_first()?;
+    Some(if rest.is_empty() {
+        first.clone()
+    } else {
+        format!("{first} (+{})", rest.len())
+    })
+}
+
+pub fn site_labels(name_lists: &HashMap<PublicKey, Vec<String>>) -> HashMap<PublicKey, String> {
+    name_lists
+        .iter()
+        .filter_map(|(pk, ds)| site_label(ds).map(|label| (*pk, label)))
+        .collect()
+}
+
 #[derive(Debug, Clone)]
 pub struct WebringView {
     pub graph: Graph,
@@ -269,10 +285,7 @@ pub async fn collect(
     .cloned()
     .collect();
     let name_lists = site_name_lists(&graph.nodes, &latest);
-    let names = name_lists
-        .iter()
-        .map(|(pk, ds)| (*pk, ds.join(", ")))
-        .collect();
+    let names = site_labels(&name_lists);
     Ok(WebringView {
         graph,
         name_lists,

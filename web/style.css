@@ -957,6 +957,24 @@ textarea.swing-input {
   unicode-bidi: isolate;
 }
 
+.swing-fingerprint {
+  display: inline-flex;
+  flex: none;
+  gap: 0.15em;
+  padding: 2px var(--swing-space-2);
+  border: 1px solid var(--swing-border-strong);
+  border-radius: 999px;
+  background: var(--swing-surface-raised);
+  line-height: 1;
+  vertical-align: -0.35em;
+}
+
+.swing-fingerprint svg {
+  display: block;
+  width: 1.15em;
+  height: 1.15em;
+}
+
 .swing-copyable {
   display: inline-flex;
   align-items: center;
@@ -1172,6 +1190,10 @@ body[data-view="sites"][data-style="table"] .swing-site-set {
   stroke-width: 3;
 }
 
+.swing-node-emoji {
+  pointer-events: none;
+}
+
 .swing-node text {
   fill: var(--swing-text);
   font-family: var(--swing-font-ui);
@@ -1275,6 +1297,12 @@ body[data-view="sites"][data-style="table"] .swing-site-set {
   font-family: var(--swing-font-mono);
   word-break: break-all;
   unicode-bidi: isolate;
+}
+
+.swing-node-detail h2 .swing-fingerprint {
+  display: flex;
+  width: fit-content;
+  margin-bottom: var(--swing-space-1);
 }
 
 .swing-node-detail h2 {

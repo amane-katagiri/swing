@@ -188,7 +188,7 @@ mod tests {
 
     use super::*;
     use crate::nostr::SiteEvent;
-    use crate::webring::site_name_lists;
+    use crate::webring::{site_labels, site_name_lists};
 
     fn keys(n: usize) -> Vec<PublicKey> {
         let mut pks: Vec<PublicKey> = (0..n).map(|_| Keys::generate().public_key()).collect();
@@ -204,10 +204,7 @@ mod tests {
         nodes: &BTreeMap<PublicKey, usize>,
         sites: &[SiteEvent],
     ) -> HashMap<PublicKey, String> {
-        site_name_lists(nodes, sites)
-            .into_iter()
-            .map(|(pk, ds)| (pk, ds.join(", ")))
-            .collect()
+        site_labels(&site_name_lists(nodes, sites))
     }
 
     fn sample() -> (Vec<PublicKey>, Graph, HashMap<PublicKey, String>) {
@@ -242,13 +239,13 @@ mod tests {
             "Webring of mirror set \"swing\" (depth 2): 4 accounts, 1 mutual, 2 one-way\n"
         ));
         assert!(text.contains(&format!(
-            "  blog.me.example, me.example  {}  depth=0  [root]\n",
+            "  blog.me.example (+1)  {}  depth=0  [root]\n",
             mirror::npub(&k[0])
         )));
         assert!(text.contains("depth=2  [no follow set]\n"));
-        assert!(text.contains("Mutual\n  blog.me.example, me.example ↔ bob.example\n"));
+        assert!(text.contains("Mutual\n  blog.me.example (+1) ↔ bob.example\n"));
         assert!(text.contains(&format!(
-            "  \"x\" <y> #z → blog.me.example, me.example\n  bob.example → {dave}\n"
+            "  \"x\" <y> #z → blog.me.example (+1)\n  bob.example → {dave}\n"
         )));
         assert!(text.contains("Referencing the root (unverified)\n  (none)\n"));
         assert!(text.ends_with("\n(accounts beyond depth 2, not shown: 2)\n"));
@@ -277,6 +274,24 @@ mod tests {
     }
 
     #[test]
+    fn site_labels_show_the_first_name_and_count_the_rest() {
+        let k = keys(3);
+        let nodes = BTreeMap::from([(k[0], 0), (k[1], 1), (k[2], 1)]);
+        let labels = site_names(
+            &nodes,
+            &[
+                site(k[0], "c.example"),
+                site(k[0], "a.example"),
+                site(k[0], "b.example"),
+                site(k[1], "solo.example"),
+            ],
+        );
+        assert_eq!(labels[&k[0]], "a.example (+2)");
+        assert_eq!(labels[&k[1]], "solo.example");
+        assert!(!labels.contains_key(&k[2]));
+    }
+
+    #[test]
     fn text_labels_disambiguate_duplicate_site_names() {
         let k = keys(2);
         let nodes = BTreeMap::from([(k[0], 0), (k[1], 1)]);
@@ -300,7 +315,7 @@ mod tests {
 
         assert!(dot.starts_with("digraph swing {\n"));
         assert!(dot.contains(&format!(
-            "  \"{me}\" [label=\"blog.me.example, me.example\\n{}\", penwidth=2];\n",
+            "  \"{me}\" [label=\"blog.me.example (+1)\\n{}\", penwidth=2];\n",
             short_npub(&k[0])
         )));
         assert!(dot.contains("label=\"\\\"x\\\" <y> #z\\n"));
@@ -317,7 +332,7 @@ mod tests {
 
         assert!(mermaid.starts_with("graph LR\n"));
         assert!(mermaid.contains(&format!(
-            "  n0[\"blog.me.example, me.example<br/>{}\"]:::root\n",
+            "  n0[\"blog.me.example (+1)<br/>{}\"]:::root\n",
             short_npub(&k[0])
         )));
         assert!(mermaid.contains("  n2[\"#quot;x#quot; #lt;y#gt; #35;z<br/>"));

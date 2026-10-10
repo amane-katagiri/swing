@@ -54,6 +54,7 @@ state は読まない。
 ## webring
 
 - `<key>` を起点にする。複数指定でき、すべて深さ 0 の起点になる。省略時は自分の pubkey。`--depth` の既定は 2（上限なし）、`--format` の既定は `text`。たどり方・グラフ・名前・`beyond`・`over_budget`・`referencing` は [`../webring.md`](../webring.md)。
+- ノードの名前は先頭の `d` と残りのサイト数（`blog.example.com (+2)`。[`../webring.md#ノードの名前`](../webring.md#ノードの名前)）。CLI の出力に絵文字のフィンガープリントは出さない。
 - `text`: 見出しに件数、`Accounts` にアカウントごとの名前（無ければ縮めた npub。同じ名前が複数あれば縮めた npub を添える）・npub・深さ・`[root]` / `[no follow set]`、`Mutual` に双方向の組、`One-way` に片方向の辺を出す。並びは（深さ、名前）の順。
   - 続けて `Referencing the root (unverified)` に `referencing` を npub で出し、落とした分は `… and N more`（1 件も無ければ `(none)`）。
   - `beyond` が 0 より大きければ `(accounts beyond depth N, not shown: N)`、`over_budget` が 0 より大きければ `(crawl stopped at the N-account budget; not reached: N)` を末尾に出す。

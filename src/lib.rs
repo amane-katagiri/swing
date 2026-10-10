@@ -4,6 +4,7 @@ pub mod api_client;
 pub mod auth;
 pub mod config;
 pub mod dashboard;
+pub mod fingerprint;
 pub mod format;
 pub mod gateway;
 pub mod health;

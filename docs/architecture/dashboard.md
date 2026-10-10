@@ -8,6 +8,7 @@
   - [`dashboard/views.md`](dashboard/views.md) — Desktop 以外の各画面
     - [`dashboard/views/publish.md`](dashboard/views/publish.md) — Publish 画面
   - [`dashboard/css.md`](dashboard/css.md) — CSS カスタマイズのインターフェース
+  - [`dashboard/fingerprint.md`](dashboard/fingerprint.md) — アカウントの絵文字のフィンガープリント（`src/fingerprint.rs`・`web/emoji/`・`web/emoji.svg`）
 - [`dashboard/desktop.md`](dashboard/desktop.md) — Desktop 画面（`web/desktop*`）
   - [`dashboard/desktop/control-panel.md`](dashboard/desktop/control-panel.md) — 「コントロール パネル」ダイアログ
   - [`dashboard/mascot.md`](dashboard/mascot.md) — Desktop 画面のマスコット（`web/desktop-mascot*`・`web/mascots/`）
@@ -68,7 +69,7 @@ HTTP サーバー（axum 0.8）で、ブラウザ向けの管理画面（`[dashb
 | ルート | Content-Type |
 |---|---|
 | `GET /` | `text/html; charset=utf-8`（`index.html`） |
-| `GET /favicon.svg` `/desktop-icons.svg` | `image/svg+xml` |
+| `GET /favicon.svg` `/desktop-icons.svg` `/emoji.svg` | `image/svg+xml` |
 | `GET /favicon-32.png` `/apple-touch-icon.png` | `image/png` |
 | `GET /*.css` | `text/css; charset=utf-8`。一覧は `STATIC_ASSETS` が正本 |
 | `GET /*.js` | `text/javascript; charset=utf-8`。一覧は `STATIC_ASSETS` が正本（役割は [`dashboard/web.md#構成`](dashboard/web.md#構成)） |

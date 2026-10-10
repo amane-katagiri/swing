@@ -77,13 +77,14 @@
 | `dashboard/` | Web ダッシュボードと制御 API（`mod.rs`・`guard.rs`・`api.rs`・`error.rs`・`publish.rs`・`session.rs`・`setup.rs`・`locks.rs`・`upload.rs`・`dto.rs`・`config_dto.rs`・`assets.rs`・`mascots/`・`test_support.rs`）。[dashboard.md](architecture/dashboard.md) |
 | `auth.rs`・`api_client.rs`・`login.rs` | トークン・セッション・ログインコード、CLI のダッシュボード API クライアント、`swing dashboard open`/`rotate-token`。[dashboard/security.md](architecture/dashboard/security.md) |
 | `activity.rs` | 最新の publish・レプリカ報告の時刻（`/api/activity` 用、メモリだけ） |
+| `fingerprint.rs` | 絵文字のフィンガープリント（`packaging/twemoji/` で作る `web/emoji.svg` も）。[dashboard/fingerprint.md](architecture/dashboard/fingerprint.md) |
 | `test_support.rs` | テスト用のフィクスチャ（`FakeKubo` など） |
 
 ほか:
 
 | パス | 役割 |
 |---|---|
-| `web/` | ダッシュボードのフロント。ビルド工程なしでバイナリに埋め込む（`fonts/`: 同梱フォント PixelMplus12、`mascots/`: 同梱のマスコットパック）。[dashboard/web.md](architecture/dashboard/web.md) |
+| `web/` | ダッシュボードのフロント。ビルド工程なしでバイナリに埋め込む（`fonts/`: 同梱フォント PixelMplus12、`emoji/`: 絵文字のフィンガープリントの一覧、`mascots/`: 同梱のマスコットパック）。[dashboard/web.md](architecture/dashboard/web.md) |
 | `tests/` | 統合テスト（`#[ignore]`。下記「[テスト](#テスト)」） |
 | `tray/` | タスクトレイ `swing-tray` の別クレート（workspace のメンバー。`src/`・`assets/`・`macos/`）。[tray.md](architecture/tray.md) |
 | `build.rs`・`assets/swing.ico` | Windows 向けに exe へアイコンとバージョン情報を埋め込む。アイコンは `tray/assets/` の画像とともに `web/favicon.svg` から書き出した派生物（[tray.md](architecture/tray.md#アイコン)） |
