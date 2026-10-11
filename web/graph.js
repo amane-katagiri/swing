@@ -5,16 +5,19 @@ const NODE_RADIUS = 10;
 const NODE_EMOJI_SIZE = 14;
 const ARROW_LEN = 8;
 const LABEL_MAX = 16;
-const LINK_DISTANCE = 130;
-const REPULSION = 2600;
+const LINK_DISTANCE = 90;
+const REPULSION = 1300;
 const RING_SPACING = 60;
 const LABEL_GAP = 4;
+const NODE_STROKE_ALLOWANCE = 2;
 const LABEL_HEIGHT = 14;
 const LABEL_CHAR_PX = 6.6;
 const COLLIDE_PAD = 6;
 const EDGE_CLEARANCE = 22;
 const EDGE_AVOID_MAX_NODES = 150;
 const WARMUP_MS = 150;
+const LABEL_SCALE_PASSES = 3;
+const LABEL_SCALE_ALPHA = 0.3;
 const SVG_NS = 'http://www.w3.org/2000/svg';
 
 function truncateLabel(label) {
@@ -79,14 +82,14 @@ function seedPositions(sim) {
   }
 }
 
-function labelSide(s) {
+function labelSide(s, scale) {
   let right = 0;
   let left = 0;
   for (const n of s.neighbors) {
     const dx = n.x - s.x;
     if (dx === 0) continue;
     const slope = Math.abs(n.y - s.y) / Math.abs(dx);
-    const overlap = Math.min(s.labelWidth, LABEL_HEIGHT / 2 / Math.max(slope, 0.001));
+    const overlap = Math.min(s.labelWidth * scale, (LABEL_HEIGHT * scale) / 2 / Math.max(slope, 0.001));
     if (dx > 0) right += overlap;
     else left += overlap;
   }
@@ -251,6 +254,7 @@ export function createWebringGraph(container, { nodes, edges, onSelect, selected
   const nodeEls = new Map();
   const labelEls = [];
   let baseLabelFontPx = null;
+  let labelScale = 1;
 
   function updateSelection() {
     for (const [pk, g] of nodeEls) {
@@ -347,7 +351,7 @@ export function createWebringGraph(container, { nodes, edges, onSelect, selected
   }
 
   function placeLabel(s) {
-    const offset = NODE_RADIUS + LABEL_GAP / clamp(view.zoom, 0.15, 4);
+    const offset = NODE_RADIUS + NODE_STROKE_ALLOWANCE + LABEL_GAP / clamp(view.zoom, 0.15, 4);
     const left = s.side === 'left';
     s.label.setAttribute('x', String(left ? -offset : offset));
     s.label.setAttribute('text-anchor', left ? 'end' : 'start');
@@ -475,14 +479,14 @@ export function createWebringGraph(container, { nodes, edges, onSelect, selected
       s.y += s.vy * alpha;
       maxSpeed = Math.max(maxSpeed, Math.abs(s.vx), Math.abs(s.vy));
     }
-    for (const s of sim) s.side = labelSide(s);
+    for (const s of sim) s.side = labelSide(s, labelScale);
     alpha = Math.max(0, alpha - alphaDecay);
     return maxSpeed;
   }
 
   function nodeBox(s) {
-    const label = NODE_RADIUS + LABEL_GAP + s.labelWidth;
-    const half = Math.max(NODE_RADIUS, LABEL_HEIGHT / 2);
+    const label = NODE_RADIUS + NODE_STROKE_ALLOWANCE + (LABEL_GAP + s.labelWidth) * labelScale;
+    const half = Math.max(NODE_RADIUS, (LABEL_HEIGHT * labelScale) / 2);
     return s.side === 'left'
       ? { x0: s.x - label, x1: s.x + NODE_RADIUS, y0: s.y - half, y1: s.y + half }
       : { x0: s.x - NODE_RADIUS, x1: s.x + label, y0: s.y - half, y1: s.y + half };
@@ -533,8 +537,7 @@ export function createWebringGraph(container, { nodes, edges, onSelect, selected
     }
   }
 
-  function warmUp() {
-    const deadline = performance.now() + WARMUP_MS;
+  function warmUp(deadline) {
     let maxSpeed = Infinity;
     while (alpha > alphaMin && maxSpeed > 0.03 && performance.now() < deadline) {
       maxSpeed = stepOnce();
@@ -565,6 +568,7 @@ export function createWebringGraph(container, { nodes, edges, onSelect, selected
   }
 
   function restart(minAlpha) {
+    labelScale = 1 / clamp(view.zoom, 0.15, 4);
     alpha = Math.max(alpha, minAlpha);
     if (reducedMotion()) {
       if (rafId) {
@@ -646,9 +650,19 @@ export function createWebringGraph(container, { nodes, edges, onSelect, selected
   buildNodes();
   buildEdges();
   measureLabels();
-  const settled = single || warmUp();
+  const deadline = performance.now() + WARMUP_MS;
+  let settled = single || warmUp(deadline);
   render();
   fit();
+  for (let pass = 0; pass < LABEL_SCALE_PASSES && settled && !single; pass += 1) {
+    const next = 1 / clamp(view.zoom, 0.15, 4);
+    if (Math.abs(next - labelScale) <= labelScale * 0.05) break;
+    labelScale = next;
+    alpha = Math.max(alpha, LABEL_SCALE_ALPHA);
+    settled = warmUp(deadline);
+    render();
+    fit();
+  }
   if (!settled) restart(0);
 
   let resizeObserver = null;
