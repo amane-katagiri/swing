@@ -7,7 +7,14 @@ const ARROW_LEN = 8;
 const LABEL_MAX = 16;
 const LINK_DISTANCE = 130;
 const REPULSION = 2600;
-const INITIAL_SPREAD_RADIUS = 150;
+const RING_SPACING = 60;
+const LABEL_GAP = 4;
+const LABEL_HEIGHT = 14;
+const LABEL_CHAR_PX = 6.6;
+const COLLIDE_PAD = 6;
+const EDGE_CLEARANCE = 22;
+const EDGE_AVOID_MAX_NODES = 150;
+const WARMUP_MS = 150;
 const SVG_NS = 'http://www.w3.org/2000/svg';
 
 function truncateLabel(label) {
@@ -31,6 +38,59 @@ function buildNodeEmoji(node) {
   use.setAttribute('height', String(NODE_EMOJI_SIZE));
   use.setAttribute('aria-hidden', 'true');
   return use;
+}
+
+function circularMean(angles) {
+  let sin = 0;
+  let cos = 0;
+  for (const a of angles) {
+    sin += Math.sin(a);
+    cos += Math.cos(a);
+  }
+  return Math.atan2(sin, cos);
+}
+
+function seedPositions(sim) {
+  const rings = new Map();
+  for (const s of sim) {
+    const depth = Number.isFinite(s.data.depth) ? s.data.depth : 0;
+    if (!rings.has(depth)) rings.set(depth, []);
+    rings.get(depth).push(s);
+  }
+  const angles = new Map();
+  let radius = 0;
+  for (const depth of [...rings.keys()].sort((a, b) => a - b)) {
+    const ring = rings.get(depth);
+    const minRadius = ring.length > 1 ? (ring.length * RING_SPACING) / (Math.PI * 2) : 0;
+    radius = depth === 0 && ring.length === 1 ? 0 : Math.max(radius + LINK_DISTANCE, minRadius);
+    const step = (Math.PI * 2) / ring.length;
+    const wanted = ring.map((s, i) => {
+      const placed = s.neighbors.filter((n) => angles.has(n)).map((n) => angles.get(n));
+      return { s, angle: placed.length > 0 ? circularMean(placed) : i * step };
+    });
+    wanted.sort((a, b) => a.angle - b.angle);
+    const offset = circularMean(wanted.map((w, i) => w.angle - i * step));
+    wanted.forEach((w, i) => {
+      const angle = offset + i * step;
+      angles.set(w.s, angle);
+      w.s.x = Math.cos(angle) * radius;
+      w.s.y = Math.sin(angle) * radius;
+    });
+  }
+}
+
+function labelSide(s) {
+  let right = 0;
+  let left = 0;
+  for (const n of s.neighbors) {
+    const dx = n.x - s.x;
+    if (dx === 0) continue;
+    const slope = Math.abs(n.y - s.y) / Math.abs(dx);
+    const overlap = Math.min(s.labelWidth, LABEL_HEIGHT / 2 / Math.max(slope, 0.001));
+    if (dx > 0) right += overlap;
+    else left += overlap;
+  }
+  return left < right ? 'left' : 'right';
 }
 
 function reducedMotion() {
@@ -162,23 +222,28 @@ export function createWebringGraph(container, { nodes, edges, onSelect, selected
   container.append(wrap, buildLegend(strings));
 
   const single = nodes.length === 1;
-  const sim = nodes.map((n, i) => {
-    const angle = (i / nodes.length) * Math.PI * 2;
-    const radius = single ? 0 : INITIAL_SPREAD_RADIUS;
-    return {
-      data: n,
-      x: Math.cos(angle) * radius,
-      y: Math.sin(angle) * radius,
-      vx: 0,
-      vy: 0,
-      fx: null,
-      fy: null,
-    };
-  });
+  const sim = nodes.map((n) => ({
+    data: n,
+    x: 0,
+    y: 0,
+    vx: 0,
+    vy: 0,
+    fx: null,
+    fy: null,
+    labelWidth: 0,
+    side: 'right',
+    box: null,
+    neighbors: [],
+  }));
   const byId = new Map(sim.map((s) => [s.data.pubkey, s]));
   const simEdges = edges
     .map((e) => ({ edge: e, a: byId.get(e.from), b: byId.get(e.to) }))
-    .filter((e) => e.a && e.b);
+    .filter((e) => e.a && e.b && e.a !== e.b);
+  for (const e of simEdges) {
+    e.a.neighbors.push(e.b);
+    e.b.neighbors.push(e.a);
+  }
+  seedPositions(sim);
 
   const view = { x: 0, y: 0, zoom: 1 };
   let selected = selectedPubkey || null;
@@ -217,7 +282,7 @@ export function createWebringGraph(container, { nodes, edges, onSelect, selected
       title.textContent = label + more;
 
       const text = document.createElementNS(SVG_NS, 'text');
-      text.setAttribute('x', String(NODE_RADIUS + 4));
+      text.setAttribute('x', String(NODE_RADIUS + LABEL_GAP));
       text.setAttribute('y', '4');
       text.textContent = truncateLabel(label) + more;
 
@@ -226,6 +291,7 @@ export function createWebringGraph(container, { nodes, edges, onSelect, selected
       if (emoji) g.append(emoji);
       g.append(title, text);
       labelEls.push(text);
+      s.label = text;
       g.addEventListener('pointerdown', (ev) => startNodeDrag(ev, s, g));
       g.addEventListener('keydown', (ev) => {
         if (ev.key !== 'Enter' && ev.key !== ' ' && ev.key !== 'Spacebar') return;
@@ -253,15 +319,38 @@ export function createWebringGraph(container, { nodes, edges, onSelect, selected
     }
   }
 
+  function measureLabels() {
+    for (const s of sim) {
+      let width = 0;
+      try {
+        width = s.label.getComputedTextLength();
+      } catch {
+        width = 0;
+      }
+      s.labelWidth = width > 0 ? width : s.label.textContent.length * LABEL_CHAR_PX;
+    }
+  }
+
   function applyLabelScale() {
     if (labelEls.length === 0) return;
     if (baseLabelFontPx == null) {
       const parsed = parseFloat(getComputedStyle(labelEls[0]).fontSize);
       baseLabelFontPx = Number.isFinite(parsed) && parsed > 0 ? parsed : 11;
     }
-    const effective = baseLabelFontPx / clamp(view.zoom, 0.15, 4);
-    const fontSize = `${effective.toFixed(2)}px`;
-    for (const text of labelEls) text.style.fontSize = fontSize;
+    const scale = 1 / clamp(view.zoom, 0.15, 4);
+    const fontSize = `${(baseLabelFontPx * scale).toFixed(2)}px`;
+    const halo = `${(3 * scale).toFixed(2)}px`;
+    for (const text of labelEls) {
+      text.style.fontSize = fontSize;
+      text.style.strokeWidth = halo;
+    }
+  }
+
+  function placeLabel(s) {
+    const offset = NODE_RADIUS + LABEL_GAP / clamp(view.zoom, 0.15, 4);
+    const left = s.side === 'left';
+    s.label.setAttribute('x', String(left ? -offset : offset));
+    s.label.setAttribute('text-anchor', left ? 'end' : 'start');
   }
 
   function render() {
@@ -269,6 +358,7 @@ export function createWebringGraph(container, { nodes, edges, onSelect, selected
     for (const s of sim) {
       const g = nodeEls.get(s.data.pubkey);
       if (g) g.setAttribute('transform', `translate(${s.x.toFixed(1)},${s.y.toFixed(1)})`);
+      if (s.label) placeLabel(s);
     }
     for (const e of simEdges) {
       const dx = e.b.x - e.a.x;
@@ -309,8 +399,16 @@ export function createWebringGraph(container, { nodes, edges, onSelect, selected
       minY = Math.min(minY, s.y);
       maxY = Math.max(maxY, s.y);
     }
-    const padLeft = clamp(w * 0.06, 24, 50);
-    const padRight = clamp(w * 0.2, 60, 190);
+    let leftLabel = 0;
+    let rightLabel = 0;
+    for (const s of sim) {
+      if (s.side === 'left') leftLabel = Math.max(leftLabel, s.labelWidth);
+      else rightLabel = Math.max(rightLabel, s.labelWidth);
+    }
+    const edgePad = clamp(w * 0.04, 16, 40);
+    const labelPad = (width) => (width > 0 ? NODE_RADIUS + LABEL_GAP + width : NODE_RADIUS);
+    const padLeft = Math.min(w * 0.3, edgePad + labelPad(leftLabel));
+    const padRight = Math.min(w * 0.3, edgePad + labelPad(rightLabel));
     const padY = clamp(h * 0.09, 24, 50);
     const availW = Math.max(1, w - padLeft - padRight);
     const availH = Math.max(1, h - padY * 2);
@@ -325,12 +423,13 @@ export function createWebringGraph(container, { nodes, edges, onSelect, selected
   }
 
   let alpha = 1;
-  const alphaDecay = 0.025;
+  const alphaDecay = 0.004;
   const alphaMin = 0.01;
   let rafId = null;
 
   function stepOnce() {
     const n = sim.length;
+    for (const s of sim) s.box = nodeBox(s);
     for (let i = 0; i < n; i++) {
       const a = sim[i];
       for (let j = i + 1; j < n; j++) {
@@ -344,8 +443,10 @@ export function createWebringGraph(container, { nodes, edges, onSelect, selected
         const fy = (dy / dist) * force;
         if (a.fx == null) { a.vx += fx; a.vy += fy; }
         if (b.fx == null) { b.vx -= fx; b.vy -= fy; }
+        collide(a, b);
       }
     }
+    if (n <= EDGE_AVOID_MAX_NODES) avoidEdges();
     for (const e of simEdges) {
       const dx = e.b.x - e.a.x;
       const dy = e.b.y - e.a.y;
@@ -374,8 +475,71 @@ export function createWebringGraph(container, { nodes, edges, onSelect, selected
       s.y += s.vy * alpha;
       maxSpeed = Math.max(maxSpeed, Math.abs(s.vx), Math.abs(s.vy));
     }
+    for (const s of sim) s.side = labelSide(s);
     alpha = Math.max(0, alpha - alphaDecay);
     return maxSpeed;
+  }
+
+  function nodeBox(s) {
+    const label = NODE_RADIUS + LABEL_GAP + s.labelWidth;
+    const half = Math.max(NODE_RADIUS, LABEL_HEIGHT / 2);
+    return s.side === 'left'
+      ? { x0: s.x - label, x1: s.x + NODE_RADIUS, y0: s.y - half, y1: s.y + half }
+      : { x0: s.x - NODE_RADIUS, x1: s.x + label, y0: s.y - half, y1: s.y + half };
+  }
+
+  function collide(a, b) {
+    const ba = a.box;
+    const bb = b.box;
+    const ox = Math.min(ba.x1, bb.x1) - Math.max(ba.x0, bb.x0) + COLLIDE_PAD;
+    const oy = Math.min(ba.y1, bb.y1) - Math.max(ba.y0, bb.y0) + COLLIDE_PAD;
+    if (ox <= 0 || oy <= 0) return;
+    let px = 0;
+    let py = 0;
+    if (oy <= ox) py = (a.y < b.y ? -1 : 1) * oy * 0.25;
+    else px = ((ba.x0 + ba.x1) < (bb.x0 + bb.x1) ? -1 : 1) * ox * 0.25;
+    if (a.fx == null) { a.vx += px; a.vy += py; }
+    if (b.fx == null) { b.vx -= px; b.vy -= py; }
+  }
+
+  function avoidEdges() {
+    for (const e of simEdges) {
+      const ex = e.b.x - e.a.x;
+      const ey = e.b.y - e.a.y;
+      const lenSq = ex * ex + ey * ey;
+      if (lenSq < 1) continue;
+      for (const c of sim) {
+        if (c === e.a || c === e.b) continue;
+        const t = ((c.x - e.a.x) * ex + (c.y - e.a.y) * ey) / lenSq;
+        if (t <= 0 || t >= 1) continue;
+        let dx = c.x - (e.a.x + ex * t);
+        let dy = c.y - (e.a.y + ey * t);
+        let dist = Math.sqrt(dx * dx + dy * dy);
+        if (dist >= EDGE_CLEARANCE) continue;
+        if (dist < 0.01) {
+          const len = Math.sqrt(lenSq);
+          dx = -ey / len;
+          dy = ex / len;
+          dist = 1;
+        } else {
+          dx /= dist;
+          dy /= dist;
+        }
+        const push = (EDGE_CLEARANCE - dist) * 0.1;
+        if (c.fx == null) { c.vx += dx * push; c.vy += dy * push; }
+        if (e.a.fx == null) { e.a.vx -= dx * push * 0.5; e.a.vy -= dy * push * 0.5; }
+        if (e.b.fx == null) { e.b.vx -= dx * push * 0.5; e.b.vy -= dy * push * 0.5; }
+      }
+    }
+  }
+
+  function warmUp() {
+    const deadline = performance.now() + WARMUP_MS;
+    let maxSpeed = Infinity;
+    while (alpha > alphaMin && maxSpeed > 0.03 && performance.now() < deadline) {
+      maxSpeed = stepOnce();
+    }
+    return alpha <= alphaMin || maxSpeed <= 0.03;
   }
 
   function tick() {
@@ -481,9 +645,11 @@ export function createWebringGraph(container, { nodes, edges, onSelect, selected
 
   buildNodes();
   buildEdges();
+  measureLabels();
+  const settled = single || warmUp();
   render();
   fit();
-  if (!single) restart(1);
+  if (!settled) restart(0);
 
   let resizeObserver = null;
   if (typeof ResizeObserver === 'function') {

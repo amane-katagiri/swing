@@ -1196,6 +1196,10 @@ body[data-view="sites"][data-style="table"] .swing-site-set {
 
 .swing-node text {
   fill: var(--swing-text);
+  paint-order: stroke;
+  stroke: var(--swing-surface);
+  stroke-width: 3px;
+  stroke-linejoin: round;
   font-family: var(--swing-font-ui);
   font-size: var(--swing-graph-label-size);
   user-select: none;
