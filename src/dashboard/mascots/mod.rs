@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use axum::body::Bytes;
 use axum::extract::{Path as UrlPath, State};
-use axum::http::StatusCode;
+use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use serde_json::json;
 use tracing::warn;
@@ -313,22 +313,23 @@ fn registry(state: &AppState) -> &MascotRegistry {
         .expect("mascot routes are only mounted when [dashboard].ui is enabled")
 }
 
-pub async fn index(State(state): State<Arc<AppState>>) -> Response {
-    bytes_asset(JSON, registry(&state).index_json())
+pub async fn index(State(state): State<Arc<AppState>>, headers: HeaderMap) -> Response {
+    bytes_asset(&headers, JSON, registry(&state).index_json())
 }
 
 pub async fn file(
     State(state): State<Arc<AppState>>,
     UrlPath((id, file)): UrlPath<(String, String)>,
+    headers: HeaderMap,
 ) -> Response {
     let Some(pack) = registry(&state).find(&id) else {
         return StatusCode::NOT_FOUND.into_response();
     };
     if file == "manifest.json" {
-        return bytes_asset(JSON, pack.manifest.clone());
+        return bytes_asset(&headers, JSON, pack.manifest.clone());
     }
     if file == pack.sprite_name {
-        return bytes_asset(pack.sprite_content_type, pack.sprite.clone());
+        return bytes_asset(&headers, pack.sprite_content_type, pack.sprite.clone());
     }
     StatusCode::NOT_FOUND.into_response()
 }

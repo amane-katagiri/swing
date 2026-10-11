@@ -66,6 +66,8 @@ HTTP サーバー（axum 0.8）で、ブラウザ向けの管理画面（`[dashb
 
 `[dashboard].ui = true` のときだけ配信する（`ui_router()`）。差し替えないファイルは `assets.rs::STATIC_ASSETS`（パス・Content-Type・本体の配列）にまとめてあり、`assets::register()` がそのままルートに登録する。`/desktop-page.html`・`/desktop-page.css`・`/desktop-banner` は `DesktopAssets::load` で読んだものを `AppState.desktop` に、`/mascots/*` は `mascots::MascotRegistry` に持つ（読む時機は上記「[設定](#設定dashboard)」）。これらは認証が要る（[`dashboard/security.md#ガード`](dashboard/security.md#ガード)）。リクエストのたびにディスクを読むのは `/custom.css` だけ。
 
+`/custom.css` 以外のファイルの応答には `Cache-Control: no-cache` と、本体の SHA-256 の先頭 16 バイトを 16 進にした強い `ETag` を付ける（`STATIC_ASSETS` の分は最初のリクエストで一度だけ計算し、`AppState` に持つものはリクエストのたびに計算する）。`If-None-Match` のどれか（`W/` は外して比べる）か `*` が一致すれば、本体と `Content-Type` を付けずに `304` を返す（`ETag` と `Cache-Control` は付ける）。URL に版を含めない（モジュールは `./x.js` で import する）ので長期のキャッシュは指定せず、毎回確かめて変わっていなければ本体を送らない。
+
 | ルート | Content-Type |
 |---|---|
 | `GET /` | `text/html; charset=utf-8`（`index.html`） |

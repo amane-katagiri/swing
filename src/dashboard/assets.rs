@@ -1,13 +1,15 @@
 use std::path::Path;
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 
 use anyhow::{Context, Result, bail};
 use axum::Router;
 use axum::body::Bytes;
 use axum::extract::State;
-use axum::http::header;
+use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
+
+use sha2::{Digest, Sha256};
 
 use super::AppState;
 use crate::config::DashboardConfig;
@@ -92,18 +94,78 @@ const STATIC_ASSETS: &[StaticAsset] = &[
     asset!("font/woff2", "fonts/pixelmplus12-bold.woff2"),
 ];
 
-fn serve_static(asset: &'static StaticAsset) -> Response {
-    ([(header::CONTENT_TYPE, asset.content_type)], asset.body).into_response()
+static STATIC_ETAGS: LazyLock<Vec<HeaderValue>> =
+    LazyLock::new(|| STATIC_ASSETS.iter().map(|a| etag(a.body)).collect());
+
+fn etag(body: &[u8]) -> HeaderValue {
+    let digest = Sha256::digest(body);
+    let hex: String = digest[..16].iter().map(|b| format!("{b:02x}")).collect();
+    HeaderValue::from_str(&format!("\"{hex}\"")).expect("hex etag is a valid header value")
+}
+
+fn is_fresh(request: &HeaderMap, etag: &HeaderValue) -> bool {
+    let Some(tags) = request
+        .get(header::IF_NONE_MATCH)
+        .and_then(|v| v.to_str().ok())
+    else {
+        return false;
+    };
+    let etag = etag.to_str().unwrap_or_default();
+    tags.split(',')
+        .map(|tag| tag.trim())
+        .any(|tag| tag == "*" || tag.strip_prefix("W/").unwrap_or(tag) == etag)
+}
+
+fn revalidated(
+    request: &HeaderMap,
+    content_type: &str,
+    etag: HeaderValue,
+    body: impl IntoResponse,
+) -> Response {
+    let cache_control = HeaderValue::from_static("no-cache");
+    if is_fresh(request, &etag) {
+        return (
+            StatusCode::NOT_MODIFIED,
+            [(header::ETAG, etag), (header::CACHE_CONTROL, cache_control)],
+        )
+            .into_response();
+    }
+    (
+        [
+            (
+                header::CONTENT_TYPE,
+                HeaderValue::from_str(content_type).expect("content type is a valid header value"),
+            ),
+            (header::ETAG, etag),
+            (header::CACHE_CONTROL, cache_control),
+        ],
+        body,
+    )
+        .into_response()
 }
 
 pub(super) fn register(router: Router<Arc<AppState>>) -> Router<Arc<AppState>> {
-    STATIC_ASSETS.iter().fold(router, |router, asset| {
-        router.route(asset.path, get(move || async move { serve_static(asset) }))
-    })
+    STATIC_ASSETS
+        .iter()
+        .enumerate()
+        .fold(router, |router, (index, asset)| {
+            router.route(
+                asset.path,
+                get(move |headers: HeaderMap| async move {
+                    revalidated(
+                        &headers,
+                        asset.content_type,
+                        STATIC_ETAGS[index].clone(),
+                        asset.body,
+                    )
+                }),
+            )
+        })
 }
 
-pub(super) fn bytes_asset(content_type: &str, body: Bytes) -> Response {
-    ([(header::CONTENT_TYPE, content_type.to_string())], body).into_response()
+pub(super) fn bytes_asset(request: &HeaderMap, content_type: &str, body: Bytes) -> Response {
+    let etag = etag(&body);
+    revalidated(request, content_type, etag, body)
 }
 
 fn desktop(state: &AppState) -> &DesktopAssets {
@@ -113,16 +175,25 @@ fn desktop(state: &AppState) -> &DesktopAssets {
         .expect("desktop asset routes are only mounted when [dashboard].ui is enabled")
 }
 
-pub async fn desktop_page(State(state): State<Arc<AppState>>) -> Response {
-    bytes_asset("text/html; charset=utf-8", desktop(&state).page.clone())
-}
-
-pub async fn desktop_page_css(State(state): State<Arc<AppState>>) -> Response {
-    bytes_asset("text/css; charset=utf-8", desktop(&state).page_css.clone())
-}
-
-pub async fn desktop_banner(State(state): State<Arc<AppState>>) -> Response {
+pub async fn desktop_page(State(state): State<Arc<AppState>>, headers: HeaderMap) -> Response {
     bytes_asset(
+        &headers,
+        "text/html; charset=utf-8",
+        desktop(&state).page.clone(),
+    )
+}
+
+pub async fn desktop_page_css(State(state): State<Arc<AppState>>, headers: HeaderMap) -> Response {
+    bytes_asset(
+        &headers,
+        "text/css; charset=utf-8",
+        desktop(&state).page_css.clone(),
+    )
+}
+
+pub async fn desktop_banner(State(state): State<Arc<AppState>>, headers: HeaderMap) -> Response {
+    bytes_asset(
+        &headers,
         desktop(&state).banner_content_type,
         desktop(&state).banner.clone(),
     )
@@ -296,6 +367,65 @@ mod tests {
                 asset.path
             );
         }
+    }
+
+    async fn get_with(path: &str, if_none_match: Option<&str>) -> axum::response::Response {
+        let mut req = Request::builder()
+            .uri(path)
+            .header("Host", "127.0.0.1:8082");
+        if let Some(tag) = if_none_match {
+            req = req.header("If-None-Match", tag);
+        }
+        call(router(test_state()), req.body(Body::empty()).unwrap()).await
+    }
+
+    #[tokio::test]
+    async fn assets_are_revalidated_by_etag() {
+        for path in [
+            "/emoji.svg",
+            "/",
+            "/desktop-page.html",
+            "/desktop-banner",
+            "/mascots/index.json",
+            "/mascots/yureko/sprite.png",
+        ] {
+            let resp = get_with(path, None).await;
+            assert_eq!(resp.status(), StatusCode::OK, "{path}");
+            assert_eq!(
+                resp.headers().get("cache-control").unwrap(),
+                "no-cache",
+                "{path}"
+            );
+            let tag = resp
+                .headers()
+                .get("etag")
+                .unwrap()
+                .to_str()
+                .unwrap()
+                .to_string();
+
+            let resp = get_with(path, Some(&tag)).await;
+            assert_eq!(resp.status(), StatusCode::NOT_MODIFIED, "{path}");
+            assert_eq!(resp.headers().get("etag").unwrap(), tag.as_str(), "{path}");
+            assert!(resp.headers().get("content-type").is_none(), "{path}");
+            let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+                .await
+                .unwrap();
+            assert!(body.is_empty(), "{path}");
+
+            let listed = format!("\"other\", W/{tag}");
+            let resp = get_with(path, Some(&listed)).await;
+            assert_eq!(resp.status(), StatusCode::NOT_MODIFIED, "{path}");
+
+            let resp = get_with(path, Some("\"stale\"")).await;
+            assert_eq!(resp.status(), StatusCode::OK, "{path}");
+        }
+    }
+
+    #[test]
+    fn etags_differ_between_assets() {
+        let tags: std::collections::BTreeSet<_> = super::STATIC_ETAGS.iter().collect();
+        assert_eq!(tags.len(), super::STATIC_ASSETS.len());
     }
 
     #[tokio::test]
