@@ -128,6 +128,7 @@ SWING は普段使いの PC で、使っている間だけ動かしても構い�
 開発者・他の実装を作る方向け:
 
 - [`docs/protocol.md`](docs/protocol.md): 実装非依存のプロトコル定義
+- [`docs/fingerprint-spec.md`](docs/fingerprint-spec.md): 絵文字のフィンガープリントの定義（ほかのクライアントで同じ絵文字を出すため）
 - [`docs/architecture.md`](docs/architecture.md): 現在の実装の詳細なリファレンス
 - [`docs/plan.md`](docs/plan.md): 初期実装計画。設計の背景や原則
 - [`docs/extensions.md`](docs/extensions.md): 新しい kind や `d` タグの命名規約と予約表

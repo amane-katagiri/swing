@@ -229,7 +229,7 @@
 269b atom symbol
 1f52d telescope
 1f528 hammer
-1f5dc clamp
+1f5dc compression
 1f9f1 brick
 1f3e0 house building
 1f3e2 office building

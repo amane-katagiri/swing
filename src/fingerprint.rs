@@ -47,11 +47,41 @@ mod tests {
         }
     }
 
+    const SPEC: &str = include_str!("../docs/fingerprint-spec.md");
+
+    fn spec_rows() -> impl Iterator<Item = Vec<&'static str>> {
+        SPEC.lines()
+            .filter_map(|line| line.strip_prefix("| ")?.strip_suffix(" |"))
+            .map(|row| row.split(" | ").collect())
+    }
+
+    fn codepoint(cell: &str) -> String {
+        cell.strip_prefix("U+").unwrap().to_lowercase()
+    }
+
     #[test]
-    fn fingerprint_hashes_the_x_only_pubkey() {
-        let pk =
-            PublicKey::from_hex("79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798")
-                .unwrap();
-        assert_eq!(fingerprint(&pk), ["1f43c", "1f421", "1f33f", "1f52e"]);
+    fn list_matches_the_spec_table() {
+        let table: Vec<String> = spec_rows()
+            .filter(|cells| cells[0].parse::<usize>().is_ok())
+            .enumerate()
+            .map(|(i, cells)| {
+                assert_eq!(cells[0], i.to_string());
+                codepoint(cells[1])
+            })
+            .collect();
+        assert_eq!(table, *EMOJI);
+    }
+
+    #[test]
+    fn fingerprint_matches_the_spec_vectors() {
+        let vectors: Vec<_> = spec_rows()
+            .filter_map(|cells| Some((cells[0].strip_prefix('`')?.strip_suffix('`')?, cells[2])))
+            .collect();
+        assert_eq!(vectors.len(), 3);
+        for (hex, expected) in vectors {
+            let pk = PublicKey::from_hex(hex).unwrap();
+            let expected: Vec<String> = expected.split(' ').map(codepoint).collect();
+            assert_eq!(fingerprint(&pk), expected, "{hex}");
+        }
     }
 }
