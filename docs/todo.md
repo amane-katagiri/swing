@@ -5,6 +5,7 @@
 | 優先度 | タスク | 出所 |
 |---|---|---|
 | 低 | ミラーしているサイトをサイト単位で削除する操作（CLI とダッシュボード）。今はサイトが state から消えるのは、フォローを外して `remove_on_unfollow` が有効なときだけで、古い版の整理も最新版は残す。そのため作者が更新をやめたサイトも `max_sites_per_account` の枠を使い続け、枠が埋まるとその作者の新しいサイトはミラーされない。消したサイトが次の poll でまた取り込まれないよう、除外の記録（state.json に持つか）も合わせて決める | [セキュリティレビュー](log/2026-09-29-security-review-and-cleanup.md) |
+| 中 | ミラーしているサイトの最新版のサイトイベントを、署名済みのまま state.json に持って relay に送り直す（Follow Set の再送と同じ形）。今は `sites` に `cid`・`size`・`created_at`・`stored_at` しか持たないので、作者が publish しなくなった後で relay からサイトイベントが消えると、内容をミラーしている人がいても新しい参加者はそのサイトを見つけられない。送り直す契機（relay ごとに最新版が無いときだけか、一定の間隔か）と、イベントを持たない既存の記録の読み方（後方互換の処置になるので入れる前に要否を確認する）を決める | 設計の相談 |
 | 中 | `swing publish` が管理下の Kubo を使うとき、`<state_dir>/kubo-api.json` のポートに応答する相手を PeerID（公開情報）の一致だけで信じる。`swing up` が後片付けせずに死んだ後、そのポートを取ったローカルの別ユーザーが PeerID を返せば、`add` の結果の CID を選べる。`kubo.pid` の記録の pid が生きていて起動時刻とポートが一致することも確かめる | [セキュリティレビュー](log/2026-09-29-security-review-and-cleanup.md) |
 | 中 | `swing mirror add`（ダッシュボードの追加も）は、応答した relay に Follow Set が無く state.json にも無いと、空から作って追加した鍵だけの Follow Set を出す。relay が 1 つでも応答すればこうなるので、Follow Set が見つからないときは確認を求めるか、設定したすべての relay が EOSE を返したときだけ空から作る | [セキュリティレビュー](log/2026-09-29-security-review-and-cleanup.md) |
 | 低 | agent の送った報告の読み込み（`load_sent_reports`）は、relay が 1 つでも応答すれば読み込み済みにする。報告を持つ relay が時間切れだと取り下げの対象が欠ける（`report_ttl` で失効はする）。relay ごとに管理するか、定期的に読み直す | [セキュリティレビュー](log/2026-09-29-security-review-and-cleanup.md) |
