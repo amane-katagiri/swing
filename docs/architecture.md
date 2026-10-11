@@ -74,7 +74,7 @@
 | `proc.rs` | プロセスの開始時刻・生存確認・シグナル（`kubo/` が使う）と、Linux の `/proc/<pid>/stat` の読み取り（`stats/process.rs` と共有） |
 | `service/` | `swing service`（`templates.rs`: unit・plist・タスク XML、`process.rs`: 外部コマンド、`ownership.rs`: 登録が指す実行ファイルの読み取りと判定、`linux.rs`・`macos.rs`・`windows.rs`、ほかの OS は `unsupported.rs`）。[service.md](architecture/service.md)、登録の持ち主の判定は [service/ownership.md](architecture/service/ownership.md) |
 | `gateway.rs`・`host.rs` | 内蔵 gateway・Host ヘッダのパーサ（ダッシュボードのガードと共有）。[gateway.md](architecture/gateway.md) |
-| `dashboard/` | Web ダッシュボードと制御 API（`mod.rs`・`guard.rs`・`api.rs`・`error.rs`・`publish.rs`・`session.rs`・`setup.rs`・`locks.rs`・`upload.rs`・`dto.rs`・`config_dto.rs`・`assets.rs`・`mascots/`・`test_support.rs`）。[dashboard.md](architecture/dashboard.md) |
+| `dashboard/` | Web ダッシュボードと制御 API（`mod.rs`・`guard.rs`・`api.rs`・`error.rs`・`publish.rs`・`session.rs`・`setup.rs`・`locks.rs`・`upload.rs`・`dto.rs`・`config_dto.rs`・`assets/`・`mascots/`・`test_support.rs`）。[dashboard.md](architecture/dashboard.md) |
 | `auth.rs`・`api_client.rs`・`login.rs` | トークン・セッション・ログインコード、CLI のダッシュボード API クライアント、`swing dashboard open`/`rotate-token`。[dashboard/security.md](architecture/dashboard/security.md) |
 | `activity.rs` | 最新の publish・レプリカ報告の時刻（`/api/activity` 用、メモリだけ） |
 | `fingerprint.rs` | 絵文字のフィンガープリント（`packaging/twemoji/` で作る `web/emoji.svg` も）。[dashboard/fingerprint.md](architecture/dashboard/fingerprint.md) |

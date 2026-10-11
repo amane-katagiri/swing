@@ -29,7 +29,7 @@ HTTP サーバー（axum 0.8）で、ブラウザ向けの管理画面（`[dashb
 
 ### UI と API の分離（`[dashboard].ui`）
 
-`dashboard::router` は静的ファイルのルート（下記「[静的ファイルの配信](#静的ファイルの配信srcdashboardassetsrs)」）とログインリンクの受け口 `/login` を `ui_router()` にまとめ、`ui = true` のときだけ `/api/*` のルータにマージする。`ui = false` なら `/` などは `404` で、`/api/*` は通常どおり応答する。
+`dashboard::router` は静的ファイルのルート（下記「[静的ファイルの配信](#静的ファイルの配信srcdashboardassets)」）とログインリンクの受け口 `/login` を `ui_router()` にまとめ、`ui = true` のときだけ `/api/*` のルータにマージする。`ui = false` なら `/` などは `404` で、`/api/*` は通常どおり応答する。
 
 ### 起動と終了
 
@@ -62,11 +62,11 @@ HTTP サーバー（axum 0.8）で、ブラウザ向けの管理画面（`[dashb
 - ほかの全ルート: 120 秒。
 - ヘッダ読み取りのタイムアウトは無い（[`dashboard/security.md#既知の弱点`](dashboard/security.md#既知の弱点)）。
 
-## 静的ファイルの配信（`src/dashboard/assets.rs`）
+## 静的ファイルの配信（`src/dashboard/assets/`）
 
-`[dashboard].ui = true` のときだけ配信する（`ui_router()`）。差し替えないファイルは `assets.rs::STATIC_ASSETS`（パス・Content-Type・本体の配列）にまとめてあり、`assets::register()` がそのままルートに登録する。`/desktop-page.html`・`/desktop-page.css`・`/desktop-banner` は `DesktopAssets::load` で読んだものを `AppState.desktop` に、`/mascots/*` は `mascots::MascotRegistry` に持つ（読む時機は上記「[設定](#設定dashboard)」）。これらは認証が要る（[`dashboard/security.md#ガード`](dashboard/security.md#ガード)）。リクエストのたびにディスクを読むのは `/custom.css` だけ。
+`[dashboard].ui = true` のときだけ配信する（`ui_router()`）。差し替えないファイルは `assets/mod.rs::STATIC_ASSETS`（パス・Content-Type・本体の配列）にまとめてあり、`assets::register()` がそのままルートに登録する。`/desktop-page.html`・`/desktop-page.css`・`/desktop-banner` は `DesktopAssets::load` で読んだものを `AppState.desktop` に、`/mascots/*` は `mascots::MascotRegistry` に持つ（読む時機は上記「[設定](#設定dashboard)」）。これらは認証が要る（[`dashboard/security.md#ガード`](dashboard/security.md#ガード)）。リクエストのたびにディスクを読むのは `/custom.css` だけ。
 
-`/custom.css` 以外のファイルの応答には `Cache-Control: no-cache` と、本体の SHA-256 の先頭 16 バイトを 16 進にした強い `ETag` を付ける（`STATIC_ASSETS` の分は最初のリクエストで一度だけ計算し、`AppState` に持つものはリクエストのたびに計算する）。`If-None-Match` のどれか（`W/` は外して比べる）か `*` が一致すれば、本体と `Content-Type` を付けずに `304` を返す（`ETag` と `Cache-Control` は付ける）。URL に版を含めない（モジュールは `./x.js` で import する）ので長期のキャッシュは指定せず、毎回確かめて変わっていなければ本体を送らない。
+キャッシュと圧縮は `assets/delivery.rs`（`Prepared`・`bytes_asset`）が受け持つ。`/custom.css` 以外のファイルの応答には `Cache-Control: no-cache` と、本体の SHA-256 の先頭 16 バイトを 16 進にした強い `ETag` を付ける（`STATIC_ASSETS` の分は最初のリクエストで一度だけ計算し、`AppState` に持つものはリクエストのたびに計算する）。`If-None-Match` のどれか（`W/` は外して比べる）か `*` が一致すれば、本体と `Content-Type` を付けずに `304` を返す（`ETag` と `Cache-Control` は付ける）。URL に版を含めない（モジュールは `./x.js` で import する）ので長期のキャッシュは指定せず、毎回確かめて変わっていなければ本体を送らない。
 
 `STATIC_ASSETS` のうち `text/*` と `image/svg+xml` のものは、最初のリクエストで全部をまとめて gzip（`flate2`、最大の圧縮率）し、元より小さくなったものだけ圧縮版を持つ。圧縮版を持つファイルは、`Accept-Encoding` に `gzip` か `*` が `q` 0 より大きく入っていれば圧縮版を `Content-Encoding: gzip` で返し、どちらの版の応答（`304` を含む）にも `Vary: accept-encoding` を付ける。`ETag` は版ごとにその本体から作るので、圧縮版と元の版で別の値になる。画像・フォントと、`AppState` に持つファイルは圧縮しない。
 

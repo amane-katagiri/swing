@@ -4,7 +4,7 @@
 
 ## 読み込み順
 
-`style.css` → Desktop 系 6 ファイル（[`desktop.md#構成`](desktop.md#構成)） → `/custom.css`（サーバ設定。[`../dashboard.md#静的ファイルの配信srcdashboardassetsrs`](../dashboard.md#静的ファイルの配信srcdashboardassetsrs)） → `<style id="user-css">`（Settings 画面のカスタム CSS。`localStorage["swing:user-css"]`）。後に読むものが勝つ。Desktop 画面は `--swing-*` 変数を参照せず、リンク集ページ（iframe）にはどれも届かない（[`desktop.md#リンク集ページiframe`](desktop.md#リンク集ページiframe)）。
+`style.css` → Desktop 系 6 ファイル（[`desktop.md#構成`](desktop.md#構成)） → `/custom.css`（サーバ設定。[`../dashboard.md#静的ファイルの配信srcdashboardassets`](../dashboard.md#静的ファイルの配信srcdashboardassets)） → `<style id="user-css">`（Settings 画面のカスタム CSS。`localStorage["swing:user-css"]`）。後に読むものが勝つ。Desktop 画面は `--swing-*` 変数を参照せず、リンク集ページ（iframe）にはどれも届かない（[`desktop.md#リンク集ページiframe`](desktop.md#リンク集ページiframe)）。
 
 ## CSS 変数（`web/style.css` の `:root`）
 

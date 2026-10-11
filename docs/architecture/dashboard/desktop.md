@@ -99,7 +99,7 @@ Desktop 画面では `.swing-main` の幅制限と余白を外して画面いっ
 
 ### リンク集ページ（iframe）
 
-ウィンドウの中身（`#desk-page-frame`）は同一オリジンの iframe で開く `/desktop-page.html` の別ドキュメント。ルートと差し替え設定は [`../dashboard.md#静的ファイルの配信srcdashboardassetsrs`](../dashboard.md#静的ファイルの配信srcdashboardassetsrs)。
+ウィンドウの中身（`#desk-page-frame`）は同一オリジンの iframe で開く `/desktop-page.html` の別ドキュメント。ルートと差し替え設定は [`../dashboard.md#静的ファイルの配信srcdashboardassets`](../dashboard.md#静的ファイルの配信srcdashboardassets)。
 
 - CSS: `index.html` のダッシュボードの CSS は当たらず、ページ側の CSS も外に漏れない。窓側の `desktop-frame.css` だけは `desktop.js` が iframe の `<head>` の先頭に `<link>` で差し込む。ページ専用 CSS は `--desk-*`・`@font-face`・リセットまで自己完結する。
 - 読み込みの時機: このページとバナー・マスコットはログインが要る（[`security.md#ガード`](security.md#ガード)）。`index.html` の iframe には `src` を書かず、`app.js` が `/api/overview` の読み込みを終えた後（失敗しても 401 でなければ）に呼ぶ `DesktopView.start()` が `src` を入れ、`DesktopMascots.start()` でパックを読み始める。ログイン画面を出すときは呼ばない。

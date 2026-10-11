@@ -27,7 +27,7 @@
 
 - 一覧の各行に `<symbol id="e-<コードポイント>" viewBox="0 0 36 36">` を 1 つずつ持つ 1 枚の SVG。ID を持つ要素や `url(#…)`・`href` での参照を含まない（記号どうしで ID がぶつからない）。正方形でない元画像は 36×36 の中央に寄せる。
 - 先頭の XML コメントに CC-BY 4.0 の表示（Twemoji graphics by Twitter, Inc and other contributors、ライセンスの URL、元のリポジトリとタグとコミット）を入れる。
-- ほかの静的ファイルと同じく `assets.rs::STATIC_ASSETS` で `/emoji.svg`（`image/svg+xml`）として配る（[`../dashboard.md#静的ファイルの配信srcdashboardassetsrs`](../dashboard.md#静的ファイルの配信srcdashboardassetsrs)）。同じオリジンの `<use>` で参照するので CSP の `default-src 'self'` のままで読める。
+- ほかの静的ファイルと同じく `assets/mod.rs::STATIC_ASSETS` で `/emoji.svg`（`image/svg+xml`）として配る（[`../dashboard.md#静的ファイルの配信srcdashboardassets`](../dashboard.md#静的ファイルの配信srcdashboardassets)）。同じオリジンの `<use>` で参照するので CSP の `default-src 'self'` のままで読める。
 - 大きさは約 440KB（gzip で約 160KB）。
 
 ### 作り直し方（`packaging/twemoji/build-sprite.py`）

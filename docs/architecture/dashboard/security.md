@@ -21,7 +21,7 @@
 | `Content-Security-Policy` | `default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; frame-ancestors 'self'; base-uri 'none'; form-action 'self'; object-src 'none'` |
 | `Referrer-Policy` | `no-referrer` |
 | `X-Frame-Options` | `SAMEORIGIN` |
-| `Cache-Control` | `no-store`。middleware が付けるのは `/api/` 配下だけ（`/custom.css` はハンドラが付ける。ほかの静的ファイルはハンドラが `no-cache` を付ける。[`../dashboard.md#静的ファイルの配信srcdashboardassetsrs`](../dashboard.md#静的ファイルの配信srcdashboardassetsrs)） |
+| `Cache-Control` | `no-store`。middleware が付けるのは `/api/` 配下だけ（`/custom.css` はハンドラが付ける。ほかの静的ファイルはハンドラが `no-cache` を付ける。[`../dashboard.md#静的ファイルの配信srcdashboardassets`](../dashboard.md#静的ファイルの配信srcdashboardassets)） |
 | `Cross-Origin-Resource-Policy` | `same-origin`。認証の要る `/api/` 外のファイル（上の 3）の応答だけ |
 
 ## 認証
