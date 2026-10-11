@@ -1,3 +1,4 @@
+use std::io::Write;
 use std::path::Path;
 use std::sync::{Arc, LazyLock};
 
@@ -9,6 +10,8 @@ use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 
+use flate2::Compression;
+use flate2::write::GzEncoder;
 use sha2::{Digest, Sha256};
 
 use super::AppState;
@@ -94,8 +97,59 @@ const STATIC_ASSETS: &[StaticAsset] = &[
     asset!("font/woff2", "fonts/pixelmplus12-bold.woff2"),
 ];
 
-static STATIC_ETAGS: LazyLock<Vec<HeaderValue>> =
-    LazyLock::new(|| STATIC_ASSETS.iter().map(|a| etag(a.body)).collect());
+struct Prepared {
+    etag: HeaderValue,
+    gzip: Option<Gzipped>,
+}
+
+struct Gzipped {
+    body: Bytes,
+    etag: HeaderValue,
+}
+
+static PREPARED: LazyLock<Vec<Prepared>> =
+    LazyLock::new(|| STATIC_ASSETS.iter().map(prepare).collect());
+
+fn prepare(asset: &StaticAsset) -> Prepared {
+    let compressible =
+        asset.content_type.starts_with("text/") || asset.content_type == "image/svg+xml";
+    let gzip = compressible
+        .then(|| gzip(asset.body))
+        .filter(|body| body.len() < asset.body.len())
+        .map(|body| Gzipped {
+            etag: etag(&body),
+            body: Bytes::from(body),
+        });
+    Prepared {
+        etag: etag(asset.body),
+        gzip,
+    }
+}
+
+fn gzip(body: &[u8]) -> Vec<u8> {
+    let mut encoder = GzEncoder::new(Vec::new(), Compression::best());
+    encoder
+        .write_all(body)
+        .expect("writing to a Vec does not fail");
+    encoder.finish().expect("writing to a Vec does not fail")
+}
+
+fn accepts_gzip(request: &HeaderMap) -> bool {
+    request
+        .get_all(header::ACCEPT_ENCODING)
+        .iter()
+        .filter_map(|v| v.to_str().ok())
+        .flat_map(|v| v.split(','))
+        .any(|coding| {
+            let mut parts = coding.split(';');
+            let name = parts.next().unwrap_or_default().trim();
+            let quality = parts
+                .filter_map(|p| p.trim().strip_prefix("q="))
+                .find_map(|q| q.trim().parse::<f32>().ok())
+                .unwrap_or(1.0);
+            (name.eq_ignore_ascii_case("gzip") || name == "*") && quality > 0.0
+        })
+}
 
 fn etag(body: &[u8]) -> HeaderValue {
     let digest = Sha256::digest(body);
@@ -122,26 +176,53 @@ fn revalidated(
     etag: HeaderValue,
     body: impl IntoResponse,
 ) -> Response {
-    let cache_control = HeaderValue::from_static("no-cache");
-    if is_fresh(request, &etag) {
-        return (
-            StatusCode::NOT_MODIFIED,
-            [(header::ETAG, etag), (header::CACHE_CONTROL, cache_control)],
+    let mut response = if is_fresh(request, &etag) {
+        StatusCode::NOT_MODIFIED.into_response()
+    } else {
+        let content_type =
+            HeaderValue::from_str(content_type).expect("content type is a valid header value");
+        ([(header::CONTENT_TYPE, content_type)], body).into_response()
+    };
+    let headers = response.headers_mut();
+    headers.insert(header::ETAG, etag);
+    headers.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-cache"));
+    response
+}
+
+fn serve_static(request: &HeaderMap, asset: &'static StaticAsset, prepared: &Prepared) -> Response {
+    let Some(gzipped) = &prepared.gzip else {
+        return revalidated(
+            request,
+            asset.content_type,
+            prepared.etag.clone(),
+            asset.body,
+        );
+    };
+    let mut response = if accepts_gzip(request) {
+        let mut response = revalidated(
+            request,
+            asset.content_type,
+            gzipped.etag.clone(),
+            gzipped.body.clone(),
+        );
+        if response.status() == StatusCode::OK {
+            response
+                .headers_mut()
+                .insert(header::CONTENT_ENCODING, HeaderValue::from_static("gzip"));
+        }
+        response
+    } else {
+        revalidated(
+            request,
+            asset.content_type,
+            prepared.etag.clone(),
+            asset.body,
         )
-            .into_response();
-    }
-    (
-        [
-            (
-                header::CONTENT_TYPE,
-                HeaderValue::from_str(content_type).expect("content type is a valid header value"),
-            ),
-            (header::ETAG, etag),
-            (header::CACHE_CONTROL, cache_control),
-        ],
-        body,
-    )
-        .into_response()
+    };
+    response
+        .headers_mut()
+        .insert(header::VARY, HeaderValue::from_static("accept-encoding"));
+    response
 }
 
 pub(super) fn register(router: Router<Arc<AppState>>) -> Router<Arc<AppState>> {
@@ -152,12 +233,7 @@ pub(super) fn register(router: Router<Arc<AppState>>) -> Router<Arc<AppState>> {
             router.route(
                 asset.path,
                 get(move |headers: HeaderMap| async move {
-                    revalidated(
-                        &headers,
-                        asset.content_type,
-                        STATIC_ETAGS[index].clone(),
-                        asset.body,
-                    )
+                    serve_static(&headers, asset, &PREPARED[index])
                 }),
             )
         })
@@ -422,9 +498,89 @@ mod tests {
         }
     }
 
+    async fn get_encoded(
+        path: &str,
+        accept: &str,
+        if_none_match: Option<&str>,
+    ) -> axum::response::Response {
+        let mut req = Request::builder()
+            .uri(path)
+            .header("Host", "127.0.0.1:8082")
+            .header("Accept-Encoding", accept);
+        if let Some(tag) = if_none_match {
+            req = req.header("If-None-Match", tag);
+        }
+        call(router(test_state()), req.body(Body::empty()).unwrap()).await
+    }
+
+    #[tokio::test]
+    async fn text_assets_are_gzipped_when_accepted() {
+        use std::io::Read;
+        for path in ["/emoji.svg", "/", "/app.js", "/style.css"] {
+            let plain = get_with(path, None).await;
+            assert!(plain.headers().get("content-encoding").is_none(), "{path}");
+            assert_eq!(
+                plain.headers().get("vary").unwrap(),
+                "accept-encoding",
+                "{path}"
+            );
+            let plain_tag = plain.headers().get("etag").unwrap().clone();
+            let plain_body = axum::body::to_bytes(plain.into_body(), usize::MAX)
+                .await
+                .unwrap();
+
+            let resp = get_encoded(path, "br, gzip;q=0.8", None).await;
+            assert_eq!(resp.status(), StatusCode::OK, "{path}");
+            assert_eq!(
+                resp.headers().get("content-encoding").unwrap(),
+                "gzip",
+                "{path}"
+            );
+            assert_eq!(
+                resp.headers().get("vary").unwrap(),
+                "accept-encoding",
+                "{path}"
+            );
+            let tag = resp.headers().get("etag").unwrap().clone();
+            assert_ne!(tag, plain_tag, "{path}");
+            let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+                .await
+                .unwrap();
+            assert!(body.len() < plain_body.len(), "{path}");
+            let mut decoded = Vec::new();
+            flate2::read::GzDecoder::new(body.as_ref())
+                .read_to_end(&mut decoded)
+                .unwrap();
+            assert_eq!(decoded, plain_body.as_ref(), "{path}");
+
+            let resp = get_encoded(path, "gzip", Some(tag.to_str().unwrap())).await;
+            assert_eq!(resp.status(), StatusCode::NOT_MODIFIED, "{path}");
+            assert!(resp.headers().get("content-encoding").is_none(), "{path}");
+            assert_eq!(
+                resp.headers().get("vary").unwrap(),
+                "accept-encoding",
+                "{path}"
+            );
+
+            let resp = get_encoded(path, "gzip;q=0, deflate", None).await;
+            assert!(resp.headers().get("content-encoding").is_none(), "{path}");
+            assert_eq!(resp.headers().get("etag").unwrap(), plain_tag, "{path}");
+        }
+    }
+
+    #[tokio::test]
+    async fn binary_assets_are_not_gzipped() {
+        for path in ["/favicon-32.png", "/fonts/pixelmplus12-regular.woff2"] {
+            let resp = get_encoded(path, "gzip", None).await;
+            assert_eq!(resp.status(), StatusCode::OK, "{path}");
+            assert!(resp.headers().get("content-encoding").is_none(), "{path}");
+            assert!(resp.headers().get("vary").is_none(), "{path}");
+        }
+    }
+
     #[test]
     fn etags_differ_between_assets() {
-        let tags: std::collections::BTreeSet<_> = super::STATIC_ETAGS.iter().collect();
+        let tags: std::collections::BTreeSet<_> = super::PREPARED.iter().map(|p| &p.etag).collect();
         assert_eq!(tags.len(), super::STATIC_ASSETS.len());
     }
 

@@ -2890,6 +2890,7 @@ dependencies = [
  "bytes",
  "cid",
  "clap",
+ "flate2",
  "futures-util",
  "getrandom 0.3.4",
  "hmac",

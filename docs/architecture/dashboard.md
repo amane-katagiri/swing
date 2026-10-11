@@ -68,6 +68,8 @@ HTTP サーバー（axum 0.8）で、ブラウザ向けの管理画面（`[dashb
 
 `/custom.css` 以外のファイルの応答には `Cache-Control: no-cache` と、本体の SHA-256 の先頭 16 バイトを 16 進にした強い `ETag` を付ける（`STATIC_ASSETS` の分は最初のリクエストで一度だけ計算し、`AppState` に持つものはリクエストのたびに計算する）。`If-None-Match` のどれか（`W/` は外して比べる）か `*` が一致すれば、本体と `Content-Type` を付けずに `304` を返す（`ETag` と `Cache-Control` は付ける）。URL に版を含めない（モジュールは `./x.js` で import する）ので長期のキャッシュは指定せず、毎回確かめて変わっていなければ本体を送らない。
 
+`STATIC_ASSETS` のうち `text/*` と `image/svg+xml` のものは、最初のリクエストで全部をまとめて gzip（`flate2`、最大の圧縮率）し、元より小さくなったものだけ圧縮版を持つ。圧縮版を持つファイルは、`Accept-Encoding` に `gzip` か `*` が `q` 0 より大きく入っていれば圧縮版を `Content-Encoding: gzip` で返し、どちらの版の応答（`304` を含む）にも `Vary: accept-encoding` を付ける。`ETag` は版ごとにその本体から作るので、圧縮版と元の版で別の値になる。画像・フォントと、`AppState` に持つファイルは圧縮しない。
+
 | ルート | Content-Type |
 |---|---|
 | `GET /` | `text/html; charset=utf-8`（`index.html`） |
