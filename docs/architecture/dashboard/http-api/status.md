@@ -5,14 +5,15 @@
 ## GET /api/overview
 
 ```json
-{ "version": "0.1.0", "setup": false, "pubkey": "ab12…", "npub": "npub1…", "relays": ["wss://relay.damus.io"], "mirror_set": "swing", "gateway": "http://localhost:8080", "started_at": 1790000000, "instance": "cdeee5bc85519f44", "max_upload": 2147483648, "signer": { "remote": true, "relays": ["wss://relay.primal.net"], "last_failure": { "at": 1790000100, "message": "the signer app did not answer in time; check that it is running and approve the request" } } }
+{ "version": "0.1.0", "setup": false, "pubkey": "ab12…", "npub": "npub1…", "fingerprint": ["1f43c", "1f421", "1f33f", "1f52e"], "relays": ["wss://relay.damus.io"], "mirror_set": "swing", "gateway": "http://localhost:8080", "started_at": 1790000000, "instance": "cdeee5bc85519f44", "max_upload": 2147483648, "signer": { "remote": true, "relays": ["wss://relay.primal.net"], "last_failure": { "at": 1790000100, "message": "the signer app did not answer in time; check that it is running and approve the request" } } }
 ```
 
+- `fingerprint`: 自分の pubkey の絵文字のフィンガープリント（[`../fingerprint.md`](../fingerprint.md)）。
 - `gateway`: `[dashboard].gateway` が空なら `null`。
 - `started_at`・`instance`: `up::run` の回ごとに `AppState` を作った時刻（Unix 秒）と、そのたびに作るランダムな 16 桁の 16 進文字列。プロセス内の再起動（`POST /api/restart`）でも変わる。Web UI は `instance` で再起動の前後を見分け、`swing stop` は同じ値を [`POST /api/identity`](session.md#post-apiidentity) から読む。
 - `max_upload`: `[dashboard].max_upload` のバイト数。
 - `signer`: 署名の方法。`remote` は NIP-46 の署名アプリを使っているかどうか、`relays` は署名アプリとのやりとりに使っている relay（秘密鍵なら空）、`last_failure` は署名アプリへの最後のリクエストが失敗したときの時刻とメッセージ（成功していれば・秘密鍵なら `null`。[`../../signer.md`](../../signer.md)）。
-- `setup`: 鍵も署名アプリも未設定（セットアップモード。[`../../up.md#セットアップモード鍵未設定`](../../up.md#セットアップモード鍵未設定)）かどうか。そのときは `pubkey`／`npub`／`signer` も `null`。
+- `setup`: 鍵も署名アプリも未設定（セットアップモード。[`../../up.md#セットアップモード鍵未設定`](../../up.md#セットアップモード鍵未設定)）かどうか。そのときは `pubkey`／`npub`／`fingerprint`／`signer` も `null`。
 
 ## GET /api/activity
 

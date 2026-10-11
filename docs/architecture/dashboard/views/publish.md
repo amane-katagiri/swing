@@ -4,7 +4,7 @@
 
 ## 自分の情報と署名アプリ
 
-- 自分の情報（`.swing-identity`）: npub・hex・ミラーセット・relays と、署名の方式（設定ファイルの秘密鍵／署名アプリ）を `overview.signer` から出す（`publish.js::renderSigner`）。`last_failure` があれば警告を出す。署名アプリのときは画面表示のたびと publish 完了時に `GET /api/overview` を読み直してこの行を更新する。
+- 自分の情報（`.swing-identity`）: npub・hex・絵文字のフィンガープリント（[`../fingerprint.md`](../fingerprint.md)。隣のコピーボタンで、異体字セレクタ U+FE0F を付けた絵文字の文字を区切り無しでつないだものをコピーする）・ミラーセット・relays と、署名の方式（設定ファイルの秘密鍵／署名アプリ）を `overview.signer` から出す（`publish.js::renderSigner`）。`last_failure` があれば警告を出す。署名アプリのときは画面表示のたびと publish 完了時に `GET /api/overview` を読み直してこの行を更新する。
 - 署名アプリのときは「つなぎ直す」ボタンから relay 欄と QR（`pairing.js`）とキャンセルボタンを出す。ペアリングが `ready` になると「つなぎ直して再起動」ボタン（`#pub-signer-save`）が有効になり、押すと [`POST /api/signer/reconnect`](../http-api/config.md#post-apisignerreconnect) を呼び、`waitForNewInstance` で `instance` が押す前の `cache.overview.instance` から変わるのを待ってページを読み直す（[`../web.md#止まっている間の呼び出し`](../web.md#止まっている間の呼び出し)）。
 
 ## フォーム

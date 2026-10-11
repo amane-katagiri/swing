@@ -19,7 +19,7 @@ import {
   parseApiBody,
   apiResponseError,
 } from './util.js';
-import { appendLinksAndMessage, renderRelayResults, buildSiteNameRow } from './ui.js';
+import { appendLinksAndMessage, renderRelayResults, buildSiteNameRow, fingerprintBadge, fingerprintIds, emojiChar, copyButton } from './ui.js';
 import { createPairing } from './pairing.js';
 
 const publishEls = {
@@ -28,6 +28,7 @@ const publishEls = {
   form: document.getElementById('publish-form'),
   npub: document.getElementById('pub-npub'),
   hex: document.getElementById('pub-hex'),
+  fingerprint: document.getElementById('pub-fingerprint'),
   mirrorSet: document.getElementById('pub-mirror-set'),
   relays: document.getElementById('pub-relays'),
   signer: document.getElementById('pub-signer'),
@@ -209,6 +210,8 @@ export function updateNavFooter(overview) {
 export function renderIdentity(overview) {
   publishEls.npub.textContent = overview.npub;
   publishEls.hex.textContent = overview.pubkey;
+  const badge = fingerprintBadge(overview.fingerprint);
+  publishEls.fingerprint.replaceChildren(...(badge ? [badge, copyButton(fingerprintIds(overview.fingerprint).map(emojiChar).join(''), t('copyFingerprint'))] : []));
   publishEls.mirrorSet.textContent = overview.mirror_set;
   publishEls.relays.replaceChildren();
   for (const r of overview.relays) publishEls.relays.append(el('li', {}, r));

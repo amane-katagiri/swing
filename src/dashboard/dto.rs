@@ -105,6 +105,7 @@ pub struct OverviewDto {
     pub setup: bool,
     pub pubkey: Option<String>,
     pub npub: Option<String>,
+    pub fingerprint: Option<Vec<String>>,
     pub relays: Vec<String>,
     pub mirror_set: String,
     pub gateway: Option<String>,

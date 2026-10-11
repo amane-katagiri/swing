@@ -9,6 +9,7 @@ use axum::response::{IntoResponse, Response};
 use nostr_sdk::prelude::*;
 use serde::Deserialize;
 
+use crate::fingerprint::fingerprint;
 use crate::health;
 use crate::mirror;
 use crate::publish;
@@ -92,6 +93,7 @@ pub async fn overview(
         setup: pubkey.is_none(),
         pubkey: pubkey.map(|pk| pk.to_hex()),
         npub: pubkey.map(|pk| mirror::npub(&pk)),
+        fingerprint: pubkey.map(|pk| fingerprint(&pk)),
         relays: state.config.nostr.relays.clone(),
         mirror_set: state.config.nostr.mirror_set.clone(),
         gateway: state.config.dashboard.gateway.clone(),

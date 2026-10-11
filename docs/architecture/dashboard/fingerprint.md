@@ -10,7 +10,7 @@
 2. ダイジェストの先頭 4 バイト（`fingerprint::LENGTH`）を、それぞれ 0〜255 の番号として一覧（`web/emoji/list.txt`）の行に当てる。
 3. その行のコードポイント（16 進の小文字、例 `1f40b`）を順に並べた配列を返す。
 
-計算はサーバ側で行い、API の DTO に `fingerprint` として載せる（ダッシュボードは平文の http で LAN から開かれることがあり、そこでは `crypto.subtle` が使えない）。載せる場所は [`http-api/nostr.md`](http-api/nostr.md)（webring のノード・`referencing`・レプリカの報告者）と [`http-api/status.md`](http-api/status.md)（`/api/sites` のアカウントと `/api/status` の `versions`・`sites`）。
+計算はサーバ側で行い、API の DTO に `fingerprint` として載せる（ダッシュボードは平文の http で LAN から開かれることがあり、そこでは `crypto.subtle` が使えない）。載せる場所は [`http-api/nostr.md`](http-api/nostr.md)（webring のノード・`referencing`・レプリカの報告者）と [`http-api/status.md`](http-api/status.md)（`/api/overview` の自分・`/api/sites` のアカウントと `/api/status` の `versions`・`sites`）。
 
 ## 一覧（`web/emoji/list.txt`）
 
@@ -51,6 +51,7 @@ Twemoji の画像は CC-BY 4.0。表示（作者・ライセンス・元のリ�
 - 部品は [`web.md#共通の-ui-部品`](web.md#共通の-ui-部品)、class は [`css.md`](css.md)（`swing-fingerprint`・`swing-node-emoji`）。
 - 出す場所（[`views.md`](views.md)）:
   - Sites 画面: アカウントの見出し（カード・テーブル・Unfollowed）に 4 つ、Storage check の表のアカウント列に先頭の 1 つ。
+  - Publish 画面: 自分の情報の「フィンガープリント」の行に 4 つと、絵文字の文字としてコピーするボタン。
   - Webring 画面: グラフのノードの円の中に先頭の 1 つ、`list` 表示の各行・詳細パネルの見出しと報告者一覧に 4 つ。
 - Desktop 画面は独自のアカウント表示を持たない。
 
