@@ -54,7 +54,7 @@
 
 - `fingerprint`（`accounts` と `unfollowed.accounts` の各要素）: 絵文字のフィンガープリント。4 つの Twemoji のコードポイント（16 進の小文字）の配列（[`../fingerprint.md`](../fingerprint.md)）。
 - `follow_set.note`: [使う Follow Set](../../mirror.md#使う-follow-set) の注記から括弧を外した文字列。無ければ `null`。
-- `nip05`・`title`・`message`・`size`・`stored_size`・`stored_at` は値が無ければ `null`。`title` は作者の自己申告で受信側は信頼しない（[`protocol.md` 第 4 節](../../../protocol.md#4-サイトイベント)）。`title` と `message`（生の `content`）のサニタイズ・切り詰めはフロントの責務。
+- `nip05`・`title`・`message`・`size`・`stored_size`・`stored_at` は値が無ければ `null`。`title` は作者の自己申告で受信側は信頼しない（[`protocol.md` 第 5.2 節](../../../protocol.md#52-受信側の扱い)）。`title` と `message`（生の `content`）のサニタイズ・切り詰めはフロントの責務。
 - 版ごとの重複排除込みの実測合計は `/api/status` の `sites[].actual` にしかない。
 - `replicas`・`unverified_replicas`: `ReplicaCounts` の `trusted` と `unverified`（[`../../nostr.md#レプリカ報告の信頼度replicastier`](../../nostr.md#レプリカ報告の信頼度replicastier)）。レプリカ報告の取得に失敗すると全サイトで両方 `null` になり、`replicas_error` に理由が入る。
 - `gateway_url`: `stored` が true かつ gateway 設定がある版だけに付く。

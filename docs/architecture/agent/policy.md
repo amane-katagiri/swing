@@ -9,7 +9,7 @@
 1. `nostr::plausible_at` が false（`created_at` が未来ずれの許容を超えて先。[`nostr.md`](../nostr.md#未来ずれの許容nostrmax_future_skew)）なら skip（`future_created_at`）。
 2. 同じ CID が同サイトに記録済みなら skip（`duplicate_cid`）。
 3. 新しいサイトで、同じ pubkey の記録済みのサイトが `max_sites_per_account` 個以上あれば skip（`max_sites_per_account`）。
-4. `created_at` が同サイトの最新版以下なら skip（`stale`）。`created_at` が等しいときは `id` によらず先に保存した版を保つ（[`../protocol.md`](../../protocol.md) 第 4 節）。
+4. `created_at` が同サイトの最新版以下なら skip（`stale`）。`created_at` が等しいときは `id` によらず先に保存した版を保つ（[`../protocol.md` 第 5.2 節](../../protocol.md#52-受信側の扱い)）。
 5. 現在時刻が同サイトの最大の `stored_at` から `min_update_interval` 未満なら skip（`min_update_interval`）。
 6. `size` が `max_update_size` を超えるなら skip（`max_update_size`）。
 7. 同サイト合計が `max_per_site` を超えるなら古い版（`created_at` の小さい版）から evict する。新版単体で超えるなら skip（`max_per_site_exceeded_alone`）。
