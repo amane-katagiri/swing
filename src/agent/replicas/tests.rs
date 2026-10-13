@@ -334,6 +334,7 @@ async fn published_versions_are_reported_together_with_mirrored_ones() {
             size: 1,
             created_at: 100,
             stored_at: 100,
+            event: None,
         },
     );
     {

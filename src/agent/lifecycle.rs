@@ -145,7 +145,7 @@ fn site_event_of(
     event: &Event,
     subscription_id: &SubscriptionId,
     site_event_kind: u16,
-) -> Option<nostr::SiteEvent> {
+) -> Option<nostr::SignedSite> {
     if subscription_id.as_str() != nostr::SITE_SUBSCRIPTION_ID
         || event.kind != Kind::Custom(site_event_kind)
     {
@@ -159,6 +159,10 @@ fn site_event_of(
     nostr::parse_site_event(event, site_event_kind)
         .inspect_err(|e| warn!(error = %e, "skipping invalid site event"))
         .ok()
+        .map(|site| nostr::SignedSite {
+            site,
+            event: event.clone(),
+        })
 }
 
 async fn race_with_shutdown<F: std::future::Future<Output = ()>>(

@@ -7,11 +7,13 @@ use nostr_sdk::prelude::*;
 mod client;
 mod follow;
 mod report;
+mod resend;
 mod site;
 
 pub use client::{
-    Paged, RelayClient, RelaySendResult, ReportRelay, bounded_client, print_relay_line,
-    print_relay_send_result_lines, relay_send_results, with_rejection_hint,
+    DeletionAnswers, Paged, RelayAnswers, RelayClient, RelaySendResult, ReportRelay,
+    bounded_client, print_relay_line, print_relay_send_result_lines, relay_send_results,
+    with_rejection_hint,
 };
 pub use follow::{
     FollowSetChoice, choose_follow_set, extract_follow_set_pubkeys, follow_set_pubkeys_capped,
@@ -21,10 +23,14 @@ pub use report::{
     MAX_REPORT_AGE, ReplicaReport, build_replica_report_builder, parse_replica_report,
     site_coordinate,
 };
+pub use resend::{
+    DeletionMatch, Withdrawal, Withdrawals, is_saved_site_event, keep_newest_site,
+    plan_site_resends,
+};
 pub use site::{
-    SiteEvent, SiteFields, build_site_event_builder, build_site_note_builder, canonical_cid,
-    cap_sites_per_author, is_unsafe_char, parse_site_event, select_latest, site_note_content,
-    valid_http_url, valid_title, validate_d_tag,
+    SignedSite, SiteEvent, SiteFields, build_site_event_builder, build_site_note_builder,
+    canonical_cid, cap_sites_per_author, is_unsafe_char, parse_site_event, select_latest,
+    site_note_content, valid_http_url, valid_title, validate_d_tag,
 };
 
 pub const SITE_SUBSCRIPTION_ID: &str = "swing-sites";

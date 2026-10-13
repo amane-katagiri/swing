@@ -7,24 +7,23 @@ use tracing::warn;
 
 use crate::ipfs::KuboStore;
 use crate::nip05::Nip05Verify;
-use crate::nostr::{self, RelayClient, ReportRelay, SiteEvent};
+use crate::nostr::{self, RelayClient, ReportRelay, SignedSite};
 use crate::state::State;
 
 use super::{Agent, now_secs};
 
 pub(super) async fn refresh_follow_set<C, N, R>(
-    relay: &RelayClient,
+    relay: &Arc<RelayClient>,
     agent: &Arc<Agent<C, N, R>>,
     tasks: &mut JoinSet<()>,
-) where
+) -> Option<Vec<PublicKey>>
+where
     C: KuboStore + Send + Sync + 'static,
     N: Nip05Verify + Send + Sync + 'static,
     R: ReportRelay + Send + Sync + 'static,
 {
-    let Some(follow_event) = choose_and_apply_follow_set(relay, agent).await else {
-        return;
-    };
-    resubscribe_and_backfill(relay, agent, tasks, follow_event).await;
+    let follow_event = choose_and_apply_follow_set(relay, agent).await?;
+    Some(resubscribe_and_backfill(relay, agent, tasks, follow_event).await)
 }
 
 async fn choose_and_apply_follow_set<C, N, R>(
@@ -87,11 +86,12 @@ where
 }
 
 async fn resubscribe_and_backfill<C, N, R>(
-    relay: &RelayClient,
+    relay: &Arc<RelayClient>,
     agent: &Arc<Agent<C, N, R>>,
     tasks: &mut JoinSet<()>,
     follow_event: Event,
-) where
+) -> Vec<PublicKey>
+where
     C: KuboStore + Send + Sync + 'static,
     N: Nip05Verify + Send + Sync + 'static,
     R: ReportRelay + Send + Sync + 'static,
@@ -120,17 +120,16 @@ async fn resubscribe_and_backfill<C, N, R>(
     }
 
     match relay
-        .fetch_latest_sites(config.nostr.site_event_kind, &target_list)
+        .fetch_latest_signed_sites(config.nostr.site_event_kind, &target_list)
         .await
     {
         Ok(latest) => {
             let selected = {
-                let state = agent.state.lock().await;
-                limit_sites_per_account(
-                    latest.into_values().collect(),
-                    &state,
-                    config.policy.max_sites_per_account,
-                )
+                let mut state = agent.state.lock().await;
+                if fill_saved_events(&mut state, &latest) {
+                    agent.save(&state, "keeping site events").await;
+                }
+                limit_sites_per_account(latest, &state, config.policy.max_sites_per_account)
             };
             for ev in selected {
                 agent.submit(ev, tasks);
@@ -138,23 +137,40 @@ async fn resubscribe_and_backfill<C, N, R>(
         }
         Err(e) => warn!(error = %e, "fetching historical site events failed"),
     }
+    target_list
+}
+
+fn fill_saved_events(state: &mut State, latest: &[SignedSite]) -> bool {
+    let mut filled = false;
+    for signed in latest {
+        let key = crate::state::site_key(&signed.site.pubkey.to_hex(), &signed.site.d);
+        filled |= state.fill_latest_event(&key, &signed.site.cid, &signed.event);
+    }
+    filled
 }
 
 pub(super) fn limit_sites_per_account(
-    events: Vec<SiteEvent>,
+    events: Vec<SignedSite>,
     state: &State,
     max_sites: usize,
-) -> Vec<SiteEvent> {
-    let mut by_account: HashMap<PublicKey, Vec<(bool, SiteEvent)>> = HashMap::new();
+) -> Vec<SignedSite> {
+    let mut by_account: HashMap<PublicKey, Vec<(bool, SignedSite)>> = HashMap::new();
     for ev in events {
-        let stored = state
-            .sites
-            .contains_key(&crate::state::site_key(&ev.pubkey.to_hex(), &ev.d));
-        by_account.entry(ev.pubkey).or_default().push((stored, ev));
+        let stored = state.sites.contains_key(&crate::state::site_key(
+            &ev.site.pubkey.to_hex(),
+            &ev.site.d,
+        ));
+        by_account
+            .entry(ev.site.pubkey)
+            .or_default()
+            .push((stored, ev));
     }
     let mut selected = Vec::new();
     for mut events in by_account.into_values() {
-        events.sort_by(|a, b| b.0.cmp(&a.0).then(b.1.created_at.cmp(&a.1.created_at)));
+        events.sort_by(|a, b| {
+            b.0.cmp(&a.0)
+                .then(b.1.site.created_at.cmp(&a.1.site.created_at))
+        });
         let stored = events.iter().filter(|(s, _)| *s).count();
         selected.extend(
             events
@@ -182,6 +198,7 @@ mod tests {
                     size: 1,
                     created_at: 1,
                     stored_at: 1,
+                    event: None,
                 },
             );
         }
@@ -193,7 +210,7 @@ mod tests {
         let fx = Fixture::new(default_policy(), FakeKubo::default());
         let state = stored_state(&fx, &["stored.example"]);
         let mut other_event = fx.event("x.example", "c", None, 1);
-        other_event.pubkey = Keys::generate().public_key();
+        other_event.site.pubkey = Keys::generate().public_key();
         let events = vec![
             fx.event("old.example", "c", None, 10),
             fx.event("stored.example", "c", None, 5),
@@ -204,7 +221,7 @@ mod tests {
 
         let mut selected: Vec<String> = limit_sites_per_account(events, &state, 3)
             .into_iter()
-            .map(|e| e.d)
+            .map(|e| e.site.d)
             .collect();
         selected.sort();
         assert_eq!(
@@ -225,9 +242,34 @@ mod tests {
 
         let mut selected: Vec<String> = limit_sites_per_account(events, &state, 1)
             .into_iter()
-            .map(|e| e.d)
+            .map(|e| e.site.d)
             .collect();
         selected.sort();
         assert_eq!(selected, vec!["a.example", "b.example"]);
+    }
+
+    #[test]
+    fn site_events_fill_old_records_that_lack_them() {
+        let fx = Fixture::new(default_policy(), FakeKubo::default());
+        let mut state = State::default();
+        let fetched = fx.event("a.example", "bafy-a", None, 100);
+        state.apply_store(
+            &fx.key("a.example"),
+            VersionRecord {
+                cid: "bafy-a".into(),
+                size: 1,
+                created_at: 100,
+                stored_at: 1,
+                event: None,
+            },
+        );
+        let other = fx.event("b.example", "bafy-b", None, 100);
+
+        assert!(fill_saved_events(&mut state, &[fetched.clone(), other]));
+        assert_eq!(
+            state.latest_version(&fx.key("a.example")).unwrap().event,
+            Some(fetched.event.clone())
+        );
+        assert!(!fill_saved_events(&mut state, &[fetched]));
     }
 }

@@ -144,12 +144,12 @@ async fn event_from_non_target_pubkey_is_ignored() {
 async fn submit_drops_events_from_pubkeys_outside_the_follow_set_before_queueing() {
     let fx = Fixture::new(default_policy(), FakeKubo::default());
     let mut flood = fx.event(D, "bafy-intruder", None, 200);
-    flood.pubkey = Keys::generate().public_key();
+    flood.site.pubkey = Keys::generate().public_key();
 
     let mut tasks = JoinSet::new();
     for i in 0..50 {
         let mut ev = flood.clone();
-        ev.d = format!("intruder-{i}.example");
+        ev.site.d = format!("intruder-{i}.example");
         fx.agent.submit(ev, &mut tasks);
     }
 
@@ -434,6 +434,7 @@ async fn the_fetch_stops_at_the_space_left_for_the_account_and_the_node() {
             size: 60,
             created_at: 100,
             stored_at: 100,
+            event: None,
         },
     );
 

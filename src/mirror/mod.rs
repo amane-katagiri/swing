@@ -534,6 +534,7 @@ mod tests {
             size: 1,
             created_at,
             stored_at: created_at,
+            event: None,
         };
         state.apply_store(&state::site_key("aa", "x.example"), record("old", 1));
         state.apply_store(&state::site_key("aa", "x.example"), record("new", 2));
@@ -560,6 +561,7 @@ mod tests {
             size: created_at,
             created_at,
             stored_at: created_at,
+            event: None,
         };
         let mut state = State::default();
         state.apply_store(&state::site_key(&hex, "pending.example"), record("old", 1));

@@ -439,6 +439,7 @@ mod tests {
                     size: 1,
                     created_at: *created_at,
                     stored_at: *created_at,
+                    event: None,
                 },
             );
         }

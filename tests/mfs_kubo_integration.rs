@@ -142,6 +142,7 @@ async fn tricky_site_names_round_trip_through_real_mfs() {
                 size: 0,
                 created_at: AGENT_VERSION,
                 stored_at: 0,
+                event: None,
             }],
         );
         agent_cids.insert(d.clone(), staged);

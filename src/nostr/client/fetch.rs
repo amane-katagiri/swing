@@ -1,4 +1,5 @@
 use std::collections::{BTreeSet, HashMap, HashSet};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 use anyhow::Result;
@@ -266,4 +267,92 @@ pub(super) async fn walk_pages(
         events: out,
         complete,
     })
+}
+
+pub(super) struct Folded<T> {
+    pub(super) value: T,
+    pub(super) complete: bool,
+}
+
+#[derive(Default)]
+struct Spent {
+    events: AtomicUsize,
+    bytes: AtomicUsize,
+}
+
+impl Spent {
+    fn take(&self, size: usize, cap: FetchCap) -> bool {
+        let events = self.events.fetch_add(1, Ordering::Relaxed) + 1;
+        let bytes = self.bytes.fetch_add(size, Ordering::Relaxed) + size;
+        events <= cap.events && bytes <= cap.bytes
+    }
+}
+
+// Each answer is folded as it arrives so memory stays at what the fold keeps, not at what the relay sends.
+pub(super) async fn fold_per_relay<T, S, F>(
+    relays: Vec<(RelayUrl, Relay)>,
+    requests: &[Vec<Filter>],
+    seed: S,
+    fold: F,
+) -> Vec<(RelayUrl, Vec<Folded<T>>)>
+where
+    T: Send,
+    S: Fn(usize) -> T + Sync,
+    F: Fn(&mut T, Event) + Sync,
+{
+    let count = relays.len().max(1);
+    let total = FetchCap {
+        events: FetchCap::TOTAL.events / count,
+        bytes: FetchCap::TOTAL.bytes / count,
+    };
+    let deadline = tokio::time::Instant::now() + FETCH_DEADLINE;
+    let (seed, fold) = (&seed, &fold);
+    let per_relay = relays.into_iter().map(|(url, relay)| async move {
+        let spent = Spent::default();
+        let spent = &spent;
+        let mut folded: Vec<(usize, Folded<T>)> =
+            futures_util::stream::iter(requests.iter().enumerate())
+                .map(|(i, filters)| {
+                    let stream = relay_stream(relay.clone(), filters.clone())
+                        .take_until(tokio::time::sleep(FETCH_TIMEOUT))
+                        .take_until(tokio::time::sleep_until(deadline));
+                    async move {
+                        let mut stream = std::pin::pin!(stream);
+                        let mut value = seed(i);
+                        let (mut events, mut bytes) = (0usize, 0usize);
+                        let complete = loop {
+                            match stream.next().await {
+                                None => break false,
+                                Some((_, Streamed::Finished)) => break true,
+                                Some((url, Streamed::Failed(e))) => {
+                                    tracing::debug!(relay = %url, error = %e, "relay did not answer the request");
+                                    break false;
+                                }
+                                Some((url, Streamed::Event(event))) => {
+                                    let size = event_bytes(&event);
+                                    events += 1;
+                                    bytes += size;
+                                    if events > FetchCap::PER_REQ.events
+                                        || bytes > FetchCap::PER_REQ.bytes
+                                        || !spent.take(size, total)
+                                    {
+                                        tracing::warn!(relay = %url, "relay answers exceed the fetch budget; counting the request as unanswered");
+                                        break false;
+                                    }
+                                    fold(&mut value, event);
+                                }
+                            }
+                        };
+                        (i, Folded { value, complete })
+                    }
+                })
+                .buffer_unordered(budget::FETCH_CONCURRENCY)
+                // Unboxed, rustc cannot prove the future Send for every lifetime once it is spawned.
+                .boxed()
+                .collect()
+                .await;
+        folded.sort_by_key(|(i, _)| *i);
+        (url, folded.into_iter().map(|(_, f)| f).collect())
+    });
+    futures_util::future::join_all(per_relay).await
 }

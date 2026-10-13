@@ -18,6 +18,12 @@ pub struct SiteEvent {
     pub id: EventId,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SignedSite {
+    pub site: SiteEvent,
+    pub event: Event,
+}
+
 const MAX_D_TAG_BYTES: usize = 253;
 const MAX_URL_TAG_BYTES: usize = 2048;
 const MAX_TITLE_TAG_BYTES: usize = 256;

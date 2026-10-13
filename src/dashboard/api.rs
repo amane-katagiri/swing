@@ -938,6 +938,7 @@ mod tests {
                     size: 1,
                     created_at: 1,
                     stored_at,
+                    event: None,
                 },
             );
         }

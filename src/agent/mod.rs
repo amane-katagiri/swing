@@ -1,6 +1,7 @@
 mod follow;
 mod lifecycle;
 mod replicas;
+mod resend;
 mod store;
 #[cfg(test)]
 mod test_support;
@@ -8,6 +9,7 @@ mod test_support;
 pub use lifecycle::run_until;
 
 use std::collections::{BTreeMap, HashSet};
+use std::future::Future;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, RwLock};
 
@@ -34,7 +36,7 @@ fn now_secs() -> u64 {
 }
 
 async fn poll_once<C, N, R>(
-    relay: &RelayClient,
+    relay: &Arc<RelayClient>,
     agent: &Arc<Agent<C, N, R>>,
     tasks: &mut JoinSet<()>,
 ) where
@@ -43,8 +45,8 @@ async fn poll_once<C, N, R>(
     R: ReportRelay + Send + Sync + 'static,
 {
     agent.sweep().await;
-    follow::refresh_follow_set(relay, agent, tasks).await;
-    agent.start_report_round(tasks);
+    let targets = follow::refresh_follow_set(relay, agent, tasks).await;
+    agent.start_report_round(relay, targets, tasks);
 }
 
 impl<C, N, R> Agent<C, N, R>
@@ -53,18 +55,42 @@ where
     N: Nip05Verify + Send + Sync + 'static,
     R: ReportRelay + Send + Sync + 'static,
 {
-    // Signing each report can wait on the signer app, so the round runs beside the event loop and never twice at once.
-    fn start_report_round(self: &Arc<Self>, tasks: &mut JoinSet<()>) {
+    // Signing each report can wait on the signer app, so the round runs beside the event loop and never twice at once. The resend of held site events follows the reports in the same task so that their relay fetches never overlap.
+    fn start_report_round(
+        self: &Arc<Self>,
+        relay: &Arc<RelayClient>,
+        targets: Option<Vec<PublicKey>>,
+        tasks: &mut JoinSet<()>,
+    ) {
+        let resend = targets.map(|targets| {
+            let agent = Arc::clone(self);
+            let relay = Arc::clone(relay);
+            async move { resend::resend_held_sites(&relay, &agent, &targets).await }
+        });
+        self.begin_report_round(tokio::time::Instant::now(), resend, tasks);
+    }
+
+    fn begin_report_round(
+        self: &Arc<Self>,
+        now: tokio::time::Instant,
+        resend: Option<impl Future<Output = ()> + Send + 'static>,
+        tasks: &mut JoinSet<()>,
+    ) -> bool {
         let mut round = self.report_round.lock().unwrap();
         if round.as_ref().is_some_and(|r| !r.is_finished()) {
             debug!("the previous replica report round is still running; skipping this one");
-            return;
+            return false;
         }
+        let resend = resend.filter(|_| self.resend.lock().unwrap().take_due(now));
         let agent = Arc::clone(self);
         *round = Some(tasks.spawn(async move {
             agent.sync_reports_in_round().await;
             agent.record_replica_reports().await;
+            if let Some(resend) = resend {
+                resend.await;
+            }
         }));
+        true
     }
 }
 
@@ -85,6 +111,7 @@ struct Agent<C, N, R> {
     storing: Mutex<HashSet<String>>,
     attempts: Mutex<store::Attempts>,
     report_round: Mutex<Option<AbortHandle>>,
+    resend: Mutex<resend::Schedule>,
 }
 
 impl<C: KuboStore, N: Nip05Verify, R: ReportRelay> Agent<C, N, R> {
@@ -116,6 +143,7 @@ impl<C: KuboStore, N: Nip05Verify, R: ReportRelay> Agent<C, N, R> {
             storing: Mutex::new(HashSet::new()),
             attempts: Mutex::default(),
             report_round: Mutex::new(None),
+            resend: Mutex::default(),
         }
     }
 
@@ -288,7 +316,7 @@ mod tests {
     use crate::config::CheckMode;
     use crate::ipfs::IpfsClient;
     use crate::nip05::VerificationResult;
-    use crate::nostr::SiteEvent;
+    use crate::nostr::{SignedSite, SiteEvent};
     use crate::state::{self, VersionRecord};
 
     #[tokio::test]
@@ -330,6 +358,7 @@ mod tests {
                 size: 1,
                 created_at: 100,
                 stored_at: 100,
+                event: None,
             },
         );
         fx.kubo().mfs.insert(kept_path.clone(), "bafy-kept".into());
@@ -352,15 +381,25 @@ mod tests {
         let fx = Fixture::new(default_policy(), FakeKubo::default());
         fx.seed(D, "bafy-a", 1, 100).await;
         let mut tasks = JoinSet::new();
-        fx.agent.start_report_round(&mut tasks);
-        fx.agent.start_report_round(&mut tasks);
+        let now = tokio::time::Instant::now();
+        assert!(
+            fx.agent
+                .begin_report_round(now, None::<std::future::Ready<()>>, &mut tasks)
+        );
+        assert!(
+            !fx.agent
+                .begin_report_round(now, None::<std::future::Ready<()>>, &mut tasks)
+        );
         assert_eq!(tasks.len(), 1);
         while let Some(joined) = tasks.join_next().await {
             joined.unwrap();
         }
         assert_eq!(fx.take_reports().len(), 1);
 
-        fx.agent.start_report_round(&mut tasks);
+        assert!(
+            fx.agent
+                .begin_report_round(now, None::<std::future::Ready<()>>, &mut tasks)
+        );
         assert_eq!(tasks.len(), 1);
         while tasks.join_next().await.is_some() {}
     }
@@ -516,22 +555,34 @@ mod tests {
             dir.path().join("state.json"),
             Arc::default(),
         );
-        let pubkey = Keys::generate().public_key();
+        let keys = Keys::generate();
+        let pubkey = keys.public_key();
         agent.replace_targets(HashSet::from([pubkey]));
-        let ev = SiteEvent {
-            pubkey,
-            d: "a/b.example".to_string(),
-            cid: cid.clone(),
-            url: None,
-            size: None,
-            title: None,
-            message: None,
-            created_at: 100,
-            id: nostr_sdk::prelude::EventId::from_byte_array([0; 32]),
+        let event = EventBuilder::new(Kind::Custom(agent.config.nostr.site_event_kind), "")
+            .tag(Tag::identifier("a/b.example"))
+            .tag(Tag::custom("cid", [cid.clone()]))
+            .custom_created_at(Timestamp::from_secs(100))
+            .finalize(&keys)
+            .unwrap();
+        let ev = SignedSite {
+            site: SiteEvent {
+                pubkey,
+                d: "a/b.example".to_string(),
+                cid: cid.clone(),
+                url: None,
+                size: None,
+                title: None,
+                message: None,
+                created_at: 100,
+                id: event.id,
+            },
+            event,
         };
 
         agent.apply_site_event(&ev).await;
-        let path = agent.layout.agent_version(&pubkey.to_hex(), &ev.d, 100);
+        let path = agent
+            .layout
+            .agent_version(&pubkey.to_hex(), &ev.site.d, 100);
         assert_eq!(
             agent.ipfs.mfs_stat_cid(&path).await.unwrap(),
             Some(cid.clone())
@@ -540,7 +591,7 @@ mod tests {
             .state
             .lock()
             .await
-            .site_bytes(&state::site_key(&pubkey.to_hex(), &ev.d));
+            .site_bytes(&state::site_key(&pubkey.to_hex(), &ev.site.d));
         assert!(size > 0);
 
         agent.reconcile().await;

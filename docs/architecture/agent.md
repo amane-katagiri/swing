@@ -1,6 +1,6 @@
 # mirror-agent（agent/, policy.rs, state.rs）
 
-[`../architecture.md`](../architecture.md) の一部。子ページはレプリカ報告の [`agent/replicas.md`](agent/replicas.md) と、ポリシー判定・取得の上限の [`agent/policy.md`](agent/policy.md)。MFS のパスと Kubo RPC は [`mfs.md`](mfs.md)、NIP-05 は [`nip05.md`](nip05.md)、ダッシュボードは [`dashboard.md`](dashboard.md)、内蔵 gateway は [`gateway.md`](gateway.md)、`swing up`（Kubo の起動・監視、agent の再起動）は [`up.md`](up.md)。
+[`../architecture.md`](../architecture.md) の一部。子ページはレプリカ報告の [`agent/replicas.md`](agent/replicas.md)、`state.json` の [`agent/state.md`](agent/state.md)、保存した版のサイトイベントの再送の [`agent/resend.md`](agent/resend.md)、ポリシー判定・取得の上限の [`agent/policy.md`](agent/policy.md)。MFS のパスと Kubo RPC は [`mfs.md`](mfs.md)、NIP-05 は [`nip05.md`](nip05.md)、ダッシュボードは [`dashboard.md`](dashboard.md)、内蔵 gateway は [`gateway.md`](gateway.md)、`swing up`（Kubo の起動・監視、agent の再起動）は [`up.md`](up.md)。
 
 ## agent/ の構成
 
@@ -9,6 +9,7 @@
 | `agent/mod.rs` | `Agent` 構造体、`poll_once`、メンテナンス（sweep・unfollow・突き合わせ） |
 | `agent/lifecycle.rs` | `run_until`（ライフサイクル本体）、内蔵 gateway の起動・終了 |
 | `agent/follow.rs` | Follow Set の選択・再送と、購読・過去分の取得 |
+| `agent/resend.rs` | 保存した版のサイトイベントの再送（間隔・送信のバックオフ。タスクはレプリカ報告の回と共有） |
 | `agent/store.rs` | キューイングと直列実行、「保存の順序」、NIP-05 検証 |
 | `agent/replicas.rs` | レプリカ報告（[`agent/replicas.md`](agent/replicas.md)） |
 | `agent/test_support.rs` | テスト用の偽の relay・NIP-05 検証と設定（`#[cfg(test)]`） |
@@ -22,7 +23,7 @@
    1. sweep
    2. Follow Set を決める。決まらなければ警告を出して 3 と 4 を飛ばす。
    3. unfollow
-   4. 対象 pubkey 群のサイトイベントを購読し直してから過去分を取得し、`nostr::select_latest`（未来ずれの許容は [`nostr.md`](nostr.md#未来ずれの許容nostrmax_future_skew)）でサイトごとの最新版を選び、pubkey ごとに、保存済みのサイトすべてと、それ以外のサイトを `created_at` の新しい順に合計 `max_sites_per_account` 件まで、タスクに投入する。一時的な取得・保存の失敗はここで再試行される（取得の試行は下記「保存の順序」の間引きにより、サイトごとに `min_update_interval` に 1 回まで）。
+   4. 対象 pubkey 群のサイトイベントを購読し直してから過去分を取得し、`nostr::select_latest`（未来ずれの許容は [`nostr.md`](nostr.md#未来ずれの許容nostrmax_future_skew)）でサイトごとの最新版を選び、pubkey ごとに、保存済みのサイトすべてと、それ以外のサイトを `created_at` の新しい順に合計 `max_sites_per_account` 件まで、タスクに投入する。一時的な取得・保存の失敗はここで再試行される（取得の試行は下記「保存の順序」の間引きにより、サイトごとに `min_update_interval` に 1 回まで）。投入の前に、選んだ最新版のうち、state のそのサイトの最新の版と `cid`・`created_at` が一致し、まだサイトイベントを持たない版には、そのイベントを入れて state を保存する（`State::fill_latest_event`）。続けて「[保存した版のサイトイベントの再送](agent/resend.md)」の確認の対象を、レプリカ報告の回のタスクに渡す。確認はそのタスクの報告のあと、前回から `RESEND_CHECK_INTERVAL`（1 時間）以上たっていれば行う（過去分の取得に失敗しても渡す。poll はその終わりを待たない）。
    5. レプリカ報告の同期（Follow Set が決まらなくても行う）と、他の報告者が自分のサイトについて出した報告の時刻の記録（[`agent/replicas.md`](agent/replicas.md)）を、この順に別タスクで始める。前の回のタスクがまだ動いていれば今回は始めない。
 5. 購読で届いたサイトイベントをタスクに投入する（投入前に捨てる条件は下記「並行処理」の `submit`）。購読 ID と kind が一致しない通知は debug、パースできないサイトイベントは warn を出して捨てる。
 6. タスクはサイト単位で「保存の順序」に従って処理する。新版を記録したら、同時実行の枠を返してからレプリカ報告の同期を行う。
@@ -33,7 +34,7 @@ relay の切断、Kubo のエラー、不正なイベントはログに出して
 
 `swing up` はシグナルから作った `CancellationToken`（の子トークン）を `run_until` に渡す（`cancel_on_signal` の詳細は [`up.md#shutdownshutdownrs`](up.md#shutdownshutdownrs)）。`run_until` 自体はシグナルを直接扱わない。起動時の突き合わせと `poll_once` はこのトークンの cancel と競争させ（`race_with_shutdown`）、cancel が先に届いたら処理中の I/O を打ち切って shutdown に進む。
 
-shutdown・poll 中の停止検知・relay 通知ストリーム終了のいずれでループを抜けても（正常終了でもエラーでも）、`run_until` はループを抜けた後に必ず `shutdown_gateway`（gateway の子トークンを cancel してサーバタスクを最大 5 秒待つ。超えたら warn を出して待つのをやめる）→ relay 切断 → `dashboard.set_not_ready()` の順で後始末する。ダッシュボードの API サーバは agent の外で動く（[`up.md`](up.md)）。
+shutdown・poll 中の停止検知・relay 通知ストリーム終了のいずれでループを抜けても（正常終了でもエラーでも）、`run_until` はループを抜けた後に必ず `shutdown_gateway`（gateway の子トークンを cancel してサーバタスクを最大 5 秒待つ。超えたら warn を出して待つのをやめる）→ relay 切断 → `dashboard.set_not_ready()` の順で後始末する。サイトのタスク・レプリカ報告の回・保存した版のサイトイベントの再送の確認は 1 つの `JoinSet` で動かし、`run_until` が返るときに待たずに中断する（再送の確認は送りかけでも中断してよい。state に残すのは確かめた取り下げだけで、それは記録してから送る）。ダッシュボードの API サーバは agent の外で動く（[`up.md`](up.md)）。
 
 ダッシュボードとの共有のしかたは [`dashboard.md#概要`](dashboard.md#概要)。内蔵 gateway は agent の state や Kubo RPC を一切使わず、Kubo の gateway へ透過的にプロキシするだけ（[`gateway.md`](gateway.md)）。
 
@@ -58,6 +59,10 @@ relay から取得した版と `state.follow_set` の版を比べて使う方を
 
 対象 pubkey は決まった Follow Set の `p` のうち先頭 `MAX_FOLLOW_SET_ENTRIES` 件で、超えたら `resubscribe_and_backfill` が warn を出す（[取得と表示の上限](nostr/fetch.md#定数)）。
 
+## 保存した版のサイトイベントの再送
+
+保存している版のサイトイベントを、それを持たない relay にだけ送り直す。確認の間隔・手順・取り下げの記録・送信のバックオフは [`agent/resend.md`](agent/resend.md)。
+
 ## unfollow
 
 Follow Set が決まった tick で行う。Follow Set の更新はこれより先に反映する。決まらない tick では何もせず、warn を出す（state に版か検証結果のあるアカウントがあれば、その数と、鍵か `mirror_set` を変えていないかの確認を添える）。state に保存した Follow Set は今の鍵と `mirror_set` のものしか使わないので、鍵か `mirror_set` を変えて起動すると、新しい Follow Set ができるまで以前のアカウントは消えずに残る。
@@ -78,7 +83,7 @@ Follow Set が決まった tick で行う。Follow Set の更新はこれより�
 7. state のロックの外で、版のパスに CID を置く（既存の項目は先に消す）。失敗したら終わる。
 8. state のロックの外で、`dag/stat`（`offline=true`、タイムアウト 300 秒）の `TotalSize` を実サイズとする。
 9. state のロックを取る。8 が失敗していれば（ブロックが欠けている場合を含む）、ロックを放して 7 のパスを消して終わる。作者が Follow Set から外れていれば（7 の間に unfollow があった場合を含む）同じく 7 のパスを消して終わる。`size` タグより大きければ warn を出す。実サイズで `policy::decide` する。skip ならロックを放して 7 のパスを消して終わる。
-10. 新版を記録し、evict した版を `sites` から消して state を保存し、ロックを放してから evict した版のパスを消す。
+10. 新版を、受け取った署名済みのサイトイベントと一緒に記録し（[`state.json`](agent/state.md) の `event`）、evict した版を `sites` から消して state を保存し、ロックを放してから evict した版のパスを消す。
 
 4・5 で拒否したとき、取得したブロックは Kubo の GC に任せる。
 
@@ -120,24 +125,4 @@ Follow Set が決まった tick で行う。Follow Set の更新はこれより�
 
 ## state.json（state.rs）
 
-`[agent].state_dir` 直下。`auth::write_private_file` で書く（手順とパーミッションは [`dashboard/security.md#トークン`](dashboard/security.md#トークン)）。
-
-```json
-{
-  "sites": {
-    "<pubkey hex>:<d>": [
-      { "cid": "bafy...", "size": 12345, "created_at": 1700000000, "stored_at": 1700000100 }
-    ]
-  },
-  "verifications": {
-    "<pubkey hex>:<d>": { "status": "verified", "detail": null, "checked_at": 1700000100 }
-  },
-  "follow_set": { "id": "...", "pubkey": "...", "created_at": 1700000000, "kind": 30000, "tags": [["d", "swing"], ["p", "..."]], "content": "", "sig": "..." }
-}
-```
-
-- キーは最初の `:` で `<pubkey hex>` と `<d>` に分ける。
-- `sites[].size` は `dag/stat` の `TotalSize`。
-- `status` は `verified` / `mismatch` / `not_applicable` / `error`。`verifications` の扱いは [`nip05.md`](nip05.md)。
-- `follow_set` は最後に保存した署名済みの Follow Set。無ければ `null`（キーが無くても `null`）。
-- `sites` と `verifications` は必須キー。ファイルが無い、または空白だけなら空の state として扱う。
+`[agent].state_dir` 直下の state の形式と各項目の扱いは [`agent/state.md`](agent/state.md)。

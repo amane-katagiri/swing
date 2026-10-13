@@ -6,13 +6,14 @@ use futures_util::StreamExt;
 use nostr_sdk::prelude::*;
 
 use super::{
-    FOLLOW_SET_KIND, SITE_SUBSCRIPTION_ID, SiteEvent, budget, is_follow_set_of, newest_by_address,
-    parse_site_event, select_latest,
+    FOLLOW_SET_KIND, SITE_SUBSCRIPTION_ID, SignedSite, SiteEvent, budget, is_follow_set_of,
+    newest_by_address, parse_site_event, select_latest,
 };
 use crate::signer::Signer;
 
 mod fetch;
 mod report_relay;
+mod resend;
 mod send;
 
 pub use fetch::Paged;
@@ -21,6 +22,7 @@ use fetch::{
     relay_stream, walk_pages,
 };
 pub use report_relay::ReportRelay;
+pub use resend::{DeletionAnswers, RelayAnswers};
 pub use send::{
     RelaySendResult, print_relay_line, print_relay_send_result_lines, relay_send_results,
     with_rejection_hint,
@@ -256,6 +258,19 @@ impl RelayClient {
         site_event_kind: u16,
         authors: &[PublicKey],
     ) -> Result<HashMap<(String, String), SiteEvent>> {
+        Ok(self
+            .fetch_latest_signed_sites(site_event_kind, authors)
+            .await?
+            .into_iter()
+            .map(|s| ((s.site.pubkey.to_hex(), s.site.d.clone()), s.site))
+            .collect())
+    }
+
+    pub async fn fetch_latest_signed_sites(
+        &self,
+        site_event_kind: u16,
+        authors: &[PublicKey],
+    ) -> Result<Vec<SignedSite>> {
         let events = self.fetch_site_events(site_event_kind, authors).await?;
         let parsed: Vec<SiteEvent> = events
             .iter()
@@ -267,7 +282,15 @@ impl RelayClient {
                 }
             })
             .collect();
-        Ok(select_latest(&parsed, Timestamp::now().as_secs()))
+        let mut by_id: HashMap<EventId, Event> = events.into_iter().map(|e| (e.id, e)).collect();
+        Ok(select_latest(&parsed, Timestamp::now().as_secs())
+            .into_values()
+            .filter_map(|site| {
+                by_id
+                    .remove(&site.id)
+                    .map(|event| SignedSite { site, event })
+            })
+            .collect())
     }
 
     pub async fn fetch_own_latest_site(

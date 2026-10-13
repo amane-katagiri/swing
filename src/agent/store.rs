@@ -6,7 +6,7 @@ use tracing::{debug, error, info, warn};
 use crate::config::{CheckMode, Config};
 use crate::ipfs::{FetchLimits, Fetched, KuboStore};
 use crate::nip05::{self, Nip05Verify};
-use crate::nostr::{ReportRelay, SiteEvent};
+use crate::nostr::{ReportRelay, SignedSite, SiteEvent};
 use crate::policy::{self, CandidateEvent, Decision, Usage, VersionInfo};
 use crate::state::{self, SiteKey, State, Verification, VersionRecord};
 
@@ -129,7 +129,7 @@ impl Drop for Storing<'_> {
 
 pub(super) struct Queued {
     running_created_at: u64,
-    next: Option<SiteEvent>,
+    next: Option<SignedSite>,
 }
 
 pub(super) fn version_infos(state: &State, key: &SiteKey) -> Vec<VersionInfo> {
@@ -183,7 +183,8 @@ where
     N: Nip05Verify + Send + Sync + 'static,
     R: ReportRelay + Send + Sync + 'static,
 {
-    pub(super) fn submit(self: &Arc<Self>, ev: SiteEvent, tasks: &mut JoinSet<()>) {
+    pub(super) fn submit(self: &Arc<Self>, signed: SignedSite, tasks: &mut JoinSet<()>) {
+        let ev = &signed.site;
         let pubkey_hex = ev.pubkey.to_hex();
         if !crate::nostr::plausible_at(ev.created_at, now_secs()) {
             warn!(
@@ -195,7 +196,7 @@ where
             );
             return;
         }
-        if !self.still_followed(&ev, &pubkey_hex, "submit") {
+        if !self.still_followed(ev, &pubkey_hex, "submit") {
             return;
         }
         let key = state::site_key(&pubkey_hex, &ev.d);
@@ -205,9 +206,9 @@ where
                 let newest = queued
                     .next
                     .as_ref()
-                    .map_or(queued.running_created_at, |n| n.created_at);
+                    .map_or(queued.running_created_at, |n| n.site.created_at);
                 if ev.created_at > newest {
-                    queued.next = Some(ev);
+                    queued.next = Some(signed);
                 }
                 return;
             }
@@ -225,10 +226,10 @@ where
             );
         }
         let agent = Arc::clone(self);
-        tasks.spawn(async move { agent.drain(key, ev).await });
+        tasks.spawn(async move { agent.drain(key, signed).await });
     }
 
-    async fn drain(&self, key: SiteKey, first: SiteEvent) {
+    async fn drain(&self, key: SiteKey, first: SignedSite) {
         let mut ev = first;
         loop {
             let stored = {
@@ -248,7 +249,7 @@ where
                 match &next {
                     Some(n) => {
                         if let Some(q) = queue.get_mut(&key) {
-                            q.running_created_at = n.created_at;
+                            q.running_created_at = n.site.created_at;
                         }
                     }
                     None => {
@@ -307,14 +308,15 @@ impl<C: KuboStore, N: Nip05Verify, R: ReportRelay> Agent<C, N, R> {
         result.is_verified()
     }
 
-    pub(super) async fn apply_site_event(&self, ev: &SiteEvent) -> bool {
+    pub(super) async fn apply_site_event(&self, signed: &SignedSite) -> bool {
+        let ev = &signed.site;
         let pubkey_hex = ev.pubkey.to_hex();
         let key = state::site_key(&pubkey_hex, &ev.d);
         let Some(max_bytes) = self.worth_fetching(&key, ev, &pubkey_hex).await else {
             return false;
         };
         self.fetch_directory(&key, ev, max_bytes).await
-            && self.store_fetched(&key, ev, &pubkey_hex).await
+            && self.store_fetched(&key, signed, &pubkey_hex).await
     }
 
     async fn worth_fetching(&self, key: &SiteKey, ev: &SiteEvent, pubkey_hex: &str) -> Option<u64> {
@@ -396,7 +398,8 @@ impl<C: KuboStore, N: Nip05Verify, R: ReportRelay> Agent<C, N, R> {
         }
     }
 
-    async fn store_fetched(&self, key: &SiteKey, ev: &SiteEvent, pubkey_hex: &str) -> bool {
+    async fn store_fetched(&self, key: &SiteKey, signed: &SignedSite, pubkey_hex: &str) -> bool {
+        let ev = &signed.site;
         let path = self.layout.agent_version(pubkey_hex, &ev.d, ev.created_at);
         let _storing = {
             let _state = self.state.lock().await;
@@ -447,6 +450,7 @@ impl<C: KuboStore, N: Nip05Verify, R: ReportRelay> Agent<C, N, R> {
                 size,
                 created_at: ev.created_at,
                 stored_at: now_secs(),
+                event: Some(signed.event.clone()),
             },
         );
         self.attempts.lock().unwrap().clear(key);

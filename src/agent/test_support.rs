@@ -173,6 +173,7 @@ pub(super) fn nip05_policy(mode: CheckMode) -> PolicyConfig {
 
 pub(super) struct Fixture {
     pub(super) agent: Arc<Agent<FakeKubo, FakeNip05, FakeRelay>>,
+    pub(super) keys: Keys,
     pub(super) pubkey: PublicKey,
     pub(super) state_path: std::path::PathBuf,
     pub(super) _dir: tempfile::TempDir,
@@ -182,7 +183,8 @@ impl Fixture {
     pub(super) fn new(policy: PolicyConfig, kubo: FakeKubo) -> Self {
         let dir = tempfile::tempdir().unwrap();
         let state_path = dir.path().join("state.json");
-        let pubkey = Keys::generate().public_key();
+        let keys = Keys::generate();
+        let pubkey = keys.public_key();
         let agent = Agent::new(
             test_config(policy),
             kubo,
@@ -195,6 +197,7 @@ impl Fixture {
         agent.replace_targets(HashSet::from([pubkey]));
         Self {
             agent: Arc::new(agent),
+            keys,
             pubkey,
             state_path,
             _dir: dir,
@@ -217,17 +220,26 @@ impl Fixture {
         cid: &str,
         size: Option<u64>,
         created_at: u64,
-    ) -> crate::nostr::SiteEvent {
-        crate::nostr::SiteEvent {
-            pubkey: self.pubkey,
-            d: d.to_string(),
-            cid: cid.to_string(),
-            url: None,
-            size,
-            title: None,
-            message: None,
-            created_at,
-            id: nostr_sdk::prelude::EventId::from_byte_array([0; 32]),
+    ) -> crate::nostr::SignedSite {
+        let event = EventBuilder::new(Kind::Custom(self.agent.config.nostr.site_event_kind), "")
+            .tag(Tag::identifier(d))
+            .tag(Tag::custom("cid", [cid.to_string()]))
+            .custom_created_at(Timestamp::from_secs(created_at))
+            .finalize(&self.keys)
+            .unwrap();
+        crate::nostr::SignedSite {
+            site: crate::nostr::SiteEvent {
+                pubkey: self.pubkey,
+                d: d.to_string(),
+                cid: cid.to_string(),
+                url: None,
+                size,
+                title: None,
+                message: None,
+                created_at,
+                id: event.id,
+            },
+            event,
         }
     }
 
@@ -239,6 +251,7 @@ impl Fixture {
                 size,
                 created_at,
                 stored_at: created_at,
+                event: None,
             },
         );
         let path = self.path(d, created_at);
@@ -247,7 +260,7 @@ impl Fixture {
         kubo.sizes.insert(cid.to_string(), size);
     }
 
-    pub(super) async fn apply(&self, ev: crate::nostr::SiteEvent) {
+    pub(super) async fn apply(&self, ev: crate::nostr::SignedSite) {
         self.agent.apply_site_event(&ev).await;
     }
 

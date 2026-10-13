@@ -1,6 +1,6 @@
-# 取得と表示の上限（`nostr::budget`, `nostr/client.rs`, `nostr/client/fetch.rs`）
+# 取得と表示の上限（`nostr::budget`, `nostr/client.rs`, `nostr/client/fetch.rs`, `nostr/client/resend.rs`）
 
-[`../nostr.md`](../nostr.md) の子ページ。サイトイベント・レプリカ報告・Follow Set を relay から読む経路は、`nostr::budget` の定数で件数を打ち切る。表示用の経路（`swing sites` / `replicas` / `webring`、ダッシュボードの `/api/sites` / `/api/replicas` / `/api/webring`）だけでなく、agent の取り込みと `/api/publish/sites` にも一部が効く。
+[`../nostr.md`](../nostr.md) の子ページ。サイトイベント・レプリカ報告・Follow Set・サイトイベントの削除要求を relay から読む経路は、`nostr::budget` の定数で件数を打ち切る。表示用の経路（`swing sites` / `replicas` / `webring`、ダッシュボードの `/api/sites` / `/api/replicas` / `/api/webring`）だけでなく、agent の取り込みと `/api/publish/sites` にも一部が効く。
 
 ## 1 回の REQ（`RelayClient::fetch`）
 
@@ -31,6 +31,24 @@
 - 最初のページにどの relay も答えなければ `no relay answered` のエラー。各 relay の結果は `id` で重複を除いて合わせる。
 - 結果（`Paged`）の `complete` は、最後まで（終わりのページか件数・大きさの上限まで）たどれた relay が 1 つでもあれば true。期限切れか途中のページに答えなかった relay だけなら false。自分の報告はどの relay にも同じものを送るので、1 つ読み終えれば足りるとする。
 
+## relay ごとの取得
+
+agent の保存した版のサイトイベントの再送（[`../agent/resend.md`](../agent/resend.md)）は、送り直す相手を relay ごとに決めるので、ほかの取得と違って relay の答えを合わせずに、relay ごと・REQ ごとに「答えたか」を持って返す。共通の部分は `fold_per_relay`。
+
+- 読み取りの relay ごとに、REQ を `FETCH_CONCURRENCY`（4）本ずつ並行に出す。relay どうしは並行に進めるので、同時に開いている REQ は最大で relay の数 × 4 本。1 本は「1 回の REQ」と同じく 30 秒（`FETCH_TIMEOUT`）で打ち切る。全体の期限は全 relay で共通の 120 秒（`FETCH_DEADLINE`）で、過ぎてから始まる REQ は出さない。
+- 受け取ったイベントはその場で畳み込み、生のイベントの列は持たない（下記）。持つのは REQ ごとに畳み込んだ結果だけなので、メモリは受け取った件数ではなく対象の数で決まる。
+- 件数と JSON の大きさは、1 本あたり `MAX_RELAY_FETCH_LIMIT` 件・16 MiB（「1 回の REQ」と同じ）、relay 1 台あたりの合計が `MAX_FETCH_TOTAL_EVENTS`・`MAX_FETCH_TOTAL_BYTES` を relay の数で割った値（「ページに分ける取得」と同じ）まで。超えたら warn を出し、その REQ は「答えていない」とする。
+- REQ が「答えた」のは、EOSE（または接頭辞の無い CLOSED）まで受け取り、そのとき relay がまだ接続中だったときだけ（「1 回の REQ」と同じ）。期限切れ・上限超え・途中で切れた REQ は「答えていない」。
+- エラーにはならない。どの relay も答えなければ、すべての対象がすべての relay で「答えていない」になる。
+
+`fetch_sites_per_relay` は、対象のサイトを `AUTHORS_PER_SPLIT_REQ`（10）件ずつ 1 つの REQ にまとめ、その中でサイトごとに別のフィルタ（kind・作者・`d`、`limit` 2）を置く。受け取ったイベントは、作者・kind・`d` が一致してサイトイベントとしてパースでき、`created_at` が未来ずれの許容内のものだけを、NIP-01 の置き換え規則でサイトごとに最新の 1 件へ畳み込む（`nostr::keep_newest_site`）。結果（`RelayAnswers`）は relay ごと・サイトごとに「答えていない」「答えたが無い」「最新の 1 件」のどれか。
+
+`fetch_site_deletions` は、送り直す予定のサイトの作者ごとに（作者のサイトが `COORDINATES_PER_FILTER`（250）件を超えたら 250 件ずつに分けて）2 つのフィルタを作る。kind 5・その作者 1 人で、`#a` にその作者のサイトの座標を並べたものと、`#e` にその作者の保存している版の `id` を並べたもの（`#a` と `#e` を 1 つのフィルタに入れると両方を満たすものしか返らないので分ける）。`limit` はどちらもその作者のサイトの数 × 2。これを `AUTHORS_PER_SPLIT_REQ` 個のフィルタ（5 人分）ずつ 1 つの REQ にまとめる。作者ごとにフィルタと `limit` を分けるのは、ある作者がほかの作者のサイトを指す削除要求を大量に出しても、ほかの作者の削除要求を押し出せないようにするため（フィルタの作者が 1 人なので、ほかの作者のイベントは当たらない）。
+
+- 受け取った kind 5 は、`id` で重複を除き、作者がそのフィルタの作者のものだけを、要求した `e`（保存している版の `id`）と `a`（そのサイトの座標）のタグだけ索引に入れる（`nostr::Withdrawals`。`e` は作者と `id` の組の集合、`a` は作者と座標の組ごとに最大の `created_at`）。`created_at` が未来ずれの許容を超える削除要求は索引に入れない。
+- 作者ごとに、`#a` と `#e` のそれぞれに当たった件数を数え、どちらかが `limit` に達したら、その relay ではその作者のサイトを「答えていない」とし、warn を出す（`limit` で切られて削除要求を見落としているかもしれないため）。
+- 結果（`DeletionAnswers`）は、全 relay の全 REQ（答えていない REQ の途中までの分も含む）の索引を合わせたものと、relay ごと・サイトごとの「答えたか」（その作者を含む REQ に答え、その作者が `limit` に達していない）。
+
 ## 定数
 
 | 定数 | 値 | 適用箇所 |
@@ -41,8 +59,8 @@
 | `MAX_CRAWL_NODES` | 1000 | `webring::crawl`。`Crawl.depths` がこれを超えないように新規ノードの追加を止め、弾いた件数を `Crawl.over_budget`（テキスト出力・`/api/webring` の `over_budget`）に積む。追加しなかったノードは次のレベルの取得にも現れない |
 | `MAX_REFERENCING_LISTED` | 50 | `webring::crawl`。`#p` で見つかる「起点を名指ししているだけの相手」（`Crawl.referencing`）の一覧を先頭 50 件までに切り詰める。超えた件数は `Crawl.referencing_dropped` に積む。たどり方は [`../webring.md`](../webring.md#たどり方webringcrawl) |
 | `MAX_RELAY_FETCH_LIMIT` | 10,000 | relay 1 台への 1 回の REQ に付ける `limit` の上限（下記）。1 回の REQ で全 relay から受け取って残す件数の上限も同じ値 |
-| `COORDINATES_PER_FILTER` | 250 | `fetch_replica_reports`・`fetch_replica_reports_by` が 1 つのフィルタの `#a` に入れる座標の数。超える分は組に分けて別の REQ にする |
-| `AUTHORS_PER_FILTER` / `AUTHORS_PER_SPLIT_REQ` | 50 / 10 | 作者を並べる取得の組の大きさ（下記） |
+| `COORDINATES_PER_FILTER` | 250 | `fetch_replica_reports`・`fetch_replica_reports_by` が 1 つのフィルタの `#a` に入れる座標の数。超える分は組に分けて別の REQ にする。`fetch_site_deletions` が 1 人の作者のフィルタに入れるサイトの数にも使う |
+| `AUTHORS_PER_FILTER` / `AUTHORS_PER_SPLIT_REQ` | 50 / 10 | 作者を並べる取得の組の大きさ（下記）。`AUTHORS_PER_SPLIT_REQ` は `fetch_sites_per_relay` が 1 つの REQ にまとめるサイトの数と、`fetch_site_deletions` が 1 つの REQ に置くフィルタの数にも使う |
 | `MAX_FETCH_TOTAL_EVENTS` / `MAX_FETCH_TOTAL_BYTES` / `FETCH_CONCURRENCY` | 50,000 / 64 MiB / 4 | 複数の REQ に分ける取得の合計の上限と並行数（上記） |
 
 `nostr::budget` の残りの定数（`MAX_CONTENT_BYTES`・`MAX_TRUSTED_REPORTERS`・イベントとメッセージの大きさ）は [`../nostr.md`](../nostr.md#検証)。

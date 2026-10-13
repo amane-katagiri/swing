@@ -756,3 +756,188 @@ async fn paged_fetches_step_past_a_second_holding_more_than_a_page() {
     assert!(crowded.iter().filter(|e| ids.contains(&e.id)).count() >= 2);
     client.shutdown().await;
 }
+
+#[tokio::test]
+async fn sites_per_relay_tell_a_relay_without_the_site_from_one_that_did_not_answer() {
+    let k = keys();
+    let now = Timestamp::now().as_secs();
+    let held = make_site_event(&k, 35980, "a.example", CID_A, now);
+    let other = make_site_event(&k, 35980, "b.example", CID_A, now);
+    let (_holding, holding) = relay_holding(&[held.clone(), other]).await;
+    let (_empty, empty) = relay_holding(&[]).await;
+    let refusing = LocalRelayBuilder::default()
+        .query_policy(RefusesQueries)
+        .build();
+    refusing.run().await.unwrap();
+    let refusing = refusing.url().await.to_string();
+    let client = RelayClient::connect(
+        Signer::Local(keys()),
+        &[holding.clone(), empty.clone(), refusing.clone()],
+    )
+    .await
+    .unwrap();
+
+    let sites = vec![(k.public_key(), "a.example".to_string())];
+    let answers = client.fetch_sites_per_relay(35980, &sites).await;
+    client.shutdown().await;
+
+    let by_url = |url: &str| {
+        let url = RelayUrl::parse(url).unwrap();
+        answers
+            .iter()
+            .find(|a| a.relay == url)
+            .map(|a| a.sites.clone())
+            .unwrap()
+    };
+    assert_eq!(by_url(&holding), vec![Some(Some(held))]);
+    assert_eq!(by_url(&empty), vec![Some(None)]);
+    assert_eq!(by_url(&refusing), vec![None]);
+}
+
+fn deletion_of(k: &Keys, tags: &[[&str; 2]], created_at: u64) -> Event {
+    let mut builder = EventBuilder::new(Kind::EventDeletion, "");
+    for tag in tags {
+        builder = builder.tag(Tag::parse(*tag).unwrap());
+    }
+    builder
+        .custom_created_at(Timestamp::from_secs(created_at))
+        .finalize(k)
+        .unwrap()
+}
+
+fn coordinate_of(event: &Event) -> String {
+    site_coordinate(35980, &event.pubkey, &event.tags.identifier().unwrap()).to_string()
+}
+
+#[test]
+fn deletion_requests_give_each_author_its_own_filters_and_limit() {
+    let authors: Vec<Keys> = (0..12).map(|_| keys()).collect();
+    let mut held: Vec<Event> = authors
+        .iter()
+        .map(|k| make_site_event(k, 35980, "a.example", CID_A, 100))
+        .collect();
+    held.push(make_site_event(&authors[0], 35980, "b.example", CID_A, 100));
+    let refs: Vec<&Event> = held.iter().collect();
+
+    let units = resend::deletion_units(35980, &refs);
+    assert_eq!(units.len(), 12);
+    let first = units
+        .iter()
+        .find(|u| u.author == authors[0].public_key())
+        .unwrap();
+    assert_eq!(first.sites.len(), 2);
+    assert_eq!(first.limit, 4);
+    for unit in &units {
+        let [by_address, by_id] = unit.filters();
+        for filter in [&by_address, &by_id] {
+            assert_eq!(filter.authors, Some(BTreeSet::from([unit.author])));
+            assert_eq!(filter.kinds, Some(BTreeSet::from([Kind::EventDeletion])));
+            assert_eq!(filter.limit, Some(unit.limit));
+        }
+        let addresses = by_address
+            .generic_tags
+            .get(&SingleLetterTag::from_char('a').unwrap())
+            .unwrap();
+        assert_eq!(addresses.len(), unit.sites.len());
+        assert!(addresses.iter().all(|a| a.contains(&unit.author.to_hex())));
+        assert!(
+            !by_address
+                .generic_tags
+                .contains_key(&SingleLetterTag::from_char('e').unwrap())
+        );
+        let ids = by_id
+            .generic_tags
+            .get(&SingleLetterTag::from_char('e').unwrap())
+            .unwrap();
+        assert_eq!(ids.len(), unit.sites.len());
+    }
+    let requests: Vec<usize> = units
+        .chunks(resend::UNITS_PER_REQ)
+        .map(|chunk| chunk.iter().flat_map(resend::DeletionUnit::filters).count())
+        .collect();
+    assert_eq!(requests, vec![10, 10, 4]);
+}
+
+#[tokio::test]
+async fn deletions_naming_another_authors_site_do_not_crowd_out_that_authors_own() {
+    let flooder = keys();
+    let author = keys();
+    let now = Timestamp::now().as_secs();
+    let flooders_site = make_site_event(&flooder, 35980, "f.example", CID_A, now - 100);
+    let held = make_site_event(&author, 35980, "a.example", CID_A, now - 100);
+    let target = coordinate_of(&held);
+    let mut stored: Vec<Event> = (0..20)
+        .map(|i| {
+            deletion_of(
+                &flooder,
+                &[["a", &target], ["e", &held.id.to_hex()]],
+                now - i,
+            )
+        })
+        .collect();
+    stored.push(deletion_of(&author, &[["a", &target]], now - 50));
+    let (_relay, url) = relay_holding(&stored).await;
+    let client = RelayClient::connect(Signer::Local(keys()), std::slice::from_ref(&url))
+        .await
+        .unwrap();
+
+    let answers = client
+        .fetch_site_deletions(35980, &[&flooders_site, &held])
+        .await;
+    client.shutdown().await;
+
+    assert!(answers.withdrawals.of(&held, 35980).is_some());
+    assert!(answers.withdrawals.of(&flooders_site, 35980).is_none());
+    let relay = RelayUrl::parse(&url).unwrap();
+    assert!(answers.answered(&relay, 0));
+    assert!(answers.answered(&relay, 1));
+}
+
+#[tokio::test]
+async fn an_author_whose_deletions_reach_the_limit_is_unknown_on_that_relay() {
+    let busy = keys();
+    let quiet = keys();
+    let now = Timestamp::now().as_secs();
+    let busy_site = make_site_event(&busy, 35980, "a.example", CID_A, now - 100);
+    let quiet_site = make_site_event(&quiet, 35980, "a.example", CID_A, now - 100);
+    let coordinate = coordinate_of(&busy_site);
+    let earlier: Vec<Event> = (0..2)
+        .map(|i| deletion_of(&busy, &[["a", &coordinate]], now - 500 - i))
+        .collect();
+    let (_relay, url) = relay_holding(&earlier).await;
+    let client = RelayClient::connect(Signer::Local(keys()), std::slice::from_ref(&url))
+        .await
+        .unwrap();
+
+    let answers = client
+        .fetch_site_deletions(35980, &[&busy_site, &quiet_site])
+        .await;
+    client.shutdown().await;
+
+    let relay = RelayUrl::parse(&url).unwrap();
+    assert!(answers.withdrawals.of(&busy_site, 35980).is_none());
+    assert!(!answers.answered(&relay, 0));
+    assert!(answers.answered(&relay, 1));
+}
+
+#[tokio::test]
+async fn a_relay_that_refuses_the_deletion_request_has_not_answered_it() {
+    let author = keys();
+    let now = Timestamp::now().as_secs();
+    let held = make_site_event(&author, 35980, "a.example", CID_A, now - 100);
+    let (_healthy, healthy) = relay_holding(&[]).await;
+    let refusing = LocalRelayBuilder::default()
+        .query_policy(RefusesQueries)
+        .build();
+    refusing.run().await.unwrap();
+    let refusing = refusing.url().await.to_string();
+    let client = RelayClient::connect(Signer::Local(keys()), &[healthy.clone(), refusing.clone()])
+        .await
+        .unwrap();
+
+    let answers = client.fetch_site_deletions(35980, &[&held]).await;
+    client.shutdown().await;
+
+    assert!(answers.answered(&RelayUrl::parse(&healthy).unwrap(), 0));
+    assert!(!answers.answered(&RelayUrl::parse(&refusing).unwrap(), 0));
+}

@@ -11,6 +11,8 @@ pub struct VersionRecord {
     pub size: u64,
     pub created_at: u64,
     pub stored_at: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub event: Option<Event>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -21,6 +23,28 @@ pub struct Verification {
 }
 
 pub type SiteKey = String;
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct Withdrawn {
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    pub events: BTreeSet<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub through: Option<u64>,
+}
+
+impl Withdrawn {
+    pub fn covers(&self, event_id_hex: &str, created_at: u64) -> bool {
+        self.events.contains(event_id_hex) || self.through.is_some_and(|at| created_at <= at)
+    }
+}
+
+fn latest_index(versions: &[VersionRecord]) -> Option<usize> {
+    versions
+        .iter()
+        .enumerate()
+        .max_by_key(|(_, v)| v.created_at)
+        .map(|(i, _)| i)
+}
 
 pub fn site_key(pubkey_hex: &str, d: &str) -> SiteKey {
     format!("{pubkey_hex}:{d}")
@@ -44,6 +68,8 @@ pub struct State {
     pub sites: BTreeMap<SiteKey, Vec<VersionRecord>>,
     pub verifications: BTreeMap<SiteKey, Verification>,
     pub follow_set: Option<Event>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub withdrawn: BTreeMap<SiteKey, Withdrawn>,
 }
 
 impl State {
@@ -147,7 +173,36 @@ impl State {
     }
 
     pub fn apply_store(&mut self, key: &SiteKey, record: VersionRecord) {
-        self.sites.entry(key.clone()).or_default().push(record);
+        let versions = self.sites.entry(key.clone()).or_default();
+        versions.push(record);
+        let latest = latest_index(versions);
+        for (i, v) in versions.iter_mut().enumerate() {
+            if Some(i) != latest {
+                v.event = None;
+            }
+        }
+    }
+
+    pub fn latest_version(&self, key: &str) -> Option<&VersionRecord> {
+        let versions = self.sites.get(key)?;
+        latest_index(versions).map(|i| &versions[i])
+    }
+
+    pub fn fill_latest_event(&mut self, key: &str, cid: &str, event: &Event) -> bool {
+        let Some(versions) = self.sites.get_mut(key) else {
+            return false;
+        };
+        let Some(latest) = latest_index(versions).map(|i| &mut versions[i]) else {
+            return false;
+        };
+        if latest.event.is_some()
+            || latest.cid != cid
+            || latest.created_at != event.created_at.as_secs()
+        {
+            return false;
+        }
+        latest.event = Some(event.clone());
+        true
     }
 
     pub fn latest_stored_at(&self) -> Option<u64> {
@@ -164,13 +219,33 @@ impl State {
         *versions = kept;
         if versions.is_empty() {
             self.sites.remove(key);
+            self.withdrawn.remove(key);
         }
         removed
     }
 
     fn remove_site(&mut self, key: &SiteKey) -> Vec<VersionRecord> {
         self.verifications.remove(key);
+        self.withdrawn.remove(key);
         self.sites.remove(key).unwrap_or_default()
+    }
+
+    pub fn record_withdrawal(
+        &mut self,
+        key: &SiteKey,
+        event_id_hex: Option<String>,
+        through: Option<u64>,
+    ) -> bool {
+        if !self.sites.contains_key(key) {
+            return false;
+        }
+        let entry = self.withdrawn.entry(key.clone()).or_default();
+        let before = entry.clone();
+        entry.events.extend(event_id_hex);
+        if let Some(at) = through {
+            entry.through = Some(entry.through.map_or(at, |t| t.max(at)));
+        }
+        *entry != before
     }
 
     pub fn set_verification(&mut self, key: &SiteKey, verification: Verification) {
@@ -191,6 +266,7 @@ mod tests {
             size: 1,
             created_at: 1,
             stored_at,
+            event: None,
         };
         state.apply_store(&site_key("aa", "x.example"), record("one", 30));
         state.apply_store(&site_key("aa", "x.example"), record("two", 10));
@@ -210,6 +286,7 @@ mod tests {
                 size: 100,
                 created_at: 1,
                 stored_at: 2,
+                event: None,
             },
         );
         state.save(&path).await.unwrap();
@@ -247,6 +324,141 @@ mod tests {
         assert!(State::load(&path).await.is_err());
     }
 
+    #[tokio::test]
+    async fn records_saved_before_events_were_kept_load_without_an_event() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("state.json");
+        std::fs::write(
+            &path,
+            r#"{"sites":{"aa:x.example":[{"cid":"c","size":1,"created_at":1,"stored_at":2}]},"verifications":{}}"#,
+        )
+        .unwrap();
+        let state = State::load(&path).await.unwrap();
+        assert_eq!(state.latest_version("aa:x.example").unwrap().event, None);
+    }
+
+    fn signed(created_at: u64) -> Event {
+        use nostr_sdk::prelude::*;
+        EventBuilder::new(Kind::TextNote, "")
+            .custom_created_at(Timestamp::from_secs(created_at))
+            .finalize(&Keys::generate())
+            .unwrap()
+    }
+
+    fn record(cid: &str, created_at: u64, event: Option<Event>) -> VersionRecord {
+        VersionRecord {
+            cid: cid.into(),
+            size: 1,
+            created_at,
+            stored_at: created_at,
+            event,
+        }
+    }
+
+    #[tokio::test]
+    async fn only_the_latest_version_keeps_its_event() {
+        let key = site_key("aa", "x.example");
+        let mut state = State::default();
+        state.apply_store(&key, record("one", 10, Some(signed(10))));
+        state.apply_store(&key, record("two", 20, Some(signed(20))));
+        state.apply_store(&key, record("older", 5, Some(signed(5))));
+        let events: Vec<(u64, bool)> = state.sites[&key]
+            .iter()
+            .map(|v| (v.created_at, v.event.is_some()))
+            .collect();
+        assert_eq!(events, vec![(10, false), (20, true), (5, false)]);
+        assert_eq!(state.latest_version(&key).unwrap().cid, "two");
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("state.json");
+        state.save(&path).await.unwrap();
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(text.matches("\"event\"").count(), 1);
+        let loaded = State::load(&path).await.unwrap();
+        assert_eq!(loaded.sites[&key], state.sites[&key]);
+    }
+
+    #[test]
+    fn a_missing_event_is_filled_only_into_the_matching_latest_version() {
+        let key = site_key("aa", "x.example");
+        let mut state = State::default();
+        state.apply_store(&key, record("old", 10, None));
+        state.apply_store(&key, record("new", 20, None));
+
+        assert!(!state.fill_latest_event(&key, "old", &signed(10)));
+        assert!(!state.fill_latest_event(&key, "new", &signed(21)));
+        assert!(!state.fill_latest_event(&key, "other", &signed(20)));
+        assert!(!state.fill_latest_event("aa:none.example", "new", &signed(20)));
+        let event = signed(20);
+        assert!(state.fill_latest_event(&key, "new", &event));
+        assert!(!state.fill_latest_event(&key, "new", &signed(20)));
+        assert_eq!(state.latest_version(&key).unwrap().event, Some(event));
+        assert_eq!(state.sites[&key][0].event, None);
+    }
+
+    #[test]
+    fn a_withdrawal_covers_its_events_and_versions_up_to_the_address_deletion() {
+        let withdrawn = Withdrawn {
+            events: BTreeSet::from(["aa".to_string()]),
+            through: Some(200),
+        };
+        assert!(withdrawn.covers("aa", 900));
+        assert!(withdrawn.covers("bb", 200));
+        assert!(!withdrawn.covers("bb", 201));
+        assert!(!Withdrawn::default().covers("aa", 1));
+    }
+
+    #[tokio::test]
+    async fn withdrawals_are_kept_for_stored_sites_and_dropped_with_them() {
+        let key = site_key("aa", "x.example");
+        let mut state = State::default();
+        assert!(!state.record_withdrawal(&key, Some("e1".into()), None));
+        state.apply_store(&key, record("one", 10, None));
+        assert!(state.record_withdrawal(&key, Some("e1".into()), None));
+        assert!(!state.record_withdrawal(&key, Some("e1".into()), None));
+        assert!(state.record_withdrawal(&key, None, Some(20)));
+        assert!(!state.record_withdrawal(&key, None, Some(15)));
+        assert_eq!(
+            state.withdrawn[&key],
+            Withdrawn {
+                events: BTreeSet::from(["e1".to_string()]),
+                through: Some(20),
+            }
+        );
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("state.json");
+        state.save(&path).await.unwrap();
+        let loaded = State::load(&path).await.unwrap();
+        assert_eq!(loaded.withdrawn, state.withdrawn);
+
+        state.remove_versions(&key, &["one".to_string()]);
+        assert!(state.withdrawn.is_empty());
+        state.apply_store(&key, record("two", 30, None));
+        state.record_withdrawal(&key, None, Some(30));
+        state.remove_account("aa");
+        assert!(state.withdrawn.is_empty());
+    }
+
+    #[tokio::test]
+    async fn state_saved_before_withdrawals_were_kept_loads_without_them() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("state.json");
+        std::fs::write(
+            &path,
+            r#"{"sites":{"aa:x.example":[{"cid":"c","size":1,"created_at":1,"stored_at":2}]},"verifications":{}}"#,
+        )
+        .unwrap();
+        let state = State::load(&path).await.unwrap();
+        assert!(state.withdrawn.is_empty());
+        state.save(&path).await.unwrap();
+        assert!(
+            !std::fs::read_to_string(&path)
+                .unwrap()
+                .contains("withdrawn")
+        );
+    }
+
     #[test]
     fn site_key_round_trips_even_when_d_contains_colons() {
         let key = site_key("ab", "a:b");
@@ -263,6 +475,7 @@ mod tests {
                 size: 1,
                 created_at: 1,
                 stored_at: 1,
+                event: None,
             },
         );
         let verification = Verification {
@@ -291,6 +504,7 @@ mod tests {
             size,
             created_at: 1,
             stored_at: 1,
+            event: None,
         };
         state.apply_store(&site_key("aa", "one.example"), record("c1", 10));
         state.apply_store(&site_key("aa", "two.example"), record("c2", 20));
@@ -318,6 +532,7 @@ mod tests {
                 size: 1,
                 created_at: 1,
                 stored_at: 1,
+                event: None,
             },
         );
         state.set_verification(&site_key("aa", "stored.example"), verification(1));
@@ -375,6 +590,7 @@ mod tests {
                 size: 10,
                 created_at: 1,
                 stored_at: 1,
+                event: None,
             },
         );
         state.set_verification(
@@ -400,6 +616,7 @@ mod tests {
                 size: 10,
                 created_at: 1,
                 stored_at: 1,
+                event: None,
             },
         );
         state.apply_store(
@@ -409,6 +626,7 @@ mod tests {
                 size: 20,
                 created_at: 2,
                 stored_at: 2,
+                event: None,
             },
         );
         state.remove_versions(&key, &["cid1".to_string()]);
