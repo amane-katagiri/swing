@@ -101,6 +101,7 @@ Claude Code や Codex など、Agent Skills 形式のスキル（`SKILL.md`）�
 ```bash
 swing skill install                       # ~/.claude/skills/swing-publish/SKILL.md に書き出す
 swing skill install --dir <スキルのディレクトリ>  # ほかのエージェント（<ディレクトリ>/swing-publish/SKILL.md）
+swing skill install --dir ~/.agents/skills  # Codex
 swing skill show                          # 標準出力に出す
 ```
 
