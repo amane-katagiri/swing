@@ -37,7 +37,7 @@
 - 署名は nostr-sdk が受信時に検証する。nostr-sdk は一度検証した `id` を覚えていて、同じ `id` を名乗るイベントは署名を確かめずに通す。`RelayClient` と `bounded_client` の nostr-sdk クライアントには `AdmitPolicy`（`MatchingIds`。`Event::verify_id` が偽なら拒否）を付け、`id` が中身から計算した値と一致しないイベントを、取得・購読・署名アプリとの通信のどれでも、nostr-sdk がデータベースに入れて通知する前に捨てる。
 - 大きさ: `RelayClient` の nostr-sdk クライアントは、relay から受け取るメッセージを 128 KiB（`MAX_RELAY_MESSAGE_BYTES`）、イベントを 16 KiB（`MAX_EVENT_BYTES`）・タグ 600 個（`MAX_EVENT_TAGS`）までに制限する。kind 30000（Follow Set）だけはイベントの上限を 64 KiB（`MAX_FOLLOW_SET_EVENT_BYTES`）にする。サイトイベントとレプリカ報告は既定の 16 KiB。超えたものは nostr-sdk が受信時に捨てる。署名アプリとの通信（[`signer.md`](signer.md)。常駐の接続とペアリング）は `nostr::bounded_client` で作り、メッセージもイベントも 128 KiB（`MAX_SIGNER_EVENT_BYTES`）・タグ 600 個までにする。
 
-サイトイベントの「取得 → パース → サイトごとの最新を選ぶ」は `RelayClient::fetch_latest_signed_sites(site_event_kind, authors)` にまとめてあり、選んだ版を受け取った署名済みのイベントと組にして（`SignedSite`）返す。agent の過去分の取り込みはこれを使い、`mirror::collect_sites`・`replicas::collect`・`webring::collect` は組からパースした結果だけを取り出す `RelayClient::fetch_latest_sites` を使う。パースに失敗したイベントは debug ログを出して捨てる。agent は購読で届いたイベントも `SignedSite` にして扱い、署名を確かめ直してから、保存した版と一緒に `state.json` に記録する（[`agent/state.md`](agent/state.md)）。保存しないイベントも、保存しているサイトの最新の版より新しければ、その版の後の署名か取り下げとして記録する（[`agent.md` の保存の順序](agent.md#保存の順序)の 1）。`state.json` から読んだサイトイベントは、送り直す前に `nostr::saved_site_event` で署名も確かめ直し、`cid`・`created_at` がその版の記録と一致することも確かめる（[`agent/resend.md`](agent/resend.md)）。
+サイトイベントの「取得 → パース → サイトごとの最新を選ぶ」は `RelayClient::fetch_latest_signed_sites(site_event_kind, authors, held)` にまとめてあり、選んだ版を受け取った署名済みのイベントと組にして（`SignedSite`）返す。`held` は relay の答えに混ぜて同じ規則で最新を選ぶイベントで、relay と同じ `id` のものは足さない。agent の過去分の取り込みはこれを `held` 無しで使う。`mirror::collect_sites`・`replicas::collect`・`webring::collect` は組からパースした結果だけを取り出す `RelayClient::fetch_latest_sites` を使い、`held` に `state.json` が持つサイトイベント（`State::listed_site_events`）を渡す。これで relay から消えた、または relay に古い版しか無いサイトも、保存している版のイベントで一覧に出る。渡すのは、取得する作者の各サイトの最新の版が持つ `event` のうち、`nostr::saved_site_event` で署名を確かめられ、`cid` が版と一致し、`created_at` が版の `created_at` 以上のもの。`withdrawn`（[`agent/state.md`](agent/state.md)）は見ない。取り下げられた版も中身は保存し続けるので（[`agent/resend.md`](agent/resend.md)）、一覧には保存している版を出す。パースに失敗したイベントは debug ログを出して捨てる。agent は購読で届いたイベントも `SignedSite` にして扱い、署名を確かめ直してから、保存した版と一緒に `state.json` に記録する（[`agent/state.md`](agent/state.md)）。保存しないイベントも、保存しているサイトの最新の版より新しければ、その版の後の署名か取り下げとして記録する（[`agent.md` の保存の順序](agent.md#保存の順序)の 1）。`state.json` から読んだサイトイベントは、送り直す前に `nostr::saved_site_event` で署名も確かめ直し、`cid`・`created_at` がその版の記録と一致することも確かめる（[`agent/resend.md`](agent/resend.md)）。
 
 ## 未来ずれの許容（`nostr::MAX_FUTURE_SKEW`）
 
@@ -67,8 +67,8 @@
 
 `swing replicas` と `/api/replicas` が共有する。作者は呼び出し元が渡す（どちらも省略時は自分の pubkey）。
 
-1. 作者ごとにサイトごとの最新のサイトイベントを取り（`fetch_latest_sites`）、1 作者あたり `d` の昇順で先頭 `MAX_SITES_PER_AUTHOR_LISTED` 件までにする（`nostr::cap_sites_per_author`。[取得と表示の上限](nostr/fetch.md#定数)）。
+1. 作者ごとにサイトごとの最新のサイトイベントを、`state.json` が持つイベントと合わせて取り（`fetch_latest_sites`。上の `held`）、1 作者あたり `d` の昇順で先頭 `MAX_SITES_PER_AUTHOR_LISTED` 件までにする（`nostr::cap_sites_per_author`。[取得と表示の上限](nostr/fetch.md#定数)）。
 2. `fetch_chosen` で信頼する報告者を集め、`fetch_for_sites` で報告を取って上の規則で数える。サイトごとの報告は `MAX_REPORTS_PER_SITE` で切り詰め、落とした件数を `dropped` に入れる。
 3. 作者ごとにサイトを `d` の昇順に並べる。サイトイベントの無い作者も空の一覧で入る。
 
-サイトイベントか Follow Set の取得に失敗したら全体がエラーになる（報告の取得は上記のとおり、2 系統が両方失敗したときだけ）。
+サイトイベントか Follow Set の取得、`state.json` の読み込みのどれかに失敗したら全体がエラーになる（報告の取得は上記のとおり、2 系統が両方失敗したときだけ）。

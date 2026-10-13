@@ -49,7 +49,7 @@
 { "follow_set": { "found": true, "note": null },
   "accounts": [ { "pubkey": "…", "npub": "…", "fingerprint": ["1f40b", "1f353", "1f680", "1f9e9"], "sites": [ { "d": "example.com", "cid": "bafy…", "url": "…", "size": 12345, "stored_size": 12300, "stored_at": 1790000100, "created_at": 1790000000, "title": "…", "message": "…", "nip05": "verified", "replicas": 3, "unverified_replicas": 0, "stored": true, "gateway_url": "…", "previous": null } ] } ],
   "replicas_error": null,
-  "unfollowed": { "remove_on_unfollow": true, "accounts": [ { "...": "同じ形。ただし url・title・message・replicas・unverified_replicas は常に null、stored は常に true、stored_size は size と同じ値、previous は常に null" } ] } }
+  "unfollowed": { "remove_on_unfollow": true, "accounts": [ { "...": "同じ形。ただし url・title・message は版が持つイベントから取れなければ null、replicas・unverified_replicas は常に null、stored は常に true、stored_size は size と同じ値、previous は常に null" } ] } }
 ```
 
 - `fingerprint`（`accounts` と `unfollowed.accounts` の各要素）: 絵文字のフィンガープリント。4 つの Twemoji のコードポイント（16 進の小文字）の配列（[`../fingerprint.md`](../fingerprint.md)）。

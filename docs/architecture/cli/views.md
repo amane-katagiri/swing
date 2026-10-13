@@ -20,7 +20,7 @@
   - `size` 列: `stored_size` があれば数値で、無ければイベントの自己申告の `size` を括弧書き（例 `(12345)`）で、どちらも無ければ `-` を出す。
   - `replicas` 列: `3` または `3 (+12 unverified)`（未検証の報告者がいるとき）の形（`replicas::format_replica_counts`）。レプリカ報告の取得に失敗したら先頭に `(fetching replica reports failed: ...)` を表示して `-` にする。
 - `title` があれば次の行に `    title: `、`message` があれば続けて `    message: ` を出す。どちらも `format::sanitize_display_text` で無害化し 200 文字までにする（超えた分は `…`）。`url` 列も `format::Sanitized` を通す。
-- 続けて、unfollow の一覧（[`../mirror.md#unfollow-の一覧`](../mirror.md#unfollow-の一覧)）を `Unfollowed but still stored` 見出しの下に、アカウントの見出しに `[unfollowed]` を付け、サイトごとに `url` を `-`、状態を `[unfollowed]` にした行で出す。見出しには `remove_on_unfollow` と Follow Set が見つかったかどうかに応じて、次の poll で消えるか・残すか・Follow Set が見つかるまで消さないかを添える。
+- 続けて、unfollow の一覧（[`../mirror.md#unfollow-の一覧`](../mirror.md#unfollow-の一覧)）を `Unfollowed but still stored` 見出しの下に、アカウントの見出しに `[unfollowed]` を付け、サイトごとに状態を `[unfollowed]` にした行で出す（`url` は版のイベントから取れなければ `-`）。見出しには `remove_on_unfollow` と Follow Set が見つかったかどうかに応じて、次の poll で消えるか・残すか・Follow Set が見つかるまで消さないかを添える。
 
 ## replicas
 

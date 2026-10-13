@@ -120,7 +120,7 @@ where
     }
 
     match relay
-        .fetch_latest_signed_sites(config.nostr.site_event_kind, &target_list)
+        .fetch_latest_signed_sites(config.nostr.site_event_kind, &target_list, Vec::new())
         .await
     {
         Ok(latest) => {

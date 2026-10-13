@@ -255,9 +255,10 @@ impl RelayClient {
         &self,
         site_event_kind: u16,
         authors: &[PublicKey],
+        held: Vec<Event>,
     ) -> Result<HashMap<(String, String), SiteEvent>> {
         Ok(self
-            .fetch_latest_signed_sites(site_event_kind, authors)
+            .fetch_latest_signed_sites(site_event_kind, authors, held)
             .await?
             .into_iter()
             .map(|s| ((s.site.pubkey.to_hex(), s.site.d.clone()), s.site))
@@ -268,8 +269,11 @@ impl RelayClient {
         &self,
         site_event_kind: u16,
         authors: &[PublicKey],
+        held: Vec<Event>,
     ) -> Result<Vec<SignedSite>> {
-        let events = self.fetch_site_events(site_event_kind, authors).await?;
+        let mut events = self.fetch_site_events(site_event_kind, authors).await?;
+        let fetched: HashSet<EventId> = events.iter().map(|e| e.id).collect();
+        events.extend(held.into_iter().filter(|e| !fetched.contains(&e.id)));
         let parsed: Vec<SiteEvent> = events
             .iter()
             .filter_map(|e| match parse_site_event(e, site_event_kind) {

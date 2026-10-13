@@ -9,6 +9,44 @@ use crate::test_support::{
     CID_A, CID_B, keys, make_site_event, refusing_relay, relay_holding, serve_relay,
 };
 
+#[tokio::test]
+async fn the_latest_sites_include_held_events_the_relays_lack_or_hold_older() {
+    let k = keys();
+    let now = Timestamp::now().as_secs();
+    let site = |d: &str, cid: &str, at: u64| make_site_event(&k, 35980, d, cid, at);
+    let (_relay, url) = relay_holding(&[
+        site("updated.example", CID_A, now - 20),
+        site("relay-newer.example", CID_B, now - 10),
+    ])
+    .await;
+    let client = RelayClient::connect(Signer::Local(keys()), &[url])
+        .await
+        .unwrap();
+
+    let latest = client
+        .fetch_latest_sites(
+            35980,
+            &[k.public_key()],
+            vec![
+                site("updated.example", CID_B, now - 10),
+                site("relay-newer.example", CID_A, now - 20),
+                site("missing.example", CID_A, now - 30),
+            ],
+        )
+        .await
+        .unwrap();
+    let cids: BTreeSet<(String, String)> = latest.into_values().map(|s| (s.d, s.cid)).collect();
+    let cid_b = crate::nostr::canonical_cid(CID_B).unwrap();
+    assert_eq!(
+        cids,
+        BTreeSet::from([
+            ("missing.example".to_string(), CID_A.to_string()),
+            ("relay-newer.example".to_string(), cid_b.clone()),
+            ("updated.example".to_string(), cid_b),
+        ])
+    );
+}
+
 #[test]
 fn relay_send_results_reports_success_and_failure_per_relay() {
     let id = EventBuilder::new(Kind::TextNote, "")

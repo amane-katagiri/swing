@@ -10,7 +10,7 @@ CLI の `swing webring`（[`cli/views.md#webring`](cli/views.md#webring)）と�
 - `d` が上限より小さければ、その `p` のうちまだ見ていないアカウントを深さ `d + 1` にする。深さが上限のアカウントも Follow Set は取得するが、先へは広げない。
 - たどるアカウントの総数は起点を含めて `MAX_CRAWL_NODES`（[取得と表示の上限](nostr/fetch.md#定数)）まで。超えて見つかったアカウントは加えず、件数を `over_budget` に数える。
 - 起点を名指ししているだけの相手（`referencing`）: 深さ 0 のときだけ、起点を `#p` に入れて Follow Set の作者を 1 回取得する。名指しは起点が相手を選んだ証拠にならないので、クロールを広げるのには使わない。クロールに加えたアカウントを除き、hex の昇順で先頭 `MAX_REFERENCING_LISTED` 件までにし、落とした件数を `referencing_dropped` に数える。
-- Follow Set・サイトイベント・`referencing` のどれかの取得に失敗したら全体がエラーになる。
+- Follow Set・サイトイベント・`referencing` のどれかの取得か、`state.json` の読み込みに失敗したら全体がエラーになる。
 
 ## グラフ（`webring::build_graph`）
 
@@ -22,6 +22,6 @@ CLI の `swing webring`（[`cli/views.md#webring`](cli/views.md#webring)）と�
 
 ## ノードの名前
 
-ノードのアカウントのサイトイベントを取得し、サイトごとの最新（`nostr::select_latest`）の `d` を、1 アカウントあたり `d` の昇順で先頭 `MAX_SITES_PER_AUTHOR_LISTED` 件まで名前にする（`webring::site_name_lists`）。サイトイベントの無いアカウントは名前を持たない（表示側で縮めた npub（`webring::short_npub`。先頭 12 文字と末尾 6 文字）を使う）。
+ノードのアカウントのサイトイベントを、`state.json` が持つイベントと合わせて取得し（[`nostr.md`](nostr.md#検証) の `held`）、サイトごとの最新（`nostr::select_latest`）の `d` を、1 アカウントあたり `d` の昇順で先頭 `MAX_SITES_PER_AUTHOR_LISTED` 件まで名前にする（`webring::site_name_lists`）。サイトイベントの無いアカウントは名前を持たない（表示側で縮めた npub（`webring::short_npub`。先頭 12 文字と末尾 6 文字）を使う）。
 
 表示名は先頭（昇順で最初）の `d` だけにし、残りは件数で添える（`webring::site_label` / `site_labels`）。CLI の出力では `blog.example.com (+2)`、サイトが 1 つなら `d` そのまま。ダッシュボードは先頭の `d` と残りの件数を別のフィールドで受け取り、`blog.example.com +2` のように出す（[`dashboard/http-api/nostr.md`](dashboard/http-api/nostr.md#get-apiwebringrootkeydepthn)）。すべての `d` は名前の一覧（API の `names`、ダッシュボードの詳細パネル）に残る。

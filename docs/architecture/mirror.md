@@ -28,9 +28,9 @@ CLI の `swing mirror list` / `add` / `remove`・`swing sites`（[`cli/views.md`
 ## sites の集計（`mirror::collect_sites`）
 
 1. [使う Follow Set](#使う-follow-set) の `p` を対象にする（`nostr::follow_set_pubkeys_capped`。重複を除いてタグ順に `MAX_FOLLOW_SET_ENTRIES` 件まで、切り詰めたら warn を 1 回出す）。Follow Set が無ければ対象は空。
-2. 対象者のサイトイベントを取り、サイトごとの最新（`nostr::select_latest`）を、1 作者あたり `d` の昇順で先頭 `MAX_SITES_PER_AUTHOR_LISTED` 件までにする（`nostr::cap_sites_per_author`）。
+2. `state.json` を読み、対象者のサイトイベントを relay から取って `state.json` が持つイベントと合わせ（[`nostr.md`](nostr.md#検証) の `held`）、サイトごとの最新（`nostr::select_latest`）を、1 作者あたり `d` の昇順で先頭 `MAX_SITES_PER_AUTHOR_LISTED` 件までにする（`nostr::cap_sites_per_author`）。
 3. その版のレプリカ数を数える（下記）。
-4. `state.json` を読み、サイトごとに次を付ける。
+4. `state.json` から、サイトごとに次を付ける。
    - `stored_size`・`stored_at`: 同じサイトの版のうち `cid` がイベントと一致するものの `size`（保存時に `dag/stat` で測った値）と保存時刻。一致する版が無ければ無し。`stored` は一致する版があるかどうか。
    - `previous`: 一致する版が無く、同じサイトの版が state にあるとき、そのうち `created_at` が最大の版（`cid`・`size`・`created_at`・`stored_at`）。新しい版を `min_update_interval` などで待っている間も、配っている版が分かるようにする。一致する版があるか、版が 1 つも無ければ無し。
    - `nip05`: `state.json` の `verifications` にあるそのサイトの検証結果。
@@ -49,6 +49,6 @@ CLI の `swing mirror list` / `add` / `remove`・`swing sites`（[`cli/views.md`
 
 `state.json` に版があり、キーの pubkey が 1 の対象にいないものを、アカウント（hex の昇順）とサイトごとに、`created_at` が最大の版 1 つで並べる。Follow Set が見つからなかったときは対象が空なので、保存済みの全アカウントがここに入る。
 
-- `size` と `stored_size` はどちらも state に記録した版の大きさ、`stored` は常に true。`url`・`title`・`message`・レプリカ数は無し、`nip05` は state の検証結果。
+- `size` と `stored_size` はどちらも state に記録した版の大きさ、`stored` は常に true。`url`・`title`・`message` は、その版が持つイベントを `nostr::saved_site_event` で確かめられ `cid` が版と一致すればその値、そうでなければ無し。レプリカ数は無し、`nip05` は state の検証結果。
 - キーが `<pubkey hex>:<d>` として読めない版は入れない。
 - いつ消えるかは [agent の unfollow](agent.md#unfollow)。

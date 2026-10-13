@@ -274,9 +274,11 @@ pub async fn collect(
     let crawled = crawl(&source, roots, depth).await?;
     let graph = build_graph(&crawled);
     let accounts: Vec<PublicKey> = graph.nodes.keys().copied().collect();
-    let latest_map = relay
-        .fetch_latest_sites(config.nostr.site_event_kind, &accounts)
-        .await?;
+    let kind = config.nostr.site_event_kind;
+    let held = mirror::load_state(config)
+        .await?
+        .listed_site_events(kind, &accounts);
+    let latest_map = relay.fetch_latest_sites(kind, &accounts, held).await?;
     let latest: Vec<SiteEvent> = nostr::cap_sites_per_author(
         latest_map.values(),
         nostr::budget::MAX_SITES_PER_AUTHOR_LISTED,

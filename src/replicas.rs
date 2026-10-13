@@ -307,9 +307,11 @@ pub async fn collect(
     config: &Config,
     authors: &[PublicKey],
 ) -> Result<Vec<AuthorReplicas>> {
-    let latest = relay
-        .fetch_latest_sites(config.nostr.site_event_kind, authors)
-        .await?;
+    let kind = config.nostr.site_event_kind;
+    let held = mirror::load_state(config)
+        .await?
+        .listed_site_events(kind, authors);
+    let latest = relay.fetch_latest_sites(kind, authors, held).await?;
     let sites =
         nostr::cap_sites_per_author(latest.values(), nostr::budget::MAX_SITES_PER_AUTHOR_LISTED);
 

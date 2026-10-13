@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 use anyhow::{Context, Result};
-use nostr_sdk::prelude::Event;
+use nostr_sdk::prelude::{Event, PublicKey};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -279,6 +279,25 @@ impl State {
         self.record_withdrawal(key, withdrawn)
     }
 
+    pub fn listed_site_events(&self, site_event_kind: u16, authors: &[PublicKey]) -> Vec<Event> {
+        authors
+            .iter()
+            .flat_map(|author| {
+                account_entries(&self.sites, &author.to_hex())
+                    .filter_map(move |(key, versions)| {
+                        let (_, d) = split_site_key(key)?;
+                        let record = &versions[latest_index(versions)?];
+                        let event = record.event.as_ref()?;
+                        let site =
+                            crate::nostr::saved_site_event(event, author, d, site_event_kind)?;
+                        (site.cid == record.cid && site.created_at >= record.created_at)
+                            .then(|| event.clone())
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .collect()
+    }
+
     pub fn latest_stored_at(&self) -> Option<u64> {
         self.sites.values().flatten().map(|v| v.stored_at).max()
     }
@@ -422,6 +441,62 @@ mod tests {
             stored_at: created_at,
             event,
         }
+    }
+
+    #[test]
+    fn listed_site_events_are_the_matching_events_of_the_latest_versions() {
+        use crate::test_support::{CID_A, CID_B, keys, make_site_event};
+        let author = keys();
+        let other = keys();
+        let hex = author.public_key().to_hex();
+        let event = |d: &str, cid: &str, at: u64| make_site_event(&author, 35980, d, cid, at);
+        let mut state = State::default();
+        let kept = event("kept.example", CID_A, 20);
+        state.apply_store(&site_key(&hex, "kept.example"), record(CID_B, 10, None));
+        state.apply_store(
+            &site_key(&hex, "kept.example"),
+            record(CID_A, 20, Some(kept.clone())),
+        );
+        state.apply_store(
+            &site_key(&hex, "other-cid.example"),
+            record(CID_B, 20, Some(event("other-cid.example", CID_A, 20))),
+        );
+        state.apply_store(
+            &site_key(&hex, "other-d.example"),
+            record(CID_A, 20, Some(event("kept.example", CID_A, 20))),
+        );
+        state.apply_store(&site_key(&hex, "no-event.example"), record(CID_A, 20, None));
+        let withdrawn = event("withdrawn.example", CID_A, 20);
+        state.apply_store(
+            &site_key(&hex, "withdrawn.example"),
+            record(CID_A, 20, Some(withdrawn.clone())),
+        );
+        state.record_withdrawal(
+            &site_key(&hex, "withdrawn.example"),
+            Withdrawn {
+                events: BTreeSet::new(),
+                through: Some(20),
+            },
+        );
+        let other_hex = other.public_key().to_hex();
+        state.apply_store(
+            &site_key(&other_hex, "x.example"),
+            record(
+                CID_A,
+                20,
+                Some(make_site_event(&other, 35980, "x.example", CID_A, 20)),
+            ),
+        );
+
+        assert_eq!(
+            state.listed_site_events(35980, &[author.public_key()]),
+            vec![kept, withdrawn]
+        );
+        assert!(
+            state
+                .listed_site_events(35981, &[author.public_key()])
+                .is_empty()
+        );
     }
 
     #[tokio::test]

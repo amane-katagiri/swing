@@ -322,8 +322,10 @@ pub async fn collect_sites(relay: &RelayClient, config: &Config) -> Result<Sites
     let (follow_event, follow_note) = current_follow_set(relay, config).await?;
     let follow_set_found = follow_event.is_some();
     let targets = follow_targets(follow_event.as_ref());
+    let state = load_state(config).await?;
+    let kind = config.nostr.site_event_kind;
     let latest = relay
-        .fetch_latest_sites(config.nostr.site_event_kind, &targets)
+        .fetch_latest_sites(kind, &targets, state.listed_site_events(kind, &targets))
         .await?;
     let latest_sites =
         nostr::cap_sites_per_author(latest.values(), nostr::budget::MAX_SITES_PER_AUTHOR_LISTED);
@@ -333,14 +335,13 @@ pub async fn collect_sites(relay: &RelayClient, config: &Config) -> Result<Sites
             Ok(data) => (Some(data), None),
             Err(e) => (None, Some(format!("{e:#}"))),
         };
-    let state = load_state(config).await?;
     Ok(SitesView {
         follow_set_found,
         follow_note,
         accounts: followed_accounts(&targets, &latest_sites, &state, &replica_data)?,
         replicas_error,
         remove_on_unfollow: config.policy.remove_on_unfollow,
-        unfollowed: unfollowed_accounts(&state, &targets)?,
+        unfollowed: unfollowed_accounts(&state, &targets, kind)?,
     })
 }
 
@@ -409,7 +410,11 @@ fn followed_accounts(
     Ok(accounts)
 }
 
-fn unfollowed_accounts(state: &State, targets: &[PublicKey]) -> Result<Vec<AccountSites>> {
+fn unfollowed_accounts(
+    state: &State,
+    targets: &[PublicKey],
+    site_event_kind: u16,
+) -> Result<Vec<AccountSites>> {
     let target_hex: BTreeSet<String> = targets.iter().map(|pk| pk.to_hex()).collect();
     let unfollowed_map = unfollowed_sites(state, &target_hex);
     let mut unfollowed = Vec::with_capacity(unfollowed_map.len());
@@ -419,17 +424,24 @@ fn unfollowed_accounts(state: &State, targets: &[PublicKey]) -> Result<Vec<Accou
             .into_iter()
             .map(|(d, version)| {
                 let key = state::site_key(&pubkey_hex, &d);
+                let site = version
+                    .event
+                    .as_ref()
+                    .and_then(|e| nostr::saved_site_event(e, &pubkey, &d, site_event_kind))
+                    .filter(|site| site.cid == version.cid);
+                let (url, title, message) =
+                    site.map_or((None, None, None), |s| (s.url, s.title, s.message));
                 SiteRow {
                     nip05: nip05_status(state, &key),
                     d,
                     cid: version.cid,
-                    url: None,
+                    url,
                     size: Some(version.size),
                     stored_size: Some(version.size),
                     stored_at: Some(version.stored_at),
                     created_at: version.created_at,
-                    title: None,
-                    message: None,
+                    title,
+                    message,
                     replicas: None,
                     stored: true,
                     previous: None,
@@ -550,6 +562,58 @@ mod tests {
             .map(|(d, v)| (d.as_str(), v.cid.as_str()))
             .collect();
         assert_eq!(sites, vec![("x.example", "new"), ("y:z", "yz")]);
+    }
+
+    #[test]
+    fn unfollowed_accounts_take_the_site_fields_from_the_held_event() {
+        use crate::test_support::{CID_A, CID_B, make_site_event};
+        let author = keys();
+        let hex = author.public_key().to_hex();
+        let record = |cid: &str, event: Option<Event>| VersionRecord {
+            cid: cid.into(),
+            size: 1,
+            created_at: 10,
+            stored_at: 10,
+            event,
+        };
+        let mut state = State::default();
+        state.apply_store(
+            &state::site_key(&hex, "held.example"),
+            record(
+                CID_A,
+                Some(make_site_event(&author, 35980, "held.example", CID_A, 10)),
+            ),
+        );
+        state.apply_store(
+            &state::site_key(&hex, "mismatch.example"),
+            record(
+                CID_B,
+                Some(make_site_event(
+                    &author,
+                    35980,
+                    "mismatch.example",
+                    CID_A,
+                    10,
+                )),
+            ),
+        );
+        state.apply_store(&state::site_key(&hex, "none.example"), record(CID_A, None));
+
+        let accounts = unfollowed_accounts(&state, &[], 35980).unwrap();
+
+        let urls: Vec<(&str, Option<&str>)> = accounts[0]
+            .sites
+            .iter()
+            .map(|s| (s.d.as_str(), s.url.as_deref()))
+            .collect();
+        assert_eq!(
+            urls,
+            vec![
+                ("held.example", Some("https://example.com/")),
+                ("mismatch.example", None),
+                ("none.example", None),
+            ]
+        );
     }
 
     #[test]
