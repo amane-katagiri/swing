@@ -655,11 +655,13 @@ function checksFoundProblems({ nip05, checks }) {
   );
 }
 
-function describePrecheckBlock({ nip05, checks, abort }) {
+const NIP05_BLOCKED_KEYS = { mismatch: 'precheckNip05Mismatch', error: 'precheckNip05Error', not_applicable: 'precheckNip05NotApplicable' };
+
+function describePrecheckBlock({ nip05, checks, abort }, site) {
   if (!abort) return '';
   const reasons = [];
-  if (nip05.status !== 'off' && nip05.status !== 'verified' && abort.startsWith('NIP-05 ')) {
-    reasons.push(t('precheckNip05Blocked', { detail: abort.split('; ')[0] }));
+  if (NIP05_BLOCKED_KEYS[nip05.status] && abort.startsWith('NIP-05 ')) {
+    reasons.push(t(NIP05_BLOCKED_KEYS[nip05.status], { url: `https://${site}/.well-known/nostr.json` }));
   }
   const local = describeCheckBlock(checks);
   if (local) reasons.push(local);
@@ -668,7 +670,7 @@ function describePrecheckBlock({ nip05, checks, abort }) {
 
 function showConfirm({ previous, newFiles, precheck, request }) {
   const problems = checksFoundProblems(precheck);
-  const blocked = describePrecheckBlock(precheck);
+  const blocked = describePrecheckBlock(precheck, request.site);
   pendingPublish = blocked ? null : request;
   const addRow = (k, v) => publishEls.confirmCheckRows.append(el('dt', {}, k), el('dd', {}, v));
   publishEls.confirmCheckRows.replaceChildren();
