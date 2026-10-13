@@ -254,7 +254,7 @@ impl Nip05Verify for HttpNip05Verifier {
         };
         if !resp.status().is_success() {
             return VerificationResult::Error(
-                format!("http status {}", resp.status()),
+                format!("HTTP status {}", resp.status()),
                 ErrorCategory::InvalidResponse,
             );
         }
@@ -271,7 +271,7 @@ impl Nip05Verify for HttpNip05Verifier {
             };
             if body.len() + chunk.len() > MAX_BODY_BYTES {
                 return VerificationResult::Error(
-                    "response body exceeds size cap".to_string(),
+                    "response body exceeds the size cap".to_string(),
                     ErrorCategory::InvalidResponse,
                 );
             }

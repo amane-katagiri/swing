@@ -150,7 +150,7 @@ async fn start_kubo(
         "failed to prepare Kubo repo"
     );
     if initialised {
-        info!(repo = %config.kubo.repo.display(), "initialised Kubo repo");
+        info!(repo = %config.kubo.repo.display(), "initialized Kubo repo");
     }
 
     let api_port = attempt!(
@@ -205,7 +205,7 @@ async fn start_kubo(
         return Ok(StartOutcome::Retry);
     }
 
-    info!(api = %api.url(), "kubo is ready");
+    info!(api = %api.url(), "Kubo is ready");
     Ok(StartOutcome::Ready(Box::new(daemon), api))
 }
 
@@ -469,11 +469,11 @@ async fn run_managed(
             tokio::select! {
                 status = daemon.wait() => {
                     match status {
-                        Ok(status) => error!(%status, "kubo daemon exited unexpectedly"),
-                        Err(e) => error!(error = %e, "waiting for the kubo daemon failed"),
+                        Ok(status) => error!(%status, "Kubo daemon exited unexpectedly"),
+                        Err(e) => error!(error = %e, "waiting for the Kubo daemon failed"),
                     }
                     dashboard.stats.set_kubo(None);
-                    stop_agent(&agent_token, &mut agent_handle, "after kubo exited").await;
+                    stop_agent(&agent_token, &mut agent_handle, "after Kubo exited").await;
                     forget_daemon(&config.agent.state_dir);
                     backoff.wait(daemon_started.elapsed(), &token).await;
                     continue 'daemon;

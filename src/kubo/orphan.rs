@@ -100,7 +100,7 @@ async fn terminate_process(pid: u32) -> Result<()> {
     }
     tracing::warn!(
         pid,
-        "orphaned Kubo did not exit after SIGTERM, sending SIGKILL"
+        "orphaned Kubo did not exit after SIGTERM; sending SIGKILL"
     );
     send_signal(pid, libc::SIGKILL).context("sending SIGKILL to orphaned Kubo")?;
     if wait_for_exit(pid, ORPHAN_KILL_WAIT).await {

@@ -7,7 +7,7 @@
 - 登録する `swing` のコマンドは `<exe> up --config <config>`。`<exe>` は `current_exe()` を `std::path::absolute` で絶対パスにしたもので、シンボリックリンクは解決しない（macOS で Homebrew の `opt` 経由で起動すると、そのパスが登録される。[`homebrew.md`](homebrew.md#パスと-brew-upgrade)）。Windows ではこれを `conhost.exe` で包む（[下記](#windowsタスクスケジューラ)）。
 - 設定ファイルは `config::locate_config` で決め（[`config.md`](config.md#設定ファイルの場所)）、`canonicalize` して登録する。そのパスにファイルが無いときは決まり方で分かれる。
   - `--config`／`SWING_CONFIG` で指した: `config file not found: <path>` でエラー。
-  - ユーザーごとの既定の場所（`--system` でないとき）: ディレクトリ（unix は 0700）と空の設定ファイル（unix は 0600）を作り、`Created an empty config file at <path>` と表示して登録する。サービスはセットアップモード（[`up.md`](up.md#セットアップモード鍵未設定)）で起動する。
+  - ユーザーごとの既定の場所（`--system` でないとき）: ディレクトリ（unix は 0700）と空の設定ファイル（unix は 0600）を作り、`Created an empty config file at <path>.` と表示して登録する。サービスはセットアップモード（[`up.md`](up.md#セットアップモード鍵未設定)）で起動する。
   - それ以外（`--system` での既定の場所、既定の場所を決められないときのカレントディレクトリ）: `service install needs a config file (swing.toml): pass --config or set SWING_CONFIG` でエラー。環境変数だけで動かす構成は登録できない。
 - 作業ディレクトリは設定ファイルの親ディレクトリ。
 - `--system` は Linux でのみ有効で、他 OS では `--system is only supported on Linux` でエラー。launchd・タスクスケジューラへの登録はログインユーザーのもので、システム全体への登録は無い。

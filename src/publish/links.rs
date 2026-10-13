@@ -59,12 +59,12 @@ impl LinkKind {
 
     fn label(self, redirects: bool) -> &'static str {
         match self {
-            LinkKind::Reserved => "top-level ipfs/ipns name: 404 on swing's gateway",
+            LinkKind::Reserved => "top-level ipfs/ipns name: 404 on SWING's gateway",
             LinkKind::RootRelative => "starts with /: breaks on path gateways",
             LinkKind::Broken if redirects => "not in the site; _redirects may cover it",
             LinkKind::Broken => "not in the site",
             LinkKind::InsecureScript => "http:// script: blocked by the gateway's CSP",
-            LinkKind::PostForm => "non-GET form: 405 on swing's gateway",
+            LinkKind::PostForm => "non-GET form: 405 on SWING's gateway",
             LinkKind::Worker => "worker: blocked by the gateway's CSP",
             LinkKind::InsecureRequest => {
                 "http:// or ws:// request: may be blocked by the gateway's CSP"

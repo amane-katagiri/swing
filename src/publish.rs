@@ -258,7 +258,7 @@ pub async fn add_and_measure(
     let site_path = layout.publish_site(pubkey_hex, d);
     let mut created_at = plan_version(ipfs, &site_path, relays).await?;
     let added = ipfs.add_site(site).await?;
-    let cid = nostr::canonical_cid(&added).context("Kubo returned an invalid cid")?;
+    let cid = nostr::canonical_cid(&added).context("Kubo returned an invalid CID")?;
     let path = loop {
         let path = layout.publish_version(pubkey_hex, d, created_at);
         if ipfs

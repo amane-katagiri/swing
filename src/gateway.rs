@@ -112,7 +112,7 @@ pub fn client() -> Result<reqwest::Client> {
         .no_proxy()
         .connect_timeout(Duration::from_secs(10))
         .build()
-        .context("building gateway http client")
+        .context("building the gateway HTTP client")
 }
 
 pub fn router(hosts: Vec<String>, upstream: String, client: reqwest::Client) -> Router {

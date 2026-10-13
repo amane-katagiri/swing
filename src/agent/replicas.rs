@@ -185,7 +185,7 @@ impl<C: KuboStore, N: Nip05Verify, R: ReportRelay> Agent<C, N, R> {
         let paged = match self.reporter.fetch_own_reports(kind).await {
             Ok(paged) => paged,
             Err(e) => {
-                warn!(error = %e, "fetching own replica reports failed; fetching them again in the next report round, and stale reports are withdrawn once a fetch succeeds");
+                warn!(error = %e, "fetching our own replica reports failed; fetching them again in the next report round, and stale reports are withdrawn once a fetch succeeds");
                 return;
             }
         };
@@ -249,7 +249,7 @@ impl<C: KuboStore, N: Nip05Verify, R: ReportRelay> Agent<C, N, R> {
             Err(e) => {
                 warn!(
                     error = format!("{e:#}"),
-                    "fetching replica reports about own sites failed"
+                    "fetching replica reports about our own sites failed"
                 );
                 return;
             }

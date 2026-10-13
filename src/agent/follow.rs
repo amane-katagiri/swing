@@ -66,7 +66,7 @@ where
             warn!(
                 mirror_set = %config.nostr.mirror_set,
                 stored_accounts,
-                "no follow set found yet; keeping stored sites until one is (did the key or mirror_set change?)"
+                "no follow set found yet; keeping stored sites until one is found (did the key or mirror_set change?)"
             );
         } else {
             warn!(mirror_set = %config.nostr.mirror_set, "no follow set found yet; will retry");

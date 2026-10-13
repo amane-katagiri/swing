@@ -1065,7 +1065,7 @@ fn errors_name_the_source_the_value_came_from() {
     })
     .unwrap_err();
     assert!(
-        format!("{err:#}").starts_with("invalid SWING_KEEP_DAYS: expected integer: "),
+        format!("{err:#}").starts_with("invalid SWING_KEEP_DAYS: expected an integer: "),
         "{err:#}"
     );
 }

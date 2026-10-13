@@ -126,7 +126,7 @@ enum Command {
         timeout: u64,
     },
     #[command(
-        about = "Register swing up as a login/system service (systemd user unit, launchd agent, or Task Scheduler)"
+        about = "Register `swing up` as a login/system service (systemd user unit, launchd agent, or Task Scheduler)"
     )]
     Service {
         #[command(subcommand)]
@@ -265,7 +265,7 @@ enum DashboardCommand {
         no_browser: bool,
     },
     #[command(
-        about = "Replace the dashboard token, logging out every browser session (POST /api/token/rotate, or the token file directly when swing up is not running)"
+        about = "Replace the dashboard token, logging out every browser session (POST /api/token/rotate, or the token file directly when `swing up` is not running)"
     )]
     RotateToken {
         #[command(flatten)]
@@ -307,7 +307,7 @@ enum KeyCommand {
 
 #[derive(Subcommand)]
 enum ServiceCommand {
-    #[command(about = "Register swing up as a login/system service")]
+    #[command(about = "Register `swing up` as a login/system service")]
     Install {
         #[command(flatten)]
         config: ConfigArg,

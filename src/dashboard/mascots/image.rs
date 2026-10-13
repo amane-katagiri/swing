@@ -62,7 +62,7 @@ pub fn check_sprite(bytes: &[u8], content_type: &str) -> Result<(), String> {
         || u64::from(width) * u64::from(height) > MAX_SPRITE_PIXELS
     {
         return Err(format!(
-            "is {width}x{height} px, over the {MAX_SPRITE_SIDE} px side / {MAX_SPRITE_PIXELS} pixel limit"
+            "is {width}x{height} px, over the limit of {MAX_SPRITE_SIDE} px per side or {MAX_SPRITE_PIXELS} pixels in total"
         ));
     }
     Ok(())

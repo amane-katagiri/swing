@@ -278,7 +278,7 @@ fn load_user_packs(dir: &Path) -> Vec<(String, MascotPack)> {
         for id in ids.split_off(MAX_USER_PACKS) {
             log.skip(
                 OsStr::new(&id),
-                &format!("more than {MAX_USER_PACKS} user packs, keeping the first {MAX_USER_PACKS} by id"),
+                &format!("more than {MAX_USER_PACKS} user packs; keeping the first {MAX_USER_PACKS} by id"),
             );
         }
     }

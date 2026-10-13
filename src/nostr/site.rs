@@ -73,7 +73,7 @@ pub fn canonical_cid(s: &str) -> Result<String> {
     let cid = cid::Cid::try_from(s).context("invalid cid tag")?;
     if cid.codec() != DAG_PB_CODEC {
         anyhow::bail!(
-            "invalid cid tag: codec {:#x} is not dag-pb, cannot be a UnixFS directory",
+            "invalid cid tag: codec {:#x} is not dag-pb, so it cannot be a UnixFS directory",
             cid.codec()
         );
     }

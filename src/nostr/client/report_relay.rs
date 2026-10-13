@@ -30,7 +30,7 @@ impl ReportRelay for RelayClient {
         let filter = Filter::new()
             .kind(Kind::Custom(report_kind))
             .author(RelayClient::public_key(self));
-        self.fetch_pages(filter, OWN_REPORTS_PAGE, "fetching own replica reports")
+        self.fetch_pages(filter, OWN_REPORTS_PAGE, "fetching our own replica reports")
             .await
     }
 
@@ -45,7 +45,7 @@ impl ReportRelay for RelayClient {
         let events = self
             .fetch_per_author(
                 reporters,
-                "fetching replica reports about own sites",
+                "fetching replica reports about our own sites",
                 |reporter| {
                     let filter = Filter::new()
                         .kind(kind)

@@ -58,7 +58,7 @@ fn refuse_future_version(site_path: &str, newest: u64, now: u64) -> Result<(), C
         ));
     }
     Err(ClockError(format!(
-        "the newest version {path} is dated {} after this machine's clock, and a site event dated after it would be dropped as from the future. \
+        "the newest version {path} is dated {} after this machine's clock, and a site event dated after it would be rejected as coming from the future. \
          Either the clock on this machine is behind now (fix the system clock and publish again), \
          or that version was created while the clock was ahead (remove it with `ipfs files rm -r {path}` and publish again; \
          with Docker Compose, run it in the ipfs container: `docker compose exec ipfs ipfs files rm -r {path}`)",

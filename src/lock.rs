@@ -25,11 +25,11 @@ pub fn acquire(state_dir: &Path) -> Result<InstanceLock> {
     match try_acquire(state_dir, "swing.lock")? {
         TryAcquire::Acquired(lock) => Ok(lock),
         TryAcquire::Held { pid: Some(pid) } => bail!(
-            "another swing instance is already running on {} (pid {pid})",
+            "another swing instance is already using {} (pid {pid})",
             state_dir.display()
         ),
         TryAcquire::Held { pid: None } => bail!(
-            "another swing instance is already running on {}",
+            "another swing instance is already using {}",
             state_dir.display()
         ),
     }
@@ -96,7 +96,7 @@ mod tests {
         let err = acquire(dir.path()).unwrap_err().to_string();
         #[cfg(unix)]
         assert!(err.contains(&std::process::id().to_string()), "{err}");
-        assert!(err.contains("already running"), "{err}");
+        assert!(err.contains("already using"), "{err}");
 
         drop(first);
         // Other tests fork child processes concurrently; a fork in flight shares the flock until it execs.

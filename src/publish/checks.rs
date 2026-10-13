@@ -188,7 +188,7 @@ impl LocalChecks {
                 format_bytes(SIZE_GUIDELINE)
             )),
             Some(bytes) => lines.push(format!(
-                "! size: {} is over the {} guideline; each mirror decides by its own limits (max_update_size, default {})",
+                "! size: {} is over the {} guideline; each mirror decides based on its own limit (max_update_size, default {})",
                 format_bytes_approx(bytes),
                 format_bytes(SIZE_GUIDELINE),
                 format_bytes(DEFAULT_MAX_UPDATE_SIZE)

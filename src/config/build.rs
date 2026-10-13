@@ -170,7 +170,7 @@ fn integer<T: FromStr>(v: &str) -> Result<T>
 where
     T::Err: std::error::Error + Send + Sync + 'static,
 {
-    v.parse().context("expected integer")
+    v.parse().context("expected an integer")
 }
 
 fn u16_value(v: &str) -> Result<u16> {

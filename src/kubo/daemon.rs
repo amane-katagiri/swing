@@ -150,21 +150,21 @@ impl Daemon {
 
     pub async fn stop(mut self, grace: Duration) -> Result<()> {
         match self.ipfs.shutdown(SHUTDOWN_RPC_TIMEOUT).await {
-            Ok(()) => tracing::debug!("kubo RPC shutdown requested"),
+            Ok(()) => tracing::debug!("Kubo RPC shutdown requested"),
             Err(e) => {
-                tracing::debug!(error = %format!("{e:#}"), "kubo RPC shutdown request failed (daemon may be exiting anyway)");
+                tracing::debug!(error = %format!("{e:#}"), "Kubo RPC shutdown request failed (daemon may be exiting anyway)");
             }
         }
 
         match tokio::time::timeout(grace, self.child.wait()).await {
             Ok(Ok(_)) => {
-                tracing::debug!("kubo exited after RPC shutdown");
+                tracing::debug!("Kubo exited after RPC shutdown");
                 return Ok(());
             }
             Ok(Err(e)) => return Err(e).context("waiting for Kubo to exit"),
             Err(_) => {
                 tracing::debug!(
-                    "kubo did not exit within {grace:?} of the RPC shutdown request; escalating"
+                    "Kubo did not exit within {grace:?} of the RPC shutdown request; escalating"
                 );
             }
         }
@@ -178,12 +178,12 @@ impl Daemon {
             }
             match tokio::time::timeout(SIGTERM_GRACE, self.child.wait()).await {
                 Ok(Ok(_)) => {
-                    tracing::debug!("kubo exited after SIGTERM");
+                    tracing::debug!("Kubo exited after SIGTERM");
                     return Ok(());
                 }
                 Ok(Err(e)) => return Err(e).context("waiting for Kubo to exit"),
                 Err(_) => {
-                    tracing::warn!("Kubo did not exit after SIGTERM, killing it");
+                    tracing::warn!("Kubo did not exit after SIGTERM; killing it");
                 }
             }
         }
@@ -193,7 +193,7 @@ impl Daemon {
             .wait()
             .await
             .context("waiting for Kubo to exit")?;
-        tracing::debug!("kubo killed");
+        tracing::debug!("Kubo killed");
         Ok(())
     }
 

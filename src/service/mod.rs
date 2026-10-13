@@ -84,7 +84,7 @@ fn create_empty_config(path: &Path) -> Result<()> {
     }
     match crate::auth::private_file_options().open(path) {
         Ok(_) => {
-            println!("Created an empty config file at {}", path.display());
+            println!("Created an empty config file at {}.", path.display());
             Ok(())
         }
         Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => Ok(()),
@@ -209,7 +209,7 @@ pub async fn uninstall(system: bool, only_from: Option<&Path>) -> Result<()> {
             }
         } else {
             println!(
-                "{}; left it as is.",
+                "{}; leaving it as is.",
                 Sanitized(describe_outside(registration, &dir))
             );
         }

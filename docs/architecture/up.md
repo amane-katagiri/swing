@@ -114,5 +114,5 @@
 - `state_dir` が無ければ `0700` で作る。
 - ロックファイルを作成（無ければ）・読み書きで開く。Unix では `O_NOFOLLOW` で開くので、シンボリックリンクならエラーになり、開いたあとに通常ファイルでなければ（ディレクトリなど）エラーにする。その上で `std::fs::File::try_lock()`（advisory lock。プロセスが `kill -9` で消えても OS が外す）を取る。
 - 取れたら中身を空にして自分の PID を書く。
-- 既に別のプロセスが取っていれば、ファイルの中身（相手の PID）を読んで `another swing instance is already running on <state_dir> (pid N)` でエラーにする（PID が読めなければ `(pid N)` を省く。Windows ではロックがファイル全体への強制ロックなので常に省かれる）。
+- 既に別のプロセスが取っていれば、ファイルの中身（相手の PID）を読んで `another swing instance is already using <state_dir> (pid N)` でエラーにする（PID が読めなければ `(pid N)` を省く。Windows ではロックがファイル全体への強制ロックなので常に省かれる）。
 - `InstanceLock` を drop してもロックファイル自体は消さない。次回の `acquire` はロックが外れていれば中身を上書きして取り直す。

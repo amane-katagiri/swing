@@ -368,12 +368,12 @@ impl<C: KuboStore, N: Nip05Verify, R: ReportRelay> Agent<C, N, R> {
         match self.ipfs.is_directory(&ev.cid).await {
             Ok(true) => {}
             Ok(false) => {
-                warn!(cid = %ev.cid, site = %ev.d, reason = "not_a_directory", "cid is not a UnixFS directory; not fetching");
+                warn!(cid = %ev.cid, site = %ev.d, reason = "not_a_directory", "CID is not a UnixFS directory; not fetching");
                 self.reject(key, ev);
                 return false;
             }
             Err(e) => {
-                warn!(cid = %ev.cid, site = %ev.d, error = %e, "checking whether cid is a directory failed; will retry after min_update_interval");
+                warn!(cid = %ev.cid, site = %ev.d, error = %e, "checking whether the CID is a directory failed; will retry after min_update_interval");
                 return false;
             }
         }

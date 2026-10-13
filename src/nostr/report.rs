@@ -52,7 +52,7 @@ pub fn parse_replica_report(
     validate_d_tag(d)?;
     let expected = site_coordinate(site_event_kind, &author, d).to_string();
     if tag_value(event, "a") != Some(expected.as_str()) {
-        anyhow::bail!("a tag does not match d tag");
+        anyhow::bail!("the a tag does not match the d tag");
     }
     let cids = event
         .tags
