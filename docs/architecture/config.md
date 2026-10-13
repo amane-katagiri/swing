@@ -11,7 +11,7 @@
 3. ユーザーごとの既定の場所の `swing.toml`（無くても使う）
 4. 3 の場所を決められないときだけ `<カレントディレクトリ>/swing.toml`（無くても使う）
 
-カレントディレクトリに `swing.toml` があっても、3 の場所を決められれば読まない（警告も出さない）。既定の場所以外の設定ファイルを使うときは 1 か 2 で指す。
+カレントディレクトリに `swing.toml` があっても、3 の場所を決められれば読まない（警告も出さない）。
 
 3 の場所（`default_config_dir`）は OS で決まる。
 
@@ -29,7 +29,7 @@ TOML の構文や型のエラーは `line <行>, column <桁>: <理由>` の形�
 
 読み込んだファイルに `[nostr].secret_key` があり、Unix でグループかその他のユーザーに読み取り権限がある（`mode & 0o044 != 0`）なら、`chmod 600` を促す警告をログに出して読み込みを続ける。
 
-秘密鍵を含みうる文字列（読んだ設定ファイルの本文、`NostrFile.secret_key`・`NostrSecretKey`、[設定の書き換え](#設定の書き換えsrcsettingseditrs)で読み書きする本文と鍵の hex、`POST /api/setup` で受け取った `secret_key`）は `Zeroizing` に持ち、破棄時にゼロで埋める。`NostrSecretKey` の中身は `expose_secret()` からだけ取り出せ、`Debug` 出力では `<redacted>` になる。`toml_edit` の文書が中に持つコピーと HTTP のリクエスト本文は消さない（できる範囲での対処）。
+秘密鍵を含みうる文字列（読んだ設定ファイルの本文、`NostrFile.secret_key`・`NostrSecretKey`、[設定の書き換え](#設定の書き換えsrcsettingseditrs)で読み書きする本文と鍵の hex、`POST /api/setup` で受け取った `secret_key`）は `Zeroizing` に持ち、破棄時にゼロで埋める。`NostrSecretKey` の中身は `expose_secret()` からだけ取り出せ、`Debug` 出力では `<redacted>` になる。`toml_edit` の文書が中に持つコピーと HTTP のリクエスト本文は消さない。
 
 ## 設定カタログ
 

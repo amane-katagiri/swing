@@ -38,7 +38,7 @@ MFS は DAG が欠けていても置け、GC も `block/rm` も止めない。�
 | PeerID | `id` → `ID` | 10 秒 |
 | 通信量 | `stats/bw` → `TotalIn`・`TotalOut`（[`stats.md`](stats.md)） | 10 秒 |
 | 停止 | `shutdown` | 呼び出し元が指定（[`kubo/daemon.md#停止daemonstopgrace`](kubo/daemon.md#停止daemonstopgrace) は 5 秒、孤児回収は 3 秒） |
-| add（publish） | `add?recursive=true&cid-version=1&pin=false&quieter=true&wrap-with-directory=false` | 全体の上限なし。送るボディが 300 秒進まなければ（最後のファイルを送った後の応答待ちを含む）失敗（`ADD_IDLE_TIMEOUT`） |
+| add（publish） | `add?recursive=true&cid-version=1&pin=false&quieter=true&wrap-with-directory=false&only-hash=<bool>`（`only-hash=true` は `IpfsClient::hash_site`。[dry run](publish/dry-run.md) が CID だけを求める） | 全体の上限なし。送るボディが 300 秒進まなければ（最後のファイルを送った後の応答待ちを含む）失敗（`ADD_IDLE_TIMEOUT`） |
 
 - `dag/stat` に CID を複数渡すと、`TotalSize` はそれらをまとめた重複排除後のサイズ（同じブロックを 1 回だけ数えた合計）になる。1 つでもブロックが欠けていれば呼び出し全体が失敗する。CID を 1 つも渡さないときは呼ばずに 0 を返す。
 - `dag/export` の無通信タイムアウトはヘッダー受信までにも適用する。
@@ -46,13 +46,13 @@ MFS は DAG が欠けていても置け、GC も `block/rm` も止めない。�
 - CID の中のファイル一覧（`ipfs::list_files_local`。publish の[前の版のファイル一覧](publish.md#前の版のファイル一覧)が使う）は、ディレクトリを 1 つずつ `ls` でたどり、ファイルのパス（ルートからの相対、`/` 区切り）をバイト順で返す。`offline=true` なのでブロックがローカルに無ければその時点でエラーになり、たどった項目（ディレクトリを含む）が呼び出し元の指定した数を超えてもエラーにする。
 - `files/rm` は失敗しても 200 でボディにメッセージを返すので、ボディが空でなければ失敗とする。存在しないパスは成功。
 - `files/ls` と `files/stat` の `file does not exist` は、それぞれ空の一覧、「無い」として扱う。
-- ディレクトリ判定は MFS のパスではなく `/ipfs/{cid}` を `files/stat` に渡す。agent は取得の直後に呼ぶ（[`agent.md` の「保存の順序」](agent.md#保存の順序)）。
+- ディレクトリ判定は MFS のパスではなく `/ipfs/{cid}` を `files/stat` に渡す。agent は取得（`dag/export`）の前に呼ぶ（[`agent/store.md` の「保存の順序」](agent/store.md#保存の順序)）。
 
-`add`（`IpfsClient::add_site`。`add_dir` はディレクトリを一覧して `add_site` で add し、`mfs_put` でパスに置く）:
+`add`（`IpfsClient::add_site` と `hash_site`。`add_dir` はディレクトリを一覧して `add_site` で add し、`mfs_put` でパスに置く）:
 
-- 送るのは `ipfs::SiteListing`（`site.rs`）が一覧した通常のファイルとディレクトリだけ（一覧の後に増えたファイルは送らない）。一覧はシンボリックリンクを辿り、ファイルはリンク先を `canonicalize` した実パスで持つ。次の場合はエラーにして何も追加しない: 実パスが `canonicalize` したルートディレクトリの下に無い、循環している、同じディレクトリを指すシンボリックリンクが 2 つ以上ある（リンクで辿るディレクトリは 1 回だけ展開する。実体の場所と 1 つのリンクからは両方とも一覧する）。
+- 送るのは `ipfs::SiteListing`（`site.rs`）が一覧した通常のファイルとディレクトリだけ（一覧の後に増えたファイルは送らない）。一覧はシンボリックリンクを辿り、ファイルはリンク先を `canonicalize` した実パスで持つ。次の場合はエラーにして何も追加しない: ディレクトリが空（`directory is empty: <dir>`）、実パスが `canonicalize` したルートディレクトリの下に無い、循環している、同じディレクトリを指すシンボリックリンクが 2 つ以上ある（リンクで辿るディレクトリは 1 回だけ展開する。実体の場所と 1 つのリンクからは両方とも一覧する）。
 - ファイルは送る順が来たときに開き直す（同時に開くのは 1 つ。開けなければ送信の途中で `opening <パス>: ...` のエラー）。unix では一覧の実パスをルートから 1 階層ずつ `openat(O_NOFOLLOW)` で開くので、一覧の後に途中のディレクトリがシンボリックリンクに差し替えられてもルートの外は開かない。開いたファイルの `(dev, ino)` が一覧のときと違えば（差し替えられていれば）エラーにして add を止める。Windows は実パスをそのまま開き、この確認はしない。
 - 本体は `multipart/form-data` を 1 本のストリームとして自分で組む（境界は 16 バイトの乱数の hex）。パートはディレクトリと各ファイルに 1 つずつで、どれも `name="file"`。
 - `filename` はルートディレクトリ名を先頭に付けた相対パス（例: `public/css/style.css`）を要素ごとにパーセントエンコードしたもの。`Content-Type` はディレクトリが空ボディの `application/x-directory`、ファイルが `application/octet-stream`。
 - 最後の JSON 行の `Hash` がルート CID（`ipfs add -Qr --cid-version=1` と同じ）。
-- MFS には置かない（`to-files` は使わない）。`to-files` は、そのパスに既に項目があると何も置かずに成功を返すので、置いたかどうかを確かめられない。
+- MFS には置かない（`to-files` は、そのパスに既に項目があると何も置かずに成功を返すので使わない）。

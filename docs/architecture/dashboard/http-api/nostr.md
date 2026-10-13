@@ -18,17 +18,16 @@
 { "changed": [ { "pubkey": "…", "npub": "…" } ], "unchanged": [ { "pubkey": "…", "npub": "…" } ], "published": true, "relays": [ { "relay": "wss://…", "ok": true, "error": null } ], "members": [ { "pubkey": "…", "npub": "…" } ], "note": null, "follow_set_found": true }
 ```
 
-Follow Set の書き換え（`mirror::apply_add` / `apply_remove`）は [`../../mirror.md`](../../mirror.md#follow-set-の書き換えmirrorapply_add--apply_remove)。
+Follow Set の書き換え（`mirror::apply_add` / `apply_remove`）は [`../../mirror.md`](../../mirror.md#follow-set-の書き換えmirrorapply_add--apply_remove)。現在の Follow Set の取得から発行までを、`mirror/add`・`mirror/remove` どうしで 1 件ずつ順に行う（`AppState.locks.mirror_writes()`）。
 
 応答:
 
 - `changed`: 実際に追加・削除したもの。`unchanged`: 既に追加済み／もともと未登録で no-op だったもの。
-- 変更が無ければ `published: false`、`relays: []`。`published: true` なのにどの relay にも受理されなければ 502。
-- 成功（1 relay 以上が accept）したら agent をすぐ poll させる（[`../../dashboard.md#概要`](../../dashboard.md#概要)）。
-- 現在の Follow Set の取得から発行までを、`mirror/add`・`mirror/remove` どうしで 1 件ずつ順に行う（`AppState.locks.mirror_writes()`。ロックは `dashboard::locks::Locks` の中にあり、このメソッドからしか取れない）。
+- 変更が無ければ `published: false`、`relays: []`。`published: true` なのにどの relay にも受理されなければ 502 `no relay accepted the mirror set update`。
+- 1 つ以上の relay に受理されたら agent をすぐ poll させる（[`../../dashboard.md#概要`](../../dashboard.md#概要)）。
 - `note`: 保存済みの版を使ったときの注記（[`../../mirror.md#使う-follow-set`](../../mirror.md#使う-follow-set)）。括弧付きの文字列そのまま、無ければ `null`。
 - `follow_set_found`: 操作前に Follow Set が見つかっていたか。
-- `add` が Follow Set の上限（`MAX_FOLLOW_SET_ENTRIES`）を超える（[`../../mirror.md`](../../mirror.md#follow-set-の書き換えmirrorapply_add--apply_remove)）ときは publish せず 409（`{"error": "would grow the follow set to <N> entries, over the 500-entry limit; remove some first"}`）。それ以外の失敗は 502。
+- `add` が Follow Set の上限（`MAX_FOLLOW_SET_ENTRIES`。[`../../mirror.md`](../../mirror.md#follow-set-の書き換えmirrorapply_add--apply_remove)）を超えるときは publish せず 409（`FollowSetCapExceeded` の文言）。それ以外の失敗は 502。
 - relay から Follow Set を取れなかったとき（答えた relay が 1 つも無い）も 502 で、「Follow Set が無い」とはみなさず publish もしない。
 
 ## POST /api/mirror/preview
@@ -41,7 +40,7 @@ Follow Set の書き換え（`mirror::apply_add` / `apply_remove`）は [`../../
 
 - 入力の順に 1 件ずつ。`input` は送られた文字列そのまま。読めない鍵は `npub`・`fingerprint` が `null`。
 - 読めた鍵は `mirror/add` と同じく同じ pubkey の 2 件目以降を落とす（hex と npub で同じ鍵を入れても 1 件）。
-- `fingerprint` は [`../fingerprint.md`](../fingerprint.md)。ミラー済みかどうかは返さない（Follow Set を引かない）。
+- ミラー済みかどうかは返さない（Follow Set を引かない）。
 
 ## GET /api/webring?root=\<key\>&depth=\<N\>
 
@@ -56,8 +55,7 @@ Follow Set の書き換え（`mirror::apply_add` / `apply_remove`）は [`../../
 ```
 
 - `root: true` は `depth == 0` のノード。ノードの並びは（深さ、ラベル）順。`names` は[ノードの名前](../../webring.md#ノードの名前)のすべての `d`、`label` は先頭の `d`（サイトが無ければ縮めた npub。同じものが複数あれば ` (<縮めた npub>)` を添える）、`more_sites` は `names` の残りの件数（`names.length - 1`、名前が無ければ 0）。`text`・`dot`・`mermaid` の表示名は `(+N)` 付きでこれと別。
-- `fingerprint`（ノードと `referencing.accounts` の各要素）: 絵文字のフィンガープリント。4 つの Twemoji のコードポイント（16 進の小文字）の配列（[`../fingerprint.md`](../fingerprint.md)）。
-- 双方向の組は `mutual: true` の辺 1 本、片方向は `mutual: false` の辺。
+- 双方向の組は `mutual: true` の辺 1 本、片方向は `mutual: false` の辺で、`mutual: true` の辺が先に並ぶ。
 - `beyond`・`over_budget`・`referencing` の意味は [`../../webring.md`](../../webring.md)。`referencing.more` は `referencing_dropped`。`referencing` は `nodes`・`edges`・`dot`・`mermaid` には含まれない。
 - `has_follow_set: false` は Follow Set を取得できなかったノード。`text`・`dot`・`mermaid` は `swing webring` の各 `--format` の出力（[`../../cli/views.md#webring`](../../cli/views.md#webring)）と同じ。
 
@@ -71,7 +69,6 @@ Follow Set の書き換え（`mirror::apply_add` / `apply_remove`）は [`../../
 ] } ] }
 ```
 
-- `reporters[].fingerprint`: 報告者の絵文字のフィンガープリント（[`../fingerprint.md`](../fingerprint.md)）。
 - `tier`: `"author"` / `"chosen"` / `"other"` のいずれか（定義は [`../../nostr.md#レプリカ報告の信頼度replicastier`](../../nostr.md#レプリカ報告の信頼度replicastier)）。`"other"` が CLI の `[unverified]` に相当する。
-- `replicas` は最新版を持つ報告者のうち tier が `author`・`chosen` の数、`unverified` は tier が `other` の数。
+- `replicas`・`unverified` は[カウント](../../nostr.md#レプリカ報告の信頼度replicastier)の `trusted`・`unverified`。
 - `reports`（＝ `reporters.length`）は切り詰めた後の件数、`dropped` は切り詰めで落ちた件数。`reporters` の並びは [`replicas_of`](../../nostr.md#レプリカ報告の信頼度replicastier) の順。

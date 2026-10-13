@@ -4,7 +4,7 @@
 
 ## 設定
 
-Desktop 画面の「コントロール パネル」→「通知」タブ（[`desktop/control-panel.md`](desktop/control-panel.md)）と Settings 画面の「通知」パネル（[`views.md#通知`](views.md#通知)）の両方が同じ値を読み書きする。読み書きの関数は `notify-settings.js`（[`web.md#構成`](web.md#構成)）。
+Desktop 画面の「コントロール パネル」→「通知」タブ（[`desktop/control-panel.md`](desktop/control-panel.md)）と Settings 画面の「通知」パネル（[`views/settings.md#通知`](views/settings.md#通知)）の両方が同じ値を読み書きする。読み書きの関数は `notify-settings.js`（[`web.md#構成`](web.md#構成)）。
 
 | 項目 | 保存先 | 値 | 既定 |
 |---|---|---|---|
@@ -53,7 +53,7 @@ Desktop 画面の「コントロール パネル」→「通知」タブ（[`des
 - **マスコット**: 受ける種類・預かり・出し方は [`mascot.md#おしらせ`](mascot.md#おしらせ)。
 - **ブラウザの通知**（`desktop-notify.js::createBrowserNotifier`）: ブラウザの通知が使えるときだけ、ブラウザ側でオンの種類だけを出す。
   - 既読のものを除き、さらに `swing:desktop:notified`（種類ごとに、通知を出した `at` の最大値の JSON）より新しいものだけを出してその値を進める。出しただけでは既読にしない（マスコット側がオフの種類は watcher が流した時点で既読にする。[更新の確認](#更新の確認)）。
-  - 1 回ぶんを 1 つの `Notification` にする。題は `SWING`、本文は 1 件ならサイトのタイトル（サニタイズして最大 60 文字、無ければ `d`）入りの文、2 件以上なら件数入りの文（表示言語の設定に従う i18n）。`tag` は `swing:<kind>:<最も新しい at>` で、複数のタブが同じおしらせを出しても重ならない。
+  - 1 回ぶんを 1 つの `Notification` にする。題は `SWING`、アイコンは `/apple-touch-icon.png`、本文は 1 件ならサイトのタイトル（サニタイズして最大 60 文字、無ければ `d`）入りの文、2 件以上なら件数入りの文（表示言語の設定に従う i18n）。`tag` は `swing:<kind>:<最も新しい at>` で、複数のタブが同じおしらせを出しても重ならない。
   - `new Notification` が例外を投げる環境（ページからの通知を作れないモバイルのブラウザなど）では何もしない。
   - クリックすると通知を閉じてタブを前面に出し、通知を出した時点でのその種類のマスコット側のオン・オフで次のように動く。クリックでは既読を進めない。
 
@@ -61,4 +61,4 @@ Desktop 画面の「コントロール パネル」→「通知」タブ（[`des
 |---|---|---|
 | `stored` | Desktop 画面（`#/desktop`） | 1 件ならリンク（`href`）を新しいタブで開く。2 件以上（またはリンクが `http://`・`https://` でない）なら起動時の画面（`desktop-system-settings.js::startupView()`。`desktop` か `sites`） |
 | `published` | Desktop 画面 | Publish 画面（`#/publish`） |
-| `replica` | Desktop 画面 | Webring 画面で自分のノードを選んだ状態（`swing:show-self-in-webring` を投げる。[`views.md#webring-画面`](views.md#webring-画面)）。詳細パネルは watcher が `cache.replicasByKey` に入れた最新の `/api/replicas` をそのまま使う |
+| `replica` | Desktop 画面 | Webring 画面で自分のノードを選んだ状態（`swing:show-self-in-webring` を投げる。[`views/webring.md`](views/webring.md)）。詳細パネルは watcher が `cache.replicasByKey` に入れた最新の `/api/replicas` をそのまま使う |

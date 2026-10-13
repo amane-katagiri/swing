@@ -22,7 +22,7 @@ swing-tray [--config <path>]
 
 ## 設定ファイル
 
-`--config <path>` を渡すか、渡さなければ他のサブコマンドと同じく `config::resolve_config_path`（`SWING_CONFIG` → ユーザーごとの既定の場所。[`config.md`](config.md#設定ファイルの場所)）で決める。ポーリングと操作のたびに `Config::load` で読み直す。
+`--config <path>` を渡さなければ、他のサブコマンドと同じ探索順（[`config.md`](config.md#設定ファイルの場所)）で決める。ポーリングと操作のたびに `Config::load` で読み直す。
 
 ## 多重起動の防止
 
@@ -60,7 +60,7 @@ swing-tray [--config <path>]
 
 ## 起動したときの自動起動
 
-起動して最初の状態の確認で、`swing up` が止まっていて、しかもサービスとして登録済みと確認できたなら（登録状態が分からないときは起動しない）、`service::start(false)` で起動する（表示は下記の「起動しています…」）。最初の 1 回だけ行い、その後に止まっても起動しない。ログイン時にサービスとトレイの両方から起動しても、Windows はタスクの `MultipleInstancesPolicy = IgnoreNew`、macOS は `kickstart`（`-k` なし）が 2 つ目を起こさず、万一 2 つ目が立ち上がっても `swing.lock` ですぐ終わる。
+起動して最初の状態の確認で、`swing up` が止まっていて、しかもサービスとして登録済みと確認できたなら（登録状態が分からないときは起動しない）、`service::start(false)` で起動する（表示は下記の「起動しています…」）。最初の 1 回だけ行い、その後に止まっても起動しない。ログイン時にサービスと重なっても、2 つ目は Windows ではタスクの `MultipleInstancesPolicy = IgnoreNew`、macOS では `kickstart`（`-k` なし）で起きず、起きても `swing.lock` ですぐ終わる。
 
 ## 状態の表示
 
@@ -68,7 +68,7 @@ swing-tray [--config <path>]
 
 | 状態 | 条件 | 表示 | アイコン |
 |---|---|---|---|
-| 動作中 | `/api/overview` が返った | `SWING: 動作中`。`setup: true` なら `セットアップ待ち`、`signer.last_failure`（NIP-46 の署名アプリへの最後のリクエストが、時間切れ・拒否・接続できないなどで失敗した。次に成功すると消える。[`signer.md`](signer.md)）があれば `動作中（前回の署名に失敗しました）` | ロゴ |
+| 動作中 | `/api/overview` が返った | `SWING: 動作中`。`setup: true` なら `セットアップ待ち`、`signer.last_failure`（[`signer.md`](signer.md#署名アプリへのリクエストremotesigner)）が `null` でなければ `動作中（前回の署名に失敗しました）` | ロゴ |
 | 停止中 | API に接続できない（`ApiClientError::Unreachable`） | `SWING: 停止中`。サービスとして未登録と確認できたときだけ `停止中（サービス未登録）` | 灰色で半透明のロゴ（macOS は薄いロゴ。下記「アイコン」） |
 | エラー | 設定を読めない、トークンが合わない（401）、相手がトークンを知っていることを確かめられない（`ApiClientError::NotSwing`。[`dashboard/security.md`](dashboard/security.md#cli-と-swing-trayapiclient)）、応答が無いなど | `SWING: エラー: <メッセージの 1 行目>` | 灰色で半透明のロゴ（macOS は薄いロゴ。下記「アイコン」） |
 
@@ -88,7 +88,7 @@ swing-tray [--config <path>]
 | 終了（はい） | `停止しています…` | 止まってトレイが閉じるか、止めるのに失敗した |
 
 - 途中の間は「終了」以外の項目をすべて無効にする（「終了（はい）」の途中は「終了」も無効）。逆向きの操作（止めている途中の「起動」など）は、状態が変わりきったのを確認してから有効にする。
-- 操作が失敗したら（API が 4xx/5xx を返した、`schtasks` が失敗したなど）、途中の表示をやめて失敗を表示する。
+- 操作が失敗したら（API が 4xx/5xx を返した、`schtasks` が失敗したなど）、途中の表示をやめて上記の失敗の表示にする。
 - 120 秒たっても状態が変わらなければ、途中の表示をやめて、確認できた状態に戻す（「終了（はい）」は `stop::run` の 90 秒のタイムアウトで失敗になる）。
 
 状態から表示・使える項目・アイコンを決める部分、途中の表示を戻す条件、ボタンの文字から答えを決める部分は `status.rs` にあり、OS に依存しないユニットテストがある。

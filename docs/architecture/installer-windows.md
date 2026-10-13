@@ -121,7 +121,7 @@ GUI で、`service install` が成功したときだけ出す（既定はオン�
 
 ファイルを消す前（`usUninstall`）に次を行う。サイレント（`unins000.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART`）でも同じ。
 
-1. `swing service status --points-into "{app}"`（出力はログへ）の後、`swing service uninstall --only-from "{app}"` で `{app}` を指す登録だけを消す（[`service/ownership.md`](service/ownership.md)）。
+1. `{app}\swing.exe` があれば、`swing service status --points-into "{app}"`（出力はログへ）の後、`swing service uninstall --only-from "{app}"` で `{app}` を指す登録だけを消す（[`service/ownership.md`](service/ownership.md)）。
 2. [プロセスの止め方](#プロセスの止め方)で止める。トレイは、タスクの削除を見て自分で閉じる（[`tray.md`](tray.md#サービスの登録が消えたら終了する)）のを最大 30 秒待つ。1 で別の場所を指す登録を残したときは、`swing stop` を使い、トレイは待たずに強制終了する。
 3. `Path` から `{app}` の項目を（大文字小文字と末尾の `\` を無視して）すべて除く。ほかは順序を保ち、空の項目は落とし、残りが空なら値ごと消す。
 

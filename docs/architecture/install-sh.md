@@ -38,22 +38,22 @@ curl -fsSL .../install.sh | sh -s -- --version v0.1.0
 
 1. `SHA256SUMS` を取得する。`--version` が無ければ、その中から `swing-<tag>-<target>.tar.gz`（target は `x86_64-unknown-linux-musl` か `aarch64-unknown-linux-musl`。`/` を含む名前は使わない）を探して、最新のタグを決める。
 2. アーカイブを取得して SHA-256 を照合し、展開する。
-3. `swing-uninstall.sh` の元になる `install.sh` は、ファイルとして実行されていればそれ自身、パイプなら `SHA256SUMS` に載っていればリリースから取得して照合する。載っていなければ警告して、アンインストーラは入れない。
+3. `swing-uninstall.sh` の元になる `install.sh` は、`install.sh`（か `swing-uninstall.sh`）という名前のファイルとして実行されていればそれ自身、そうでなければ（パイプなど） `SHA256SUMS` に載っていればリリースから取得して照合する。載っていなければ警告して、アンインストーラは入れない。
 4. `lib/swing` と `bin` の置き場所を検査する（下記）。
 5. Kubo（`KUBO_VERSION`）を `<KUBO_BASE_URL>/kubo_v<version>_linux-<amd64|arm64>.tar.gz` から取得して、`KUBO_SHA512_<AMD64|ARM64>` と照合する。配布元の `.sha512` は取得しない。`lib/swing/ipfs` の `ipfs version --number` が `KUBO_VERSION` と一致すれば取得しない。版を上げるときの手順は [`kubo.md#kubo-のバージョン`](kubo.md#kubo-のバージョン)。
-6. `bin/swing` が既にあり、自分が作ったリンク（`lib/swing/swing` を指す）でなければ、`--force` が無いかぎり、何も変えずに失敗する。
+6. `bin/swing` がディレクトリなら失敗する。既にあり、自分が作ったリンク（`lib/swing/swing` を指す）でなければ、`--force` が無いかぎり、何も変えずに失敗する。
 7. `lib/swing` と `bin` を作り（`mkdir -p`）、置き場所をもう一度検査する。
 8. 動いているサービスを止める（下記）。
 9. ファイルを `lib/swing/` に置く。同じディレクトリに `.<名前>.<pid>` で書いてから `mv -f` する（1 ファイルごとにアトミック）。
 10. 前回の `manifest` に載っていて今回は無いファイル（[一覧の読み方](#一覧の読み方)に合うものだけ）を消し、`manifest` を書き直す。
 11. `bin/swing` を `lib/swing/swing` へのシンボリックリンクにする（一時名で作って `mv -f`）。`current_exe()` は実体のパスを返すので、`ipfs` は `lib/swing` で見つかり（[`kubo.md`](kubo.md#バイナリの検出kubolocate_binary)）、サービスの `ExecStart` も `lib/swing/swing` になる。
-12. `lib/swing/swing --version` が動かなければ警告する。`bin` が PATH に無ければ警告する。
+12. `lib/swing/swing --version` が動かなければ警告する。サービスを起動し直す（`--service` なら `swing service install`。失敗したら失敗する。下記）。`bin` が PATH に無ければ警告する。最後に次の手順（`swing service install`（`--service` のときは出さない）・`swing dashboard open`・`swing skill install`）・データの場所・アンインストーラの場所を表示する。
 
 どれかの検証が失敗したら、`lib/swing/` と `bin/` には何も書かない（ダウンロードと照合は置き換えの前にすべて終える）。一時ディレクトリは `trap` で消す。
 
 ## 置き場所の検査
 
-`lib/swing` と `bin` のそれぞれについて、実在するいちばん深い祖先（そのもの、または親をたどったもの）から `/` までのすべてのディレクトリを、書かれたパスのままのものと `pwd -P` で解決したものの両方で `ls -ldn` で調べ、どれかに当たれば何も変えずに失敗する（`refusing to use <dir>: ...`）。どちらも葉から `/` へ向かって調べ、別のユーザーの持ち物に当たればその時点でそれを理由にする。書き込めるディレクトリは最初に見つけたものを覚えて調べ続けるので、両方あるときは別のユーザーの持ち物のほうを理由にする。グループかその他のユーザーが書き込めることが理由なら、`--prefix /opt/swing` のように自分か root しか書き込めない prefix を案内し、その prefix に `lib/swing/manifest` があれば先に `install.sh --uninstall --prefix <prefix>` で消すよう続けて案内する。シンボリックリンクそのものは調べない（その親は調べる）。
+`lib/swing` と `bin` のそれぞれについて、実在するいちばん深い祖先（そのもの、または親をたどったもの。ディレクトリでなければ失敗）から `/` までのすべてのディレクトリを、書かれたパスのままのものと `pwd -P` で解決したものの両方で `ls -ldn` で調べ、どれかに当たれば何も変えずに失敗する（`refusing to use <dir>: ...`）。どちらも葉から `/` へ向かって調べ、別のユーザーの持ち物に当たればその時点でそれを理由にする。書き込めるディレクトリは最初に見つけたものを覚えて調べ続けるので、両方あるときは別のユーザーの持ち物のほうを理由にする。グループかその他のユーザーが書き込めることが理由なら、`--prefix /opt/swing` のように自分か root しか書き込めない prefix を案内し、その prefix に `lib/swing/manifest` があれば先に `install.sh --uninstall --prefix <prefix>` で消すよう続けて案内する。シンボリックリンクそのものは調べない（その親は調べる）。
 
 - 持ち主が root でも実行しているユーザーでもない
 - グループかその他のユーザーが書き込める。ただし祖先が sticky ビット付き（`/tmp` など）なら許す。`lib/swing`・`bin` そのものは sticky でも許さない
@@ -65,7 +65,7 @@ curl -fsSL .../install.sh | sh -s -- --version v0.1.0
 
 ## 表示
 
-`info`・`warning:`・`error:` の行と、データの場所・アンインストーラの場所・`--purge` の確認の表示では、埋め込むパスや名前の制御文字（改行・ESC などの C0、DEL、UTF-8 の C1）と、UTF-8 の不可視の書式文字（U+200B〜U+200F・U+2028〜U+202E・U+2060〜U+2064・U+2066〜U+206F・U+FEFF）をそれぞれ `?` に置き換える。ほかのユーザーが名前を付けられるディレクトリのパスが、偽の行や端末のエスケープシーケンスを出せないようにするため。`swing service status` の出力はそのまま中継する（`swing` 側で置き換える）。
+`info`・`warning:`・`error:` の行と、データの場所・アンインストーラの場所・`--purge` の確認の表示では、埋め込むパスや名前の制御文字（改行・ESC などの C0、DEL、UTF-8 の C1）と、UTF-8 の不可視の書式文字（U+200B〜U+200F・U+2028〜U+202E・U+2060〜U+2064・U+2066〜U+206F・U+FEFF）をそれぞれ `?` に置き換える。`swing service status` の出力はそのまま中継する（`swing` 側で置き換える）。
 
 ## 置く物
 
@@ -83,7 +83,7 @@ curl -fsSL .../install.sh | sh -s -- --version v0.1.0
 
 ## 更新（再実行）
 
-同じコマンドを再実行すると、その場で更新する。動いているサービスは、[登録の持ち主の確認](#登録の持ち主の確認)で `lib/swing` の `swing` を起動するものだと分かったときだけ扱う。そうでなければ止めも起動し直しもせず、`leaving the swing service as is; ...` と `swing` の出力を表示して更新を続ける。
+同じコマンドを再実行すると、その場で更新する。動いているサービスは、[登録の持ち主の確認](#登録の持ち主の確認)で `lib/swing` の `swing` を起動するものだと分かったときだけ扱う。そうでなければ止めも起動し直しもせず、`leaving the swing service as is; ...` と `swing` の出力を表示して更新を続ける。ただし `--service` なら、持ち主に関わらず最後に `swing service install` で登録し直す。
 
 | サービス | 置き換えの前 | 置き換えの後 |
 |---|---|---|
@@ -107,12 +107,12 @@ curl -fsSL .../install.sh | sh -s -- --version v0.1.0
 1. `manifest` が無ければ「no installation found」で失敗する。`lib/swing` を[置き場所の検査](#置き場所の検査)にかけ、どれかに当たれば何も実行せず何も消さずに失敗する（`--purge` でも同じ）。
    - 理由がグループかその他のユーザーから書き込めるディレクトリなら、そのディレクトリを持ち主しか書き込めないようにしてから再実行するよう案内する
    - どの理由でも、手で消すためのコマンドは表示しない（表示したパスは、そのディレクトリに書き込める人が実行前にすり替えられるため）
-2. `cd -P` で `lib/swing` に一度だけ入り、以後の実行と読み書きはその中から相対パスで行う（`swing` は `./swing` で実行する）。入った先（実体）が root か実行ユーザーの持ち物でなければ、`manifest` が root か実行ユーザーの持ち物の通常のファイル（シンボリックリンクでない）でなければ、何も消さずに失敗する。検査の後で `lib/swing` のパスがすり替えられても、実行と削除の先は最初に入ったディレクトリから動かない。
-   - `bin` の検査（`check_dir`）はアンインストールでは行わない。`bin` からは何も実行せず、`cd -P` で入った `bin` の中で、シンボリックリンクの `swing` のうち、リンク先の親を `cd -P` で解決すると入った `lib/swing` になる `/.../swing` を指すものだけを消すため（prefix をシンボリックリンク経由で入れ、`swing-uninstall.sh` が実体のパスから prefix を決めたときも消える）
+2. `cd -P` で `lib/swing` に一度だけ入り、以後の実行と読み書きはその中から相対パスで行う（`swing` は `./swing` で実行する）。検査の後で `lib/swing` のパスがすり替えられても、実行と削除の先は最初に入ったディレクトリから動かない。入った先（実体）が root か実行ユーザーの持ち物でないとき、または `manifest` が root か実行ユーザーの持ち物の通常のファイル（シンボリックリンクでない）でないときは、何も消さずに失敗する。
+   - `bin` は検査しない。`bin` からは何も実行せず、消すのは手順 6 のリンクだけ
 3. `--purge` なら、削除先を決めて確認する（`/dev/tty` から読む。端末が無くて `--yes` も無ければ何も消さずに失敗する）。
 4. system unit（`/etc/systemd/system/swing.service`）があれば、`sudo <lib>/swing service uninstall --system` を先に実行するよう案内して失敗する。`--force` なら続ける。ただし `./swing service status --system --points-into <lib>` の終了コードが 4（別の場所の `swing` を起動する unit）なら、触れずに続ける（`swing` が無ければ確かめられないので失敗する）。
 5. ユーザー unit があれば `./swing service uninstall --only-from <lib>` を実行する（失敗したら何も消さずに終わる。`swing` が無ければ、手で消すよう warn に出して続ける）。unit が別の場所の `swing` を起動するものなら、`swing` がその旨を出して unit を残す。
-6. 入った `lib/swing` の中で `manifest` に書いたファイル（「一覧の読み方」に合うもの。シンボリックリンクならリンクだけ）と `manifest` を消し、自分のリンクだった `bin/swing` を消す。最後に `lib/swing` の実体の親へ移り、空になっていればその名前のディレクトリを消す。
+6. 入った `lib/swing` の中で `manifest` に書いたファイル（「一覧の読み方」に合うもの。シンボリックリンクならリンクだけ）と `manifest` を消す。`cd -P` で入った `bin` の `swing` がシンボリックリンクで、リンク先が `/.../swing` の形でその親を `cd -P` で解決すると入った `lib/swing` になるときだけ消す（prefix をシンボリックリンク経由で入れたときも消える）。最後に `lib/swing` の実体の親へ移り、空になっていればその名前のディレクトリを消す。
 7. 設定とデータは残し、場所を表示する。`--purge` なら、ユーザーごとの既定の場所（[`config.md`](config.md#設定ファイルの場所)。実行時の `HOME` と `XDG_DATA_HOME` で決まる）だけを消し、`--config` や `SWING_CONFIG` で指していた別の場所には触れない。その場所が `/swing` で終わらなければ、手順 3 で何も消さずに失敗する。
 
 ## テスト

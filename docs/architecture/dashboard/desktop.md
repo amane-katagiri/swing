@@ -1,6 +1,6 @@
 # ダッシュボードの Desktop 画面（`web/desktop*.js`）
 
-[`../dashboard.md`](../dashboard.md) の子ページで、[`web.md`](web.md) と並列。ダッシュボード全体の構成・ルーティング・他画面は [`web.md`](web.md)、サーバ側は [`../dashboard.md`](../dashboard.md)、おしらせは [`notices.md`](notices.md)。子ページは [`mascot.md`](mascot.md)（マスコット）と [`desktop/control-panel.md`](desktop/control-panel.md)（コントロール パネル）。
+[`../dashboard.md`](../dashboard.md) の子ページで、[`web.md`](web.md) と並列。ダッシュボード全体の構成・ルーティング・他画面は [`web.md`](web.md)、サーバ側は [`../dashboard.md`](../dashboard.md)、おしらせは [`notices.md`](notices.md)。子ページは [`mascot.md`](mascot.md)（マスコット）・[`desktop/control-panel.md`](desktop/control-panel.md)（「コントロール パネル」ダイアログ）・[`desktop/mirror-add.md`](desktop/mirror-add.md)（ツールバーの「ミラー」で開く「ミラーに追加」ダイアログ）・[`desktop/link-page.md`](desktop/link-page.md)（ウィンドウの中身のリンク集ページ）。
 
 ## 構成
 
@@ -22,8 +22,8 @@ Desktop 画面専用のモジュール（各モジュールは表で自分より
 | `desktop-mascot-pack.js`・`desktop-mascot-sprite.js`・`desktop-mascot-behavior.js`・`desktop-mascot-balloon.js`・`desktop-mascot.js`・`desktop-mascot-settings.js` | マスコット（分担は [`mascot.md#概要`](mascot.md#概要)）。`desktop.js` が `DesktopMascots` の `init`・`start`・`onShow`・`watchFrame`・`showing` を呼ぶ |
 | `desktop-notify-settings.js` | 「コントロール パネル」の「通知」タブ本体（`NotifySettingsPage`） |
 | `desktop-settings.js` | 「コントロール パネル」の殻（`PAGES` を `desktop-dialog.js` に結び付ける、`DesktopSettings`） |
-| `desktop-mirror-add.js` | 「ミラーに追加」ダイアログ（`DesktopMirrorAdd`）。[`desktop/mirror-add.md`](desktop/mirror-add.md) |
 | `desktop-fingerprint.js` | ドット絵にした絵文字のフィンガープリント（`deskFingerprint`）。[`desktop/mirror-add.md`](desktop/mirror-add.md#フィンガープリントのドット絵) |
+| `desktop-mirror-add.js` | 「ミラーに追加」ダイアログ（`DesktopMirrorAdd`）。[`desktop/mirror-add.md`](desktop/mirror-add.md) |
 | `desktop.js` | 画面のロジック本体（デスクトップアイコンの選択・起動、リンク集ページへの書き込み、共通のクリック/フォーカス処理） |
 
 そのほかのファイル:
@@ -31,7 +31,7 @@ Desktop 画面専用のモジュール（各モジュールは表で自分より
 | ファイル | 役割 |
 |---|---|
 | `desktop.css`・`desktop-dialog.css`・`desktop-wallpaper.css`・`desktop-mascot-settings.css`・`desktop-system-settings.css`・`desktop-mascot.css` | `index.html` がこの順に読む CSS（それぞれフォント・シェル・`--desk-*` 変数、ダイアログの枠・汎用部品（無効状態を含むチェックボックス・テキスト入力）と「ミラーに追加」ダイアログ、「背景」タブ固有、「マスコット」タブ固有、「システム」タブ固有、マスコットと吹き出し）。読み込み順は [`css.md#読み込み順`](css.md#読み込み順) |
-| `desktop-frame.css` | 窓側のスクロールバーの見た目。`desktop.js` がリンク集ページ（iframe）に差し込む（下記「[リンク集ページ（iframe）](#リンク集ページiframe)」） |
+| `desktop-frame.css` | 窓側のスクロールバーの見た目。`desktop.js` がリンク集ページ（iframe）に差し込む（[`desktop/link-page.md`](desktop/link-page.md)） |
 | `desktop-page.html`・`desktop-page.css`・`desktop-banner.gif` | リンク集ページ・その専用 CSS・88×31 バナーの同梱版。設定で差し替えられる（[`../dashboard.md#設定dashboard`](../dashboard.md#設定dashboard)） |
 | `desktop-icons.svg` | ピクセルアートアイコンのスプライト。`index.html` から `<use>` で参照する |
 | `fonts/` | 同梱フォント PixelMplus12 とそのライセンス |
@@ -39,7 +39,7 @@ Desktop 画面専用のモジュール（各モジュールは表で自分より
 
 ## 画面
 
-Win95/98 風デスクトップ（背景・デスクトップアイコン・タスクバー・Start 風ボタン・時計）と、その上の「SWING Explorer」ウィンドウ（タイトルバー・メニューバー・ツールバー・アドレス行・ページ本文・ステータスバー）を `#view-desktop` に静的 HTML で組む。実際に操作できる要素と装飾の切り分けは下記「装飾 vs 実機能」を参照。配色はダッシュボードのテーマ（`--swing-*`）を参照せず、`#view-desktop` スコープの固定レトロパレット（`--desk-*`）を使う（ライト/ダークで見た目は変わらない）。
+Win95/98 風デスクトップ（背景・デスクトップアイコン・タスクバー・Start 風ボタン・時計）と、その上の「SWING Explorer」ウィンドウ（タイトルバー・メニューバー・ツールバー・アドレス行・ページ本文・ステータスバー）を `#view-desktop` に静的 HTML で組む。配色はダッシュボードのテーマ（`--swing-*`）を参照せず、`#view-desktop` スコープの固定レトロパレット（`--desk-*`）を使う（ライト/ダークで見た目は変わらない）。
 
 ### フォント
 
@@ -63,7 +63,7 @@ PixelMplus12（`web/fonts/`）を使う。フォントの読み込みが終わ�
 | 要素 | 動作 |
 |---|---|
 | ツールバーの「更新」（`#desk-reload`） | 再取得 |
-| ツールバーの「ミラー」（`#desk-mirror-add`） | 「ミラーに追加」ダイアログを開く（下記「[ミラーに追加](#ミラーに追加)」） |
+| ツールバーの「ミラー」（`#desk-mirror-add`） | 「ミラーに追加」ダイアログを開く（[`desktop/mirror-add.md`](desktop/mirror-add.md)） |
 | タイトルバーの最小化/最大化/閉じる | 最小化・最大化⇄復元・閉じる |
 | タイトルバー本体 | ドラッグで移動（ナロー幅では無効）。ダブルクリックで最大化⇄復元 |
 | `.desk-resize` ハンドル（8 個） | ウィンドウのリサイズ。最大化中は非表示 |
@@ -85,51 +85,13 @@ SWING Explorer ウィンドウ・「コントロール パネル」ダイアロ�
 
 「コントロール パネル」ダイアログは [`desktop/control-panel.md`](desktop/control-panel.md)。
 
-### ミラーに追加
-
-ツールバーの「ミラー」で開く「ミラーに追加」ダイアログは [`desktop/mirror-add.md`](desktop/mirror-add.md)。
-
 ### レイアウト
 
 Desktop 画面では `.swing-main` の幅制限と余白を外して画面いっぱいに広げる。ページ全体はスクロールせず、スクロールするのはリンク集ページ（iframe）だけ。760px 以下のナロー幅ではナビが上に来る縦積みになり、ページ最下部のフッタ（`#page-footer`）は出さない。
 
 ### リンク集ページ（iframe）
 
-ウィンドウの中身（`#desk-page-frame`）は同一オリジンの iframe で開く `/desktop-page.html` の別ドキュメント。ルートと差し替え設定は [`../dashboard.md#静的ファイルの配信srcdashboardassets`](../dashboard.md#静的ファイルの配信srcdashboardassets)。
-
-- CSS: `index.html` のダッシュボードの CSS は当たらず、ページ側の CSS も外に漏れない。窓側の `desktop-frame.css` だけは `desktop.js` が iframe の `<head>` の先頭に `<link>` で差し込む。ページ専用 CSS は `--desk-*`・`@font-face`・リセットまで自己完結する。
-- 読み込みの時機: このページとバナー・マスコットはログインが要る（[`security.md#ガード`](security.md#ガード)）。`index.html` の iframe には `src` を書かず、`app.js` が `/api/overview` の読み込みを終えた後（失敗しても 401 でなければ）に呼ぶ `DesktopView.start()` が `src` を入れ、`DesktopMascots.start()` でパックを読み始める。ログイン画面を出すときは呼ばない。
-- `src` の無い間の `about:blank` の `load` は無視する。
-
-iframe には `sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox"` を付ける。差し替えたページの `<script>`・イベントハンドラ属性・フォーム送信・親ウィンドウの遷移は動かず、`target="_blank"` のリンクは制限の無い新しいタブで開く。親の `desktop.js` は `contentDocument` を直接読み書きする。
-
-`desktop.js` はページ側の JS を前提にせず、決まった `id` を見つけたときだけ書き込む（無い `id` は黙って飛ばす）。差し替えるページはこの `id` と、`desktop.js` が差し込む要素のクラス・属性を契約として使える:
-
-| `id` | 書き込む内容 |
-|---|---|
-| `desk-link-list` | リンク行（下表）を `replaceChildren` で流し込む |
-| `desk-page-status` | 読み込み中・エラー・空の文面。`data-kind` に `loading` / `error` / `empty` を付ける（リンクを出せたときは文面を消して属性ごと外す） |
-| `desk-marquee-text` | マーキーの文面 |
-| `desk-counter` | 来訪者カウンタ |
-
-| 差し込む要素 | 内容 |
-|---|---|
-| `li.desk-link-row` | 1 サイトの行 |
-| `.desk-status-icon` | ステータスアイコン。`data-status` は `ng` / `err` / `new` / `up` / `default`（下記） |
-| `.desk-link-date` | 日付（`YYYY.MM.DD`） |
-| `.desk-link-title` | タイトル（リンクか `span`） |
-| `.desk-link-d` | `title` を出すときに併記する `(d)` |
-| `.desk-link-honke` | `[本家]` の第二リンク |
-| `.desk-link-cache` | 更新待ちのサイトの `[キャッシュ]`（保存済みの前の版）のリンク |
-| `.desk-link-message` | 更新メモ |
-
-データは `cache.sites`（[`web.md`](web.md) の Sites 画面と共有）の `accounts` と `unfollowed.accounts` の両方から `stored === true` のサイトと、更新待ち（`stored` が false で `previous` がある）のサイトを集め、`created_at` 降順で並べる。各行のステータスアイコン（`.desk-status-icon`、`data-status`）は次の優先順で 1 個だけ選ぶ: (1) `nip05 === "mismatch"` → `ng`。(2) `nip05 === "error"`・未知の文字列 → `err`。(3) それ以外は更新の新しさで `new`（7 日以内）/`up`（30 日以内）/`default`（`not_applicable` は NIP-05 の問題扱いにせず新しさ判定に乗る）。
-
-タイトルは自己申告の `title`（サニタイズ済み、最大 120 文字）があればそれを、無ければ `d` を表示し、`title` を出すときは必ず `d` も括弧付きで併記する。リンク先は `gateway_url` を一次リンク（無ければ `url`）にし、両方あれば `url` を `[本家]` の第二リンクにする。更新待ちのサイトは、日付・アイコン・タイトル・更新メモを新しい版（イベント）のもので出し、まだ取り込んでいない新しい版にはリンクしないのでタイトルをリンクにせず、`title` 属性で最新版がまだ保存されていないことを示す。`url` があれば `[本家]` を、`previous.gateway_url` があればそれを `[キャッシュ]` のリンクにして並べる。npub・cid・size・replicas は表示しない。来訪者カウンタは、ページ読み込みのたびに 1 増やす `localStorage["swing:desktop:visits"]` に、保存中サイト数から求めた基準値を足して表示する。
-
-### おしらせ
-
-更新の確認とおしらせの出し分け（マスコットの吹き出しかブラウザの通知か）は [`notices.md`](notices.md)。
+SWING Explorer ウィンドウの中身（`#desk-page-frame`）は、同一オリジンの iframe で開く `/desktop-page.html`。読み込みの時機・sandbox・差し替えるページが使える `id` とクラス・行の作り方は [`desktop/link-page.md`](desktop/link-page.md)。
 
 ### Desktop 画面は丸ごと日本語固定
 
@@ -137,4 +99,4 @@ iframe には `sandbox="allow-same-origin allow-popups allow-popups-to-escape-sa
 
 ### 内部クラス（非安定）
 
-上の「リンク集ページ（iframe）」の表に載せたもの以外の `desk-` 接頭辞のクラスは `#view-desktop` とリンク集ページの実装に閉じた内部のもので、`swing-` 接頭辞のクラス（[`css.md#安定-class`](css.md#安定-class)）と違って安定インターフェースではない。
+[`desktop/link-page.md`](desktop/link-page.md) の表に載せたもの以外の `desk-` 接頭辞のクラスは `#view-desktop` とリンク集ページの実装に閉じた内部のもので、`swing-` 接頭辞のクラス（[`css.md#安定-class`](css.md#安定-class)）と違って安定インターフェースではない。

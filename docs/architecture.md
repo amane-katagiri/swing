@@ -11,16 +11,16 @@
 | [`architecture/mirror.md`](architecture/mirror.md) | `mirror list`/`add`/`remove`・`sites` とダッシュボードの API が共有する処理: 使う Follow Set の選び方・Follow Set の書き換え・sites の集計（レプリカ数、unfollow の一覧） |
 | [`architecture/webring.md`](architecture/webring.md) | `webring` と `/api/webring` が共有する処理: Follow Set のたどり方・グラフ・ノードの名前 |
 | [`architecture/health.md`](architecture/health.md) | 版の検査と MFS の突き合わせ: agent の起動時の突き合わせと sweep、`status` と `/api/status` が共有する判定と集計 |
-| [`architecture/agent.md`](architecture/agent.md) | mirror-agent の動作。子ページはポリシー判定の [`agent/policy.md`](architecture/agent/policy.md)、レプリカ報告の送信の [`agent/replicas.md`](architecture/agent/replicas.md)、保存した版のサイトイベントの再送の [`agent/resend.md`](architecture/agent/resend.md)、`state.json` の [`agent/state.md`](architecture/agent/state.md) |
+| [`architecture/agent.md`](architecture/agent.md) | mirror-agent の動作。子ページはポリシー判定の [`agent/policy.md`](architecture/agent/policy.md)、レプリカ報告の送信の [`agent/replicas.md`](architecture/agent/replicas.md)、保存した版のサイトイベントの再送の [`agent/resend.md`](architecture/agent/resend.md)、取得した版の保存の順序の [`agent/store.md`](architecture/agent/store.md)、`state.json` の [`agent/state.md`](architecture/agent/state.md) |
 | [`architecture/signer.md`](architecture/signer.md) | 署名（`signer/`）: 秘密鍵か NIP-46 の署名アプリか、`remote-signer.json`、QR コードでのペアリング |
 | [`architecture/nip05.md`](architecture/nip05.md) | NIP-05 検証（agent と publish で共通） |
-| [`architecture/nostr.md`](architecture/nostr.md) | Nostr イベントの検証（`nostr/`）、未来ずれの許容、レプリカ報告の信頼度。取得と表示の上限（`nostr::budget`）の子ページもここから |
+| [`architecture/nostr.md`](architecture/nostr.md) | Nostr イベントの検証（`nostr/`）、未来ずれの許容、レプリカ報告の信頼度。子ページは relay からの取得と表示の上限（`nostr::budget`）の [`nostr/fetch.md`](architecture/nostr/fetch.md) |
 | [`architecture/kubo.md`](architecture/kubo.md) | Kubo の管理（`kubo/`）: 検出と init、設定、RPC の秘密、Kubo のバージョン。子ページはデーモンの起動・停止と孤児の回収の [`kubo/daemon.md`](architecture/kubo/daemon.md) |
 | [`architecture/mfs.md`](architecture/mfs.md) | MFS の使い方（`mfs.rs`）と Kubo RPC クライアント（`ipfs.rs`） |
 | [`architecture/up.md`](architecture/up.md) | `swing up`（supervisor）: 起動順、セットアップモード、終了要求・シグナル、停止の時間予算、多重起動の防止 |
 | [`architecture/stats.md`](architecture/stats.md) | リソース使用量の記録（`stats.rs`） |
 | [`architecture/gateway.md`](architecture/gateway.md) | 内蔵 gateway（`gateway.rs`）: Host 振り分けと Kubo gateway へのプロキシ |
-| [`architecture/service.md`](architecture/service.md) | `swing service`（systemd / launchd / タスクスケジューラ）。子ページは登録の持ち主の判定（`--only-from`・`--points-into`）の [`service/ownership.md`](architecture/service/ownership.md) |
+| [`architecture/service.md`](architecture/service.md) | `swing service`（systemd / launchd / タスクスケジューラ）。子ページは登録の持ち主の判定（`--only-from`・`--points-into`）の [`service/ownership.md`](architecture/service/ownership.md)、`--system` の unit の実行ユーザーの [`service/system-user.md`](architecture/service/system-user.md) |
 | [`architecture/tray.md`](architecture/tray.md) | タスクトレイ（`swing-tray`、Windows と macOS） |
 | [`architecture/docker.md`](architecture/docker.md) | Dockerfile、compose、外部 Kubo コンテナの設定 |
 | [`architecture/dashboard.md`](architecture/dashboard.md) | Web ダッシュボード兼制御 API（`dashboard/`）: 起動と終了、設定、タイムアウト、静的ファイル。子ページの一覧もここ |
@@ -41,7 +41,7 @@
 | ダッシュボードの HTTP サーバ | `axum` 0.8、リクエストタイムアウトに `tower-http` |
 | 設定 | `toml` + `serde`、環境変数が TOML を上書き |
 | CLI | `clap` derive |
-| ログ | `tracing` + `tracing-subscriber`（`RUST_LOG`。既定は `swing up` が `info`、ほかのコマンドは `info,nostr_sdk=warn,nostr_connect=warn`）。メッセージと各フィールドの値は `logging::SanitizedFields` で `format::Sanitized` を通してから書く（外部由来の文字列でログの行を偽れないように） |
+| ログ | `tracing` + `tracing-subscriber`（`RUST_LOG`。既定は `swing up` が `info`、ほかのコマンドは `info,nostr_sdk=warn,nostr_connect=warn`）。書き出しは `logging::SanitizedFields`（[cli.md#共通](architecture/cli.md#共通)） |
 | CID 検証 | `cid` クレート |
 
 クレート `swing` は lib + bin 構成。統合テストは `swing::` としてモジュールを直接使う。
@@ -60,22 +60,22 @@
 | `nip05.rs` | NIP-05 検証。[nip05.md](architecture/nip05.md) |
 | `ipfs.rs`・`ipfs/site.rs`・`mfs.rs` | Kubo RPC クライアント・サイトのディレクトリの一覧と add の multipart・MFS 上のパスの組み立て。[mfs.md](architecture/mfs.md) |
 | `kubo/` | Kubo の RPC の秘密と `kubo-api.json`（`access.rs`）・検出と init（`binary.rs`）・設定（`config.rs`）・起動と終了（`daemon.rs`）・`kubo.pid` と孤児回収（`orphan.rs`）、テストは `tests.rs`。[kubo.md](architecture/kubo.md) |
-| `agent/` | mirror-agent のループ。[agent.md](architecture/agent.md) |
+| `agent/` | mirror-agent のループ。[agent.md](architecture/agent.md)、保存の順序は [agent/store.md](architecture/agent/store.md) |
 | `policy.rs`・`state.rs` | 保存ポリシーの判定（純粋関数）・`state.json` の永続化。[agent.md](architecture/agent.md)・[agent/state.md](architecture/agent/state.md) |
 | `health.rs` | 版と MFS の突き合わせ（agent と `status` で共通）と `status`。[health.md](architecture/health.md)、CLI の表示は [cli/views.md](architecture/cli/views.md#status) |
 | `publish.rs`・`publish/checks.rs`・`publish/links.rs`（と `publish/links/`）・`publish/clock.rs`・`publish/new_files.rs`・`publish/staged.rs`・`publish/dry_run.rs` | `publish` と、その前後の確認（ドットファイル・保護パス・サイズ・リンク・同じ内容・増えたファイル・時計）、告知できなかった版の後始末。[publish.md](architecture/publish.md)、CLI の表示は [cli/publish.md](architecture/cli/publish.md) |
 | `mirror/` | `mirror list`/`add`/`remove`・`sites`（`set.rs`: Follow Set の編集、`print.rs`・`time.rs`: 表示）。[mirror.md](architecture/mirror.md)、CLI の表示は [cli/views.md](architecture/cli/views.md#mirror-list--add--remove) |
 | `replicas.rs` | レプリカ報告の集計と `replicas`。[nostr.md](architecture/nostr.md#一覧の集計replicascollect)、表示は [cli/views.md](architecture/cli/views.md#replicas) |
 | `webring/` | Follow Set のたどり方とグラフ、`webring`（`render.rs`: テキスト・DOT・Mermaid）。[webring.md](architecture/webring.md)、CLI の表示は [cli/views.md](architecture/cli/views.md#webring) |
-| `key.rs`・`format.rs` | `key generate`・バイト数と秒数の表示、端末に出す他人由来の文字列の無害化（`Sanitized`: 制御文字を空白 1 つに置き換え、見えない書式文字（`nostr::is_unsafe_char`）を取り除く。`sanitize_display_text`: それに加えて文字数で切り、前後の空白を削る）、エラー終了のときの表示（`error_report`） |
-| `logging.rs` | `tracing` のフィールドの書き出し（`SanitizedFields`） |
+| `key.rs`・`format.rs` | `key generate`・バイト数と秒数の表示、他人由来の文字列の無害化（`Sanitized`・`sanitize_display_text`）、エラー終了のときの表示（`error_report`）。無害化の規則は [cli.md#共通](architecture/cli.md#共通) |
+| `logging.rs` | `tracing` のメッセージとフィールドの書き出し（`SanitizedFields`） |
 | `up.rs`・`ports.rs`・`lock.rs`・`shutdown.rs` | `swing up` の supervisor・セットアップモードでのポートのずらし方・多重起動の防止・シグナルと終了要求。[up.md](architecture/up.md) |
 | `stop.rs` | `swing stop`。[cli.md](architecture/cli.md#stop) |
 | `stats.rs`・`stats/process.rs` | リソース使用量の記録と `stats`、OS ごとのプロセスの CPU とメモリ。[stats.md](architecture/stats.md) |
 | `proc.rs` | プロセスの開始時刻・生存確認・シグナル（`kubo/` が使う）と、Linux の `/proc/<pid>/stat` の読み取り（`stats/process.rs` と共有） |
-| `service/` | `swing service`（`templates.rs`: unit・plist・タスク XML、`process.rs`: 外部コマンド、`ownership.rs`: 登録が指す実行ファイルの読み取りと判定、`linux.rs`・`macos.rs`・`windows.rs`、ほかの OS は `unsupported.rs`）。[service.md](architecture/service.md)、登録の持ち主の判定は [service/ownership.md](architecture/service/ownership.md) |
+| `service/` | `swing service`（`templates.rs`: unit・plist・タスク XML、`process.rs`: 外部コマンド、`ownership.rs`: 登録が指す実行ファイルの読み取りと判定、`linux.rs`・`macos.rs`・`windows.rs`、ほかの OS は `unsupported.rs`）。[service.md](architecture/service.md)、登録の持ち主の判定は [service/ownership.md](architecture/service/ownership.md)、`--system` の実行ユーザーは [service/system-user.md](architecture/service/system-user.md) |
 | `gateway.rs`・`host.rs` | 内蔵 gateway・Host ヘッダのパーサ（ダッシュボードのガードと共有）。[gateway.md](architecture/gateway.md) |
-| `dashboard/` | Web ダッシュボードと制御 API（`mod.rs`・`guard.rs`・`api.rs`・`error.rs`・`publish.rs`・`session.rs`・`setup.rs`・`locks.rs`・`upload.rs`・`dto.rs`・`config_dto.rs`・`assets/`・`mascots/`・`test_support.rs`）。[dashboard.md](architecture/dashboard.md) |
+| `dashboard/` | Web ダッシュボードと制御 API（`mod.rs`・`guard.rs`・`api.rs`・`error.rs`・`publish.rs`・`precheck.rs`・`session.rs`・`setup.rs`・`locks.rs`・`upload.rs`・`dto.rs`・`config_dto.rs`・`assets/`・`mascots/`・`test_support.rs`）。[dashboard.md](architecture/dashboard.md) |
 | `auth.rs`・`api_client.rs`・`login.rs` | トークン・セッション・ログインコード、CLI のダッシュボード API クライアント、`swing dashboard open`/`rotate-token`。[dashboard/security.md](architecture/dashboard/security.md) |
 | `activity.rs` | 最新の publish・レプリカ報告の時刻（`/api/activity` 用、メモリだけ） |
 | `fingerprint.rs` | 絵文字のフィンガープリント（`packaging/twemoji/` で作る `web/emoji.svg` も）。[dashboard/fingerprint.md](architecture/dashboard/fingerprint.md) |
@@ -114,7 +114,7 @@ swing service stop      [--system]
 swing service status    [--system] [--points-into <dir>]
 swing dashboard open         [--config <path>] [--no-browser]
 swing dashboard rotate-token [--config <path>]
-swing publish [--config <path>] --site <d-tag> [--url <URL>] [--nip05 <off|warn|require>] [--check-dotfiles <off|warn|require>] [--check-size <off|warn|require>] [--check-links <off|warn|require>] [--check-unchanged <off|warn|require>] [--title <TEXT>] [-m, --message <TEXT>] [-y, --yes] [--dry-run [--json]] <DIR>
+swing publish [--config <path>] --site <d-tag> [--url <URL>] [--nip05 <off|warn|require>] [--check-dotfiles <off|warn|require>] [--check-size <off|warn|require>] [--check-links <off|warn|require>] [--check-unchanged <off|warn|require>] [--title <TEXT>] [-m, --message <TEXT>] [--note] [-y, --yes] [--dry-run [--json]] <DIR>
 swing mirror list                      [--config <path>]
 swing mirror add <key>...              [--config <path>]
 swing mirror remove <key>...           [--config <path>]
@@ -137,8 +137,4 @@ swing-tray [--config <path>]
 
 ## 設定と環境変数
 
-設定ファイル（`--config` → `SWING_CONFIG` → あれば `./swing.toml` → ユーザーごとの既定の場所の `swing.toml`）の値を `SWING_` 環境変数が上書きする。すべてのキーは `src/settings/catalog.rs` の `SETTINGS` にカタログとしてまとまり、`swing.example.toml` と `.env.example` はそこから生成する。探し方・検証・値の形式・書き換えの規則は [`architecture/config.md`](architecture/config.md)。
-
-## テスト
-
-ユニットテストの置き方と、ローカルの Kubo・relay を使う統合テストの動かし方は [`architecture/testing.md`](architecture/testing.md)。ビルドとリリース、macOS・Homebrew・Windows の動作確認は [`architecture/release.md`](architecture/release.md)。
+設定ファイル（探す順は [`architecture/config.md#設定ファイルの場所`](architecture/config.md#設定ファイルの場所)）の値を `SWING_` 環境変数が上書きする。すべてのキーは `src/settings/catalog.rs` の `SETTINGS` にまとまり、`swing.example.toml` と `.env.example` はそこから生成する。詳細は [`architecture/config.md`](architecture/config.md)。

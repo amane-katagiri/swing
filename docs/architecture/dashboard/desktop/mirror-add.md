@@ -10,9 +10,9 @@
 
 ## フィンガープリントのドット絵
 
-`desktop-fingerprint.js::deskFingerprint(ids, title)` は、Sites 画面などの `fingerprintBadge`（[`../web.md#共通の-ui-部品`](../web.md#共通の-ui-部品)）の代わりに、Desktop 画面の見た目に合わせて絵文字を 16×16 のドット絵にして出す。絵文字の表とスプライトは同じもの（[`../fingerprint.md`](../fingerprint.md)）で、別の画像は持たない。
+`desktop-fingerprint.js::deskFingerprint(ids, title)` は、Sites 画面などの `fingerprintBadge`（[`../web/ui.md`](../web/ui.md)）の代わりに、Desktop 画面の見た目に合わせて絵文字を 16×16 のドット絵にして出す。絵文字の表とスプライトは同じもの（[`../fingerprint.md`](../fingerprint.md)）で、別の画像は持たない。
 
-- 初めて使うときに `/emoji.svg` を 1 回だけ取って `DOMParser` で読み、絵文字ごとに `<symbol>` の中身を 36×36 の SVG の `data:` URL にして `Image` で読む。16×16 の canvas に縮めて描き、不透明度を 128 未満は 0、それ以上は 255 の 2 値にしてふちのぼかしを消し、PNG の `data:` URL にする。結果は絵文字ごとにページの寿命のあいだ覚える（失敗したものは覚えない）。
-- `.desk-fingerprint`（`role="img"`、`aria-label` と `title` は `fingerprintBadge` と同じ作り）の中に 16×16 の `<img>` を 4 つ並べ、`image-rendering: pixelated` で拡大する。Desktop 画面は整数倍に拡大する（[`../desktop.md`](../desktop.md)）ので、ドットはそろう。
+- 初めて使うときに `/emoji.svg` を取って `DOMParser` で読み（取れたらページの寿命のあいだ使い回し、失敗したら次に使うときに取り直す）、絵文字ごとに `<symbol>` の中身を 36×36 の SVG の `data:` URL にして `Image` で読む。16×16 の canvas に縮めて描き、不透明度を 128 未満は 0、それ以上は 255 の 2 値にしてふちのぼかしを消し、PNG の `data:` URL にする。結果は絵文字ごとにページの寿命のあいだ覚える（失敗したものは覚えない）。
+- `.desk-fingerprint`（`role="img"`、`aria-label` と `title` は `fingerprintBadge` と同じ作り）の中に 16×16 の `<img>` を 4 つ並べ、`image-rendering: pixelated` で拡大する（Desktop 画面の整数倍の拡大は [`../desktop.md#表示倍率`](../desktop.md#表示倍率)）。
 - スプライトを取れない・canvas を読めないときは、その絵文字だけ `<svg><use href="/emoji.svg#e-…"/></svg>` のベクタで出す。
 - `data:` の画像は CSP の `img-src 'self' data:` の範囲（[`../security.md`](../security.md)）。

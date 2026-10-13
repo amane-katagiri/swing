@@ -16,7 +16,7 @@ CLI の `swing publish`（[`cli/publish.md`](cli/publish.md)）とダッシュ�
 10. 投稿を頼まれていれば[通常の投稿](#通常の投稿)。
 11. [古い版の削除](#古い版の削除)。
 
-7 以降で失敗したときに MFS に置いた版をどうするかは[告知できなかった版の後始末](#告知できなかった版の後始末)。CLI の `--dry-run` は同じ段階の関数を使い、何も書かずに 8 まで確かめる（子ページ [`publish/dry-run.md`](publish/dry-run.md)）。
+7 以降で失敗したときに MFS に置いた版をどうするかは[告知できなかった版の後始末](#告知できなかった版の後始末)。CLI の `--dry-run` は同じ段階の関数を使い、何も書かずに 8 まで確かめる（CID は `only-hash=true` の add で求める。段階ごとの分岐と、鍵・Kubo・relay が無いときの扱いは子ページ [`publish/dry-run.md`](publish/dry-run.md)）。
 
 ## 保護パスの拒否
 
@@ -32,7 +32,7 @@ CLI の `swing publish`（[`cli/publish.md`](cli/publish.md)）とダッシュ�
 `check_links` が `off` でなければ、一覧したファイルの中身を読んで[リンクの確認](publish/links.md)をする（`publish::scan_links`）。ダッシュボードの公開画面は、アップロードする前に同じ判定を [`POST /api/publish/check`](dashboard/http-api/publish.md#post-apipublishcheck) でも行う（一覧とファイルの中身はブラウザから受け取る）。続けて `LocalChecks::evaluate` が、モードが `off` でない項目だけを判定する。
 
 - ドットファイル（`find_dotfiles`）: 各パスをルートから順にセグメントごとに見て、名前が `.` で始まり `[publish].dotfiles_allow` のどれとも一致しない最初のセグメントまでを 1 件とする（ディレクトリは 1 回だけ数え、その下は見ない）。一致するセグメントはそれ自身だけを見逃し、その下は続けて見る（`.well-known/.env` は `.well-known/.env` を 1 件とする）。表示や応答に並べるのは先頭 `LISTED_DOTFILES`（10）件。
-- サイズ: ファイルの大きさの合計（ブロックの共有やディレクトリのノードは数えない）が `SIZE_GUIDELINE`（512 MiB、固定）を超えたら引っかかる（ちょうどは超えない扱い）。ミラーが保存するかは各ミラーの `max_update_size` で決まるので、これは目安。
+- サイズ: ファイルの大きさの合計（ブロックの共有やディレクトリのノードは数えない）が `SIZE_GUIDELINE`（512 MiB、固定）を超えたら引っかかる（ちょうどは超えない扱い）。ミラーが保存するかは各ミラーの `max_update_size` で決まる。
 - リンク: [`publish/links.md`](publish/links.md) の判定で、確実に崩れるもの（最上位の `ipfs`・`ipns`、`/` で始まる参照、一覧に無いものへの参照、`http://` のスクリプト）があれば引っかかる。崩れるかもしれないもの（GET 以外のフォーム・Worker・`http://`/`ws://` への通信・外部の資源・元のサイトへの絶対 URL）は表示だけで、`require` でも止めない。
 - `require` の項目が引っかかったら、項目ごとの対処の案内を `; ` でつないだメッセージ（`abort_message`）で、add せずに止める。
 
@@ -59,13 +59,13 @@ CLI の `swing publish`（[`cli/publish.md`](cli/publish.md)）とダッシュ�
 
 `publish::plan_version`。MFS の版を一覧し（失敗したらエラー）、次の順に確かめ、当たれば何も add せずに `publish::ClockError` で止める。自動では直さない。メッセージ中のずれの大きさは `1 second` / `N seconds` / `about N minutes` / `about N hours` / `about N days` で示す。
 
-署名の上限は現在時刻 + [`MAX_FUTURE_SKEW`](nostr.md#未来ずれの許容nostrmax_future_skew)（900 秒）− `SIGN_MARGIN`（60 秒）。ミラーや relay の時計がこの機械より少し遅れていても、署名したイベントが未来すぎるとして捨てられないための余裕。
+署名の上限は現在時刻 + [`MAX_FUTURE_SKEW`](nostr.md#未来ずれの許容nostrmax_future_skew)（900 秒）− `SIGN_MARGIN`（60 秒）。`SIGN_MARGIN` は、ミラーや relay の時計がこの機械より少し遅れていても署名したイベントが未来すぎるとして捨てられないための余裕。
 
 1. MFS の未来の版: 最大の版 + 1 が署名の上限を超える。その版が現在時刻 + `MAX_FUTURE_SKEW` 以内なら、待てば署名できるので待つ秒数（版 + 1 − 署名の上限）を案内する。それより先なら、この機械の時計が遅れている（時計を直してやり直す）か、その版を時計が進んでいたときに作った（`ipfs files rm -r <その版のパス>`、Docker Compose なら `docker compose exec ipfs ipfs files rm -r <その版のパス>` で消してやり直す）かのどちらかだと案内する。
 2. relay の前の版が先の日付: 前の版の `created_at` + 1 が署名の上限を超える。前の版は取得の段階で現在時刻 + `MAX_FUTURE_SKEW` までに限られるので、超える幅は最大 `SIGN_MARGIN` + 1 秒で、待つ秒数を案内する。
-3. relay より進んだ時計: [relay の時計](#前の版と-relay-の時計)のずれの最小が `MAX_FUTURE_SKEW` を超える。答えた relay が 1 つも無ければ確かめずに進む。1 つの relay に公開を止めさせないことを優先した最善努力の確認で、`Date` が遠い未来の relay が 1 つでも答えれば止めない。
+3. relay より進んだ時計: [relay の時計](#前の版と-relay-の時計)のずれの最小が `MAX_FUTURE_SKEW` を超える。答えた relay が 1 つも無ければ確かめずに進む。最小で比べるので、`Date` が遠い未来の relay が 1 つでも答えれば止めない。
 
-relay が持つ自分のサイトイベントが未来ずれの許容を超えて先の日付なら、swing にもミラーにも見えず、その relay では時刻が過ぎるまで新しい公開で置き換わらない（上書きする手段は無い）。
+relay が持つ自分のサイトイベントが未来ずれの許容を超えて先の日付なら、swing にもミラーにも見えず、その relay では時刻が過ぎるまで新しい公開で置き換わらない。
 
 ## `created_at` の決め方
 
@@ -73,7 +73,7 @@ relay が持つ自分のサイトイベントが未来ずれの許容を超え�
 
 ## add と版の配置
 
-`publish::add_and_measure`。add の直前に[時計の確認](#時計の確認)をして `created_at` を決め、サイトの一覧を CIDv1・pin なしで add し（MFS にはまだ置かない）、その CID を `<mfs_root>/publish/<pubkey hex>/<site>/<created_at>` に置く（`IpfsClient::mfs_place`。[`mfs.md`](mfs.md#rpc)）。そのパスに既に項目があれば Kubo が配置を断るので、既存の項目は消さずに `created_at` を 1 秒進めて置き直す。置けたパスだけがこの publish の版になり、[後始末](#告知できなかった版の後始末)もこのパスだけを消すので、並行する別の publish の版を上書きしたり消したりしない。続けて `dag/stat`（`offline=true`）の `TotalSize` をサイトイベントの `size` タグにする。pin なしの add は Kubo の GC を止めないので、この `dag/stat` がブロックの欠けを確かめる役も持つ（add から配置までの間にルートのブロックが消されていれば、配置が `offline=true` で失敗する）。
+`publish::add_and_measure`。add の直前に[時計の確認](#時計の確認)をして `created_at` を決め、サイトの一覧を CIDv1・pin なしで add し（MFS にはまだ置かない）、その CID を `<mfs_root>/publish/<pubkey hex>/<site>/<created_at>` に置く（`IpfsClient::mfs_place`。[`mfs.md`](mfs.md#rpc)）。そのパスに既に項目があれば Kubo が配置を断るので、既存の項目は消さずに `created_at` を 1 秒進めて置き直す。置けたパスだけがこの publish の版になり、[後始末](#告知できなかった版の後始末)もこのパスだけを消す。続けて `dag/stat`（`offline=true`）の `TotalSize` をサイトイベントの `size` タグにする。pin なしの add は Kubo の GC を止めないので、add から配置までの間にブロックが消されていれば、配置か `dag/stat`（どちらも `offline=true`）が失敗する。
 
 ## 同じ内容かの確認
 
@@ -102,14 +102,10 @@ relay が持つ自分のサイトイベントが未来ずれの許容を超え�
 
 置いた版（[配置](#add-と版の配置)で置けたパス）は `publish::StagedVersion` が持ち、署名できるまでの失敗では MFS から消す。
 
-- 消す: CID が読めない、`dag/stat` の失敗、署名できない、[同じ内容](#同じ内容かの確認)で止めるとき。消せなければその理由も元のエラーに続ける。
+- 消す: `dag/stat` の失敗、署名できない、[同じ内容](#同じ内容かの確認)で止めるとき。消せなければその理由も元のエラーに続ける。
 - 処理が途中で打ち切られた（ダッシュボードのタイムアウトやクライアントの切断）ときも、後から削除を始める（失敗は警告のログだけ）。
 - 署名できた後は、送信の失敗や打ち切りがあっても消さない。
 
 ## 古い版の削除
 
 `publish::prune_old_versions_collect`。受理された後、[版](#版)のうち今回の版は必ず残し、それ以外を新しい順に `[publish].keep_versions - 1` 個残して消す。一覧や削除に失敗しても publish は成功のままで、失敗の内容だけを返す。
-
-## 確かめるだけの実行（dry run）
-
-CLI の `swing publish --dry-run` は、上の段階の関数を同じ順に呼び、何も書かずに 8（同じ内容かの確認）まで確かめる。CID は `only-hash=true` の add で求める。段階ごとの分岐と、鍵・Kubo・relay が無いときの扱いは子ページ [`publish/dry-run.md`](publish/dry-run.md)。

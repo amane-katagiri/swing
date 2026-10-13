@@ -19,13 +19,11 @@
 - 長さ `MAX_PATH_LEN`（4096 バイト）以下、セグメント数 `MAX_PATH_SEGMENTS`（32）以下、各セグメントは非空かつ `.`/`..` でない
 - 各セグメントは `.` や半角スペースで終わらない、Windows の予約デバイス名（`CON`・`PRN`・`AUX`・`NUL`・`CONIN$`・`CONOUT$`・`COM1`〜`9`・`COM¹`〜`³`・`LPT1`〜`9`・`LPT¹`〜`³`、大小文字無視、拡張子付き `nul.txt` や拡張子の前に空白のある `nul .txt` も含む）でない（プラットフォームを問わず拒否）
 - 同じパスの重複（大文字小文字を区別しない）
-- 同じパスをファイルとディレクトリの両方に使う組み合わせ（`a` と `a/b`、大文字小文字を区別しない）は、後から来たほうのパスを検証した時点で 400。OS のエラーの種類には頼らず、受け取ったパスどうしで判定する
-- 展開先の下にあることを確かめてから、既存のファイルを上書きしない `create_new` で書く。上の比べ方では別になるが、ファイルシステムの上では同じになる組み合わせ（macOS の NFC と NFD など）は、作成が既存のもの（ファイル・ディレクトリ）に当たった時点で同じ 400 にする
+- 同じパスをファイルとディレクトリの両方に使う組み合わせ（`a` と `a/b`、大文字小文字を区別しない）は、後から来たほうのパスを検証した時点で 400（受け取ったパスどうしで判定する）
+- 展開先の下にあることを確かめてから、既存のファイルを上書きしない `create_new` で書く。上の比べ方では別でもファイルシステムの上では同じになる組み合わせ（macOS の NFC と NFD など）は、作成が既存のファイル・ディレクトリに当たった時点で同じ 400 にする
 - `file` パートの総数は `MAX_UPLOAD_FILES`（10,000）まで
 
 本体を受け取り終えてから、`site` が無ければ 400 `missing site`、`file` が 0 個なら 400 を返す。
-
-パート・パスの上限は固定の定数（`MAX_CONTENT_BYTES` は `nostr::budget`、ほかは `src/dashboard/upload.rs`）。ボディ全体の上限は設定の `[dashboard].max_upload`（下記）。
 
 判定の順:
 
@@ -61,8 +59,6 @@
   "gateway_url": "…", "note": { "relays": [ { "relay": "wss://…", "ok": true, "error": null } ], "error": null }, "files": 3 }
 ```
 
-- `note` は通常の投稿をしたときだけオブジェクトで、それ以外（頼まれていない・`published` が `false`）は `null`。`relays` は relay ごとの成否（署名や送信に失敗したときは空）、`error` はどこにも受理されなかったとき `no relay accepted the note`、署名や送信に失敗したときはその理由。どちらでも応答は 200 のまま。
-
 - `nip05.status` は `off`/`verified`/`mismatch`/`not_applicable`/`error`。`detail` は `error` のときだけ粗い分類（`unreachable`/`timeout`/`invalid_response`）が入る（SSRF 対策と合わせて [`../../nip05.md`](../../nip05.md)）。`require` で検証が通らなければ、add する前に 422 を返す: `{ "error": "...", "nip05": { "status": "...", "detail": "..." } }`。
 - `checks`: 各項目の `mode` はその回に使ったモード。判定は[ローカルの確認](../../publish.md#サイトの一覧とローカルの確認)と[同じ内容かの確認](../../publish.md#同じ内容かの確認)。
   - `dotfiles`: `status` は `off`（`count` は 0、`paths` は空）/`ok`/`found`。`count` は見つかった件数、`paths` はその先頭 `LISTED_DOTFILES`（10）件。
@@ -74,23 +70,24 @@
 - add の後、署名できるまでに失敗したら（`dag/stat` の失敗、署名できない）502 を返す。add した版の扱いは[告知できなかった版の後始末](../../publish.md#告知できなかった版の後始末)（打ち切りのときの削除は応答の後になりうる）。
 - `created_at` は[共通の決め方](../../publish.md#created_at-の決め方)。[時計の確認](../../publish.md#時計の確認)に当たったら何も add せずに 400 `{ "error": "..." }`（`publish::ClockError`）、そのための MFS の一覧に失敗したら 502 を返す。
 - どの relay にも受理されなければ 502 `no relay accepted the site event; old versions were kept (<relay>: <理由>; …)` を返す（理由を返した relay だけを並べる）。
-- `relays[].error` は relay が断った理由。未来すぎる `created_at` を理由に断られたときは[案内](../../publish.md#署名と送信)が後ろに付く。制御文字などを除き、500 文字を超える分は `…` に切り詰める（CLI の表示と同じ）。
+- `relays[].error`（形は[親ページ](../http-api.md#形式とエラー)）には、未来すぎる `created_at` を理由に断られたとき[案内](../../publish.md#署名と送信)が後ろに付く。
+- `note` は通常の投稿をしたときだけオブジェクトで、それ以外（頼まれていない・`published` が `false`）は `null`。`relays` は relay ごとの成否（署名や送信に失敗したときは空）、`error` はどこにも受理されなかったとき `no relay accepted the note`、署名や送信に失敗したときはその理由。どちらでも応答は 200 のまま。
 - 古い版の削除に失敗したときは `prune_error` に理由が入るだけで、応答は成功のまま。
 - `files` は受け取ったファイル数。
 
 ## POST /api/publish/check
 
-公開画面が、アップロードする前に NIP-05 とドットファイル・サイズ・リンクの確認の結果を出すために使う。ファイルの中身は走査するものだけを受け取り、何も保存せず、Kubo にも relay にも触らない。判定は upload と同じ関数（NIP-05 は `publish::check_nip05` と `HttpNip05Verifier::public_only`、[ローカルの確認](../../publish.md#サイトの一覧とローカルの確認)。リンクは `links::evaluate`）で、upload は自分でもう一度判定する（この API を経たかどうかは見ない）。多重実行の排他（409）は無い。時計と前の版と同じ内容かは確かめない。
+公開画面が、アップロードする前に NIP-05 とドットファイル・サイズ・リンクの確認の結果を出すために使う。ファイルの中身はリンクの確認が読むものだけを受け取り、何も保存せず、Kubo にも relay にも触らない。判定は upload と同じ関数（NIP-05 は `publish::check_nip05` と `HttpNip05Verifier::public_only`、[ローカルの確認](../../publish.md#サイトの一覧とローカルの確認)。リンクは `links::evaluate`）。upload はこの API を経たかどうかを見ずに自分で判定し直す。多重実行の排他（409）は無い。時計・前の版・同じ内容かは確かめない。
 
 `multipart/form-data`。パート:
 
-- `site`（必須）・`url`・`nip05`・`check_dotfiles`・`check_size`・`check_links`（省略可）。モードの省略時は `[publish]` の同名の設定。`site`・`url` とモードは upload と同じ規則で検証して 400（`invalid site: ...`・`invalid url: ...`・`invalid nip05: ...`・`invalid check_links: ...` など）。知らない名前のパートは読み捨てる。
-- `files`（必須）: 全ファイルの送信名と大きさの JSON 配列 `[{"path": "index.html", "size": 1234}, …]`。`MAX_UPLOAD_FILES × (MAX_PATH_LEN + 64)` バイトまで。形が違えば 400 `invalid files: ...`。空なら 400。`MAX_UPLOAD_FILES`（10,000）件まで。各 `path` は upload と同じ[パスの検証](#post-apipublishupload)（`upload::PathRules`。空・`/` 始まり・`..`・空のセグメント・予約デバイス名・大文字小文字だけ違う重複・ファイルとディレクトリの衝突）で、違反は 400。`size` の合計が `[dashboard].max_upload` を超えたら 413。
-- `file`（任意、複数）: `filename` が `files` の `path` で、そのファイルの中身。`files` に無いもの、[リンクの確認が読まない](../../publish/links.md#読むファイル)もの（拡張子が対象外か `size` が 4 MiB 超）、1 つが 4 MiB を超えるもの、同じ名前の 2 つ目は 400。リンクの確認が読むファイルの中身が無ければ、そのファイルは読まなかった（`skipped`）として数える。
+- `site`（必須。無ければ 400 `missing site`）・`url`・`nip05`・`check_dotfiles`・`check_size`・`check_links`（省略可）。モードの省略時は `[publish]` の同名の設定。`site`・`url` とモードは upload と同じ規則で検証して 400（`invalid site: ...`・`invalid url: ...`・`invalid nip05: ...`・`invalid check_links: ...` など）。テキストのパートの上限も upload と同じ。知らない名前のパートは読み捨てる。
+- `files`（必須。無ければ 400 `missing files`）: 全ファイルの送信名と大きさの JSON 配列 `[{"path": "index.html", "size": 1234}, …]`。`MAX_UPLOAD_FILES × (MAX_PATH_LEN + 64)` バイトまで。形が違えば 400 `invalid files: ...`。空なら 400。`MAX_UPLOAD_FILES`（10,000）件まで。各 `path` は upload と同じ[パスの検証](#post-apipublishupload)（`upload::PathRules`。空・`/` 始まり・`..`・空のセグメント・予約デバイス名・大文字小文字だけ違う重複・ファイルとディレクトリの衝突）で、違反は 400。`size` の合計が `[dashboard].max_upload` を超えたら 413。
+- `file`（任意、複数。`MAX_UPLOAD_FILES` 個まで）: `filename` が `files` の `path` で、そのファイルの中身。`filename` の無いもの、`files` に無いもの、[リンクの確認が読まない](../../publish/links.md#読むファイル)もの（拡張子が対象外か `size` が 4 MiB 超）、1 つが 4 MiB を超えるもの、同じ名前の 2 つ目は 400。リンクの確認が読むファイルの中身が無ければ、そのファイルは読まなかった（`skipped`）として数える。
 
 ディレクトリは `files` のパスの親から作る。並び順はセグメントごとの比較で、upload の一覧と同じ順になる。ボディの上限とタイムアウトは upload と同じ（`[dashboard].max_upload`、30 分）。
 
-`nip05` が `off` でなければ、ここまでの検証の後に自分の公開鍵を upload と同じ `require_own_pubkey` で求め（無ければ 503。セットアップモードなら `agent is not configured`、それ以外は `agent is not ready`）、`site` を検証する。NIP-05 の検証とドットファイル・サイズ・リンクの確認は並行して走らせる。`off` なら公開鍵は求めない。
+判定の順は、パートの受信（400・413）→ `site`・`url`・モードの検証（400）→ `files` の件数・パス・大きさの合計（400・413）→ `file` パートと `files` の突き合わせ（400）→ `nip05` が `off` でなければ自分の公開鍵（セットアップモードなら 503 `agent is not configured`）。その後、`site` の NIP-05 の検証とドットファイル・サイズ・リンクの確認を並行して走らせる（リンクの確認が失敗したら 500）。
 
 ```json
 { "nip05": { "status": "verified", "detail": null }, "checks": { "dotfiles": {…}, "size": {…}, "links": {…}, "unchanged": null }, "abort": null }
@@ -98,7 +95,7 @@
 
 - `nip05` は[upload の応答](#post-apipublishupload)の `nip05` と同じ形。
 - `checks` は upload の応答の `checks` と同じ形で、`unchanged` は常に `null`。
-- `abort` は `require` の項目が引っかかったときに upload が返す止める理由、無ければ `null`。NIP-05 の理由（upload の NIP-05 の 422 と同じ文）が先で、ドットファイル・サイズ・リンクの理由（`LocalChecks::abort_message`）が続く。両方あれば `; ` でつなぐ（upload は NIP-05 で止まるとほかを確かめないので、つないだものは返さない。順は upload が確かめる順）。
+- `abort` は `require` の項目が引っかかったときに upload が返す止める理由、無ければ `null`。NIP-05 の理由（upload の NIP-05 の 422 と同じ文）が先で、ドットファイル・サイズ・リンクの理由（`LocalChecks::abort_message`）が続く。両方あれば `; ` でつなぐ（upload は NIP-05 で止まるので、つないだ文は返さない）。
 
 ## GET /api/publish/sites
 

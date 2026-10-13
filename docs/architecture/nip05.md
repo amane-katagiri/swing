@@ -23,18 +23,18 @@
 
 - reqwest のエラーはタイムアウトなら `Timeout`、接続エラーなら `Unreachable`、それ以外は `InvalidResponse`。HTTP ステータス異常・ボディサイズ超過・非 UTF-8・JSON パース失敗は `InvalidResponse`。
 - CLI の `swing publish` と agent（`state.verifications` の `detail`）は生のメッセージ（`VerificationResult::detail()`）を使う。
-- ダッシュボードの公開（`POST /api/publish/upload`）の応答は分類名（`coarse_detail()`: `unreachable` / `timeout` / `invalid_response`）だけを返し、生のメッセージは warn ログにだけ出す。
+- ダッシュボードの公開（`POST /api/publish/upload`・`POST /api/publish/check`）の応答は分類名（`coarse_detail()`: `unreachable` / `timeout` / `invalid_response`）だけを返し、生のメッセージは warn ログにだけ出す。
 
 ## クライアント
 
-agent と dashboard（`POST /api/publish/upload` の `site`）は `HttpNip05Verifier::public_only()`、CLI の `swing publish` は `HttpNip05Verifier::new()` を使う。`public_only()` は次の制限を加える。
+agent と dashboard（`POST /api/publish/upload`・`POST /api/publish/check` の `site`）は `HttpNip05Verifier::public_only()`、CLI の `swing publish`（`--dry-run` を含む）は `HttpNip05Verifier::new()` を使う。`public_only()` は次の制限を加える。
 
 - 名前解決の結果から公開アドレス以外を除き、残らなければ `Error`。除外するのは IPv4 の unspecified・loopback・private・link-local・broadcast・documentation・multicast・`0.0.0.0/8`・`240.0.0.0/4`・`100.64.0.0/10`・`198.18.0.0/15`・`192.0.0.0/24`、IPv6 の unspecified・loopback・multicast・`fc00::/7`・`fe80::/10`・`fec0::/10`（site-local）・`2001:db8::/32`・`2001::/32`（Teredo）・`64:ff9b:1::/48`（ローカル用 NAT64）。IPv4 を埋め込んだ IPv6（IPv4-mapped `::ffff:0:0/96`、NAT64 `64:ff9b::/96`、6to4 `2002::/16`、IPv4-compatible `::a.b.c.d`）は埋め込まれた IPv4 を取り出して IPv4 の規則で判定する。
 - プロキシ環境変数を無視する。
 
 ## agent での適用
 
-[保存の順序](agent.md#保存の順序) の事前判定の後、取得の前に行う。`require` のときは、保存した版のサイトイベントを送り直す前にも同じ関数（`Agent::nip05_verified`）で確かめ、同じキャッシュの規則で期限の過ぎた記録は検証し直す（[`agent/resend.md`](agent/resend.md#手順) の 2）。
+[保存の順序](agent/store.md#保存の順序) の事前判定の後、取得の前に行う。`require` のときは、保存した版のサイトイベントを送り直す前にも同じ関数（`Agent::nip05_verified`）で確かめ、同じキャッシュの規則で期限の過ぎた記録は検証し直す（[`agent/resend.md`](agent/resend.md#手順) の 2）。
 
 | `[policy].nip05` | 動作 |
 |---|---|

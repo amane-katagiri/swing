@@ -37,8 +37,7 @@
 
 - キーは `"<section>.<フィールド名>"`（`GET /api/config` の `raw` が付くキーと同じ）、値の形式は `raw` と同じ（`nostr.relays` は空配列だと 400）。受け付けるキーの範囲と、範囲外のキーが混ざったときの 400 は [`../../config.md#編集できるキー`](../../config.md#編集できるキー)。
 - 成功したら `restart_required: true` の `GET /api/config` と同じ形を返す。動いている relay・Kubo・agent への反映は次の再起動から。
-- 書き込み先のファイルは要求のたびに読み直す。書き込みの手順と、ほかの書き込み API との直列化は [`../../config.md#設定の書き換えsrcsettingseditrs`](../../config.md#設定の書き換えsrcsettingseditrs)・[`../../config.md#ダッシュボードでの直列化と反映`](../../config.md#ダッシュボードでの直列化と反映)。
-- 入力・検証の失敗は 400（ファイルに触れない）、設定ファイルの読み書きの失敗は 500。どちらもプロセスの状態は変わらない。
+- 入力・検証の失敗は 400（ファイルに触れない）、設定ファイルの読み書きの失敗は 500（分け方は [`../../config.md#書き込みの手順`](../../config.md#書き込みの手順)）。どちらもプロセスの状態は変わらない。書き込みの手順と、ほかの書き込み API との直列化は [`../../config.md#設定の書き換えsrcsettingseditrs`](../../config.md#設定の書き換えsrcsettingseditrs)・[`../../config.md#ダッシュボードでの直列化と反映`](../../config.md#ダッシュボードでの直列化と反映)。
 
 ## POST /api/setup
 
@@ -49,7 +48,7 @@
 ```
 
 - `remote_signer`（省略時 `false`）: `true` なら秘密鍵を書かず、[`POST /api/setup/signer`](#post-apisetupsigner) で済ませたペアリングの結果を `<state_dir>/remote-signer.json` に保存する（[`../../signer.md#remote-signerjson`](../../signer.md#remote-signerjson)）。ペアリングが `ready` でなければ 409 `{"error": "no signer app is connected yet; scan the QR code first"}`。`true` のとき `secret_key` は見ない。
-- `secret_key`: `null`（または省略・空文字）なら新しい鍵を作る。nsec か hex の文字列ならその鍵を使う。
+- `secret_key`: `null`（または省略・空白だけ）なら新しい鍵を作る。nsec か hex の文字列ならその鍵を使う。
 - `items` は `PUT /api/config` と同じ規則で受け付ける。
 - 成功したら `[nostr].secret_key` に鍵の hex を書き、`items` と合わせて 1 回の書き込みで保存する。`remote_signer: true` のときは `items` だけを書いてから `remote-signer.json` を書き、ペアリングの状態を捨てる。
 - 失敗のステータスは `PUT /api/config` と同じ（`secret_key` が鍵として読めないときも 400、`remote-signer.json` の書き込みの失敗も 500）。
@@ -64,14 +63,14 @@
 
 ## POST /api/setup/signer
 
-セットアップモードの間と、署名アプリを使っている間（つなぎ直し）だけ使える（秘密鍵で動いているときは 409）。NIP-46 の署名アプリとのペアリングを始める（[`../../signer.md#ペアリングpairing`](../../signer.md#ペアリングpairing)）。前のペアリングがあれば捨てる。
+セットアップモードの間と、署名アプリを使っている間（つなぎ直し）だけ使える（秘密鍵で動いているときは 409 `a signer app can be paired only during setup or when swing already uses one`）。NIP-46 の署名アプリとのペアリングを始める（[`../../signer.md#ペアリングpairing`](../../signer.md#ペアリングpairing)）。前のペアリングがあれば捨てる。
 
 ```json
 { "relays": ["wss://relay.primal.net"] }
 ```
 
-- `relays`: 署名アプリとのやりとりに使う relay。空白だけの要素は無視し、1〜5 個。ws / wss の URL でなければ 400。
-- URI の `perms` は常に `get_public_key` と、レプリカ報告・サイトイベント・Follow Set の `sign_event:<kind>`。
+- `relays`: 署名アプリとのやりとりに使う relay。[`parse_pairing_relays`](../../signer.md#ペアリングpairing) の条件（空白を除いて 1〜5 個の ws / wss の URL）を満たさなければ 400。
+- 応答の `uri` の組み立て（クエリと `perms`）は [`../../signer.md#ペアリングpairing`](../../signer.md#ペアリングpairing)。
 
 ```json
 { "uri": "nostrconnect://<アプリの公開鍵>?relay=…&secret=…&perms=…&name=SWING&metadata=…", "qr_svg": "<svg …>" }
@@ -90,10 +89,12 @@
 | `state` | 意味 | 値の入るフィールド（ほかは `null`） |
 |---|---|---|
 | `idle` | ペアリングを始めていない | なし |
-| `waiting` | 署名アプリの接続を待っている（最大 10 分。15 秒たっても relay につながらなければ `failed`） | なし |
-| `checking` | 接続できた。確認のためレプリカ報告の kind の署名をリクエストしている（最大 60 秒） | `npub` |
+| `waiting` | 署名アプリの接続を待っている | なし |
+| `checking` | 接続できた。確認の署名（probe）をリクエストしている | `npub` |
 | `ready` | ペアリング完了。`POST /api/setup` の `remote_signer: true` か `POST /api/signer/reconnect` で保存できる | `npub`、`probe_signed`（確認の署名が通ったか）、通らなかったときの `error` |
 | `failed` | 接続できなかった | `error` |
+
+状態が移る条件と待ち時間は [`../../signer.md#ペアリングpairing`](../../signer.md#ペアリングpairing)。
 
 ## POST /api/signer/reconnect
 

@@ -1,6 +1,14 @@
 # mirror-agent（agent/, policy.rs, state.rs）
 
-[`../architecture.md`](../architecture.md) の一部。子ページはレプリカ報告の [`agent/replicas.md`](agent/replicas.md)、`state.json` の [`agent/state.md`](agent/state.md)、保存した版のサイトイベントの再送の [`agent/resend.md`](agent/resend.md)、ポリシー判定・取得の上限の [`agent/policy.md`](agent/policy.md)。MFS のパスと Kubo RPC は [`mfs.md`](mfs.md)、NIP-05 は [`nip05.md`](nip05.md)、ダッシュボードは [`dashboard.md`](dashboard.md)、内蔵 gateway は [`gateway.md`](gateway.md)、`swing up`（Kubo の起動・監視、agent の再起動）は [`up.md`](up.md)。
+[`../architecture.md`](../architecture.md) の一部。MFS のパスと Kubo RPC は [`mfs.md`](mfs.md)、NIP-05 は [`nip05.md`](nip05.md)、ダッシュボードは [`dashboard.md`](dashboard.md)、内蔵 gateway は [`gateway.md`](gateway.md)、`swing up`（Kubo の起動・監視、agent の再起動）は [`up.md`](up.md)。
+
+子ページ:
+
+- [`agent/store.md`](agent/store.md): サイトの保存の順序と、拒否の記録・取得の試行の間引き
+- [`agent/policy.md`](agent/policy.md): ポリシー判定と取得の上限
+- [`agent/replicas.md`](agent/replicas.md): レプリカ報告の送信と、他の報告者の報告の時刻の記録
+- [`agent/resend.md`](agent/resend.md): 保存した版のサイトイベントの再送
+- [`agent/state.md`](agent/state.md): `state.json` の形式と各項目の扱い
 
 ## agent/ の構成
 
@@ -9,8 +17,8 @@
 | `agent/mod.rs` | `Agent` 構造体、`poll_once`、メンテナンス（sweep・unfollow・突き合わせ） |
 | `agent/lifecycle.rs` | `run_until`（ライフサイクル本体）、内蔵 gateway の起動・終了 |
 | `agent/follow.rs` | Follow Set の選択・再送と、購読・過去分の取得 |
-| `agent/resend.rs` | 保存した版のサイトイベントの再送（間隔・送信のバックオフ。タスクはレプリカ報告の回と共有） |
-| `agent/store.rs` | キューイングと直列実行、「保存の順序」、NIP-05 検証 |
+| `agent/resend.rs` | 保存した版のサイトイベントの再送（[`agent/resend.md`](agent/resend.md)） |
+| `agent/store.rs` | キューイングと直列実行、保存の順序（[`agent/store.md`](agent/store.md)）、NIP-05 検証 |
 | `agent/replicas.rs` | レプリカ報告（[`agent/replicas.md`](agent/replicas.md)） |
 | `agent/test_support.rs` | テスト用の偽の relay・NIP-05 検証と設定（`#[cfg(test)]`） |
 
@@ -23,10 +31,10 @@
    1. sweep
    2. Follow Set を決める。決まらなければ警告を出して 3 と 4 を飛ばす。
    3. unfollow
-   4. 対象 pubkey 群のサイトイベントを購読し直してから過去分を取得し、`nostr::select_latest`（未来ずれの許容は [`nostr.md`](nostr.md#未来ずれの許容nostrmax_future_skew)）でサイトごとの最新版を選び、pubkey ごとに、保存済みのサイトすべてと、それ以外のサイトを `created_at` の新しい順に合計 `max_sites_per_account` 件まで、タスクに投入する。一時的な取得・保存の失敗はここで再試行される（取得の試行は下記「保存の順序」の間引きにより、サイトごとに `min_update_interval` に 1 回まで）。投入の前に、選んだ最新版のうち、state のそのサイトの最新の版と `cid` が一致するものを、署名が正しければその版のサイトイベントとして入れて state を保存する（`State::fill_latest_event`。入れる条件は [`agent/state.md`](agent/state.md)）。作者が同じ `cid` を後の `created_at` で署名し直した版（`title`・`url` の変更や告知のし直し）は `policy::decide` で `duplicate_cid` になり版としては記録しないが、ここで保存している版のイベントを置き換える（購読で届いたものは「保存の順序」の 1 で置き換える）。続けて「[保存した版のサイトイベントの再送](agent/resend.md)」の確認の対象を、レプリカ報告の回のタスクに渡す。確認はそのタスクの報告のあと、前回から `RESEND_CHECK_INTERVAL`（1 時間）以上たっていれば行う（過去分の取得に失敗しても渡す。poll はその終わりを待たない）。
-   5. レプリカ報告の同期（Follow Set が決まらなくても行う）と、他の報告者が自分のサイトについて出した報告の時刻の記録（[`agent/replicas.md`](agent/replicas.md)）を、この順に別タスクで始める。前の回のタスクがまだ動いていれば今回は始めない。
+   4. 対象 pubkey 群のサイトイベントを購読し直してから過去分を取得し、`nostr::select_latest`（未来ずれの許容は [`nostr.md`](nostr.md#未来ずれの許容nostrmax_future_skew)）でサイトごとの最新版を選び、pubkey ごとに、保存済みのサイトすべてと、それ以外のサイトを `created_at` の新しい順に合計 `max_sites_per_account` 件まで、タスクに投入する。一時的な取得・保存の失敗はここで再試行される（[取得の試行の間引き](agent/store.md#取得の試行の間引き)により、サイトごとに `min_update_interval` に 1 回まで）。投入の前に、選んだ最新版のうち state のそのサイトの最新の版と `cid` が一致するものを、その版のサイトイベントとして入れ、変わったら state を保存する（`State::fill_latest_event`。条件は [`agent/state.md`](agent/state.md#sitesevent)）。同じ `cid` を作者が後で署名し直した版は `policy::decide` で `duplicate_cid` になり版としては記録しないが、ここで保存している版のイベントを置き換える。続けて、この poll の対象 pubkey を[再送の確認](agent/resend.md#確認の間隔とタスク)の対象として 5 のタスクに渡す（過去分の取得に失敗しても渡す）。
+   5. レプリカ報告の同期（Follow Set が決まらなくても行う）、他の報告者が自分のサイトについて出した報告の時刻の記録（[`agent/replicas.md`](agent/replicas.md)）、間隔が来ていれば再送の確認を、この順に 1 つの別タスク（報告の回）で始める。poll はその終わりを待たない。前の回のタスクがまだ動いていれば今回は始めない。
 5. 購読で届いたサイトイベントをタスクに投入する（投入前に捨てる条件は下記「並行処理」の `submit`）。購読 ID と kind が一致しない通知は debug、パースできないサイトイベントは warn を出して捨てる。
-6. タスクはサイト単位で「保存の順序」に従って処理する。新版を記録したら、同時実行の枠を返してからレプリカ報告の同期を行う。
+6. タスクはサイト単位で[保存の順序](agent/store.md#保存の順序)に従って処理する。
 
 relay の切断、Kubo のエラー、不正なイベントはログに出して続ける。relay への再接続と再購読は nostr-sdk が行う。nostr-sdk の通知チャネルから溢れた分は、上の 4 の 4（poll ごとの過去分の取得）で回収される。通知ストリーム自体が終わったらエラーで終了する。
 
@@ -34,7 +42,7 @@ relay の切断、Kubo のエラー、不正なイベントはログに出して
 
 `swing up` はシグナルから作った `CancellationToken`（の子トークン）を `run_until` に渡す（`cancel_on_signal` の詳細は [`up.md#shutdownshutdownrs`](up.md#shutdownshutdownrs)）。`run_until` 自体はシグナルを直接扱わない。起動時の突き合わせと `poll_once` はこのトークンの cancel と競争させ（`race_with_shutdown`）、cancel が先に届いたら処理中の I/O を打ち切って shutdown に進む。
 
-shutdown・poll 中の停止検知・relay 通知ストリーム終了のいずれでループを抜けても（正常終了でもエラーでも）、`run_until` はループを抜けた後に必ず `shutdown_gateway`（gateway の子トークンを cancel してサーバタスクを最大 5 秒待つ。超えたら warn を出して待つのをやめる）→ relay 切断 → `dashboard.set_not_ready()` の順で後始末する。サイトのタスク・レプリカ報告の回・保存した版のサイトイベントの再送の確認は 1 つの `JoinSet` で動かし、`run_until` が返るときに待たずに中断する（再送の確認は送りかけでも中断してよい。state に残すのは確かめた取り下げだけで、それは記録してから送る）。ダッシュボードの API サーバは agent の外で動く（[`up.md`](up.md)）。
+shutdown・poll 中の停止検知・relay 通知ストリーム終了のいずれでループを抜けても（正常終了でもエラーでも）、`run_until` はループを抜けた後に必ず `shutdown_gateway`（gateway の子トークンを cancel してサーバタスクを最大 5 秒待つ。超えたら warn を出して待つのをやめる）→ relay 切断 → `dashboard.set_not_ready()` の順で後始末する。サイトのタスク・レプリカ報告の回・保存した版のサイトイベントの再送の確認は 1 つの `JoinSet` で動かし、`run_until` が返るときに待たずに中断する。ダッシュボードの API サーバは agent の外で動く（[`up.md`](up.md)）。
 
 ダッシュボードとの共有のしかたは [`dashboard.md#概要`](dashboard.md#概要)。内蔵 gateway は agent の state や Kubo RPC を一切使わず、Kubo の gateway へ透過的にプロキシするだけ（[`gateway.md`](gateway.md)）。
 
@@ -59,57 +67,18 @@ relay から取得した版と `state.follow_set` の版を比べて使う方を
 
 対象 pubkey は決まった Follow Set の `p` のうち先頭 `MAX_FOLLOW_SET_ENTRIES` 件で、超えたら `resubscribe_and_backfill` が warn を出す（[取得と表示の上限](nostr/fetch.md#定数)）。
 
-## 保存した版のサイトイベントの再送
-
-保存している版のサイトイベントを、それを持たない relay にだけ送り直す。確認の間隔・手順・取り下げの記録・送信のバックオフは [`agent/resend.md`](agent/resend.md)。
-
 ## unfollow
 
 Follow Set が決まった tick で行う。Follow Set の更新はこれより先に反映する。決まらない tick では何もせず、warn を出す（state に版か検証結果のあるアカウントがあれば、その数と、鍵か `mirror_set` を変えていないかの確認を添える）。state に保存した Follow Set は今の鍵と `mirror_set` のものしか使わないので、鍵か `mirror_set` を変えて起動すると、新しい Follow Set ができるまで以前のアカウントは消えずに残る。
 
-- `remove_on_unfollow = true`: `state.sites` か `state.verifications` にエントリがあり、今の Follow Set にいない pubkey を state から消して保存し、`<mfs_root>/agent/<pubkey hex>` を消す。ただし保存中（下記の保存の順序の 6）の版のパスがその下にあれば、そのアカウントのディレクトリは消さずに info を出して sweep に任せる。保存の間に作者がフォローし直されていれば版はそのまま記録され、外れたままなら 9 で版のパスが消え、残りは保存が終わった後の sweep が消す。state と比べるので、agent の停止中に外した相手や、設定を `true` に変える前に外した相手も消える。
+- `remove_on_unfollow = true`: `state.sites` か `state.verifications` にエントリがあり、今の Follow Set にいない pubkey を state から消して保存し、`<mfs_root>/agent/<pubkey hex>` を消す。ただし保存中（[保存の順序](agent/store.md#保存の順序)の 6）の版のパスがその下にあれば、そのアカウントのディレクトリは消さずに info を出して sweep に任せる（作者が外れたままなら保存の順序の 9 で版のパスが消える）。メモリの拒否と試行の記録も、今の Follow Set にいないアカウントの分を消す。前の Follow Set ではなく state と比べるので、agent の停止中に外した相手や、設定を `true` に変える前に外した相手も消える。
 - `false`: 外れた相手の保存済みの版を残す。新しい版は取らない。保持期間の適用と容量の集計は続き、最新版は残る。起動時の突き合わせで壊れていた版は取り直さずに消える。
-
-## 保存の順序
-
-1. 作者が今の Follow Set にいなければ info を出して終わる（キューに入れる前と 6・9 でも同じ確認をする）。続けて、そのサイトが state の `sites` にあり、イベントの `created_at` が未来ずれの許容の内で、署名が正しく、state のそのサイトの最新の版より新しければ（`State::note_newer_version`。最新の版に `event` があればそれと NIP-01 の置き換え規則で、無ければ版の `created_at` と比べる）、この後で保存しなくても state に残す。`cid` が最新の版と同じなら、そのイベントを最新の版のイベントにする（`State::fill_latest_event`。条件は [`agent/state.md`](agent/state.md)）。違えば、最新の版が取り下げられたとして記録する（`State::record_withdrawal`。記録のしかたは「[保存した版のサイトイベントの再送](agent/resend.md#手順)」の 4 と同じ）。変わったときだけ state を保存する。これで、新しい版が後の判定で拒否されたり取得に失敗したりして relay からも消えても、置き換えられた版を送り直さない。記録する `through` は新しい版の `created_at` より小さいので、その新しい版を後で保存するのは妨げない。同じサイトで同じ CID が以前 4・5・9 で拒否されていれば（下記）、debug を出して終わる。
-2. 事前判定: `size` タグ（無い、または読めなければ不明。[`nostr.md#検証`](nostr.md#検証)）で `policy::decide` する。skip なら終わる。同じ state から、5 で使う取得の上限 `policy::fetch_budget`（[`agent/policy.md#取得の上限`](agent/policy.md#取得の上限)）も決める。
-3. 取得の試行の間引き（下記）に当たれば debug を出して終わる。当たらなければ、ここで試行を記録する。
-   続けて NIP-05 検証（[`nip05.md#agent-での適用`](nip05.md#agent-での適用)）。`require` で `Verified` でなければ終わる。間引いたイベントでは NIP-05 の問い合わせも state の保存もしない。
-4. 2 で決めた上限が 0（アカウントかノードにもう空きが無い）なら、Kubo に何も問い合わせずに `reason = "no_space_left"` で warn を出して拒否し、終わる。
-   ディレクトリ確認: 取得の前に `files/stat /ipfs/<cid>`（ルートのブロックだけを取る）の `Type` を見る。`directory` でなければ `reason = "not_a_directory"` で warn を出して終わる。`files/stat` 自体が失敗したら取得の失敗と同じ扱いで終わる（取り直すのは 3 の試行から `min_update_interval` が過ぎてから）。
-5. 取得: `dag/export` の CAR を読み捨てながらバイト数を数え、2 で決めた上限を超えたら打ち切る。`[agent].fetch_idle_timeout` か `[agent].fetch_timeout` を超えたら失敗。いずれも state と MFS は変えない。
-6. state のロックを取り、作者が Follow Set から外れていれば終わる。版のパスを「保存中」としてメモリに登録して（9〜10 が終わるまで。sweep と unfollow はこのパスとその親ディレクトリを消さない）、ロックを放す。ロックの中で登録するので、sweep は登録より前に消し終えているか、登録を見て残すかのどちらかになる。
-7. state のロックの外で、版のパスに CID を置く（既存の項目は先に消す）。失敗したら終わる。
-8. state のロックの外で、`dag/stat`（`offline=true`、タイムアウト 300 秒）の `TotalSize` を実サイズとする。
-9. state のロックを取る。8 が失敗していれば（ブロックが欠けている場合を含む）、ロックを放して 7 のパスを消して終わる。作者が Follow Set から外れていれば（7 の間に unfollow があった場合を含む）同じく 7 のパスを消して終わる。`size` タグより大きければ warn を出す。実サイズで `policy::decide` する。skip ならロックを放して 7 のパスを消して終わる。
-10. 新版を、受け取った署名済みのサイトイベントと一緒に記録し（[`state.json`](agent/state.md) の `event`。nostr-sdk は一度確かめた `id` の署名を確かめ直さないので、署名を確かめ、正しくなければ版だけを記録する）、evict した版を `sites` から消して state を保存し、ロックを放してから evict した版のパスを消す。
-
-4・5 で拒否したとき、取得したブロックは Kubo の GC に任せる。
-
-パスの削除に失敗しても state はそのままにし、sweep に任せる。
-
-取得した内容で拒否した版（4 の `no_space_left` と `not_a_directory`、5 の上限超過、9 の `policy::decide` の skip）:
-
-- その CID をサイトごとにメモリに覚え（`agent::store::Attempts`）、同じ CID のイベントは 1 で終える。1 サイトに複数の CID を覚える。
-- 記録はアカウントごとに合計 50 件まで（`REJECTED_PER_ACCOUNT`）。超えたらそのアカウントの最も古い記録を捨てる。
-- 保存に成功したらそのサイトの記録を消す。取得の失敗やブロックの欠けなど一時的な失敗は拒否としては覚えない。
-- `remove_on_unfollow = true` の unfollow（上記）のとき、今の Follow Set にいないアカウントの記録（拒否と試行の間引き）を消す。
-
-取得の試行の間引き（`Attempts::try_attempt`）: 取得を始めた時刻をサイトごとにメモリに覚えて間引く。保存に成功したらそのサイトの記録を消す。
-
-- 同じサイトは、前の試行から `min_update_interval` の間は取得しない（`fetch_attempt_interval`）。取得の失敗（タイムアウトを含む）や拒否で終わった場合も、保存済みのサイトの更新でも同じ。
-- 同じアカウントで、直近 `min_update_interval` の間に試行したほかのサイトが `max_sites_per_account` 件（1〜50 に丸める）あれば取得しない（`fetch_attempts_per_account`）。保存済みで拒否の記録が無いサイトの更新はこの件数では止めない（試行としては数える）。
-- `min_update_interval` が 0 なら効かない。
-- 試行を記録するときに、そのアカウントの間隔を過ぎた記録（拒否の記録が無いもの）は消す。
-
-これらの記録は `state.json` に書かないので、agent を再起動すると消える。
 
 ## sweep
 
 1. state のロックの中で、すべてのサイトに `policy::retention_evictions`（`max_per_site`・`keep_versions`・`keep_days`。最新版は残す）を適用する。evict があれば `sites` から消して state を保存し、パスを消す。evict が無ければ state は保存しない。終わったら state を複製してロックを放す。
 2. ロックの外で、複製した state を使って `health::find_garbage` で state の版に対応しない MFS の項目を集める（集め方は [`health.md`](health.md#state-に無いパスhealthfind_garbage)）。一覧に失敗したディレクトリの下は消さない。
-3. 項目があれば state のロックを取り直し、今の state の版のパスか保存中のパスにあたる項目、またはそれらを下に持つディレクトリの項目を除いて消す。一覧の間に保存を終えた版は今の state にあり、保存中の版は保存中として登録済みなので、どちらも消さない。消し終えるまでロックを持つので、保存の順序の 6 は消した後に登録するか、登録を見て残されるかのどちらかになる。
+3. 項目があれば state のロックを取り直し、今の state の版のパスか保存中のパスにあたる項目、またはそれらを下に持つディレクトリの項目を除いて消す。[保存の順序](agent/store.md#保存の順序)の 6 の登録と行き違わないよう、消し終えるまでロックを持つ。
 
 ## 起動時の突き合わせ
 
@@ -117,12 +86,8 @@ Follow Set が決まった tick で行う。Follow Set の更新はこれより�
 
 ## 並行処理
 
-- `submit`（購読通知・過去分の取得の両方から呼ばれる入口）は、対象判定（Follow Set にいるか）より前に `nostr::plausible_at` で `created_at` を確かめ、未来ずれの許容（[`nostr.md`](nostr.md#未来ずれの許容nostrmax_future_skew)）を超えて先なら `future_created_at` を理由に warn を出してその場で捨てる。キューにある実行中・待機中のイベントを置き換えることはない。続けて対象判定を行い、今の Follow Set にいない pubkey のイベントは info を出してその場で捨てる。「保存の順序」1・6 の判定は、`submit` から実行までの間に対象から外れた場合に効く。
-- 「保存の順序」を同時に実行するタスクは最大 `concurrency` 個。
+- `submit`（購読通知・過去分の取得の両方から呼ばれる入口）は、対象判定（Follow Set にいるか）より前に `nostr::plausible_at` で `created_at` を確かめ、未来ずれの許容（[`nostr.md`](nostr.md#未来ずれの許容nostrmax_future_skew)）を超えて先なら `future_created_at` を理由に warn を出してその場で捨てる。キューにある実行中・待機中のイベントを置き換えることはない。続けて対象判定を行い、今の Follow Set にいない pubkey のイベントは info を出してその場で捨てる。[保存の順序](agent/store.md#保存の順序)の 1・6・9 の判定は、`submit` から実行までの間に対象から外れた場合に効く。
+- 保存の順序を同時に実行するタスクは最大 `concurrency` 個。
 - 同じ pubkey のタスクは同時に `max_sites_per_account` 個まで。超えたイベントは捨て、次の poll で拾い直す。
 - 同じサイト（`pubkey:d`）のタスクは同時に 1 つ。実行中に来たイベントは、実行中・待機中のものより `created_at` が新しいときだけ待機に置き（1 件、上書き）、実行後に同じタスクで続けて処理する。
 - 保存の順序の 6 と 9〜10 の state の更新、sweep の 1 と 3、unfollow、突き合わせは state のロックの中で直列に行う。sweep の 2（MFS の一覧）はロックの外で行う。保存の順序の Kubo への書き込み（7 と、9・10 のパスの削除）はロックの外で行う。レプリカ報告の同期どうしは報告用のロックで直列になる（取る順は報告用 → state）。取得中の一時的なディスク使用量は最大で `concurrency` × `fetch_limit`。
-
-## state.json（state.rs）
-
-`[agent].state_dir` 直下の state の形式と各項目の扱いは [`agent/state.md`](agent/state.md)。

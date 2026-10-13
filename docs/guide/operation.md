@@ -14,7 +14,7 @@ SWING は Kubo の pin を使わず、MFS の `/swing`（`SWING_MFS_ROOT` で変
 
 MFS に置いたサイトを他のノードから見つけてもらうには、Kubo の `Provide.Strategy` に `mfs` か `all` が含まれている必要があります。バイナリで `swing up` が管理する Kubo では `[kubo].provide_strategy`（`SWING_KUBO_PROVIDE_STRATEGY`、既定 `pinned+mfs`）を、Docker Compose の `ipfs` コンテナでは `.env` の `SWING_KUBO_PROVIDE_STRATEGY`（既定同じ）を、起動のたびに設定します。外部の Kubo を使う場合（`[kubo].managed = false`）は自分で設定してください。
 
-判定の詳しい順序は [`docs/architecture/agent.md`](../architecture/agent.md) を参照してください。
+判定の詳しい順序は [`docs/architecture/agent/store.md`](../architecture/agent/store.md#保存の順序) を参照してください。
 
 ## 動かし方の目安
 

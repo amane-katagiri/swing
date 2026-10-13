@@ -13,7 +13,7 @@
 7. ダッシュボードの `AppState` 作成・`dashboard::serve` の起動。bind した時点で応答を始める（agent の準備が整うまで 503 を返す API は [`dashboard/http-api.md#共通`](dashboard/http-api.md#共通)）
 8. リソース使用量の測定（`stats::run`、[`stats.md`](stats.md)）の起動
 9. 鍵の有無・`[kubo].managed` に応じた Kubo / agent の起動ループ（[下記](#swing-up-のループuprs)）
-10. 終わったら測定とダッシュボードを止め、署名アプリとの接続を閉じる（`Signer::shutdown`）。ダッシュボードの API サーバは agent の終了では止まらず（[`agent.md#シグナルと終了`](agent.md#シグナルと終了)）、ここで止まるのを待つ（上限は [停止の時間予算](#停止の時間予算)）。超えたら warn を出して待つのをやめる。
+10. 終わったら測定とダッシュボードを止め、署名アプリとの接続を閉じる（`Signer::shutdown`）。ダッシュボードの API サーバは agent の終了では止まらず（[`agent.md#シグナルと終了`](agent.md#シグナルと終了)）、ここで止まるのを待つ（上限は [停止の時間予算](#停止の時間予算)。超えたら warn を出して待つのをやめる）。
 
 ## セットアップモード（鍵未設定）
 
@@ -49,7 +49,7 @@
 
 ### unmanaged
 
-1. `config.ipfs_client()`（`[ipfs].api` の URL。秘密は付けない）でクライアントを作り、`kubo::wait_healthy`（30 秒、`UNMANAGED_HEALTH_TIMEOUT`）で待つ。
+1. `config.ipfs_client()`（`[ipfs].api` の URL。秘密は付けない）でクライアントを作り、`kubo::wait_healthy`（30 秒、`UNMANAGED_HEALTH_TIMEOUT`）で待つ。healthy にならなければ warn を出してバックオフして 1 から、待っている間に cancel されたら `Ok(())` を返す。
 2. そのクライアントを測定の対象として `AppState.stats` に渡し（PID は渡さない）、`agent::run_until` を子トークンで動かす。
 3. agent が `Ok(())` なら終了、`Err` ならバックオフして 1 から。cancel されたら agent の終了を最大 15 秒（`AGENT_STOP_TIMEOUT`）待ち、超えたら warn を出して future を捨てて終了する。
 
@@ -58,7 +58,7 @@
 `run_managed` の始めに（`up::run` が呼ばれるたびに）`locate_binary` + `version`（[`kubo.md#kubo-のバージョン`](kubo.md#kubo-のバージョン)）、続けて [`recover_orphan`](kubo/daemon.md#kubopid-と孤児-kubo-の回収managed-のみ) を行う。`recover_orphan` はトークンの cancel と競争させ、cancel が先なら回収を途中でやめて `Ok(())` を返す（`kubo.pid` は残り、次の起動で回収し直す）。以後ループ:
 
 1. 前回の `<state_dir>/kubo-api.json` を消し、repo を用意し（[`ensure_repo`](kubo.md#リポジトリの初期化kuboensure_repo)）、空きポートと新しい RPC の秘密を選んで（[`kubo.md#rpc-の認証managed-のみ`](kubo.md#rpc-の認証managed-のみ)）設定を適用し（[`apply_config`](kubo.md#適用する-kubo-設定kuboapply_config)）、Kubo を起動して `kubo.pid` を書き（[`kubo/daemon.md`](kubo/daemon.md#kubopid-と孤児-kubo-の回収managed-のみ)）、ヘルス待ち（120 秒、`MANAGED_HEALTH_TIMEOUT`。[`kubo/daemon.md`](kubo/daemon.md#ヘルス待ちkubowait_healthy--daemonwait_healthy)）の後で `kubo-api.json` を書く。
-   - いずれかの手順が失敗したら（ヘルス待ちか `kubo-api.json` の書き込みが失敗した場合は daemon を止めてから）バックオフして 1 からやり直す。`kubo.pid` の書き込みの失敗だけは warn を出して続ける。
+   - いずれかの手順が失敗したら（ヘルス待ちか `kubo-api.json` の書き込みが失敗した場合は daemon を止めてから。repo lock の warn は [`kubo/daemon.md#repo-lock-のヒント`](kubo/daemon.md#repo-lock-のヒント)）バックオフして 1 からやり直す。`kubo.pid` の書き込みの失敗だけは warn を出して続ける。
    - ヘルス待ちの間に cancel されたら daemon を止めて `Ok(())` を返す。
 2. Kubo の PID と `Daemon` の RPC クライアントを測定の対象として `AppState.stats` に渡す（Kubo が exit したら外す。[`stats.md`](stats.md#測り方)）。`config.ipfs.api` を `IpfsApi::Url("http://127.0.0.1:<api_port>")` に差し替え、`config.ipfs.api_secret` にその起動の RPC の秘密を入れたコピーで agent を子トークンとともに動かす。ダッシュボードは agent の準備ができたときに、agent と同じクライアントを受け取る。
 3. 次のいずれかを待つ:
@@ -89,7 +89,7 @@
 - 2 回目以降のシグナル（1 回目の後、runtime が動いている間）: error を出してすぐ `std::process::exit(1)` する。1 回目の後に親が終わっても何もしない（2 回目扱いにしない）。
 - ダッシュボード API からの停止（`POST /api/shutdown`、`swing stop`）は `up::run` の子トークンを cancel するだけで `SignalWatch` を通らないので、watchdog も 2 回目の判定も無い。
 
-`main.rs` は tokio の runtime を自前で組み、`run` を抜けた後に `shutdown_timeout(shutdown::RUNTIME_SHUTDOWN_TIMEOUT)`（10 秒）で畳む。終わらない blocking タスクが残っていても、10 秒でプロセスは終わる。
+`main.rs` は tokio の runtime を自前で組み、`run` を抜けた後に `shutdown_timeout(shutdown::RUNTIME_SHUTDOWN_TIMEOUT)`（10 秒）で畳むので、終わらない blocking タスクが残っていてもプロセスは終わる。
 
 ### 停止の時間予算
 

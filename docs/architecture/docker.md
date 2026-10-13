@@ -31,7 +31,7 @@
 
 コンテナ内で `swing dashboard open` が出す URL は、`public_url` が無ければコンテナ内の待ち受け（既定 8082）から組み立てる。compose は `SWING_DASHBOARD_BIND` から `SWING_DASHBOARD_PUBLIC_URL` を作らない。トークンは `swing-data` volume の `/data/dashboard.token` に置かれる。ログインの手順は [`guide/usage.md`](../guide/usage.md#ダッシュボード)。
 
-ダッシュボードの Publish 画面はブラウザからフォルダをアップロードする（`POST /api/publish/upload`。上限は `SWING_DASHBOARD_MAX_UPLOAD`、既定 2 GiB）ので、`mirror` コンテナにサイトの volume は要らない（[`dashboard/http-api/publish.md`](dashboard/http-api/publish.md#post-apipublishupload)）。CLI の `swing publish` をコンテナで使う手順は [`guide/publish.md`](../guide/publish.md)。
+ダッシュボードの Publish 画面はブラウザからフォルダをアップロードする（`POST /api/publish/upload`。上限は `SWING_DASHBOARD_MAX_UPLOAD`）ので、`mirror` コンテナにサイトの volume は要らない（[`dashboard/http-api/publish.md`](dashboard/http-api/publish.md#post-apipublishupload)）。CLI の `swing publish` をコンテナで使う手順は [`guide/publish.md`](../guide/publish.md)。
 
 ## Kubo の設定
 
@@ -45,7 +45,7 @@
 
 `SWING_GATEWAY_HOSTS` 以外の値が空の場合と、`SWING_GATEWAY_HOSTS`（`,` 区切り、空の要素は捨てる）に [`[gateway].hosts` の検証](gateway.md#hosts-の検証)の文字の規則を満たさないホスト名がある場合はコンテナは起動しない。同じ検証のうちダッシュボードのホスト名との重なりと、空のときのエラーは確かめない。ほかに毎回 `Gateway.NoFetch=true`・`Gateway.NoDNSLink=true`・`Gateway.HTTPHeaders` を設定し、`Gateway.PublicGateways` にはパス形式を返さないホストを足す（値は managed と同じ。シェルスクリプトの値が `kubo::config` の定数と同じことはテスト `gateway_config_matches_shell_script` が確かめる）。`Addresses.*` は設定しない（Kubo イメージの既定のまま）。
 
-`SWING_KUBO_STORAGE_MAX` は、managed の `swing up` では swing の容量パーサが 1024 基数のバイト数にしてから渡すのに対し、compose では Kubo が文字列のまま解釈する。Kubo は `GiB` 系を 1024 基数、`GB` 系を 10 進で読むので、`GiB` 系で書けば両者は同じ値になる。`GB` 系で書くと compose だけ 10 進になり、managed より約 7% 小さくなる（`100GB` なら 10^11 バイトと 100×2^30 バイト）。
+`SWING_KUBO_STORAGE_MAX` は、managed の `swing up` では swing の容量パーサが 1024 基数のバイト数にしてから渡すが、compose では Kubo が文字列のまま解釈し、`GB` 系を 10 進で読む。`GiB` 系なら両者は同じ値になり、`GB` 系だと compose の方が約 7% 小さくなる。
 
 キーの意味は managed の `swing up` が適用する設定と同じで、正本は [`kubo.md#適用する-kubo-設定kuboapply_config`](kubo.md#適用する-kubo-設定kuboapply_config)。
 

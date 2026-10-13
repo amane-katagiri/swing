@@ -5,11 +5,11 @@
 ## 自分の情報と署名アプリ
 
 - 自分の情報（`.swing-identity`）: npub・hex・絵文字のフィンガープリント（[`../fingerprint.md`](../fingerprint.md)。隣のコピーボタンで、異体字セレクタ U+FE0F を付けた絵文字の文字を区切り無しでつないだものをコピーする）・ミラーセット・relays と、署名の方式（設定ファイルの秘密鍵／署名アプリ）を `overview.signer` から出す（`publish.js::renderSigner`）。`last_failure` があれば警告を出す。署名アプリのときは画面表示のたびと publish 完了時に `GET /api/overview` を読み直してこの行を更新する。
-- 署名アプリのときは「つなぎ直す」ボタンから relay 欄と QR（`pairing.js`）とキャンセルボタンを出す。ペアリングが `ready` になると「つなぎ直して再起動」ボタン（`#pub-signer-save`）が有効になり、押すと [`POST /api/signer/reconnect`](../http-api/config.md#post-apisignerreconnect) を呼び、`waitForNewInstance` で `instance` が押す前の `cache.overview.instance` から変わるのを待ってページを読み直す（[`../web.md#止まっている間の呼び出し`](../web.md#止まっている間の呼び出し)）。
+- 署名アプリのときは「つなぎ直す」ボタンから relay 欄と QR（`pairing.js`）とキャンセルボタンを出す。ペアリングが `ready` になると「つなぎ直して再起動」ボタン（`#pub-signer-save`）が有効になり、押すと [`POST /api/signer/reconnect`](../http-api/config.md#post-apisignerreconnect) を呼び、`waitForNewInstance` で `instance` が押す前の `cache.overview.instance` から変わるのを待ってページを読み直す（[`../web.md#止まっている間の呼び出し`](../web.md#止まっている間の呼び出し)。待ちきれなければ時間切れのエラーを出す）。
 
 ## フォーム
 
-- 常にフォルダアップロード（`<input type="file" webkitdirectory multiple>`）。ファイル数・合計サイズを表示し、`max_upload` を超えれば送信ボタンを無効にする。各ファイルの送信名は `webkitRelativePath` から選んだフォルダ名を除いたもの。
+- 常にフォルダアップロード（`<input type="file" webkitdirectory multiple>`）。ファイル数・合計サイズを表示し、サイト名が空・ファイルが無い・合計が `max_upload` を超えるときは送信ボタンを無効にする。各ファイルの送信名は `webkitRelativePath` から選んだフォルダ名を除いたもの。
 - NIP-05 の下に、同じ形のセレクトを「ドットファイルの確認」（`check_dotfiles`）・「サイズの確認」（`check_size`）・「動作性の確認」（`check_links`）・「前回公開したサイトとの差分の確認」（`check_unchanged`）の順に並べる。どれも先頭の選択肢は値が空（パートを送らず設定の既定値に任せる）で、残りは `off`・`warn`・`require`（NIP-05 も同じ）。空でなければ同名のパートで送る（`publish.js::MODE_FIELDS`）。
 - メッセージの下に「サイトイベントに加えて更新情報をノート（kind 1）として投稿する」チェックボックス（`note`。`.swing-field` の中の `.swing-checkbox` と、URL が要る旨の `.swing-hint`）を置く。URL 欄が空白だけの間は無効にし（`publish.js::refreshSubmitState`）、送信するのは URL があってチェックされているときだけ（パート `note=true`）。
 - 最後に使ったフォーム内容（チェックボックスの状態を含む）は `swing:publish:last` に保存し、次に開いたときに入れる。
@@ -21,8 +21,10 @@
 - 選んだファイルの送信名のうち previous-files の `files` に無いものを増えたファイルとする（`publish.js::findNewFiles`。`status` が `listed` 以外なら全ファイル）。
 - 結果は、何も見つからず増えたファイルも無いときも含めて毎回 `#publish-confirm`（フォームの直後の `swing-panel`）に出し、フォームを無効にする（`publish.js::showConfirm`）。
 - パネルの上側（`#publish-confirm-checks`）は常に出し、見出し「公開前の確認」の下に `.swing-result-grid` で、NIP-05 の行（結果のパネルと同じ `publish.js::describeNip05`。公開していないので、`error` に公開した旨は付けない）と、結果のパネルと同じ確認の行（`publish.js::addCheckRows`。リンクの行には修正ガイドのリンクも出る）を並べる。増えたファイルが無ければ、最後に「新しく増えるファイル」の行で無い旨（`listed` なら比べた CID と作成日時も）を出す。下側（`#publish-confirm-new`）は増えたファイルがあるときだけ出し、比べた相手（CID と作成日時／前の版が無い／読めなかった理由）、取り消せない旨、増えたファイルの全件（`.swing-file-list`。並べ方は CLI と同じで、フォルダは入れ子の `ul`。`publish.js::groupByFolder`）を置く。最後にボタン（`.swing-css-actions`）を置く。
-- 見つかったもの（`publish.js::checksFoundProblems`）は、NIP-05 の `mismatch`・`error`、`dotfiles` の `found`・`size` の `over`・`links` の `found`。NIP-05 の `not_applicable` は見つかったものにしない（CLI の表示で `!` ではなく `-` の行なのに合わせる）。`require` で止まるかどうかは別に判定する。
-- check の `abort` があれば（`publish.js::describePrecheckBlock`）、公開のボタンを隠し、`#publish-status` に `error` で公開できない旨と直し方の案内（NIP-05 は `abort` の最初の理由が NIP-05 のもので結果が `mismatch`・`error`・`not_applicable` なら、結果ごとの案内（`mismatch` は `https://<site>/.well-known/nostr.json` にページ上部の公開鍵を載せる、`error` はそれが HTTPS で配信されているか確かめる、`not_applicable` はサイト名がドメインでない旨）と warn か off にする案内。サーバーの文は出さない、ドットファイル・サイズ・リンクは結果の 422 と同じ `publish.js::describeCheckBlock`。どちらにも当たらなければ `abort` の文）を出す。「キャンセル」だけを選べる。
+- 見つかったもの（`publish.js::checksFoundProblems`）は、NIP-05 の `mismatch`・`error`、`dotfiles` の `found`・`size` の `over`・`links` の `found`。NIP-05 の `not_applicable` は見つかったものにしない。`require` で止まるかどうかは別に判定する。
+- check の `abort` があれば、公開のボタンを隠して「キャンセル」だけを選べるようにし、`#publish-status` に `error` で公開できない旨と直し方の案内（`publish.js::describePrecheckBlock`）を出す。案内は次をつないだもので、どちらにも当たらなければ `abort` の文を出す。
+  - NIP-05: `abort` が NIP-05 の理由で始まり、結果が `mismatch`・`error`・`not_applicable` なら、結果ごとの案内（`mismatch` は `https://<site>/.well-known/nostr.json` にページ上部の公開鍵を載せる、`error` はそれが HTTPS で配信されているか確かめる、`not_applicable` はサイト名がドメインでない旨）と warn か off にする案内。サーバーの文は出さない。
+  - ドットファイル・サイズ・リンク: 結果の 422 と同じ `publish.js::describeCheckBlock`。
 - そうでなければ、公開のボタン（見つかったものがあれば「このまま公開」、増えたファイルだけなら「このファイルを含めて公開」、どちらも無ければ「公開」）と「キャンセル」を出す。`#publish-status` には、見つかったものがあれば `warn` で結果を確かめるよう、増えたファイルだけなら `warn` で一覧を確かめるよう、どちらも無ければ `ok` で問題が見つからずまだ何もアップロードしていない旨を出す。
 - 公開のボタンでアップロードし、「キャンセル」では何も送らずに `#publish-status` に公開を中止した旨を `ok` で出す。
 - 事前の確認は案内で、本番の判定はアップロードした後のサーバー側（[`POST /api/publish/upload`](../http-api/publish.md#post-apipublishupload)）で改めて行う。
@@ -31,7 +33,7 @@
 
 - 送信は `XMLHttpRequest` で、進捗を `.swing-progress`/`.swing-progress-bar`（`data-state`）に出す。署名アプリのときは処理中の表示に、承認を求められたら承認するよう案内を出す。
 - 成功したら進捗バーを隠し、`#publish-status` に結果（relay N つのうち M つが受け付けたか。全部なら `ok`、一部だけなら `warn`）を出す。結果のパネルには応答の各項目（サイトの確認の行は `publish.js::addCheckRows`、署名の行は署名アプリのときだけ、投稿の行は応答の `note` があるときだけで、`error` があれば `warn` の `swing-status` の後に relay ごとの成否）とゲートウェイのリンクを並べる。
-- リンクの行（`publish.js::describeLinks`）は、`off` なら確認していない旨、`ok` なら無い旨を 1 行で出す。`found` なら、件数（`blocking` が 1 以上ならそのうち崩れる件数も）の 1 行の後に、種別ごとに「種別の説明（件数）」の 1 行と、その下に参照を 1 件 1 項目の `ul.swing-file-list`（増えたファイルの一覧と同じ見た目。等幅で、長い参照は折り返す）で並べ（並びはサーバーが返した順で、増えたファイルの一覧と同じく最上位のファイルが先、続けてフォルダごと。サーバーの比べ方は UTF-8 のバイト順で、画面の増えたファイルの一覧（`groupByFolder` の UTF-16 のコード単位順）とは、U+E000 以降と U+10000 以降の文字が混ざったときだけ食い違うことがある。各項目は `<file>: <reference>`。`files` が 2 以上なら `<file>` の後に「ほか N ファイル」を付ける。並べなかった残りは最後の項目に「ほか N 件」と付ける）、最後に `guide` へのリンク（「修正ガイド」。`maybeLink` で `target="_blank" rel="noopener noreferrer"`）を 1 行だけ出す。行は `dd` の中の `div` で余白を足さず、リストの上下の余白は `.swing-file-list` のもの（上 `--swing-space-2`・下 `--swing-space-3`）。4 MiB を超えて読まなかったファイルがあれば 1 行目にその数を足す。`_redirects` があるときの `broken` は、補えるかもしれない旨を説明に付ける。
+- リンクの行（`publish.js::describeLinks`）は、`off` なら確認していない旨、`ok` なら無い旨を 1 行で出す。`found` なら、件数（`blocking` が 1 以上ならそのうち崩れる件数も）の 1 行の後に、種別ごとに「種別の説明（件数）」の 1 行と、その下に参照を 1 件 1 項目の `ul.swing-file-list`（増えたファイルの一覧と同じ見た目。等幅で、長い参照は折り返す）で並べ（並びはサーバーが返した順で、最上位のファイルが先、続けてフォルダごと。サーバーは UTF-8 のバイト順で比べるので、U+E000 以降と U+10000 以降の文字が混ざると増えたファイルの一覧（`groupByFolder` の UTF-16 のコード単位順）と食い違うことがある。各項目は `<file>: <reference>`。`files` が 2 以上なら `<file>` の後に「ほか N ファイル」を付ける。並べなかった残りは最後の項目に「ほか N 件」と付ける）、最後に `guide` へのリンク（「修正ガイド」。`maybeLink` で `target="_blank" rel="noopener noreferrer"`）を 1 行だけ出す。行は `dd` の中の `div` で余白を足さず、リストの上下の余白は `.swing-file-list` のもの（上 `--swing-space-2`・下 `--swing-space-3`）。4 MiB を超えて読まなかったファイルがあれば 1 行目にその数を足す。`_redirects` があるときの `broken` は、補えるかもしれない旨を説明に付ける。
 - 応答の `published` が `false`（`check_unchanged` が `require` で同じ内容だった）なら、`#publish-status` に同じ内容なので publish しなかった旨を `ok` で出し、結果のパネルから署名・作成日時・MFS パス・relay の行を省く。`swing:published` イベントは投げない。
 
 ## エラーの表示

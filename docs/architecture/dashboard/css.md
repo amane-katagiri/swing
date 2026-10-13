@@ -4,7 +4,7 @@
 
 ## 読み込み順
 
-`style.css` → Desktop 系 6 ファイル（[`desktop.md#構成`](desktop.md#構成)） → `/custom.css`（サーバ設定。[`../dashboard.md#静的ファイルの配信srcdashboardassets`](../dashboard.md#静的ファイルの配信srcdashboardassets)） → `<style id="user-css">`（Settings 画面のカスタム CSS。`localStorage["swing:user-css"]`）。後に読むものが勝つ。Desktop 画面は `--swing-*` 変数を参照せず、リンク集ページ（iframe）にはどれも届かない（[`desktop.md#リンク集ページiframe`](desktop.md#リンク集ページiframe)）。
+`style.css` → Desktop 系 6 ファイル（[`desktop.md#構成`](desktop.md#構成)） → `/custom.css`（サーバ設定。[`../dashboard.md#静的ファイルの配信srcdashboardassets`](../dashboard.md#静的ファイルの配信srcdashboardassets)） → `<style id="user-css">`（Settings 画面のカスタム CSS。`localStorage["swing:user-css"]`）。後に読むものが勝つ。Desktop 画面は `--swing-*` 変数を参照せず、リンク集ページ（iframe）にはどれも届かない（[`desktop/link-page.md`](desktop/link-page.md)）。
 
 ## CSS 変数（`web/style.css` の `:root`）
 
@@ -52,6 +52,6 @@
 | `data-state="uploading\|processing\|error"` | `swing-progress`（完了時は属性ごと外して隠す） |
 | `aria-busy="true"` | busy 中のボタン、再取得中の webring 表示領域 |
 
-リンク集ページの `data-status`・`data-kind` は [`desktop.md#リンク集ページiframe`](desktop.md#リンク集ページiframe)。
+リンク集ページの `data-status`・`data-kind` は [`desktop/link-page.md`](desktop/link-page.md)。
 
 SVG グラフは class と `data-*` だけを付け、色は JS に書かない（`style.css` 側で `.swing-node[data-root="true"] circle { ... }` のように当てる）。

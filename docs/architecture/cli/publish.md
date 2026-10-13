@@ -53,7 +53,7 @@
 
 ## 確かめるだけの実行（`--dry-run`）
 
-本番と同じ引数・確認のモード・設定で、[`../publish/dry-run.md`](../publish/dry-run.md) の段階を通す。ブロックの保存・pin・MFS への書き込み・署名・relay への送信・`--note` の投稿・古い版の削除はせず、増えたファイルも聞かない。
+本番と同じ引数・確認のモード・設定で、[`../publish/dry-run.md`](../publish/dry-run.md) の段階を通す（何も書かず、送らず、増えたファイルも聞かない）。
 
 ### 表示
 
@@ -86,7 +86,7 @@
 - `nip05`: `mode`（`off`/`warn`/`require`）・`status`（`off`・`verified`・`mismatch`・`not_applicable`・`error`・`unknown`）・`detail`（`error`・`unknown` の理由。ほかは `null`）・`stops`（本番が止まるか）。
 - `checks.dotfiles`: `mode`・`status`（`off`・`ok`・`found`）・`count`・`paths`（[ドットファイル](../publish.md#サイトの一覧とローカルの確認)の 1 件ごとのパス。全件）・`stops`。
 - `checks.size`: `mode`・`status`（`off`・`ok`・`over`）・`files`（ファイルの数）・`bytes`（ファイルの大きさの合計。`off` でも出す）・`guideline`（536870912）・`stops`。
-- `checks.links`: `mode`・`status`（`off`・`ok`・`found`）・`count`（参照の件数）・`breaking`（そのうち確実に崩れるもの）・`redirects`（`_redirects` があるか）・`skipped`（4 MiB を超えて読まなかったファイル）・`findings`・`stops`。`findings` の各要素は `kind`（[種別](../publish/links.md#種別)の名前。`root_relative` など）・`breaks`（確実に崩れるなら `true`、崩れるかもしれないだけなら `false`）・`file`（参照元のファイル。`reserved` は該当する名前）・`reference`（参照。`reserved` は空文字）・`files`（同じ参照があるファイルの数。外部の資源と元のサイトへの絶対 URL だけ 2 以上になる）。`off` なら `count`・`breaking` は 0、配列は空。
+- `checks.links`: `mode`・`status`（`off`・`ok`・`found`）・`count`（参照の件数）・`breaking`（そのうち確実に崩れるもの）・`redirects`（`_redirects` があるか）・`skipped`（4 MiB を超えて読まなかったファイルのパスの配列）・`findings`・`stops`。`findings` の各要素は `kind`（[種別](../publish/links.md#種別)の名前。`root_relative` など）・`breaks`（確実に崩れるなら `true`、崩れるかもしれないだけなら `false`）・`file`（参照元のファイル。`reserved` は該当する名前）・`reference`（参照。`reserved` は空文字）・`files`（同じ参照があるファイルの数。外部の資源と元のサイトへの絶対 URL だけ 2 以上になる）。`off` なら `count`・`breaking` は 0、配列は空。
 - `clock`: `status`（`ok`・`stops`）・`created_at`（`ok` のとき本番が使う日時。`stops` なら `null`）・`detail`（`stops` の理由）・`mfs_versions`（`{"status": "listed", "newest"}`。`newest` は MFS の最大の版で、無ければ `null`。読めなければ `{"status": "unknown", "detail"}`）・`relays_answered`（時計を答えた relay の数）。
 - `ipfs`: `{"status": "computed", "cid"}` か `{"status": "unknown", "detail"}`。
 - `previous`: relay 上の自分の最新版。`{"status": "found", "cid", "created_at"}`・`{"status": "none"}`・`{"status": "unknown", "detail"}`。

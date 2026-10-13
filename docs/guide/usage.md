@@ -83,7 +83,7 @@ SWING_DASHBOARD_BIND=0.0.0.0:8082
 SWING_DASHBOARD_UI=false
 ```
 
-見た目は `--swing-*` の CSS 変数と `SWING_DASHBOARD_CUSTOM_CSS`（`/custom.css` として配信される追加スタイルシート）でカスタマイズできます（使える変数・class・data 属性は [`docs/architecture/dashboard/css.md`](../architecture/dashboard/css.md)）。Desktop 画面のリンク集ページは、`SWING_DASHBOARD_DESKTOP_PAGE`（ページ本体の HTML）・`SWING_DASHBOARD_DESKTOP_PAGE_CSS`（そのページ専用の CSS）・`SWING_DASHBOARD_DESKTOP_BANNER`（88×31 バナー画像）で丸ごと自分のものに差し替えられます（いずれも起動時に読み込みます）。このページは同一オリジンの iframe に入っているので、ダッシュボードのスタイルは一切当たらず、こちらのスタイルも外に漏れません。ページに `desk-link-list` などの決まった `id` を置いておくと、そこにリンク一覧が描画されます（詳しくは [`docs/architecture/dashboard/desktop.md#リンク集ページiframe`](../architecture/dashboard/desktop.md#リンク集ページiframe)）。API の詳しい仕様は [`docs/architecture/dashboard/http-api.md`](../architecture/dashboard/http-api.md)、ガード（Host 検証、CSRF 対策など）は [`docs/architecture/dashboard/security.md`](../architecture/dashboard/security.md) を参照してください。
+見た目は `--swing-*` の CSS 変数と `SWING_DASHBOARD_CUSTOM_CSS`（`/custom.css` として配信される追加スタイルシート）でカスタマイズできます（使える変数・class・data 属性は [`docs/architecture/dashboard/css.md`](../architecture/dashboard/css.md)）。Desktop 画面のリンク集ページは、`SWING_DASHBOARD_DESKTOP_PAGE`（ページ本体の HTML）・`SWING_DASHBOARD_DESKTOP_PAGE_CSS`（そのページ専用の CSS）・`SWING_DASHBOARD_DESKTOP_BANNER`（88×31 バナー画像）で丸ごと自分のものに差し替えられます（いずれも起動時に読み込みます）。このページは同一オリジンの iframe に入っているので、ダッシュボードのスタイルは一切当たらず、こちらのスタイルも外に漏れません。ページに `desk-link-list` などの決まった `id` を置いておくと、そこにリンク一覧が描画されます（詳しくは [`docs/architecture/dashboard/desktop/link-page.md`](../architecture/dashboard/desktop/link-page.md)）。API の詳しい仕様は [`docs/architecture/dashboard/http-api.md`](../architecture/dashboard/http-api.md)、ガード（Host 検証、CSRF 対策など）は [`docs/architecture/dashboard/security.md`](../architecture/dashboard/security.md) を参照してください。
 
 ## 自分のマスコットを追加する
 

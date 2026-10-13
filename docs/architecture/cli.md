@@ -19,6 +19,7 @@
   - `listen` が未指定アドレス（`0.0.0.0` / `::`）でも、接続先と `Host` ヘッダはループバックの同じポートにする。
   - API に接続できなければ、`status`・`stats`・`mirror add`・`mirror remove`・`dashboard open` は `swing up is not running (cannot connect to <addr>)` で非ゼロ終了し、`stop` は `not running` を出して終了コード 0 で終わる。
 - エラーで終了するときは `Error: <メッセージ>` と、原因があれば `Caused by:` に続けて 1 つずつ（2 つ以上なら番号付きで）標準エラーに出し、終了コード 1 で終わる（`format::error_report`）。メッセージと原因はそれぞれ `format::Sanitized` を通すので、改行を含まず 1 行ずつになる。`RUST_BACKTRACE` などでバックトレースを取っていれば続けて出す。`swing up --log-file` のときは同じエラーをログにも出す。
+- relay・Kubo・署名アプリなど外から来た文字列は、端末やログに出す前に無害化する。`format::Sanitized` は制御文字を空白 1 つに置き換え、見えない書式文字（`nostr::is_unsafe_char`）を取り除く。`format::sanitize_display_text` はそれに加えて文字数で切り（切ったら `…` を足す）、前後の空白を削る。ログは `logging::SanitizedFields` がメッセージと各フィールドの値を `Sanitized` に通して書く。
 - `sites`・`replicas`・`webring`・`mirror list`・`publish` は API を経由せず relay/Kubo に直接つなぐので、`swing up` が動いていなくても使える。これらは秘密鍵か署名アプリの接続情報が要り、どちらも無ければエラー終了する（[`signer.md`](signer.md#signer)）。ただし `publish --dry-run` は鍵が無くても、分かる範囲を確かめて続ける（[`publish/dry-run.md`](publish/dry-run.md)）。
 - API 経由のコマンドは鍵が無くても動く。ただし鍵の無い `swing up` はセットアップモード（[up](#up)）で、そこでは `status`・`mirror add`・`mirror remove` は 503 `agent is not configured` を返す。
 
@@ -26,7 +27,7 @@
 
 Kubo（`[kubo].managed` なら子プロセス）と mirror-agent を 1 プロセスの supervisor として動かす。起動の順・多重起動の防止・セットアップモード・停止は [`up.md`](up.md)。mirror-agent を単体で動かすサブコマンドは無い。
 
-- `--log-file <path>`: 標準エラーの代わりにそのファイルへ追記でログを出す（新しく作るときは unix で 0600）。
+- `--log-file <path>`: 標準出力の代わりにそのファイルへ追記でログを出す（新しく作るときは unix で 0600）。
 - `--no-port-shift`（`SWING_NO_PORT_SHIFT`）: セットアップモードでポートをずらさない（[`up.md#セットアップモードでのポートの調整`](up.md#セットアップモードでのポートの調整)）。
 
 ## stop
@@ -53,7 +54,7 @@ Windows の `swing service stop` もこの `stop::run` を使う（失敗した�
 
 `swing up` を OS のサービス（systemd user unit・launchd LaunchAgent・Windows タスクスケジューラ）として登録・操作する。OS ごとの実体は [`service.md`](service.md)。
 
-- `install` のオプション: `--config`（決め方は [`service.md#共通`](service.md#共通)）・`--system`（Linux のみ）・`--run-as <user>`・`--allow-root`（実行ユーザーが root でも登録する。どちらも `--system` と一緒にだけ使える。[`service.md#system-unit-の実行ユーザー`](service.md#system-unit-の実行ユーザー)）・`--no-start`（登録だけで起動しない）・`--no-tray`（Windows と macOS で `swing-tray` の自動起動を登録しない）。
+- `install` のオプション: `--config`（決め方は [`service.md#共通`](service.md#共通)）・`--system`（Linux のみ）・`--run-as <user>`・`--allow-root`（実行ユーザーが root でも登録する。どちらも `--system` と一緒にだけ使える。[`service/system-user.md`](service/system-user.md)）・`--no-start`（登録だけで起動しない）・`--no-tray`（Windows と macOS で `swing-tray` の自動起動を登録しない）。
 - `start`/`stop`/`status`/`uninstall` は `--system` を取る。`stop` は登録を残してプロセスだけを止め、`uninstall` は止めてから登録を消す。
 - `uninstall --only-from <dir>` と `status --points-into <dir>`（どちらも `--help` に出さない）は、インストーラー向けに、起動する実行ファイルが `<dir>` の下にある登録だけを消す・その有無を終了コードで答える。規則・出力・終了コードは [`service/ownership.md`](service/ownership.md)。
 - どれもサービス機構を通す。Windows の `service stop` だけは [stop](#stop) を使う。
@@ -78,8 +79,8 @@ NIP-46 の署名アプリと、ターミナルに出した QR コードでペア
 
 ## config example / config env-example
 
-設定ファイルを読まない（`--config` を取らない）。`src/settings/catalog.rs::SETTINGS` の設定カタログから、リポジトリ直下の `swing.example.toml`／`.env.example` と同じ内容を標準出力に印字する（[`config.md`](config.md)）。両ファイルがこの出力と一致することを `cargo test` が確かめる。
+設定ファイルを読まない（`--config` を取らない）。設定カタログ（[`config.md#設定カタログ`](config.md#設定カタログ)）から、リポジトリ直下の `swing.example.toml`／`.env.example` と同じ内容を標準出力に出す。
 
 ## skill show / skill install
 
-AI エージェント向けのスキル `swing-publish` の `SKILL.md` を、版を埋めて標準出力に出す（`show`）か、エージェントのスキルのディレクトリに書き出す（`install [--dir <skills_dir>] [--force]`）。設定ファイルを読まない。書き出し先と上書きの規則は [`cli/skill.md`](cli/skill.md)。
+`swing skill show` / `install` は [`cli/skill.md`](cli/skill.md) を参照。

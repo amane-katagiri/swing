@@ -6,7 +6,7 @@
 
 ## スキルの正本と版の埋め込み
 
-- 正本はリポジトリの `skills/swing-publish/SKILL.md`（英語）。`include_str!` で `swing` に埋め込むので、どの入れ方（インストーラー・`install.sh`・Homebrew・Docker）の `swing` からでも、その版のスキルが手に入る。
+- 正本はリポジトリの `skills/swing-publish/SKILL.md`（英語）。`include_str!` で `swing` に埋め込む。
 - 正本の中の `{{version}}` を、書き出すときにすべて `CARGO_PKG_VERSION` に置き換える（`skill::render`）。手引きへのリンクは `https://github.com/amane-katagiri/swing/blob/v{{version}}/docs/...` と書き、その版のタグのドキュメントを指す。
 - frontmatter は `name: swing-publish` と `description` だけ。
 - テストは、frontmatter の形、`{{` が残らないこと、リンクがすべてその版のタグを指しリポジトリにあるファイルであること、dry run の JSON の `format` の値（`publish::dry_run::FORMAT`）が本文の記述と一致することを確かめる。

@@ -6,10 +6,10 @@
 
 全リクエストに axum middleware（`guard::security_middleware`）がかかり、次の順に判定する。エラーは `{"error": ...}` の JSON。
 
-1. **Host**: `Host` ヘッダが無ければ 403 `missing Host header`。`host::extract_host`（IPv6 の `[...]` を考慮してポートを外し小文字にする。`]` の後ろが `:<数字>` 以外ならヘッダ全体をホスト名として扱う。内蔵 gateway と共有）した値が `localhost`・`127.0.0.1`・`::1`、`[dashboard].listen` の IP（`0.0.0.0`・`::` を除く。IP として解釈して比べるので IPv6 の表記ゆれは同じとみなす）、`[dashboard].allowed_hosts`（大文字小文字を区別しない）のどれでもなければ 403 `host not allowed`（DNS rebinding を防ぐ。rebinding で届く Host は攻撃者のホスト名なので、待ち受け IP そのものの Host は許してよい）。`listen` が LAN の IP のときに `swing dashboard open`・`swing-tray` が送る Host とログインリンクの頭（`http://<listen>`）はこの IP になる。ループバック以外の名前は、下記「[リバースプロキシ経由での公開](#リバースプロキシ経由での公開)」の構成でだけサポートする。
+1. **Host**: `Host` ヘッダが無ければ 403 `missing Host header`。`host::extract_host`（IPv6 の `[...]` を考慮してポートを外し小文字にする。`]` の後ろが `:<数字>` 以外ならヘッダ全体をホスト名として扱う。内蔵 gateway と共有）した値が `localhost`・`127.0.0.1`・`::1`、`[dashboard].listen` の IP（`0.0.0.0`・`::` を除く。IP として解釈して比べるので IPv6 の表記ゆれは同じとみなす）、`[dashboard].allowed_hosts`（大文字小文字を区別しない）のどれでもなければ 403 `host not allowed`（DNS rebinding 対策）。`listen` が LAN の IP のときに `swing dashboard open`・`swing-tray` が送る Host とログインリンクの頭（`http://<listen>`）はこの IP になる。ループバック以外の名前は、下記「[リバースプロキシ経由での公開](#リバースプロキシ経由での公開)」の構成でだけサポートする。
 2. **`X-Swing-Dashboard` と Origin**: GET/HEAD 以外と、`Authorization: Bearer` の無い `/api/*` の GET/HEAD が対象。`X-Swing-Dashboard: 1` が無ければ 403 `missing X-Swing-Dashboard header`。`Origin` があれば、その authority（スキームを外し末尾の `/` を削ったもの）が `Host` ヘッダと大文字小文字を無視して一致しなければ 403 `origin does not match host`。CORS ヘッダは返さない。`Sec-Fetch-Site` は見ない（Web UI の `/api/*` の読み方は [`web.md#api-の呼び方`](web.md#api-の呼び方)）。
 3. **認証**: `/api/login`・`/api/identity` 以外の `/api/*` と、Desktop 画面だけで使う差し替え可能なファイル（`/desktop-page.html`・`/desktop-page.css`・`/desktop-banner` と `/mascots/` で始まるパス。`guard::needs_auth`）は、`guard::authenticate` を通らなければ 401 `missing or invalid dashboard token or session`。`Authorization: Bearer <token>` があればそれだけで判定し（`auth::token_matches`）、無ければセッション cookie を見る（下記「[認証](#認証)」）。`/api/` の外のこれらのファイルは 2 の対象外で、Bearer かセッション cookie のどちらかがあれば通る。どちらで通ったか（`guard::AuthMethod`）はリクエストの extension に入れる。
-4. **Bearer 限定**: `POST /api/login-code` と `POST /api/token/rotate` は Bearer で通ったときだけ受け付け（`guard::require_bearer`）、セッション cookie なら 403 `this endpoint needs the dashboard token, not a browser session`。セッション cookie からログインコードを作れると、漏れた cookie を期限ごとに作り直して使い続けられるため。Web UI はどちらも呼ばない。
+4. **Bearer 限定**: `POST /api/login-code` と `POST /api/token/rotate` は Bearer で通ったときだけ受け付け（`guard::require_bearer`）、セッション cookie なら 403 `this endpoint needs the dashboard token, not a browser session`（cookie からログインコードを作れると、漏れた cookie を期限ごとに作り直して使い続けられる）。Web UI はどちらも呼ばない。
 
 ログイン前の画面が読むもの（`/`・`*.js`・`/desktop-page.css` を除く `*.css`・`/fonts/*`・favicon・`/apple-touch-icon.png`・`/desktop-icons.svg`・`/custom.css`）と `/login` は認証なしで返す。ダッシュボードの Host に届く人には誰にでも見えるので、`/custom.css` には秘密を置かない。
 
@@ -61,7 +61,7 @@
 
 - `[dashboard].listen` の IP がループバック（`127.0.0.0/8` と `::1`）でなければ、起動時に平文で流れることを `warn` で出す（判定は待ち受けアドレスだけ）。
 - この構成で効くのは、Host の検証（公開ホスト名を `allowed_hosts` に入れる）、Origin の検証（プロキシが `Host` を書き換えると書き込み系がすべて 403 になる）、cookie の `Secure`、ログインリンクの頭になる `public_url`。
-- プロキシは `Host` をそのまま転送し（nginx なら `proxy_set_header Host $host;`）、公開ホスト名を `allowed_hosts` に入れる。`Host` を上流の待ち受け IP に書き換えるプロキシ（nginx の `proxy_pass` の既定）でも、待ち受け IP は常に許すので Host の検証は通り、ブラウザがどの名前で来たかをダッシュボードは確かめられない。それでも cookie はブラウザが使った名前のホストにだけ結び付くので別の名前には送られず、書き込み系は `Origin` と書き換え後の `Host` が合わずに 403 になる。
+- プロキシは `Host` をそのまま転送し（nginx なら `proxy_set_header Host $host;`）、公開ホスト名を `allowed_hosts` に入れる。`Host` を上流の待ち受け IP に書き換えるプロキシ（nginx の `proxy_pass` の既定）では、待ち受け IP は常に許すので Host の検証は通るが、書き込み系は `Origin` と書き換え後の `Host` が合わずに 403 になる。
 
 ## 既知の弱点
 

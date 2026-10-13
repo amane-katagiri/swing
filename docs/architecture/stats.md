@@ -1,6 +1,6 @@
 # リソース使用量の記録（`src/stats.rs`, `src/stats/process.rs`）
 
-[`../architecture.md`](../architecture.md) の一部。`swing up` が自分と Kubo の CPU・メモリと、Kubo の IPFS の通信量を一定の間隔で測り、メモリ上に持つ。読むのは [`GET /api/stats`](dashboard/http-api/status.md#get-apistats)・[`swing stats`](cli/views.md#stats)・ダッシュボードの Settings 画面（[`dashboard/views.md`](dashboard/views.md#リソース使用量)）。
+[`../architecture.md`](../architecture.md) の一部。`swing up` が自分と Kubo の CPU・メモリと、Kubo の IPFS の通信量を一定の間隔で測り、メモリ上に持つ。読むのは [`GET /api/stats`](dashboard/http-api/status.md#get-apistats)・[`swing stats`](cli/views.md#stats)・ダッシュボードの Settings 画面（[`dashboard/views/settings.md`](dashboard/views/settings.md#リソース使用量)）。
 
 ## 測り方
 

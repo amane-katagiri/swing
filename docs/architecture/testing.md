@@ -2,7 +2,7 @@
 
 [`../architecture.md`](../architecture.md) の子ページ。ユニットテストの置き方と、統合テストの動かし方。ビルドとリリース、macOS・Homebrew・Windows の動作確認は [`release.md`](release.md)。
 
-- ユニットテスト: `cargo test`。大きいテストモジュールは `foo.rs` に `#[cfg(test)] mod tests;` を置いて `foo/tests.rs` に分ける（`config/build/tests.rs`・`nostr/client/tests.rs`・`nostr/client/resend/tests.rs`・`nostr/site/tests.rs`・`agent/replicas/tests.rs` など）。agent と health のテストは MFS をメモリ上で真似る `FakeKubo`（`src/test_support.rs`）を使い、agent はこれに `FakeNip05` を組み合わせる。ダッシュボードのテストは axum の `Router` に `oneshot` でリクエストを投げ、TCP で listen しない。署名アプリとのやり取りのテストは [`signer.md#テスト`](signer.md#テスト)。
+- ユニットテスト: `cargo test`。大きいテストモジュールは `foo.rs` に `#[cfg(test)] mod tests;` を置いて `foo/tests.rs` に分ける（`config/build/tests.rs`・`nostr/client/tests.rs`・`nostr/client/resend/tests.rs`・`nostr/site/tests.rs`・`agent/replicas/tests.rs` など）。agent と health のテストは MFS をメモリ上で真似る `FakeKubo`（`src/test_support.rs`）を使い、agent はこれに `FakeNip05` を組み合わせる。ダッシュボードのテストは axum の `Router` に `oneshot` でリクエストを投げ、TCP で listen しない。署名アプリとのやり取りのテストは [`signer.md#テスト`](signer.md#テスト)。`ipfs::tests::kubo_client_probe` は `#[ignore]` だが、通常のテスト `kubo_client_ignores_proxy_environment` が `SWING_TEST_KUBO_PROBE_API` とプロキシの環境変数を付けた子プロセスとして起動する（Kubo のクライアントがプロキシを通らないことの確認）。
 - 統合テスト（`#[ignore]`、ローカルの Kubo / relay が必要。公開ネットワークには接続しない）:
 
 ```bash

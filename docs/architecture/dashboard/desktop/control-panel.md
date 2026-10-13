@@ -2,9 +2,9 @@
 
 [`../desktop.md`](../desktop.md) の子ページ。
 
-デスクトップアイコン「コントロール パネル」をダブルクリックまたは Enter/Space でモーダルダイアログ「コントロール パネル」を開く。タブは「背景」「マスコット」「通知」「システム」の 4 つ。ロジックは 3 層（ダイアログ一般の機能を持つ `desktop-dialog.js`、タブ切り替えの殻 `desktop-settings.js`、各タブの中身の `desktop-wallpaper.js::WallpaperPage`・`desktop-mascot-settings.js::MascotSettingsPage`・`desktop-notify-settings.js::NotifySettingsPage`・`desktop-system-settings.js::SystemSettingsPage`）に分かれる。
+デスクトップアイコン「コントロール パネル」をダブルクリックまたは Enter/Space でモーダルダイアログ「コントロール パネル」を開く。タブは「背景」「マスコット」「通知」「システム」の 4 つ。ダイアログの殻は `desktop-dialog.js::createDialog`、タブ切り替えは `desktop-settings.js`、各タブの中身は下記の Page オブジェクト。
 
-**Page のインターフェース**: `desktop-settings.js` の `PAGES` の各要素は、`id`（`data-tab` と一致）・`init({changed, dialog, updates})`（`updates` は `desktop.js` の `desktopUpdates`）・`open()`・`isDirty()`・`save()`・`discard()` を持つオブジェクト（任意で `onKey(ev)`・`boot()`）。ドラッグ・Tab トラップ・Esc/Enter・OK/キャンセル/適用ボタンは `createDialog` が全ページ共通で持つ（フォーカス表示は CSS）。
+**Page のインターフェース**: `desktop-settings.js` の `PAGES` の各要素は、`id`（`data-tab` と一致）・`init({changed, dialog, updates})`（`updates` は `desktop.js` の `desktopUpdates`）・`open()`・`isDirty()`・`save()`・`discard()` を持つオブジェクト（任意で `onKey(ev)`・`boot()`）。ドラッグ・Tab トラップ・Esc/Enter・OK/キャンセル/適用ボタンは `createDialog` が全ページ共通で持つ。適用ボタンは変更のあるページ（`isDirty()`）が無ければ押せない。
 
 **タブ**: タブのボタンはクリックか、フォーカスしたタブで ←/→（端で折り返す）・Home/End で切り替える。Tab で止まるのは選択中のタブだけ（他は `tabindex="-1"`）。選んだタブはダイアログを閉じて開き直しても保つ（ページを読み込み直すと「背景」に戻る）。
 
@@ -26,7 +26,7 @@
 
 ### 通知タブ（`NotifySettingsPage`）
 
-値・既定・保存先・許可の規則は [`notices.md#設定`](../notices.md#設定)。同じ設定は Settings 画面の「通知」パネルにもある（[`views.md#通知`](../views.md#通知)）。
+値・既定・保存先・許可の規則は [`notices.md#設定`](../notices.md#設定)。同じ設定は Settings 画面の「通知」パネルにもある（[`views/settings.md#通知`](../views/settings.md#通知)）。
 
 - **更新の確認**: 確認の間隔をコンボボックスで選ぶ（当て方は [`notices.md#設定`](../notices.md#設定)）。
 - **デスクトップでおしらせする内容**: マスコットの吹き出しに出す 3 つの種類のチェックボックス（「フォロー中のサイトを新しくミラーしたとき」「サイトを SWING に公開（publish）したとき」「自分のサイトが SWING で新しくミラーされたとき」）。

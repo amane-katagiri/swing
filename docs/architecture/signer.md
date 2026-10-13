@@ -2,7 +2,7 @@
 
 [`../architecture.md`](../architecture.md) の一部。
 
-SWING が出すイベント（サイトイベント・Follow Set・レプリカ報告）の署名は、すべて `signer::Signer` を通す。秘密鍵を設定に置く方法と、NIP-46 の署名アプリ（remote signer）に署名をリクエストする方法の 2 通りがある。イベントの形式はどちらでも同じで、[`../protocol.md`](../protocol.md) は署名の方法に依存しない。
+SWING が出すイベント（サイトイベント・Follow Set・レプリカ報告）の署名は、すべて `signer::Signer` を通す。秘密鍵を設定に置く方法と、NIP-46 の署名アプリ（remote signer）に署名をリクエストする方法の 2 通りがあり、イベントの形式はどちらでも同じ。
 
 ## `Signer`
 
@@ -15,7 +15,7 @@ SWING が出すイベント（サイトイベント・Follow Set・レプリカ�
 - `public_key()` は署名せずに自分の公開鍵を返す。`Remote` はペアリング時に署名アプリから受け取った公開鍵をファイルに持っていて、それを使う（`get_public_key` を送らない）。
 - `RelayClient`（`nostr/client.rs`）は `Signer` を持ち、`RelayClient::sign(builder)` で署名する。サイトイベント（`publish::sign_site_event`。CLI とダッシュボードの公開）・Follow Set の更新（`mirror::publish_if_changed`）・レプリカ報告（`ReportRelay::send_report`）の 3 か所がこれを呼ぶ。ペアリングの probe（下記）だけは `RemoteSigner` を直接使う。
 - `up::run` は呼ばれるたびに（プロセス内再起動を含む）`Signer::load` を 1 回呼び、`dashboard::AppState.signer` に置く。agent（`agent::lifecycle::run_until`）は再起動のたびにそれを使い回し、`RelayClient::connect` に渡す。agent の終了時は relay の `Client` だけを閉じ、署名アプリとの接続は `up::run` の最後に `Signer::shutdown` で閉じる。
-- relay に直接つなぐ CLI（[`cli.md#共通`](cli.md#共通)）はコマンドごとに `Signer::require` し、終わるときに `RelayClient::shutdown` で relay と署名アプリの両方の接続を閉じる（`sites`・`mirror list` は取得がエラーなら閉じずに終わる）。`swing up` と同じアプリ鍵を使うので、署名アプリ側の許可はそのまま効く。
+- relay に直接つなぐ CLI（[`cli.md#共通`](cli.md#共通)）はコマンドごとに `Signer::require` し、終わるときに `RelayClient::shutdown` で relay と署名アプリの両方の接続を閉じる（`sites`・`mirror list` は取得がエラーなら閉じずに終わる）。`swing up` と同じ `remote-signer.json` のアプリ鍵を使う。
 
 ## 署名アプリへのリクエスト（`RemoteSigner`）
 
@@ -43,7 +43,7 @@ SWING が出すイベント（サイトイベント・Follow Set・レプリカ�
 }
 ```
 
-- `app_secret_key` は SWING が作った使い捨ての鍵で、署名アプリとの暗号化にだけ使う。ユーザーとして署名する力は無く、署名アプリが許可した範囲のリクエストしか通らない。`RemoteSignerFile` の `Debug` はこの値を出さない。メモリ上では `zeroize::Zeroizing` に入れ、読み書きに使う JSON の文字列とともに解放時に消す。署名アプリ用の relay 接続が受け取る大きさの上限は [`nostr.md#検証`](nostr.md#検証)。ペアリングの secret は保存しない。
+- `app_secret_key` はペアリングのときに SWING が作る鍵で、署名アプリとの通信の暗号化にだけ使う。`RemoteSignerFile` の `Debug` はこの値を出さない。メモリ上では `zeroize::Zeroizing` に入れ、読み書きに使う JSON の文字列とともに解放時に消す。署名アプリ用の relay 接続が受け取る大きさの上限は [`nostr.md#検証`](nostr.md#検証)。ペアリングの secret は保存しない。
 - ファイルを書くのはセットアップ（`POST /api/setup`）と、署名アプリとのつなぎ直し（`POST /api/signer/reconnect`）と、`swing signer pair`（[`cli.md#signer-pair`](cli.md#signer-pair)）だけ。つなぎ直しは、今と同じ Nostr アカウント（公開鍵）で署名する署名アプリでなければ受け付けない。秘密鍵に戻す手順は [`guide/security.md`](../guide/security.md#署名アプリnip-46で署名する)。
 
 ## ペアリング（`Pairing`）
@@ -51,7 +51,7 @@ SWING が出すイベント（サイトイベント・Follow Set・レプリカ�
 QR コードを使う `nostrconnect://`（クライアント起点）の接続だけを実装している（`signer/pair.rs`。型と関数は `signer::` から再公開している）。
 
 1. `Pairing::start(PairingRequest)` がアプリ鍵と 16 バイトの secret を作り、`nostrconnect_uri` で URI を組み立てて、ペアリングのタスクを spawn する。URI のクエリは `relay`（複数可）・`secret`・`perms`・`name=SWING`・`metadata={"name":"SWING"}`。
-2. `PairingRequest::for_config` が `[nostr]` の kind から perms・probe の kind と、`PAIRING_TIMEOUT`・`RELAY_CONNECT_TIMEOUT`・`PROBE_TIMEOUT` を組み立てる（ダッシュボードと `swing signer pair` で共通）。relay は `parse_pairing_relays` で確かめる（空白を除いて 1〜`MAX_PAIRING_RELAYS`（5）個、`ws`/`wss` の URL）。`perms` は `requested_perms(kinds)` が作り、`get_public_key` と、SWING が署名する 4 種類（`[nostr].replica_event_kind`・`[nostr].site_event_kind`・`30000`・`1`）の `sign_event:<kind>` を並べる。perms はリクエストでしかなく、自動で許可するかどうかは署名アプリが決める。
+2. `PairingRequest::for_config` が `[nostr]` の kind から perms・probe の kind と、`PAIRING_TIMEOUT`・`RELAY_CONNECT_TIMEOUT`・`PROBE_TIMEOUT` を組み立てる（ダッシュボードと `swing signer pair` で共通）。relay は `parse_pairing_relays` で確かめる（空白を除いて 1〜`MAX_PAIRING_RELAYS`（5）個、`ws`/`wss` の URL）。`perms` は `requested_perms(kinds)` が作り、`get_public_key` と、SWING が署名する 4 種類（`[nostr].replica_event_kind`・`[nostr].site_event_kind`・`30000`・`1`）の `sign_event:<kind>` を並べる。
 3. タスクは `bounded_client`（上限は署名アプリ用の接続と同じ）で URI の relay につなぎ、アプリ鍵宛ての kind 24133 を `limit(0)` で購読して、`connect` 応答を `PAIRING_TIMEOUT`（10 分）まで待つ。受け付けるのは、復号できて、`result` が URI の secret と一致する応答だけ（`is_connect_with_secret`）で、その送り主を署名アプリの公開鍵とする。`result` が `ack` の応答は warn を出して無視するので、secret を返さず `ack` だけを返す署名アプリとはペアリングできない。続けて、同じ接続でその署名アプリにだけ `get_public_key` を送り（返事は署名アプリの公開鍵から来たものだけを見る。`PUBLIC_KEY_TIMEOUT`（60 秒）まで、5 秒ごとに送り直しながら待つ）、ユーザーの公開鍵が分かったら状態を `Checking` にする。待っている間、始めてから `RELAY_CONNECT_TIMEOUT`（15 秒）たった時点で relay に 1 つもつながっていなければ、`could not connect to the relay (<relay>)` で失敗にする。
 4. 保存するのと同じ内容から `RemoteSigner` を作り直し（`PROBE_TIMEOUT`、60 秒。ユーザーが署名アプリで承認する時間を含む）、kind `[nostr].replica_event_kind` の空のイベント（`alt` は `SWING signer check`）の署名を、再起動後と同じ手順（`connect` を送らずにリクエストだけを送る）でリクエストする（probe）。probe の署名は relay に送らない。
 5. probe が成功すれば `Ready { probe_signed: true }`、失敗しても `Ready { probe_signed: false, probe_error }` にする。3 までに失敗したら `Failed(メッセージ)`。probe が通っても、署名アプリが自動で許可したのか、ユーザーがその場で承認したのかは区別できない。

@@ -1,19 +1,17 @@
 # 絵文字のフィンガープリント（`src/fingerprint.rs`, `web/emoji/`, `web/emoji.svg`, `web/desktop-fingerprint.js`, `packaging/twemoji/`）
 
-[`web.md`](web.md) の子ページ。ダッシュボードで Nostr のアカウントを見分けやすくするため、pubkey から決まる 4 つの絵文字（Twemoji の画像）を npub や名前の前に出す。
-
-見分けるための目印で、本人の証明ではない。4 つで 32 ビットしかなく、狙ったフィンガープリントの鍵は総当たりで作れる。アカウントを確かめるのは npub（と NIP-05）。CLI の出力には出さない。
+[`web.md`](web.md) の子ページ。ダッシュボードで、pubkey から決まる 4 つの絵文字（Twemoji の画像）を npub や名前の前に出す。本人の証明には使えない（[`../../fingerprint-spec.md#1-目的と限界`](../../fingerprint-spec.md#1-目的と限界)）。CLI の出力には出さない。
 
 ## 求め方（`fingerprint::fingerprint`）
 
-[`../../fingerprint-spec.md`](../../fingerprint-spec.md)（第 1 版）の求め方のとおり。pubkey の SHA-256 の先頭 4 バイトを一覧の行番号に当て、コードポイント（16 進の小文字、例 `1f40b`）の配列を返す。絵文字の文字として表すとき（自分の情報のコピーボタン・`aria-label`）は、仕様のとおり各コードポイントに U+FE0F を付ける（`ui.js::emojiChar`）。
+[`../../fingerprint-spec.md#3-求め方`](../../fingerprint-spec.md#3-求め方)（第 1 版）のとおりに求め、コードポイント（16 進の小文字、例 `1f40b`）の配列を返す。絵文字の文字として表すとき（自分の情報のコピーボタン・`aria-label`）は、[`../../fingerprint-spec.md#4-表し方`](../../fingerprint-spec.md#4-表し方) のとおり各コードポイントに U+FE0F を付ける（`ui.js::emojiChar`）。
 
-計算はサーバ側で行い、API の DTO に `fingerprint` として載せる（ダッシュボードは平文の http で LAN から開かれることがあり、そこでは `crypto.subtle` が使えない）。載せる場所は [`http-api/nostr.md`](http-api/nostr.md)（webring のノード・`referencing`・レプリカの報告者・`/api/mirror/preview`）と [`http-api/status.md`](http-api/status.md)（`/api/overview` の自分・`/api/sites` のアカウントと `/api/status` の `versions`・`sites`）。
+計算はサーバ側で行い、API の DTO に `fingerprint` として載せる（平文の http で LAN から開かれると `crypto.subtle` が使えないので、ブラウザでは求めない）。載せる場所は [`http-api/nostr.md`](http-api/nostr.md)（webring のノード・`referencing`・レプリカの報告者・`/api/mirror/preview`）と [`http-api/status.md`](http-api/status.md)（`/api/overview` の自分・`/api/sites` のアカウントと `/api/status` の `versions`・`sites`）。
 
 ## 一覧（`web/emoji/list.txt`）
 
 - ちょうど 256 行。各行は `<コードポイント> <Unicode の名前>`。行の順番が番号。Rust は `include_str!` で、スプライトの生成スクリプトも同じファイルを読む。
-- 仕様の絵文字の表の写しで、仕様と違ってはならない（テストで照らす）。第 1 版の表は変えない。表の選び方は仕様の参考の章にある。
+- 仕様の絵文字の表（[`../../fingerprint-spec.md#5-絵文字の表`](../../fingerprint-spec.md#5-絵文字の表)）の写しで、仕様と違ってはならない（テストで照らす）。
 
 ## スプライト（`web/emoji.svg`）
 
@@ -40,12 +38,12 @@ Twemoji の画像は CC-BY 4.0。表示（作者・ライセンス・元のリ�
 
 ## 表示（`ui.js::fingerprintBadge`, `graph.js`）
 
-- 部品は [`web.md#共通の-ui-部品`](web.md#共通の-ui-部品)、class は [`css.md`](css.md)（`swing-fingerprint`・`swing-node-emoji`）。
-- 出す場所（[`views.md`](views.md)）:
-  - Sites 画面: アカウントの見出し（カード・テーブル・Unfollowed）に 4 つ、Storage check の表のアカウント列に先頭の 1 つ、「ミラーに追加」の入力中に鍵ごとに 4 つ。
-  - Publish 画面: 自分の情報の「フィンガープリント」の行に 4 つと、絵文字の文字としてコピーするボタン。
-  - Webring 画面: グラフのノードの円の中に先頭の 1 つ、`list` 表示の各行・詳細パネルの見出しと報告者一覧に 4 つ。
-- Desktop 画面: 「ミラーに追加」ダイアログの入力中に鍵ごとに 4 つ。ここだけは画面の見た目に合わせて 16×16 のドット絵にして出す（`desktop-fingerprint.js::deskFingerprint`。[`desktop/mirror-add.md`](desktop/mirror-add.md#フィンガープリントのドット絵)）。
+- 部品は [`web/ui.md`](web/ui.md)、class は [`css.md`](css.md)（`swing-fingerprint`・`swing-node-emoji`）。
+- 出す場所:
+  - Sites 画面（[`views.md`](views.md#sites-画面)）: アカウントの見出し（カード・テーブル・Unfollowed）に 4 つ、Storage check の表のアカウント列に先頭の 1 つ、「ミラーに追加」の入力中に鍵ごとに 4 つ。
+  - Publish 画面（[`views/publish.md`](views/publish.md)）: 自分の情報の「フィンガープリント」の行に 4 つと、絵文字の文字としてコピーするボタン。
+  - Webring 画面（[`views/webring.md`](views/webring.md)）: グラフのノードの円の中に先頭の 1 つ、`list` 表示の各行・詳細パネルの見出しと報告者一覧に 4 つ。
+  - Desktop 画面: 「ミラーに追加」ダイアログの入力中に鍵ごとに 4 つ。ここだけは画面の見た目に合わせて 16×16 のドット絵にして出す（`desktop-fingerprint.js::deskFingerprint`。[`desktop/mirror-add.md`](desktop/mirror-add.md#フィンガープリントのドット絵)）。
 
 ## テスト
 

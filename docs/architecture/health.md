@@ -16,7 +16,7 @@
 
 ## state に無いパス（`health::find_garbage`）
 
-`<mfs_root>/agent` を `<pubkey hex>/<site>/<created_at>` の 3 階層たどり、state の版のパスに当たらない項目を集める。この下は agent だけが使うので、state が参照しないものは残り物とみなす。
+`<mfs_root>/agent` を `<pubkey hex>/<site>/<created_at>` の 3 階層たどり、state の版のパスに当たらない項目を集める。
 
 - 版が 1 つも残らない `<site>` は `<site>` のディレクトリごと、さらに `<pubkey hex>` の下に残る版が 1 つも無ければ `<pubkey hex>` のディレクトリごと 1 項目にする。想定外の階層にあるファイルも項目にする。
 - 一覧に失敗したディレクトリは、理由と一緒に別に返し、その下は項目にしない。`<site>` の一覧に失敗したときは、その `<pubkey hex>` をディレクトリごとの項目にしない。
@@ -28,5 +28,5 @@
 - 版ごとの行: 版のパス・`cid`・state に記録した `size`・`created_at` と、[版の検査](#版の検査healthcheck_site)の結果。
 - キーが `<pubkey hex>:<d>` として読めない版は検査せず、キーと `cid` だけを持つ「不正なキー」の行にする。
 - サイトごとの実容量（[版の検査](#版の検査healthcheck_site)の `TotalSize`）と、その合計。測れなかったサイトが 1 つでもあれば合計も無し。
-- [state に無いパス](#state-に無いパスhealthfind_garbage)と、一覧に失敗したディレクトリ。agent の実行中は、保存途中の版（MFS に置いた後、state を保存する前。[保存の順序](agent.md#保存の順序)）がここに出ることがある。
+- [state に無いパス](#state-に無いパスhealthfind_garbage)と、一覧に失敗したディレクトリ。agent の実行中は、保存途中の版（MFS に置いた後、state を保存する前。[保存の順序](agent/store.md#保存の順序)）がここに出ることがある。
 - 問題の件数: `Ok` 以外の版（`CheckFailed` を含む）と不正なキーの版の数、state に無いパスと一覧に失敗したディレクトリの数の合計。

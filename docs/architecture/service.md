@@ -1,6 +1,9 @@
 # swing service（service/）
 
-[`../architecture.md`](../architecture.md) の一部。`swing up` そのものは [`up.md`](up.md)。サブコマンドとオプションは [`cli.md#service-install--uninstall--start--stop--status`](cli.md#service-install--uninstall--start--stop--status)。登録の持ち主の判定（`uninstall --only-from`・`status --points-into`）は子ページの [`service/ownership.md`](service/ownership.md)。
+[`../architecture.md`](../architecture.md) の一部。`swing up` そのものは [`up.md`](up.md)。サブコマンドとオプションは [`cli.md#service-install--uninstall--start--stop--status`](cli.md#service-install--uninstall--start--stop--status)。子ページ:
+
+- [`service/system-user.md`](service/system-user.md): `--system` の unit の実行ユーザーの決め方と、差し替えられないことの検査
+- [`service/ownership.md`](service/ownership.md): 登録の持ち主の判定（`uninstall --only-from`・`status --points-into`）
 
 ## 共通
 
@@ -30,7 +33,7 @@
 | OS | 登録先 | 直後の起動 | 登録を消すとき |
 |---|---|---|---|
 | Windows | `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` の値 `swing-tray`。中身は `"<swing-tray.exe>" --config "<config>"`（`\\?\` は外し、`\\?\UNC\` は `\\` に戻す） | `CreateProcessW` でハンドルを継承させずに起動し、待たない | 値を消す。動いているトレイには触らない（トレイが閉じる条件は [`tray.md`](tray.md#サービスの登録が消えたら終了する)） |
-| macOS | `~/Library/LaunchAgents/jp.ne.ama.swing-tray.plist`。`ProgramArguments` は `SWING.app` の中の `swing-tray` を直接指す。`RunAtLoad = true`・`LimitLoadToSessionType = Aqua`・`ProcessType = Interactive`・`AssociatedBundleIdentifiers = [jp.ne.ama.swing]`、`KeepAlive` は無し | plist を書いた後に `launchctl bootout gui/<uid>/jp.ne.ama.swing-tray`（失敗は無視）し、続けて `launchctl bootstrap gui/<uid> <plist>` | `bootout`（失敗は無視）して plist を消す。動いているトレイも止まる |
+| macOS | `~/Library/LaunchAgents/jp.ne.ama.swing-tray.plist`。`ProgramArguments` は `SWING.app` の中の `swing-tray` を直接指す。`RunAtLoad = true`・`LimitLoadToSessionType = Aqua`・`ProcessType = Interactive`・`AssociatedBundleIdentifiers = [jp.ne.ama.swing]`、`KeepAlive` は無し | plist を書いた後に `launchctl bootout gui/<uid>/jp.ne.ama.swing-tray`（失敗は無視。[`bootout` の待ち](#macoslaunchd)あり）し、続けて `launchctl bootstrap gui/<uid> <plist>` | `bootout`（失敗は無視）して plist を消す。動いているトレイも止まる |
 
 ## Linux（systemd）
 
@@ -38,7 +41,7 @@
 |---|---|
 | unit パス（user） | `$XDG_CONFIG_HOME/systemd/user/swing.service`（既定 `~/.config/systemd/user/swing.service`） |
 | unit パス（`--system`） | `/etc/systemd/system/swing.service` |
-| 実行ユーザー（`--system`） | `User=<name>`（`Group=` は付けない）。下記「[system unit の実行ユーザー](#system-unit-の実行ユーザー)」 |
+| 実行ユーザー（`--system`） | `User=<name>`（`Group=` は付けない）。[`service/system-user.md`](service/system-user.md) |
 | 制限（`--system`） | `NoNewPrivileges=yes`・`PrivateTmp=yes`・`ProtectSystem=full`・`ReadWritePaths="<workdir>"`。インストール時に設定を読み（`Config::load`。そのときの環境変数も効く）、`[agent].state_dir` と `[kubo].repo` が絶対パスで `<workdir>` の外にあれば `"-<path>"` として同じ行に足す。設定を読めなければ警告を出して `<workdir>` だけにする。`ProtectHome` は付けない。user unit には何も付けない |
 | `ExecStart` | `<exe> up --config <config>` |
 | `WorkingDirectory` | 設定ファイルの親ディレクトリ |
@@ -49,29 +52,11 @@
 
 unit に埋め込むパスとユーザー名は、systemd の指定子（`%`）と、`ExecStart` では環境変数の展開（`$`）も効かないようにエスケープする。
 
-- `install`: `--system` なら実行ユーザーを決めて検査し（下記）、unit を書き出し（同じディレクトリの一時ファイルに書いて flush してから rename する。plist も同じ）→ `systemctl [--user] daemon-reload` → `systemctl [--user] enable [--now] swing`（`--no-start` なら `--now` なし）。`--system` でなければ続けて `loginctl enable-linger <uid>` を試み、失敗したら `` Warning: could not run `loginctl enable-linger`. ... `` を出す（インストールは失敗にしない）。
+- `install`: `--system` なら実行ユーザーを決めて検査し（[`service/system-user.md`](service/system-user.md)）、unit を書き出し（同じディレクトリの一時ファイルに書いて `sync_all` してから rename する。plist も同じ）→ `systemctl [--user] daemon-reload` → `systemctl [--user] enable [--now] swing`（`--no-start` なら `--now` なし）。`--system` でなければ続けて `loginctl enable-linger <uid>` を試み、失敗したら `` Warning: could not run `loginctl enable-linger`. ... `` を出す（インストールは失敗にしない）。
 - `start`: `systemctl [--user] start swing`。
 - `stop`: `systemctl [--user] stop swing`。SIGTERM で停止シーケンス（[`up.md#shutdownshutdownrs`](up.md#shutdownshutdownrs)）に入り、登録は残る。watchdog や 2 回目のシグナルで終了コードが 1 になっても、systemd の停止操作なので再起動しない。
 - `uninstall`: `systemctl [--user] disable --now swing`（失敗は注記を出すだけ）→ unit ファイル削除 → `systemctl [--user] daemon-reload`。
 - `status`: unit ファイルが無ければ `not installed`。あれば `systemctl [--user] status swing --no-pager` をそのまま実行する（終了コードは伝えない）。
-
-### system unit の実行ユーザー
-
-`--system` の unit は root では動かさない。`install --system` は次の順に実行ユーザーを決め、passwd（`getpwnam`・`getpwuid`）で引いた名前を `User=` に書く。引けなければ `no such user: <name>`・`no user with uid <uid>` でエラー。
-
-1. `--run-as <user>`（名前か数字の uid）。引いた uid が 0 なら、`--allow-root` も付けないとエラー。
-2. 環境変数 `SUDO_UID`。`0` のときは使わない。数字でなければエラー。
-3. 実行している uid（root でなければ）。
-4. どれでもなければ `refusing to register a system service that runs swing as root: ...` でエラーにし、unit を書かない。
-
-続けて、実行ユーザー以外が unit の動かすものを差し替えられないことを確かめる。対象は実行ファイル（登録するパスと、シンボリックリンクを解決したパス）・設定ファイル・作業ディレクトリと、設定を読めて `[kubo].managed` が true なら Kubo のバイナリ（`[kubo].binary`、無ければ `kubo::locate_binary` が見つけたもの。見つからなければ確かめない）。それぞれ自身と祖先のディレクトリすべてが次をみたさなければ、問題のあるパスを並べた `refusing to register a system service that runs as <name>: ...` でエラーにし、unit を書かない。
-
-- 所有者が root か実行ユーザー（シンボリックリンクそのものは所有者だけを見る）。
-- その他のユーザーが書き込めない。グループの書き込みは、そのグループが所有者の個人グループ（名前が所有者のユーザー名と同じで、ほかのメンバーがいない）のときだけ許す。持ち主が root でも許さないので、Debian の `root:staff 2775` の `/usr/local` も断る。
-- root が持つ sticky ビット付きの祖先のディレクトリ（`/tmp` など）は上の 2 つを問わない。ただし確かめる対象そのものと、実行ファイル・Kubo のバイナリを直接収めるディレクトリ（書かれたパスと解決したパスのそれぞれの親）にはこの例外を当てはめない。
-- 調べられない（存在しないなど）ものもエラーに含める。
-
-決めたユーザーは `The service runs as user <name>.` と表示する。`swing up` はそのユーザー（`HOME` もそのユーザーのもの）で設定ファイルと `state_dir` を読み書きし、Kubo のバイナリを実行するので、設定ファイルと `state_dir` はそのユーザーが書ける場所に置く。
 
 ## macOS（launchd）
 
@@ -94,7 +79,7 @@ unit に埋め込むパスとユーザー名は、systemd の指定子（`%`）�
 - `start`: ロード済みなら `launchctl kickstart gui/<uid>/jp.ne.ama.swing`、ロードされていなければ `launchctl bootstrap gui/<uid> <plist>`（plist が無ければ `swing is not registered as a service` でエラー）。
 - `stop`: `launchctl kill SIGTERM gui/<uid>/jp.ne.ama.swing`（停止シーケンスは [`up.md#shutdownshutdownrs`](up.md#shutdownshutdownrs)）。停止シーケンスが終われば exit 0 なので `KeepAlive` により止まったままになり、次のログインで再び起動する。watchdog に打ち切られたときと、停止中にもう一度 SIGINT/SIGTERM を受けたときだけ exit 1 になり、launchd が再起動しうる。
 - `uninstall`: `launchctl bootout gui/<uid>/jp.ne.ama.swing`（失敗は無視）→ plist ファイル削除。
-- `bootout` の待ち（`macos::bootout`。本体・トレイとも）: `launchctl bootout` が成功したら、`launchctl print gui/<uid>/<label>` が失敗する（ジョブが消える）まで 200 ms ごとに確かめ、`STOP_TIMEOUT` + 10 秒で打ち切る。`bootout` はプロセスが終わる前に返り、ジョブが残っている間に同じラベルを `bootstrap` すると `5: Input/output error` で失敗するため。
+- `bootout` の待ち（`macos::bootout`。本体・トレイとも）: `launchctl bootout` が成功したら、`launchctl print gui/<uid>/<label>` が失敗する（ジョブが消える）まで 200 ms ごとに確かめ、`STOP_TIMEOUT` + 10 秒で打ち切る（`bootout` はプロセスが終わる前に返り、ジョブが残っている間に同じラベルを `bootstrap` すると `5: Input/output error` で失敗する）。
 - `status`: plist が無ければ `not installed`。あれば `launchctl print gui/<uid>/jp.ne.ama.swing` をそのまま実行する。
 
 ## Windows（タスクスケジューラ）
@@ -116,7 +101,7 @@ unit に埋め込むパスとユーザー名は、systemd の指定子（`%`）�
 
 - `install`: XML を UTF-16LE（BOM 付き。XML 宣言の `encoding="UTF-16"` に合わせる）で一時ディレクトリの `swing-task-<乱数>.xml` に本人だけが読める形で書き、`schtasks /Create /TN swing /XML <tmpfile> /F` で登録してから一時ファイルを消す。`--no-start` でなければ `schtasks /Run /TN swing` で起動する。
 - `start`: `schtasks /Run /TN swing`。
-- `stop`: 設定ファイルを `resolve_config_path(None)`（`--config` は取らない。`SWING_CONFIG`、ユーザーごとの既定の場所の順）で探して読み、`stop::run`（[`cli.md#stop`](cli.md#stop)）を 60 秒（`service::GRACEFUL_STOP_TIMEOUT`）のタイムアウトで呼ぶ。設定ファイルが無い・読めない・`stop::run` が失敗したときは、理由を `Warning: …` として出し、`schtasks /End /TN swing` にフォールバックする（`conhost.exe` が終わり、`swing` は `--exit-with-parent` でグレースフルに止まる）。タスクの登録は残る。
+- `stop`: 設定ファイルを `resolve_config_path(None)`（`--config` は取らない。探す順は [`config.md#設定ファイルの場所`](config.md#設定ファイルの場所)）で探して読み、`stop::run`（[`cli.md#stop`](cli.md#stop)）を 60 秒（`service::GRACEFUL_STOP_TIMEOUT`）のタイムアウトで呼ぶ。設定ファイルが無い・読めない・`stop::run` が失敗したときは、理由を `Warning: …` として出し、`schtasks /End /TN swing` にフォールバックする（`conhost.exe` が終わり、`swing` は `--exit-with-parent` でグレースフルに止まる）。タスクの登録は残る。
 - `uninstall`: トレイの登録を消した後、`stop` と同じグレースフルな停止を試み（失敗しても `Warning: …` を出して続ける）、`schtasks /End /TN swing`（失敗は無視）→ `schtasks /Delete /TN swing /F`。
 - 登録の判定（`is_installed` と `status`）: `schtasks /Query /TN swing` が成功すれば登録済み。失敗したら `schtasks /Query /FO CSV /NH` で全タスクを列挙し、それが成功して先頭列に `"\swing"`（大文字小文字は区別しない。サブフォルダのタスクは含めない）が無いときだけ未登録とする。どちらかの起動の失敗やタイムアウトは「分からない」（`None`）。
 - `status`: 未登録なら `not installed`、分からなければエラー終了する。登録済みなら `schtasks /Query /TN swing /FO LIST /V` の標準出力をそのまま表示する。

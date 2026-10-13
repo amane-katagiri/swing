@@ -13,8 +13,8 @@
 | `x86_64-pc-windows-msvc` | windows-latest | する | `cargo build` |
 
 - Rust のバージョンは各ワークフローの環境変数 `RUST_TOOLCHAIN` で決まり、Dockerfile の builder と同じにする（[`docker.md#dockerfile`](docker.md#dockerfile)）。Linux は musl の静的バイナリにする。
-- workspace には `swing` と `swing-tray`（`tray/`）がある。fmt は `cargo fmt --all --check`、clippy / test は `--workspace` で回し、いずれもワークスペース全体（`tray/` を含む）を対象にする。Linux は `-p swing` だけをビルドし、Windows と macOS は `--workspace` でビルドする。
-- Windows 向けのビルドでは、`build.rs`（`swing` と `swing-tray` の両方）が `winresource` でファイルアイコン（`swing` は `assets/swing.ico`、`swing-tray` は `tray/assets/swing-tray.ico`）とバージョン情報（`Cargo.toml` の `name`・`version`）を exe に埋め込む。他の target では何もしない。
+- fmt は `cargo fmt --all --check`、clippy / test は `--workspace` で、ワークスペース全体（`swing` と `tray/` の `swing-tray`）を対象にする。Linux は `-p swing` だけをビルドし、Windows と macOS は `--workspace` でビルドする。
+- Windows 向けのビルドでは、`build.rs`（`swing` と `swing-tray` の両方）が `winresource` でファイルアイコン（`swing` は `assets/swing.ico`、`swing-tray` は `tray/assets/swing-tray.ico`）と、`winresource` が既定で入れるバージョン情報（`Cargo.toml` の `name`・`version`）を exe に埋め込む。他の target では何もしない。
 - macOS の `swing` は素の実行ファイルで、ファイルアイコンは付かない。`swing-tray` は `tray/macos/bundle.sh` で `SWING.app` にまとめ、アイコンと名前はバンドルが持つ（[`tray.md`](tray.md#macos-のアプリバンドルswingapp)）。
 - 成果物は `swing-<ref>-<target>.tar.gz`（Windows は `.zip`）で、中身は `swing`（`swing.exe`）・`LICENSE`・`web/fonts/LICENSE-PixelMplus.txt`・`web/emoji/LICENSE-twemoji.txt`・`swing.example.toml` と、`docs/release/README.md` を `README.md` に改名したもの。Windows には `swing-tray.exe`、macOS には `SWING.app` も入れる。Kubo は同梱しない。
 - `release` ジョブは、`packaging/linux/install.sh`（[`install-sh.md`](install-sh.md)）を `install.sh` としてアーカイブと並べてリリースに添える。`SHA256SUMS` はこれを含めて作る。
@@ -41,12 +41,12 @@
 
 ## リリースの手順
 
-`packaging/release/` のスクリプトで行う。どれも POSIX sh で、リポジトリのどこから実行してもリポジトリの直下で動く。`<version>` は `0.1.3` か `v0.1.3`。コミットするスクリプトは、環境変数 `SWING_RELEASE_TRAILER` があればその内容をコミットメッセージの 2 段落目に入れる。
+`packaging/release/` のスクリプトで行う。どれも POSIX sh で、リポジトリのどこから実行してもリポジトリの直下で動く。`<version>` は `0.1.3` か `v0.1.3`（`v` の後が `X.Y.Z` か `X.Y.Z-<英数字と .>` でなければ止まる）。コミットするスクリプトは、環境変数 `SWING_RELEASE_TRAILER` があればその内容をコミットメッセージの 2 段落目に入れる。
 
 | スクリプト | すること | 止まる条件 |
 |---|---|---|
 | `bump.sh <version>` | `Cargo.toml` と `tray/Cargo.toml` の最初の `version = "..."` を書き換え、`cargo update --workspace --offline` で `Cargo.lock` を合わせて `Bump the version to <version>` をコミットする。push はしない | `main` でない、作業ツリーに変更がある、`origin/main` より遅れている、すでにそのバージョン |
-| `check.sh <version>` | 今のコミットを作業ブランチ `release-<version>` に push し（あれば上書き）、`release`・`macos-check`・`windows-check`・`windows-installer-check`・`homebrew-check` をそのブランチで手動実行して、全部が終わるまで待つ。終わったらブランチを消す。`release` をブランチで動かすので、イメージが `release-<version>` のタグで push される | `bump.sh` と同じ条件（すでにそのバージョン、を除く）、バージョンが違う、どれかのワークフローが失敗した（ブランチは消してから止まる） |
+| `check.sh <version>` | 今のコミットを作業ブランチ `release-<version>` に強制 push し、`release`・`macos-check`・`windows-check`・`windows-installer-check`・`homebrew-check` をそのブランチで手動実行して、全部が終わるまで待つ。終わったらブランチを消す。`release` をブランチで動かすので、イメージが `release-<version>` のタグで push される | `bump.sh` と同じ条件（すでにそのバージョン、を除く）、バージョンが違う、ワークフローの実行が 5 分以内に始まらない（ワークフローごとに順に待つ。ブランチは残して止まる）、どれかのワークフローが失敗した（ブランチは消してから止まる） |
 | `tag.sh <version>` | 同じコミットで、上の 5 つのワークフローの最新の手動実行がすべて成功していることを確かめてから、`main` を push し、注釈付きタグ `v<version>` を打って push する。タグの push で `release.yml` がドラフトのリリースを作る | `bump.sh` と同じ条件、`Cargo.toml` か `tray/Cargo.toml` のバージョンが違う、`check.sh` の 5 つのどれかが通っていない、タグがローカルか `origin` にすでにある |
 | `notes.sh <version> <notes.md>` | ドラフトのリリースの本文を `gh release edit --notes-file` で差し替える。本文のひな形は `notes-template.md` | ファイルが無いか空、リリースが無いかドラフトでない |
 | `update-tap.sh <version>` | リリースに付いた `swing.rb` を取り、tap（`amane-katagiri/homebrew-swing`）の `Formula/swing.rb` を差し替えて `Update the swing formula for v<version>` をコミットして push する。すでに同じ中身なら何もしない | リリースが無いかドラフト、`swing.rb` の URL がそのタグを指していない |

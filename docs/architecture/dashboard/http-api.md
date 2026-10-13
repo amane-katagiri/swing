@@ -6,8 +6,9 @@
 
 ### 形式とエラー
 
-- すべて JSON。公開鍵は `pubkey`（小文字 hex）と `npub` を併記する。時刻は epoch 秒の整数。無い値は `null`（例外は `GET /api/config` の `display`・`raw`・`options` で、無いときはフィールドごと出ない）。`POST /api/publish/upload` と `POST /api/publish/check` だけ `multipart/form-data` を受ける。
+- すべて JSON。公開鍵は `pubkey`（小文字 hex）と `npub` を併記する。`fingerprint` はその公開鍵の絵文字のフィンガープリントで、4 つの Twemoji のコードポイント（16 進の小文字）の配列（[`fingerprint.md`](fingerprint.md)）。時刻は epoch 秒の整数。無い値は `null`（例外は `GET /api/config` の `display`・`raw`・`options` で、無いときはフィールドごと出ない）。`POST /api/publish/upload` と `POST /api/publish/check` だけ `multipart/form-data` を受ける。
 - ハンドラが返すエラーは `{ "error": "<メッセージ>" }` とステータスコード。
+- relay ごとの送信結果（`relays[]`・`note.relays[]`）は `{ "relay", "ok", "error" }`。`error` は relay が断った理由で、制御文字などを除き 500 文字を超える分は `…` に切り詰める（`RelayResultDto`。CLI の表示と同じ長さ）。
 
 | ステータス | 条件 |
 |---|---|
@@ -32,11 +33,12 @@ API は `swing up` の寿命で動き続ける（[`../up.md`](../up.md)）。
 |---|---|
 | relay か Kubo を使うもの（`/api/sites`・`/api/status`・`/api/mirror`・`/api/mirror/add`・`/api/mirror/remove`・`/api/webring`・`/api/replicas`・`/api/publish/sites`・`/api/publish/previous-files`・`/api/publish/upload`） | agent が relay と Kubo を渡すまで（起動時の突き合わせの後。[`../agent.md#全体の流れ`](../agent.md#全体の流れ)）と、agent が落ちてから次に渡すまで（[`../dashboard.md`](../dashboard.md)）は 503 `{"error": "agent is not ready"}`。セットアップモード（[`../up.md#セットアップモード鍵未設定`](../up.md#セットアップモード鍵未設定)）の間は常に 503 `{"error": "agent is not configured"}` |
 | `/api/overview`・`/api/activity`・`/api/stats`・`/api/mirror/preview`・`/api/config`・`/api/shutdown`・`/api/restart`・`/api/login`・`/api/identity`・`/api/login-code`・`/api/token/rotate` | 無い（常に応答する） |
+| `/api/publish/check` | `nip05` が `off` でなければ、セットアップモードの間は 503 `{"error": "agent is not configured"}`。それ以外は常に応答する |
 | `/api/setup` | セットアップモードでなければ 409（ほかの 409 は [`http-api/config.md`](http-api/config.md#post-apisetup)） |
 | `/api/setup/signer` | セットアップモードでも署名アプリを使っている間でもなければ 409 |
 | `/api/signer/reconnect` | 署名アプリを使っていなければ 409 |
 
-`/api/publish/upload` の判定の順は [`http-api/publish.md`](http-api/publish.md#post-apipublishupload)。署名を伴う API（`/api/mirror/add`・`/api/mirror/remove`・`/api/publish/upload`）は、NIP-46 の署名アプリを使っていると署名アプリの返事を待ち、署名できなければ 502 になる（待ち時間とオフラインのときの扱いは [`../signer.md`](../signer.md)）。
+`/api/publish/upload` の判定の順は [`http-api/publish.md`](http-api/publish.md#post-apipublishupload)、[`/api/publish/check`](http-api/publish.md#post-apipublishcheck) の判定の順はそのページ。署名を伴う API（`/api/mirror/add`・`/api/mirror/remove`・`/api/publish/upload`）は、NIP-46 の署名アプリを使っていると署名アプリの返事を待ち、署名できなければ 502 になる（待ち時間とオフラインのときの扱いは [`../signer.md`](../signer.md)）。
 
 ### 件数と負荷
 

@@ -4,14 +4,18 @@
 
 - [`dashboard/security.md`](dashboard/security.md) — ガード・認証・リバースプロキシ経由での公開・既知の弱点・秘密鍵を出さない仕組み
 - [`dashboard/http-api.md`](dashboard/http-api.md) — HTTP API の共通規則とエンドポイント一覧（各エンドポイントは `dashboard/http-api/` の子ページ）
-- [`dashboard/web.md`](dashboard/web.md) — フロントエンド（`web/*.js`）の構成と共通部品
+- [`dashboard/web.md`](dashboard/web.md) — フロントエンド（`web/*.js`）の構成・ルーティング・API の呼び方
   - [`dashboard/views.md`](dashboard/views.md) — Desktop 以外の各画面
     - [`dashboard/views/publish.md`](dashboard/views/publish.md) — Publish 画面
+    - [`dashboard/views/webring.md`](dashboard/views/webring.md) — Webring 画面とグラフ
+    - [`dashboard/views/settings.md`](dashboard/views/settings.md) — Settings 画面
+  - [`dashboard/web/ui.md`](dashboard/web/ui.md) — 共通の UI 部品
   - [`dashboard/css.md`](dashboard/css.md) — CSS カスタマイズのインターフェース
   - [`dashboard/fingerprint.md`](dashboard/fingerprint.md) — アカウントの絵文字のフィンガープリント（`src/fingerprint.rs`・`web/emoji/`・`web/emoji.svg`）
 - [`dashboard/desktop.md`](dashboard/desktop.md) — Desktop 画面（`web/desktop*`）
   - [`dashboard/desktop/control-panel.md`](dashboard/desktop/control-panel.md) — 「コントロール パネル」ダイアログ
   - [`dashboard/desktop/mirror-add.md`](dashboard/desktop/mirror-add.md) — 「ミラーに追加」ダイアログとフィンガープリントのドット絵
+  - [`dashboard/desktop/link-page.md`](dashboard/desktop/link-page.md) — SWING Explorer ウィンドウの中身のリンク集ページと、差し替えるページが使える契約
   - [`dashboard/mascot.md`](dashboard/mascot.md) — Desktop 画面のマスコット（`web/desktop-mascot*`・`web/mascots/`）
 - [`dashboard/notices.md`](dashboard/notices.md) — どの画面でも動く更新の確認・おしらせの出し分け・ブラウザの通知
 
@@ -37,7 +41,7 @@ HTTP サーバー（axum 0.8）で、ブラウザ向けの管理画面（`[dashb
 `up::run` の中で行う（全体の起動順とサーバタスクを止める時機は [`up.md`](up.md)）。
 
 - `[dashboard].listen` に bind する。失敗すると `swing up` の起動がエラーで終わる（セットアップモードではポートをずらす。[`up.md#セットアップモードでのポートの調整`](up.md#セットアップモードでのポートの調整)）。ループバック以外で待ち受けたときの warn は [`dashboard/security.md#リバースプロキシ経由での公開`](dashboard/security.md#リバースプロキシ経由での公開)。
-- `dashboard::serve` を別タスクとして `tokio::spawn` し、``dashboard listening; run `swing dashboard open` to log in`` を info で出す。
+- `dashboard::serve` を `tokio::spawn` で別タスクとして走らせる。`serve` は ``dashboard listening; run `swing dashboard open` to log in`` を info で出す。
 
 ## 設定（`[dashboard]`）
 
@@ -67,9 +71,9 @@ HTTP サーバー（axum 0.8）で、ブラウザ向けの管理画面（`[dashb
 
 `[dashboard].ui = true` のときだけ配信する（`ui_router()`）。差し替えないファイルは `assets/mod.rs::STATIC_ASSETS`（パス・Content-Type・本体の配列）にまとめてあり、`assets::register()` がそのままルートに登録する。`/desktop-page.html`・`/desktop-page.css`・`/desktop-banner` は `DesktopAssets::load` で読んだものを `AppState.desktop` に、`/mascots/*` は `mascots::MascotRegistry` に持つ（読む時機は上記「[設定](#設定dashboard)」）。これらは認証が要る（[`dashboard/security.md#ガード`](dashboard/security.md#ガード)）。リクエストのたびにディスクを読むのは `/custom.css` だけ。
 
-キャッシュと圧縮は `assets/delivery.rs`（`Prepared`・`bytes_asset`）が受け持つ。`/custom.css` 以外のファイルの応答には `Cache-Control: no-cache` と、本体の SHA-256 の先頭 16 バイトを 16 進にした強い `ETag` を付ける（`STATIC_ASSETS` の分は最初のリクエストで一度だけ計算し、`AppState` に持つものはリクエストのたびに計算する）。`If-None-Match` のどれか（`W/` は外して比べる）か `*` が一致すれば、本体と `Content-Type` を付けずに `304` を返す（`ETag` と `Cache-Control` は付ける）。URL に版を含めない（モジュールは `./x.js` で import する）ので長期のキャッシュは指定せず、毎回確かめて変わっていなければ本体を送らない。
+キャッシュと圧縮は `assets/delivery.rs`（`Prepared`・`bytes_asset`）が受け持つ。`/custom.css` 以外のファイルの応答には `Cache-Control: no-cache` と、本体の SHA-256 の先頭 16 バイトを 16 進にした強い `ETag` を付ける（`STATIC_ASSETS` の分は最初のリクエストで全部まとめて一度だけ計算し、`AppState` に持つものはリクエストのたびに計算する）。`If-None-Match` のどれか（`W/` は外して比べる）か `*` が一致すれば、本体と `Content-Type` を付けずに `304` を返す（`ETag` と `Cache-Control` は付ける）。URL に版を含めない（モジュールは `./x.js` で import する）ので、長期のキャッシュを指定すると更新が届かなくなる。
 
-`STATIC_ASSETS` のうち `text/*` と `image/svg+xml` のものは、最初のリクエストで全部をまとめて gzip（`flate2`、最大の圧縮率）し、元より小さくなったものだけ圧縮版を持つ。圧縮版を持つファイルは、`Accept-Encoding` に `gzip` か `*` が `q` 0 より大きく入っていれば圧縮版を `Content-Encoding: gzip` で返し、どちらの版の応答（`304` を含む）にも `Vary: accept-encoding` を付ける。`ETag` は版ごとにその本体から作るので、圧縮版と元の版で別の値になる。画像・フォントと、`AppState` に持つファイルは圧縮しない。
+`STATIC_ASSETS` のうち `text/*` と `image/svg+xml` のものは、`ETag` と同じときに gzip（`flate2`、最大の圧縮率）し、元より小さくなったものだけ圧縮版を持つ。圧縮版を持つファイルは、`Accept-Encoding` に `gzip` か `*` が `q` 0 より大きく入っていれば圧縮版を `Content-Encoding: gzip` で返し、どちらの版の応答（`304` を含む）にも `Vary: accept-encoding` を付ける。`ETag` は版ごとにその本体から作るので、圧縮版と元の版で別の値になる。画像・フォントと、`AppState` に持つファイルは圧縮しない。
 
 | ルート | Content-Type |
 |---|---|
@@ -78,7 +82,7 @@ HTTP サーバー（axum 0.8）で、ブラウザ向けの管理画面（`[dashb
 | `GET /favicon-32.png` `/apple-touch-icon.png` | `image/png` |
 | `GET /*.css` | `text/css; charset=utf-8`。一覧は `STATIC_ASSETS` が正本 |
 | `GET /*.js` | `text/javascript; charset=utf-8`。一覧は `STATIC_ASSETS` が正本（役割は [`dashboard/web.md#構成`](dashboard/web.md#構成)） |
-| `GET /desktop-page.html` `/desktop-page.css` | `text/html; charset=utf-8` / `text/css; charset=utf-8`。リンク集ページとその CSS（ページの契約は [`dashboard/desktop.md#リンク集ページiframe`](dashboard/desktop.md#リンク集ページiframe)） |
+| `GET /desktop-page.html` `/desktop-page.css` | `text/html; charset=utf-8` / `text/css; charset=utf-8`。リンク集ページとその CSS（ページの契約は [`dashboard/desktop/link-page.md`](dashboard/desktop/link-page.md)） |
 | `GET /desktop-banner` | 同梱版は `image/gif`。差し替えると拡張子から決める |
 | `GET /mascots/index.json` `/mascots/<id>/manifest.json` | `application/json` |
 | `GET /mascots/<id>/<sprite>` | `image/png`・`image/gif`・`image/webp`（拡張子から決める） |
