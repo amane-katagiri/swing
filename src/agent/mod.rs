@@ -55,7 +55,7 @@ where
     N: Nip05Verify + Send + Sync + 'static,
     R: ReportRelay + Send + Sync + 'static,
 {
-    // Signing each report can wait on the signer app, so the round runs beside the event loop and never twice at once. The resend of held site events follows the reports in the same task so that their relay fetches never overlap.
+    // Signing a report can wait on the signer app, so the round runs beside the event loop, never twice at once, and the resend follows it so their fetches never overlap.
     fn start_report_round(
         self: &Arc<Self>,
         relay: &Arc<RelayClient>,
@@ -382,24 +382,15 @@ mod tests {
         fx.seed(D, "bafy-a", 1, 100).await;
         let mut tasks = JoinSet::new();
         let now = tokio::time::Instant::now();
-        assert!(
-            fx.agent
-                .begin_report_round(now, None::<std::future::Ready<()>>, &mut tasks)
-        );
-        assert!(
-            !fx.agent
-                .begin_report_round(now, None::<std::future::Ready<()>>, &mut tasks)
-        );
+        assert!(fx.agent.begin_report_round(now, NO_RESEND, &mut tasks));
+        assert!(!fx.agent.begin_report_round(now, NO_RESEND, &mut tasks));
         assert_eq!(tasks.len(), 1);
         while let Some(joined) = tasks.join_next().await {
             joined.unwrap();
         }
         assert_eq!(fx.take_reports().len(), 1);
 
-        assert!(
-            fx.agent
-                .begin_report_round(now, None::<std::future::Ready<()>>, &mut tasks)
-        );
+        assert!(fx.agent.begin_report_round(now, NO_RESEND, &mut tasks));
         assert_eq!(tasks.len(), 1);
         while tasks.join_next().await.is_some() {}
     }

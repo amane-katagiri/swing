@@ -11,7 +11,7 @@ mod resend;
 mod site;
 
 pub use client::{
-    DeletionAnswers, Paged, RelayAnswers, RelayClient, RelaySendResult, ReportRelay,
+    DeletionAnswers, Paged, RelayAnswers, RelayClient, RelaySendResult, ReportRelay, SiteAnswer,
     bounded_client, print_relay_line, print_relay_send_result_lines, relay_send_results,
     with_rejection_hint,
 };
@@ -24,8 +24,8 @@ pub use report::{
     site_coordinate,
 };
 pub use resend::{
-    DeletionMatch, Withdrawal, Withdrawals, is_saved_site_event, keep_newest_site,
-    plan_site_resends,
+    DeletionMatch, ResendPlan, Withdrawal, Withdrawals, keep_newest_site, plan_site_resends,
+    saved_site_event,
 };
 pub use site::{
     SignedSite, SiteEvent, SiteFields, build_site_event_builder, build_site_note_builder,
@@ -136,30 +136,9 @@ pub fn newest_by_address(events: impl IntoIterator<Item = Event>, now: u64) -> V
 mod fixtures {
     use nostr_sdk::prelude::*;
 
-    use super::{SiteFields, build_site_event_builder};
     use crate::test_support::{self, CID_A};
 
-    pub(super) fn make_site_event(
-        keys: &Keys,
-        kind: u16,
-        d: &str,
-        cid: &str,
-        created_at: u64,
-    ) -> Event {
-        build_site_event_builder(
-            kind,
-            &SiteFields {
-                d,
-                cid,
-                url: Some("https://example.com/"),
-                size: Some(1234),
-                ..Default::default()
-            },
-        )
-        .custom_created_at(Timestamp::from_secs(created_at))
-        .finalize(keys)
-        .unwrap()
-    }
+    pub(super) use crate::test_support::make_site_event;
 
     pub(super) fn follow_set(keys: &Keys, d: &str, created_at: u64, marker: &str) -> Event {
         EventBuilder::new(Kind::Custom(super::FOLLOW_SET_KIND), marker)

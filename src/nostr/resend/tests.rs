@@ -1,32 +1,28 @@
-use super::super::fixtures::make_site_event;
 use super::*;
-use crate::test_support::{CID_A, CID_B, keys};
+use crate::test_support::{CID_A, CID_B, deletion_event as deletion, keys, make_site_event};
 
 const KIND: u16 = 35980;
 const NOW: u64 = 1_000_000;
 
-fn relay(name: &str, sites: Vec<Option<Option<Event>>>) -> RelayAnswers {
+fn relay(name: &str, sites: Vec<SiteAnswer>) -> RelayAnswers {
     RelayAnswers {
         relay: RelayUrl::parse(&format!("wss://{name}.example")).unwrap(),
         sites,
     }
 }
 
-fn names(plan: &[RelayUrl]) -> Vec<String> {
-    plan.iter()
+fn names(plan: &ResendPlan) -> Vec<String> {
+    let ResendPlan::SendTo(relays) = plan else {
+        panic!("expected relays to send to, got {plan:?}");
+    };
+    relays
+        .iter()
         .map(|u| u.as_str().trim_end_matches('/').to_string())
         .collect()
 }
 
-fn deletion(k: &Keys, tags: &[[&str; 2]], created_at: u64) -> Event {
-    let mut builder = EventBuilder::new(Kind::EventDeletion, "");
-    for tag in tags {
-        builder = builder.tag(Tag::parse(*tag).unwrap());
-    }
-    builder
-        .custom_created_at(Timestamp::from_secs(created_at))
-        .finalize(k)
-        .unwrap()
+fn found(event: &Event) -> SiteAnswer {
+    SiteAnswer::Found(event.clone())
 }
 
 fn newest_of(events: &[Event], author: &PublicKey, d: &str) -> Option<Event> {
@@ -47,6 +43,8 @@ fn only_a_valid_plausible_site_event_of_the_site_is_kept_as_newest() {
     let too_far_ahead = make_site_event(&k, KIND, "a.example", CID_B, NOW + 10_000);
     let by_someone_else = make_site_event(&keys(), KIND, "a.example", CID_B, 400);
     let other_kind = make_site_event(&k, KIND + 1, "a.example", CID_B, 400);
+    let mut bad_signature = make_site_event(&k, KIND, "a.example", CID_B, 400);
+    bad_signature.sig = older.sig;
 
     assert_eq!(
         newest_of(&[newer.clone(), older.clone()], &author, "a.example"),
@@ -58,7 +56,13 @@ fn only_a_valid_plausible_site_event_of_the_site_is_kept_as_newest() {
     );
     assert_eq!(
         newest_of(
-            &[other_site, too_far_ahead, by_someone_else, other_kind],
+            &[
+                other_site,
+                too_far_ahead,
+                by_someone_else,
+                other_kind,
+                bad_signature
+            ],
             &author,
             "a.example"
         ),
@@ -71,21 +75,38 @@ fn a_held_site_goes_only_to_the_relays_that_answered_without_it() {
     let k = keys();
     let held = make_site_event(&k, KIND, "a.example", CID_A, 200);
     let older = make_site_event(&k, KIND, "a.example", CID_B, 100);
-    let newer = make_site_event(&k, KIND, "a.example", CID_B, 300);
 
     let answers = vec![
-        relay("same", vec![Some(Some(held.clone()))]),
-        relay("newer", vec![Some(Some(newer))]),
-        relay("older", vec![Some(Some(older))]),
-        relay("none", vec![Some(None)]),
-        relay("failed", vec![None]),
+        relay("same", vec![found(&held)]),
+        relay("older", vec![found(&older)]),
+        relay("none", vec![SiteAnswer::Missing]),
+        relay("failed", vec![SiteAnswer::Unanswered]),
         relay("short", Vec::new()),
     ];
 
-    let plan = plan_site_resends(std::slice::from_ref(&held), &answers);
+    let plan = plan_site_resends(&[&held], &answers);
     assert_eq!(
         names(&plan[0]),
         vec!["wss://older.example", "wss://none.example"]
+    );
+}
+
+#[test]
+fn a_held_site_is_not_sent_anywhere_once_any_relay_holds_a_newer_version() {
+    let k = keys();
+    let held = make_site_event(&k, KIND, "a.example", CID_A, 200);
+    let newer = make_site_event(&k, KIND, "a.example", CID_B, 300);
+    let newest = make_site_event(&k, KIND, "a.example", CID_B, 400);
+
+    let answers = vec![
+        relay("none", vec![SiteAnswer::Missing]),
+        relay("newer", vec![found(&newer)]),
+        relay("newest", vec![found(&newest)]),
+        relay("same", vec![found(&held)]),
+    ];
+    assert_eq!(
+        plan_site_resends(&[&held], &answers),
+        vec![ResendPlan::Superseded(&newest)]
     );
 }
 
@@ -96,12 +117,15 @@ fn a_rewrite_at_the_same_time_counts_as_newer_only_with_a_lower_id() {
     let y = make_site_event(&k, KIND, "a.example", CID_B, 200);
     let (low, high) = if x.id < y.id { (x, y) } else { (y, x) };
 
-    let has_low = vec![relay("r", vec![Some(Some(low.clone()))])];
-    assert!(plan_site_resends(std::slice::from_ref(&high), &has_low)[0].is_empty());
-    let has_high = vec![relay("r", vec![Some(Some(high))])];
+    let has_low = vec![relay("r", vec![found(&low)])];
     assert_eq!(
-        plan_site_resends(std::slice::from_ref(&low), &has_high)[0].len(),
-        1
+        plan_site_resends(&[&high], &has_low),
+        vec![ResendPlan::Superseded(&low)]
+    );
+    let has_high = vec![relay("r", vec![found(&high)])];
+    assert_eq!(
+        names(&plan_site_resends(&[&low], &has_high)[0]),
+        vec!["wss://r.example"]
     );
 }
 
@@ -110,9 +134,9 @@ fn each_held_site_is_planned_from_its_own_answer() {
     let k = keys();
     let a = make_site_event(&k, KIND, "a.example", CID_A, 200);
     let b = make_site_event(&k, KIND, "b.example", CID_A, 200);
-    let answers = vec![relay("r", vec![Some(Some(a.clone())), Some(None)])];
-    let plan = plan_site_resends(&[a, b], &answers);
-    assert!(plan[0].is_empty());
+    let answers = vec![relay("r", vec![found(&a), SiteAnswer::Missing])];
+    let plan = plan_site_resends(&[&a, &b], &answers);
+    assert!(names(&plan[0]).is_empty());
     assert_eq!(names(&plan[1]), vec!["wss://r.example"]);
 }
 
@@ -186,7 +210,6 @@ fn deletions_by_the_author_withdraw_the_held_version() {
     );
     let stranger = keys();
     let by_someone_else = deletion(&stranger, &[["e", &id], ["a", &coordinate]], 300);
-    let too_far_ahead = deletion(&k, &[["e", &id], ["a", &coordinate]], NOW + 10_000);
     let not_a_deletion = EventBuilder::new(Kind::TextNote, "")
         .tag(Tag::parse(["e", &id]).unwrap())
         .finalize(&k)
@@ -200,7 +223,6 @@ fn deletions_by_the_author_withdraw_the_held_version() {
                 other_site,
                 other_kind,
                 by_someone_else,
-                too_far_ahead,
                 not_a_deletion,
             ]
         ),
@@ -209,7 +231,31 @@ fn deletions_by_the_author_withdraw_the_held_version() {
 }
 
 #[test]
-fn a_note_tells_which_asked_tags_matched_even_when_dated_too_far_ahead() {
+fn a_deletion_dated_too_far_ahead_withdraws_by_id_and_by_address_up_to_the_skew() {
+    let k = keys();
+    let held = make_site_event(&k, KIND, "a.example", CID_A, 200);
+    let (_, coordinates) = asked(&held);
+    let coordinate = coordinates.iter().next().unwrap();
+    let id = held.id.to_hex();
+
+    assert_eq!(
+        withdrawal_by(&held, &[deletion(&k, &[["e", &id]], NOW + 10_000)]),
+        Some(Withdrawal {
+            by_id: true,
+            through: None
+        })
+    );
+    assert_eq!(
+        withdrawal_by(&held, &[deletion(&k, &[["a", coordinate]], NOW + 10_000)]),
+        Some(Withdrawal {
+            by_id: false,
+            through: Some(NOW + MAX_FUTURE_SKEW)
+        })
+    );
+}
+
+#[test]
+fn a_note_tells_which_asked_tags_matched() {
     let k = keys();
     let held = make_site_event(&k, KIND, "a.example", CID_A, 200);
     let (ids, coordinates) = asked(&held);
@@ -224,10 +270,6 @@ fn a_note_tells_which_asked_tags_matched_even_when_dated_too_far_ahead() {
             by_address: true
         }
     );
-    let ahead = deletion(&k, &[["a", &coordinate]], NOW + 10_000);
-    let mut ahead_index = Withdrawals::default();
-    assert!(ahead_index.note(&ahead, &ids, &coordinates, NOW).by_address);
-    assert_eq!(ahead_index, Withdrawals::default());
     let unrelated = deletion(&k, &[["e", &"0".repeat(64)]], 300);
     assert_eq!(
         index.note(&unrelated, &ids, &coordinates, NOW),
@@ -275,37 +317,24 @@ fn merged_indexes_keep_every_id_and_the_latest_address_deletion() {
 fn only_a_valid_signed_site_event_of_the_key_is_sent_again() {
     let k = keys();
     let held = make_site_event(&k, KIND, "a.example", CID_A, 200);
-    assert!(is_saved_site_event(
-        &held,
-        &k.public_key(),
-        "a.example",
-        KIND
-    ));
-    assert!(!is_saved_site_event(
-        &held,
-        &keys().public_key(),
-        "a.example",
-        KIND
-    ));
-    assert!(!is_saved_site_event(
-        &held,
-        &k.public_key(),
-        "b.example",
-        KIND
-    ));
-    assert!(!is_saved_site_event(
-        &held,
-        &k.public_key(),
-        "a.example",
-        KIND + 1
-    ));
+    let saved = |event: &Event, author: &PublicKey, d: &str, kind: u16| {
+        saved_site_event(event, author, d, kind).map(|site| site.id)
+    };
+    assert_eq!(
+        saved(&held, &k.public_key(), "a.example", KIND),
+        Some(held.id)
+    );
+    assert_eq!(saved(&held, &keys().public_key(), "a.example", KIND), None);
+    assert_eq!(saved(&held, &k.public_key(), "b.example", KIND), None);
+    assert_eq!(saved(&held, &k.public_key(), "a.example", KIND + 1), None);
 
     let mut forged = held.clone();
     forged.content = "changed".into();
-    assert!(!is_saved_site_event(
-        &forged,
-        &k.public_key(),
-        "a.example",
-        KIND
-    ));
+    assert_eq!(saved(&forged, &k.public_key(), "a.example", KIND), None);
+    let mut bad_signature = held.clone();
+    bad_signature.sig = make_site_event(&k, KIND, "a.example", CID_B, 200).sig;
+    assert_eq!(
+        saved(&bad_signature, &k.public_key(), "a.example", KIND),
+        None
+    );
 }

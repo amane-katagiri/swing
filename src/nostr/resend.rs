@@ -2,17 +2,27 @@ use std::collections::{HashMap, HashSet};
 
 use nostr_sdk::prelude::*;
 
-use super::{RelayAnswers, is_newer_replaceable, parse_site_event, plausible_at, site_coordinate};
+use super::{
+    MAX_FUTURE_SKEW, RelayAnswers, SiteAnswer, SiteEvent, is_newer_replaceable, parse_site_event,
+    plausible_at, site_coordinate,
+};
 
-pub fn is_saved_site_event(
+fn site_of(event: &Event, author: &PublicKey, d: &str, site_event_kind: u16) -> Option<SiteEvent> {
+    if event.pubkey != *author {
+        return None;
+    }
+    parse_site_event(event, site_event_kind)
+        .ok()
+        .filter(|site| site.d == d)
+}
+
+pub fn saved_site_event(
     event: &Event,
     author: &PublicKey,
     d: &str,
     site_event_kind: u16,
-) -> bool {
-    event.pubkey == *author
-        && parse_site_event(event, site_event_kind).is_ok_and(|site| site.d == d)
-        && event.verify().is_ok()
+) -> Option<SiteEvent> {
+    site_of(event, author, d, site_event_kind).filter(|_| event.verify().is_ok())
 }
 
 pub fn keep_newest_site(
@@ -23,38 +33,50 @@ pub fn keep_newest_site(
     site_event_kind: u16,
     now: u64,
 ) {
-    if event.pubkey != *author
-        || !plausible_at(event.created_at.as_secs(), now)
-        || !parse_site_event(&event, site_event_kind).is_ok_and(|site| site.d == d)
+    if !plausible_at(event.created_at.as_secs(), now)
+        || slot
+            .as_ref()
+            .is_some_and(|current| !is_newer_replaceable(&event, current))
+        || saved_site_event(&event, author, d, site_event_kind).is_none()
     {
         return;
     }
-    if slot
-        .as_ref()
-        .is_none_or(|current| is_newer_replaceable(&event, current))
-    {
-        *slot = Some(event);
-    }
+    *slot = Some(event);
 }
 
-fn relay_lacks(held: &Event, newest: Option<&Event>) -> bool {
-    newest.is_none_or(|found| found.id != held.id && is_newer_replaceable(held, found))
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ResendPlan<'a> {
+    Superseded(&'a Event),
+    SendTo(Vec<RelayUrl>),
 }
 
-pub fn plan_site_resends(held: &[Event], answers: &[RelayAnswers]) -> Vec<Vec<RelayUrl>> {
+pub fn plan_site_resends<'a>(held: &[&Event], answers: &'a [RelayAnswers]) -> Vec<ResendPlan<'a>> {
     held.iter()
         .enumerate()
         .map(|(i, event)| {
-            answers
-                .iter()
-                .filter(|a| {
-                    a.sites
-                        .get(i)
-                        .and_then(Option::as_ref)
-                        .is_some_and(|newest| relay_lacks(event, newest.as_ref()))
+            let found = || {
+                answers.iter().filter_map(move |a| match a.sites.get(i) {
+                    Some(SiteAnswer::Found(found)) => Some(found),
+                    _ => None,
                 })
-                .map(|a| a.relay.clone())
-                .collect()
+            };
+            let newest = found()
+                .filter(|found| is_newer_replaceable(found, event))
+                .reduce(|a, b| if is_newer_replaceable(b, a) { b } else { a });
+            if let Some(newer) = newest {
+                return ResendPlan::Superseded(newer);
+            }
+            ResendPlan::SendTo(
+                answers
+                    .iter()
+                    .filter(|a| match a.sites.get(i) {
+                        Some(SiteAnswer::Missing) => true,
+                        Some(SiteAnswer::Found(found)) => found.id != event.id,
+                        Some(SiteAnswer::Unanswered) | None => false,
+                    })
+                    .map(|a| a.relay.clone())
+                    .collect(),
+            )
         })
         .collect()
 }
@@ -78,7 +100,6 @@ pub struct Withdrawal {
 }
 
 impl Withdrawals {
-    // Only the tags naming what was asked about are indexed, so a deletion with hundreds of tags costs no more than one with a single tag.
     pub fn note(
         &mut self,
         deletion: &Event,
@@ -90,7 +111,10 @@ impl Withdrawals {
         if deletion.kind != Kind::EventDeletion {
             return found;
         }
-        let plausible = plausible_at(deletion.created_at.as_secs(), now);
+        let through = deletion
+            .created_at
+            .as_secs()
+            .min(now.saturating_add(MAX_FUTURE_SKEW));
         for tag in deletion.tags.iter() {
             let Some(value) = tag.content() else {
                 continue;
@@ -98,18 +122,14 @@ impl Withdrawals {
             let kind = tag.kind();
             if kind == "e" && ids.contains(value) {
                 found.by_id = true;
-                if plausible {
-                    self.ids.insert((deletion.pubkey, value.to_string()));
-                }
+                self.ids.insert((deletion.pubkey, value.to_string()));
             } else if kind == "a" && coordinates.contains(value) {
                 found.by_address = true;
-                if plausible {
-                    let at = self
-                        .addresses
-                        .entry((deletion.pubkey, value.to_string()))
-                        .or_insert(0);
-                    *at = (*at).max(deletion.created_at.as_secs());
-                }
+                let at = self
+                    .addresses
+                    .entry((deletion.pubkey, value.to_string()))
+                    .or_insert(0);
+                *at = (*at).max(through);
             }
         }
         found

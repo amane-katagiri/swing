@@ -99,6 +99,28 @@ async fn stores_a_new_site_under_its_versioned_path() {
 }
 
 #[tokio::test]
+async fn the_site_event_is_kept_with_the_version_only_when_its_signature_holds() {
+    let fx = Fixture::new(
+        default_policy(),
+        sized(&[("bafy-new", 20), ("bafy-newer", 20)]),
+    );
+    let good = fx.event(D, "bafy-new", Some(20), 200);
+    fx.apply(good.clone()).await;
+    let held = |state: &State| state.latest_version(&fx.key(D)).unwrap().event.clone();
+    assert_eq!(
+        held(&*fx.agent.state.lock().await),
+        Some(good.event.clone())
+    );
+
+    let mut forged = fx.event(D, "bafy-newer", Some(20), 300);
+    forged.event.sig = good.event.sig;
+    fx.apply(forged).await;
+    let state = fx.agent.state.lock().await;
+    assert_eq!(state.latest_version(&fx.key(D)).unwrap().cid, "bafy-newer");
+    assert_eq!(held(&state), None);
+}
+
+#[tokio::test]
 async fn fetch_failure_leaves_state_and_old_versions_untouched() {
     let kubo = FakeKubo::with(|s| {
         s.fail_fetch.insert("bafy-new".into());

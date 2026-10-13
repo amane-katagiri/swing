@@ -13,7 +13,7 @@ use crate::state::State;
 use super::{Agent, now_secs};
 
 pub(super) async fn refresh_follow_set<C, N, R>(
-    relay: &Arc<RelayClient>,
+    relay: &RelayClient,
     agent: &Arc<Agent<C, N, R>>,
     tasks: &mut JoinSet<()>,
 ) -> Option<Vec<PublicKey>>
@@ -86,7 +86,7 @@ where
 }
 
 async fn resubscribe_and_backfill<C, N, R>(
-    relay: &Arc<RelayClient>,
+    relay: &RelayClient,
     agent: &Arc<Agent<C, N, R>>,
     tasks: &mut JoinSet<()>,
     follow_event: Event,

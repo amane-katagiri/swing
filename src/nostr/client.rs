@@ -22,7 +22,7 @@ use fetch::{
     relay_stream, walk_pages,
 };
 pub use report_relay::ReportRelay;
-pub use resend::{DeletionAnswers, RelayAnswers};
+pub use resend::{DeletionAnswers, RelayAnswers, SiteAnswer};
 pub use send::{
     RelaySendResult, print_relay_line, print_relay_send_result_lines, relay_send_results,
     with_rejection_hint,
@@ -125,16 +125,22 @@ impl RelayClient {
         self.signer.shutdown().await;
     }
 
-    // Client::stream_events hides which relays reached EOSE, so each relay is streamed on its own to tell "nothing found" from "no relay answered".
-    async fn fetch(&self, filters: Vec<Filter>, context: &'static str) -> Result<Vec<Measured>> {
-        let relays = self
-            .client
+    async fn read_relays(&self) -> Vec<(RelayUrl, Relay)> {
+        self.client
             .relays()
             .with_capabilities(RelayCapabilities::READ)
-            .await;
-        let streams = relays
-            .into_values()
-            .map(|relay| relay_stream(relay, filters.clone()));
+            .await
+            .into_iter()
+            .collect()
+    }
+
+    // Client::stream_events hides which relays reached EOSE, so each relay is streamed on its own to tell "nothing found" from "no relay answered".
+    async fn fetch(&self, filters: Vec<Filter>, context: &'static str) -> Result<Vec<Measured>> {
+        let streams = self
+            .read_relays()
+            .await
+            .into_iter()
+            .map(|(_, relay)| relay_stream(relay, filters.clone()));
         let merged =
             futures_util::stream::select_all(streams).take_until(tokio::time::sleep(FETCH_TIMEOUT));
         let collected = collect_newest(std::pin::pin!(merged), FetchCap::PER_REQ).await;
@@ -156,20 +162,12 @@ impl RelayClient {
         page: usize,
         context: &'static str,
     ) -> Result<Paged> {
-        let relays = self
-            .client
-            .relays()
-            .with_capabilities(RelayCapabilities::READ)
-            .await;
-        let count = relays.len().max(1);
-        let cap = FetchCap {
-            events: FetchCap::TOTAL.events / count,
-            bytes: FetchCap::TOTAL.bytes / count,
-        };
+        let relays = self.read_relays().await;
+        let cap = FetchCap::per_relay(relays.len());
         let deadline = tokio::time::Instant::now() + FETCH_DEADLINE;
         let walks = relays
-            .into_values()
-            .map(|relay| walk_pages(relay, filter.clone(), page, cap, deadline));
+            .into_iter()
+            .map(|(_, relay)| walk_pages(relay, filter.clone(), page, cap, deadline));
         let walked = futures_util::future::join_all(walks).await;
         if walked.iter().all(Option::is_none) {
             anyhow::bail!("{context}: no relay answered");
@@ -463,13 +461,22 @@ impl RelayClient {
         &self,
         event: &Event,
     ) -> Result<Output<EventId, EventSendStatus, String>> {
-        let out = self
-            .client
+        self.publish_to(event, &self.relays).await
+    }
+
+    pub async fn publish_to<'a, U>(
+        &self,
+        event: &Event,
+        relays: &'a [U],
+    ) -> Result<Output<EventId, EventSendStatus, String>>
+    where
+        &'a U: Into<RelayUrlArg<'a>>,
+    {
+        self.client
             .send_event(event)
-            .to(self.relays.iter().map(|s| s.as_str()))
+            .to(relays)
             .await
-            .context("sending event to relays")?;
-        Ok(out)
+            .context("sending event to relays")
     }
 }
 

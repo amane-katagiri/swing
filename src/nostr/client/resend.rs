@@ -1,16 +1,23 @@
 use std::cmp::Reverse;
 use std::collections::{BTreeMap, BinaryHeap, HashSet};
 
-use anyhow::{Context, Result};
 use nostr_sdk::prelude::*;
+use tracing::{debug, warn};
 
 use super::RelayClient;
-use super::fetch::{capped_limit, fold_per_relay};
+use super::fetch::{Folded, capped_limit, fold_per_relay};
 use crate::nostr::{Withdrawals, budget, keep_newest_site, site_coordinate};
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SiteAnswer {
+    Unanswered,
+    Missing,
+    Found(Event),
+}
 
 pub struct RelayAnswers {
     pub relay: RelayUrl,
-    pub sites: Vec<Option<Option<Event>>>,
+    pub sites: Vec<SiteAnswer>,
 }
 
 pub struct DeletionAnswers {
@@ -34,32 +41,40 @@ pub(super) struct DeletionUnit {
     pub(super) ids: HashSet<String>,
     pub(super) coordinates: HashSet<String>,
     pub(super) limit: usize,
-}
-
-impl DeletionUnit {
-    pub(super) fn filters(&self) -> [Filter; 2] {
-        let coordinates: Vec<Coordinate> = self
-            .coordinates
-            .iter()
-            .filter_map(|c| Coordinate::parse(c).ok())
-            .collect();
-        let ids = self.ids.iter().filter_map(|id| EventId::from_hex(id).ok());
-        [
-            Filter::new()
-                .kind(Kind::EventDeletion)
-                .author(self.author)
-                .coordinates(&coordinates)
-                .limit(self.limit),
-            Filter::new()
-                .kind(Kind::EventDeletion)
-                .author(self.author)
-                .events(ids)
-                .limit(self.limit),
-        ]
-    }
+    pub(super) filters: [Filter; 2],
 }
 
 pub(super) const UNITS_PER_REQ: usize = budget::AUTHORS_PER_SPLIT_REQ / 2;
+
+fn deletion_unit(
+    site_event_kind: u16,
+    author: PublicKey,
+    held: &[&Event],
+    sites: &[usize],
+) -> DeletionUnit {
+    let limit = capped_limit(sites.len(), 2).min(budget::MAX_DELETIONS_PER_FILTER);
+    let coordinates: Vec<Coordinate> = sites
+        .iter()
+        .filter_map(|&i| held[i].tags.identifier())
+        .map(|d| site_coordinate(site_event_kind, &author, &d))
+        .collect();
+    let ids: Vec<EventId> = sites.iter().map(|&i| held[i].id).collect();
+    let deletions = Filter::new()
+        .kind(Kind::EventDeletion)
+        .author(author)
+        .limit(limit);
+    DeletionUnit {
+        author,
+        sites: sites.to_vec(),
+        ids: ids.iter().map(EventId::to_hex).collect(),
+        coordinates: coordinates.iter().map(Coordinate::to_string).collect(),
+        limit,
+        filters: [
+            deletions.clone().coordinates(&coordinates),
+            deletions.events(ids),
+        ],
+    }
+}
 
 // A limit shared by several authors would let one author's deletions naming another's site crowd out that author's own.
 pub(super) fn deletion_units(site_event_kind: u16, held: &[&Event]) -> Vec<DeletionUnit> {
@@ -72,21 +87,7 @@ pub(super) fn deletion_units(site_event_kind: u16, held: &[&Event]) -> Vec<Delet
         .flat_map(|(author, sites)| {
             sites
                 .chunks(budget::COORDINATES_PER_FILTER)
-                .map(|chunk| DeletionUnit {
-                    author,
-                    sites: chunk.to_vec(),
-                    ids: chunk.iter().map(|&i| held[i].id.to_hex()).collect(),
-                    coordinates: chunk
-                        .iter()
-                        .filter_map(|&i| {
-                            held[i]
-                                .tags
-                                .identifier()
-                                .map(|d| site_coordinate(site_event_kind, &author, &d).to_string())
-                        })
-                        .collect(),
-                    limit: capped_limit(chunk.len(), 2).min(budget::MAX_DELETIONS_PER_FILTER),
-                })
+                .map(|chunk| deletion_unit(site_event_kind, author, held, chunk))
                 .collect::<Vec<_>>()
         })
         .collect()
@@ -107,7 +108,6 @@ impl Returned {
         }
     }
 
-    // Both filters share one REQ, so an event counted here may have come for the other filter; the limit-th newest is still the relay's cutoff for this one.
     pub(super) fn cutoff(&self, limit: usize) -> Option<u64> {
         (self.count >= limit).then(|| self.newest.peek().map_or(0, |Reverse(at)| *at))
     }
@@ -119,6 +119,11 @@ pub(super) fn answered_past(cutoffs: [Option<u64>; 2], created_at: u64) -> bool 
         .all(|cutoff| cutoff.is_none_or(|cutoff| created_at > cutoff))
 }
 
+struct SitesReq {
+    first: usize,
+    newest: Vec<Option<Event>>,
+}
+
 struct DeletionReq {
     first: usize,
     returned: Vec<[Returned; 2]>,
@@ -126,16 +131,62 @@ struct DeletionReq {
     withdrawals: Withdrawals,
 }
 
-impl RelayClient {
-    async fn read_relays(&self) -> Vec<(RelayUrl, Relay)> {
-        self.client
-            .relays()
-            .with_capabilities(RelayCapabilities::READ)
-            .await
-            .into_iter()
-            .collect()
+impl DeletionReq {
+    fn note(&mut self, units: &[DeletionUnit], event: Event, now: u64) {
+        if event.kind != Kind::EventDeletion || !self.seen.insert(event.id) {
+            return;
+        }
+        let created_at = event.created_at.as_secs();
+        for (k, [by_address, by_id]) in self.returned.iter_mut().enumerate() {
+            let unit = &units[self.first + k];
+            if unit.author != event.pubkey {
+                continue;
+            }
+            let found = self
+                .withdrawals
+                .note(&event, &unit.ids, &unit.coordinates, now);
+            if found.by_address {
+                by_address.add(created_at, unit.limit);
+            }
+            if found.by_id {
+                by_id.add(created_at, unit.limit);
+            }
+        }
     }
+}
 
+fn answered_sites(
+    relay: &RelayUrl,
+    units: &[DeletionUnit],
+    held: &[&Event],
+    requests: &[Folded<DeletionReq>],
+) -> Vec<bool> {
+    let mut answered = vec![false; held.len()];
+    for request in requests {
+        let req = &request.value;
+        for (k, returned) in req.returned.iter().enumerate() {
+            let unit = &units[req.first + k];
+            let cutoffs = returned.each_ref().map(|r| r.cutoff(unit.limit));
+            if let Some(cutoff) = cutoffs.iter().flatten().max() {
+                warn!(relay = %relay, pubkey = %unit.author, cutoff, "deletions by the author reach the request limit; the author's held site events at or before the cutoff are not sent to this relay this time");
+            }
+            if !request.complete {
+                continue;
+            }
+            for &i in &unit.sites {
+                let created_at = held[i].created_at.as_secs();
+                if answered_past(cutoffs, created_at) {
+                    answered[i] = true;
+                } else {
+                    debug!(relay = %relay, event_id = %held[i].id, created_at, "the held site event is not newer than the cutoff of the deletions returned; whether the author deleted it is unknown on this relay");
+                }
+            }
+        }
+    }
+    answered
+}
+
+impl RelayClient {
     // Kept per relay, unlike the other fetches, because a held site is sent again only to the relays that lack it.
     pub async fn fetch_sites_per_relay(
         &self,
@@ -143,10 +194,8 @@ impl RelayClient {
         sites: &[(PublicKey, String)],
     ) -> Vec<RelayAnswers> {
         let kind = Kind::Custom(site_event_kind);
-        let batches: Vec<&[(PublicKey, String)]> =
-            sites.chunks(budget::AUTHORS_PER_SPLIT_REQ).collect();
-        let requests: Vec<Vec<Filter>> = batches
-            .iter()
+        let requests: Vec<Vec<Filter>> = sites
+            .chunks(budget::AUTHORS_PER_SPLIT_REQ)
             .map(|batch| {
                 batch
                     .iter()
@@ -164,30 +213,35 @@ impl RelayClient {
         let folded = fold_per_relay(
             self.read_relays().await,
             &requests,
-            |i| (i, vec![None; batches[i].len()]),
-            |(i, slots): &mut (usize, Vec<Option<Event>>), event| {
-                let batch = batches[*i];
+            |i| {
+                let first = i * budget::AUTHORS_PER_SPLIT_REQ;
+                let len = sites[first..].len().min(budget::AUTHORS_PER_SPLIT_REQ);
+                SitesReq {
+                    first,
+                    newest: vec![None; len],
+                }
+            },
+            |req: &mut SitesReq, event| {
+                let batch = &sites[req.first..req.first + req.newest.len()];
                 let Some(j) = batch.iter().position(|(author, d)| {
                     *author == event.pubkey && event.tags.identifier().as_deref() == Some(d)
                 }) else {
                     return;
                 };
                 let (author, d) = &batch[j];
-                keep_newest_site(&mut slots[j], event, author, d, site_event_kind, now);
+                keep_newest_site(&mut req.newest[j], event, author, d, site_event_kind, now);
             },
         )
         .await;
         folded
             .into_iter()
             .map(|(relay, requests)| {
-                let mut answers = vec![None; sites.len()];
-                for (i, request) in requests.into_iter().enumerate() {
-                    if !request.complete {
-                        continue;
-                    }
-                    let start = i * budget::AUTHORS_PER_SPLIT_REQ;
-                    for (j, newest) in request.value.1.into_iter().enumerate() {
-                        answers[start + j] = Some(newest);
+                let mut answers = vec![SiteAnswer::Unanswered; sites.len()];
+                for request in requests.into_iter().filter(|r| r.complete) {
+                    let req = request.value;
+                    for (j, newest) in req.newest.into_iter().enumerate() {
+                        answers[req.first + j] =
+                            newest.map_or(SiteAnswer::Missing, SiteAnswer::Found);
                     }
                 }
                 RelayAnswers {
@@ -206,7 +260,7 @@ impl RelayClient {
         let units = deletion_units(site_event_kind, held);
         let requests: Vec<Vec<Filter>> = units
             .chunks(UNITS_PER_REQ)
-            .map(|chunk| chunk.iter().flat_map(DeletionUnit::filters).collect())
+            .map(|chunk| chunk.iter().flat_map(|u| u.filters.clone()).collect())
             .collect();
         let now = Timestamp::now().as_secs();
         let units = &units;
@@ -223,55 +277,16 @@ impl RelayClient {
                     withdrawals: Withdrawals::default(),
                 }
             },
-            |req: &mut DeletionReq, event| {
-                if event.kind != Kind::EventDeletion || !req.seen.insert(event.id) {
-                    return;
-                }
-                let created_at = event.created_at.as_secs();
-                for (k, [by_address, by_id]) in req.returned.iter_mut().enumerate() {
-                    let unit = &units[req.first + k];
-                    if unit.author != event.pubkey {
-                        continue;
-                    }
-                    let found = req
-                        .withdrawals
-                        .note(&event, &unit.ids, &unit.coordinates, now);
-                    if found.by_address {
-                        by_address.add(created_at, unit.limit);
-                    }
-                    if found.by_id {
-                        by_id.add(created_at, unit.limit);
-                    }
-                }
-            },
+            |req: &mut DeletionReq, event| req.note(units, event, now),
         )
         .await;
         let mut withdrawals = Withdrawals::default();
         let relays = folded
             .into_iter()
             .map(|(relay, requests)| {
-                let mut answered = vec![false; held.len()];
+                let answered = answered_sites(&relay, units, held, &requests);
                 for request in requests {
-                    let req = request.value;
-                    for (k, returned) in req.returned.iter().enumerate() {
-                        let unit = &units[req.first + k];
-                        let cutoffs = returned.each_ref().map(|r| r.cutoff(unit.limit));
-                        if let Some(cutoff) = cutoffs.iter().flatten().max() {
-                            tracing::warn!(relay = %relay, pubkey = %unit.author, cutoff, "deletions by the author reach the request limit; the author's held site events at or before the cutoff are not sent to this relay this time");
-                        }
-                        if !request.complete {
-                            continue;
-                        }
-                        for &i in &unit.sites {
-                            let created_at = held[i].created_at.as_secs();
-                            if answered_past(cutoffs, created_at) {
-                                answered[i] = true;
-                            } else {
-                                tracing::debug!(relay = %relay, event_id = %held[i].id, created_at, "the held site event is not newer than the cutoff of the deletions returned; whether the author deleted it is unknown on this relay");
-                            }
-                        }
-                    }
-                    withdrawals.merge(req.withdrawals);
+                    withdrawals.merge(request.value.withdrawals);
                 }
                 (relay, answered)
             })
@@ -280,17 +295,5 @@ impl RelayClient {
             withdrawals,
             relays,
         }
-    }
-
-    pub async fn publish_to(
-        &self,
-        event: &Event,
-        relays: &[RelayUrl],
-    ) -> Result<Output<EventId, EventSendStatus, String>> {
-        self.client
-            .send_event(event)
-            .to(relays.iter().map(|u| u.as_str()))
-            .await
-            .context("sending event to relays")
     }
 }

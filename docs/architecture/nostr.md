@@ -23,8 +23,8 @@
   | `fetch_follow_set` | kind が 30000、作者が自分の公開鍵、`d` が要求した名前（`is_follow_set_of`）、`created_at` が未来ずれの許容内（`plausible_at`。下記）。残ったものから最新 1 件 |
   | `fetch_follow_sets` | 作者が要求した `authors` に含まれ、kind が 30000・`d` が要求した名前（`is_follow_set_of`）。残ったものを作者ごとに最新 1 件にする |
   | `fetch_site_events` | kind が `[nostr].site_event_kind`、作者が要求した `authors` に含まれる |
-  | `fetch_sites_per_relay`（agent の保存した版のサイトイベントの再送。relay ごとに分けて返す。[`nostr/fetch.md`](nostr/fetch.md#relay-ごとの取得)） | 作者・kind（`[nostr].site_event_kind`）・`d` が要求したサイトと一致し、サイトイベントとしてパースでき、`created_at` が未来ずれの許容内。残ったものから relay ごと・サイトごとに最新 1 件（`nostr::keep_newest_site`） |
-  | `fetch_site_deletions`（同じく再送の前の取り下げの確認） | kind が 5、作者がそのフィルタの作者。`e` タグは要求した `id`、`a` タグは要求した座標のものだけを使い、`created_at` が未来ずれの許容を超えるものは使わない（`nostr::Withdrawals`）。索引は作者ごとに引くので、ほかの作者の削除要求は効かない |
+  | `fetch_sites_per_relay`（agent の保存した版のサイトイベントの再送。relay ごとに分けて返す。[`nostr/fetch.md`](nostr/fetch.md#relay-ごとの取得)） | 作者・kind（`[nostr].site_event_kind`）・`d` が要求したサイトと一致し、サイトイベントとしてパースでき、署名が正しく、`created_at` が未来ずれの許容内。残ったものから relay ごと・サイトごとに最新 1 件（`nostr::keep_newest_site`） |
+  | `fetch_site_deletions`（同じく再送の前の取り下げの確認） | kind が 5、作者がそのフィルタの作者。`e` タグは要求した `id`、`a` タグは要求した座標のものだけを使い、`a` の `created_at` は未来ずれの許容までで頭打ちにする（`nostr::Withdrawals`）。索引は作者ごとに引くので、ほかの作者の削除要求は効かない |
   | `fetch_own_latest_site`（`swing publish` の前の版） | 作者が自分の公開鍵、サイトイベントとしてパースでき（kind も確かめる）、`d` が要求した名前。`created_at` が未来ずれの許容内。残ったものから最新 1 件（`select_latest`） |
   | `fetch_replica_reports` | kind が `[nostr].replica_event_kind`、`a` タグのどれかが要求した座標のいずれかと一致する |
   | `fetch_replica_reports_by` | `fetch_replica_reports` の条件に加え、作者が要求した報告者に含まれる |
@@ -37,7 +37,7 @@
 - 署名は nostr-sdk が受信時に検証する。nostr-sdk は一度検証した `id` を覚えていて、同じ `id` を名乗るイベントは署名を確かめずに通す。`RelayClient` と `bounded_client` の nostr-sdk クライアントには `AdmitPolicy`（`MatchingIds`。`Event::verify_id` が偽なら拒否）を付け、`id` が中身から計算した値と一致しないイベントを、取得・購読・署名アプリとの通信のどれでも、nostr-sdk がデータベースに入れて通知する前に捨てる。
 - 大きさ: `RelayClient` の nostr-sdk クライアントは、relay から受け取るメッセージを 128 KiB（`MAX_RELAY_MESSAGE_BYTES`）、イベントを 16 KiB（`MAX_EVENT_BYTES`）・タグ 600 個（`MAX_EVENT_TAGS`）までに制限する。kind 30000（Follow Set）だけはイベントの上限を 64 KiB（`MAX_FOLLOW_SET_EVENT_BYTES`）にする。サイトイベントとレプリカ報告は既定の 16 KiB。超えたものは nostr-sdk が受信時に捨てる。署名アプリとの通信（[`signer.md`](signer.md)。常駐の接続とペアリング）は `nostr::bounded_client` で作り、メッセージもイベントも 128 KiB（`MAX_SIGNER_EVENT_BYTES`）・タグ 600 個までにする。
 
-サイトイベントの「取得 → パース → サイトごとの最新を選ぶ」は `RelayClient::fetch_latest_signed_sites(site_event_kind, authors)` にまとめてあり、選んだ版を受け取った署名済みのイベントと組にして（`SignedSite`）返す。agent の過去分の取り込みはこれを使い、`mirror::collect_sites`・`replicas::collect`・`webring::collect` は組からパースした結果だけを取り出す `RelayClient::fetch_latest_sites` を使う。パースに失敗したイベントは debug ログを出して捨てる。agent は購読で届いたイベントも `SignedSite` にして扱い、保存した版と一緒に `state.json` に記録する（[`agent/state.md`](agent/state.md)）。`state.json` から読んだサイトイベントは、送り直す前に `nostr::is_saved_site_event` で署名も確かめ直し、`cid`・`created_at` がその版の記録と一致することも確かめる（[`agent/resend.md`](agent/resend.md)）。
+サイトイベントの「取得 → パース → サイトごとの最新を選ぶ」は `RelayClient::fetch_latest_signed_sites(site_event_kind, authors)` にまとめてあり、選んだ版を受け取った署名済みのイベントと組にして（`SignedSite`）返す。agent の過去分の取り込みはこれを使い、`mirror::collect_sites`・`replicas::collect`・`webring::collect` は組からパースした結果だけを取り出す `RelayClient::fetch_latest_sites` を使う。パースに失敗したイベントは debug ログを出して捨てる。agent は購読で届いたイベントも `SignedSite` にして扱い、署名を確かめ直してから、保存した版と一緒に `state.json` に記録する（[`agent/state.md`](agent/state.md)）。`state.json` から読んだサイトイベントは、送り直す前に `nostr::saved_site_event` で署名も確かめ直し、`cid`・`created_at` がその版の記録と一致することも確かめる（[`agent/resend.md`](agent/resend.md)）。
 
 ## 未来ずれの許容（`nostr::MAX_FUTURE_SKEW`）
 

@@ -195,9 +195,13 @@ impl State {
         let Some(latest) = latest_index(versions).map(|i| &mut versions[i]) else {
             return false;
         };
-        if latest.event.is_some()
-            || latest.cid != cid
+        if latest.cid != cid
             || latest.created_at != event.created_at.as_secs()
+            || latest
+                .event
+                .as_ref()
+                .is_some_and(|held| held.verify().is_ok())
+            || event.verify().is_err()
         {
             return false;
         }
@@ -394,6 +398,31 @@ mod tests {
         assert!(!state.fill_latest_event(&key, "new", &signed(20)));
         assert_eq!(state.latest_version(&key).unwrap().event, Some(event));
         assert_eq!(state.sites[&key][0].event, None);
+    }
+
+    fn with_bad_signature(event: &Event) -> Event {
+        let mut forged = event.clone();
+        forged.sig = signed(event.created_at.as_secs()).sig;
+        forged
+    }
+
+    #[test]
+    fn an_event_with_a_bad_signature_is_not_filled_and_is_replaced_by_a_good_one() {
+        let key = site_key("aa", "x.example");
+        let good = signed(20);
+        let mut state = State::default();
+        state.apply_store(&key, record("new", 20, None));
+
+        assert!(!state.fill_latest_event(&key, "new", &with_bad_signature(&good)));
+        assert_eq!(state.latest_version(&key).unwrap().event, None);
+
+        state.apply_store(
+            &key,
+            record("newer", 30, Some(with_bad_signature(&signed(30)))),
+        );
+        let replacement = signed(30);
+        assert!(state.fill_latest_event(&key, "newer", &replacement));
+        assert_eq!(state.latest_version(&key).unwrap().event, Some(replacement));
     }
 
     #[test]

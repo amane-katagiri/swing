@@ -6,9 +6,10 @@ use futures_util::StreamExt;
 use nostr_sdk::prelude::*;
 use tracing::{debug, info, warn};
 
+use crate::config::CheckMode;
 use crate::ipfs::KuboStore;
-use crate::nip05::Nip05Verify;
-use crate::nostr::{self, RelayClient, ReportRelay, budget};
+use crate::nip05::{self, Nip05Verify};
+use crate::nostr::{self, RelayClient, ReportRelay, ResendPlan, budget};
 use crate::state::{self, SiteKey, State, Withdrawn};
 
 use super::{Agent, now_secs};
@@ -90,7 +91,7 @@ struct Held {
     withdrawn: Option<Withdrawn>,
 }
 
-fn held_site_events(state: &State, targets: &[PublicKey]) -> Vec<Held> {
+fn held_site_events(state: &State, targets: &HashSet<PublicKey>, require_nip05: bool) -> Vec<Held> {
     let targets: HashSet<String> = targets.iter().map(|pk| pk.to_hex()).collect();
     state
         .sites
@@ -102,6 +103,15 @@ fn held_site_events(state: &State, targets: &[PublicKey]) -> Vec<Held> {
             }
             let record = state.latest_version(key)?;
             let event = record.event.clone()?;
+            if require_nip05
+                && state
+                    .verifications
+                    .get(key)
+                    .is_none_or(|v| v.status != nip05::STATE_VERIFIED)
+            {
+                debug!(site_key = %key, "the site is not verified by NIP-05; not sending its held site event");
+                return None;
+            }
             Some(Held {
                 key: key.clone(),
                 pubkey: PublicKey::from_hex(pubkey_hex).ok()?,
@@ -118,13 +128,12 @@ fn held_site_events(state: &State, targets: &[PublicKey]) -> Vec<Held> {
 fn resend_candidates(held: Vec<Held>, site_event_kind: u16) -> Vec<Held> {
     held.into_iter()
         .filter(|h| {
-            if !nostr::is_saved_site_event(&h.event, &h.pubkey, &h.d, site_event_kind) {
+            let Some(site) = nostr::saved_site_event(&h.event, &h.pubkey, &h.d, site_event_kind)
+            else {
                 debug!(site_key = %h.key, "the held site event is not a valid site event of the site; not sending it");
                 return false;
-            }
-            let matches = nostr::parse_site_event(&h.event, site_event_kind)
-                .is_ok_and(|site| site.cid == h.cid && site.created_at == h.created_at);
-            if !matches {
+            };
+            if site.cid != h.cid || site.created_at != h.created_at {
                 warn!(site_key = %h.key, event_id = %h.event.id, "the held site event does not match the stored version; not sending it");
                 return false;
             }
@@ -138,6 +147,27 @@ fn resend_candidates(held: Vec<Held>, site_event_kind: u16) -> Vec<Held> {
             true
         })
         .collect()
+}
+
+struct Withdrawing {
+    key: SiteKey,
+    event_id_hex: Option<String>,
+    through: Option<u64>,
+}
+
+// A newer version in the same second only outranks the held one by id, so covering that second would also cover the newer version.
+fn superseded(held: Held, newer: &Event) -> Withdrawing {
+    let newer_at = newer.created_at.as_secs();
+    let (event_id_hex, through) = if newer_at > held.created_at {
+        (None, Some(newer_at - 1))
+    } else {
+        (Some(held.event.id.to_hex()), None)
+    };
+    Withdrawing {
+        key: held.key,
+        event_id_hex,
+        through,
+    }
 }
 
 struct Outgoing {
@@ -156,7 +186,13 @@ pub(super) async fn resend_held_sites<C, N, R>(
     R: ReportRelay + Send + Sync + 'static,
 {
     let kind = agent.config.nostr.site_event_kind;
-    let held = held_site_events(&*agent.state.lock().await, targets);
+    let require_nip05 = agent.config.policy.nip05 == CheckMode::Require;
+    let targets: HashSet<PublicKey> = targets
+        .iter()
+        .copied()
+        .filter(|pk| agent.is_target(pk))
+        .collect();
+    let held = held_site_events(&*agent.state.lock().await, &targets, require_nip05);
     let candidates = resend_candidates(held, kind);
     let ids: HashSet<EventId> = candidates.iter().map(|h| h.event.id).collect();
     agent.resend.lock().unwrap().backoff.retain(&ids);
@@ -165,25 +201,33 @@ pub(super) async fn resend_held_sites<C, N, R>(
     }
     let sites: Vec<(PublicKey, String)> =
         candidates.iter().map(|h| (h.pubkey, h.d.clone())).collect();
-    let events: Vec<Event> = candidates.iter().map(|h| h.event.clone()).collect();
     let answers = relay.fetch_sites_per_relay(kind, &sites).await;
-    let plan = nostr::plan_site_resends(&events, &answers);
+    let events: Vec<&Event> = candidates.iter().map(|h| &h.event).collect();
+    let plans = nostr::plan_site_resends(&events, &answers);
     let now = now_secs();
-    let wanted: Vec<(&Held, Vec<RelayUrl>)> = {
+    let mut withdrawn = Vec::new();
+    let mut wanted: Vec<(Held, Vec<RelayUrl>)> = Vec::new();
+    {
         let resend = agent.resend.lock().unwrap();
-        candidates
-            .iter()
-            .zip(plan)
-            .map(|(h, relays)| {
-                let relays: Vec<RelayUrl> = relays
-                    .into_iter()
-                    .filter(|r| resend.backoff.ready(r, h.event.id, now))
-                    .collect();
-                (h, relays)
-            })
-            .filter(|(_, relays)| !relays.is_empty())
-            .collect()
-    };
+        for (h, plan) in candidates.into_iter().zip(plans) {
+            match plan {
+                ResendPlan::Superseded(newer) => {
+                    info!(site = %h.d, pubkey = %h.pubkey, event_id = %h.event.id, newer_id = %newer.id, "a relay holds a newer version of the held site event; not sending it again");
+                    withdrawn.push(superseded(h, newer));
+                }
+                ResendPlan::SendTo(relays) => {
+                    let relays: Vec<RelayUrl> = relays
+                        .into_iter()
+                        .filter(|r| resend.backoff.ready(r, h.event.id, now))
+                        .collect();
+                    if !relays.is_empty() {
+                        wanted.push((h, relays));
+                    }
+                }
+            }
+        }
+    }
+    record_withdrawals(agent, withdrawn).await;
     if wanted.is_empty() {
         return;
     }
@@ -194,7 +238,11 @@ pub(super) async fn resend_held_sites<C, N, R>(
     for (i, (h, relays)) in wanted.into_iter().enumerate() {
         if let Some(w) = deletions.withdrawals.of(&h.event, kind) {
             info!(site = %h.d, pubkey = %h.pubkey, event_id = %h.event.id, "the author deleted the held site event; not sending it again");
-            withdrawn.push((h, w));
+            withdrawn.push(Withdrawing {
+                event_id_hex: w.by_id.then(|| h.event.id.to_hex()),
+                key: h.key,
+                through: w.through,
+            });
             continue;
         }
         let relays: Vec<RelayUrl> = relays
@@ -206,23 +254,32 @@ pub(super) async fn resend_held_sites<C, N, R>(
             continue;
         }
         sends.push(Outgoing {
-            event: h.event.clone(),
-            d: h.d.clone(),
+            event: h.event,
+            d: h.d,
             relays,
         });
     }
-    if !withdrawn.is_empty() {
-        let mut state = agent.state.lock().await;
-        let mut changed = false;
-        for (h, w) in &withdrawn {
-            changed |=
-                state.record_withdrawal(&h.key, w.by_id.then(|| h.event.id.to_hex()), w.through);
-        }
-        if changed {
-            agent.save(&state, "recording withdrawn site events").await;
-        }
-    }
+    record_withdrawals(agent, withdrawn).await;
     send_held(relay, agent, sends).await;
+}
+
+async fn record_withdrawals<C, N, R>(agent: &Agent<C, N, R>, withdrawn: Vec<Withdrawing>)
+where
+    C: KuboStore,
+    N: Nip05Verify,
+    R: ReportRelay,
+{
+    if withdrawn.is_empty() {
+        return;
+    }
+    let mut state = agent.state.lock().await;
+    let mut changed = false;
+    for w in withdrawn {
+        changed |= state.record_withdrawal(&w.key, w.event_id_hex, w.through);
+    }
+    if changed {
+        agent.save(&state, "recording withdrawn site events").await;
+    }
 }
 
 async fn send_held<C, N, R>(relay: &RelayClient, agent: &Agent<C, N, R>, sends: Vec<Outgoing>) {

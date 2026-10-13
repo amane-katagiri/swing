@@ -450,7 +450,7 @@ impl<C: KuboStore, N: Nip05Verify, R: ReportRelay> Agent<C, N, R> {
                 size,
                 created_at: ev.created_at,
                 stored_at: now_secs(),
-                event: Some(signed.event.clone()),
+                event: signed.event.verify().is_ok().then(|| signed.event.clone()),
             },
         );
         self.attempts.lock().unwrap().clear(key);

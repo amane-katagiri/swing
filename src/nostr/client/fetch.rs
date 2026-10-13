@@ -27,6 +27,14 @@ impl FetchCap {
         events: budget::MAX_RELAY_FETCH_LIMIT,
         bytes: budget::MAX_FETCH_TOTAL_BYTES / budget::FETCH_CONCURRENCY,
     };
+
+    pub(super) fn per_relay(relays: usize) -> Self {
+        let relays = relays.max(1);
+        Self {
+            events: Self::TOTAL.events / relays,
+            bytes: Self::TOTAL.bytes / relays,
+        }
+    }
 }
 
 pub(super) fn event_bytes(event: &Event) -> usize {
@@ -75,6 +83,16 @@ pub(super) fn relay_stream(
             .flatten()
             .map(move |item| (url.clone(), item)),
     )
+}
+
+fn bounded_relay_stream(
+    relay: Relay,
+    filters: Vec<Filter>,
+    deadline: tokio::time::Instant,
+) -> impl Stream<Item = (RelayUrl, Streamed)> + Send {
+    relay_stream(relay, filters)
+        .take_until(tokio::time::sleep(FETCH_TIMEOUT))
+        .take_until(tokio::time::sleep_until(deadline))
 }
 
 pub(super) struct Measured {
@@ -219,9 +237,7 @@ pub(super) async fn walk_pages(
         if let Some(until) = until {
             request = request.until(until);
         }
-        let stream = relay_stream(relay.clone(), vec![request])
-            .take_until(tokio::time::sleep(FETCH_TIMEOUT))
-            .take_until(tokio::time::sleep_until(deadline));
+        let stream = bounded_relay_stream(relay.clone(), vec![request], deadline);
         let collected = collect_newest(std::pin::pin!(stream), FetchCap::PER_REQ).await;
         if collected.completed == 0 {
             break false;
@@ -300,11 +316,7 @@ where
     S: Fn(usize) -> T + Sync,
     F: Fn(&mut T, Event) + Sync,
 {
-    let count = relays.len().max(1);
-    let total = FetchCap {
-        events: FetchCap::TOTAL.events / count,
-        bytes: FetchCap::TOTAL.bytes / count,
-    };
+    let total = FetchCap::per_relay(relays.len());
     let deadline = tokio::time::Instant::now() + FETCH_DEADLINE;
     let (seed, fold) = (&seed, &fold);
     let per_relay = relays.into_iter().map(|(url, relay)| async move {
@@ -313,9 +325,7 @@ where
         let mut folded: Vec<(usize, Folded<T>)> =
             futures_util::stream::iter(requests.iter().enumerate())
                 .map(|(i, filters)| {
-                    let stream = relay_stream(relay.clone(), filters.clone())
-                        .take_until(tokio::time::sleep(FETCH_TIMEOUT))
-                        .take_until(tokio::time::sleep_until(deadline));
+                    let stream = bounded_relay_stream(relay.clone(), filters.clone(), deadline);
                     async move {
                         let mut stream = std::pin::pin!(stream);
                         let mut value = seed(i);

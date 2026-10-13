@@ -4,7 +4,7 @@ use std::sync::Mutex;
 use nostr_sdk::prelude::*;
 
 use crate::ipfs::{FetchLimits, Fetched, KuboStore, MfsEntry};
-use crate::nostr::{SiteEvent, build_replica_report_builder};
+use crate::nostr::{SiteEvent, SiteFields, build_replica_report_builder, build_site_event_builder};
 
 pub(crate) fn keys() -> Keys {
     Keys::generate()
@@ -46,6 +46,105 @@ pub(crate) fn site_event_fixture(pubkey: PublicKey, d: &str, created_at: u64) ->
         created_at,
         id: nostr_sdk::prelude::EventId::from_byte_array([0; 32]),
     }
+}
+
+pub(crate) fn make_site_event(
+    keys: &Keys,
+    kind: u16,
+    d: &str,
+    cid: &str,
+    created_at: u64,
+) -> Event {
+    build_site_event_builder(
+        kind,
+        &SiteFields {
+            d,
+            cid,
+            url: Some("https://example.com/"),
+            size: Some(1234),
+            ..Default::default()
+        },
+    )
+    .custom_created_at(Timestamp::from_secs(created_at))
+    .finalize(keys)
+    .unwrap()
+}
+
+pub(crate) fn deletion_event(keys: &Keys, tags: &[[&str; 2]], created_at: u64) -> Event {
+    numbered_deletion_event(keys, tags, created_at, "")
+}
+
+pub(crate) fn numbered_deletion_event(
+    keys: &Keys,
+    tags: &[[&str; 2]],
+    created_at: u64,
+    content: &str,
+) -> Event {
+    let mut builder = EventBuilder::new(Kind::EventDeletion, content);
+    for tag in tags {
+        builder = builder.tag(Tag::parse(*tag).unwrap());
+    }
+    builder
+        .custom_created_at(Timestamp::from_secs(created_at))
+        .finalize(keys)
+        .unwrap()
+}
+
+pub(crate) async fn serve_relay(local: LocalRelay, events: &[Event]) -> (LocalRelay, String) {
+    local.run().await.unwrap();
+    let url = local.url().await.to_string();
+    let seeder = Client::default();
+    seeder.add_relay(url.as_str()).await.unwrap();
+    seeder.connect().await;
+    for event in events {
+        seeder.send_event(event).await.unwrap();
+    }
+    seeder.shutdown().await;
+    (local, url)
+}
+
+pub(crate) async fn relay_holding(events: &[Event]) -> (LocalRelay, String) {
+    serve_relay(LocalRelay::new(), events).await
+}
+
+#[derive(Debug)]
+pub(crate) struct RefusesQueries {
+    pub(crate) only: Option<Kind>,
+}
+
+impl QueryPolicy for RefusesQueries {
+    fn admit_query<'a>(
+        &'a self,
+        query: &'a mut Filter,
+        _addr: &'a std::net::SocketAddr,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = QueryPolicyResult> + Send + 'a>> {
+        Box::pin(async move {
+            let refused = self.only.is_none_or(|only| {
+                query
+                    .kinds
+                    .as_ref()
+                    .is_some_and(|kinds| kinds.contains(&only))
+            });
+            if refused {
+                QueryPolicyResult::Reject {
+                    prefix: MachineReadablePrefix::Error,
+                    message: "down for maintenance".into(),
+                }
+            } else {
+                QueryPolicyResult::Accept
+            }
+        })
+    }
+}
+
+pub(crate) async fn refusing_relay(only: Option<Kind>) -> (LocalRelay, String) {
+    serve_relay(
+        LocalRelayBuilder::default()
+            .query_policy(RefusesQueries { only })
+            .build(),
+        &[],
+    )
+    .await
 }
 
 #[derive(Default)]

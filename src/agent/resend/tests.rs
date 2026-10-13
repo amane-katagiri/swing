@@ -1,25 +1,18 @@
 use std::collections::BTreeSet;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+
 use tokio::task::JoinSet;
 
 use super::super::test_support::*;
 use super::*;
-use crate::nostr::{SiteFields, build_site_event_builder};
 use crate::signer::Signer;
-use crate::state::VersionRecord;
-use crate::test_support::{CID_A, CID_B};
+use crate::state::{Verification, VersionRecord};
+use crate::test_support::{
+    CID_A, CID_B, deletion_event as deletion, make_site_event, refusing_relay, relay_holding,
+};
 
 fn site_event(keys: &Keys, d: &str, cid: &str, created_at: u64) -> Event {
-    build_site_event_builder(
-        35980,
-        &SiteFields {
-            d,
-            cid,
-            ..Default::default()
-        },
-    )
-    .custom_created_at(Timestamp::from_secs(created_at))
-    .finalize(keys)
-    .unwrap()
+    make_site_event(keys, 35980, d, cid, created_at)
 }
 
 fn record_of(event: &Event) -> VersionRecord {
@@ -42,49 +35,6 @@ async fn hold(fx: &Fixture, event: &Event) {
         .lock()
         .await
         .apply_store(&key_of(event), record_of(event));
-}
-
-async fn relay_holding(events: &[Event]) -> (LocalRelay, String) {
-    serve(LocalRelay::new(), events).await
-}
-
-async fn serve(local: LocalRelay, events: &[Event]) -> (LocalRelay, String) {
-    local.run().await.unwrap();
-    let url = local.url().await.to_string();
-    let seeder = Client::default();
-    seeder.add_relay(url.as_str()).await.unwrap();
-    seeder.connect().await;
-    for event in events {
-        seeder.send_event(event).await.unwrap();
-    }
-    seeder.shutdown().await;
-    (local, url)
-}
-
-#[derive(Debug)]
-struct RefusesDeletionQueries;
-
-impl QueryPolicy for RefusesDeletionQueries {
-    fn admit_query<'a>(
-        &'a self,
-        query: &'a mut Filter,
-        _addr: &'a std::net::SocketAddr,
-    ) -> std::pin::Pin<Box<dyn Future<Output = QueryPolicyResult> + Send + 'a>> {
-        Box::pin(async move {
-            if query
-                .kinds
-                .as_ref()
-                .is_some_and(|kinds| kinds.contains(&Kind::EventDeletion))
-            {
-                QueryPolicyResult::Reject {
-                    prefix: MachineReadablePrefix::Error,
-                    message: "deletions are not served".into(),
-                }
-            } else {
-                QueryPolicyResult::Accept
-            }
-        })
-    }
 }
 
 async fn ids_on(url: &str) -> Vec<EventId> {
@@ -110,17 +60,6 @@ async fn resend_through(fx: &Fixture, relays: &[String]) {
     client.shutdown().await;
 }
 
-fn deletion(keys: &Keys, tags: &[[&str; 2]], created_at: u64) -> Event {
-    let mut builder = EventBuilder::new(Kind::EventDeletion, "");
-    for tag in tags {
-        builder = builder.tag(Tag::parse(*tag).unwrap());
-    }
-    builder
-        .custom_created_at(Timestamp::from_secs(created_at))
-        .finalize(keys)
-        .unwrap()
-}
-
 fn coordinate(fx: &Fixture, d: &str) -> String {
     format!("35980:{}:{d}", fx.pubkey.to_hex())
 }
@@ -130,31 +69,115 @@ async fn held_sites_are_sent_again_only_to_relays_that_lack_them() {
     let fx = Fixture::new(default_policy(), FakeKubo::default());
     let now = Timestamp::now().as_secs();
     let held = site_event(&fx.keys, "a.example", CID_A, now - 100);
-    let newer = site_event(&fx.keys, "a.example", CID_B, now - 50);
     let older = site_event(&fx.keys, "a.example", CID_B, now - 200);
     let unfollowed = site_event(&Keys::generate(), "s.example", CID_A, now - 100);
     hold(&fx, &held).await;
     hold(&fx, &unfollowed).await;
 
     let (_same, same) = relay_holding(std::slice::from_ref(&held)).await;
-    let (_newer, has_newer) = relay_holding(std::slice::from_ref(&newer)).await;
     let (_older, has_older) = relay_holding(std::slice::from_ref(&older)).await;
     let (_empty, empty) = relay_holding(&[]).await;
-    resend_through(
-        &fx,
-        &[
-            same.clone(),
-            has_newer.clone(),
-            has_older.clone(),
-            empty.clone(),
-        ],
-    )
-    .await;
+    resend_through(&fx, &[same.clone(), has_older.clone(), empty.clone()]).await;
 
     assert_eq!(ids_on(&same).await, vec![held.id]);
-    assert_eq!(ids_on(&has_newer).await, vec![newer.id]);
     assert_eq!(ids_on(&has_older).await, vec![held.id]);
     assert_eq!(ids_on(&empty).await, vec![held.id]);
+}
+
+#[tokio::test]
+async fn a_site_superseded_on_any_relay_is_not_sent_again_even_after_relays_drop_the_newer_one() {
+    let fx = Fixture::new(default_policy(), FakeKubo::default());
+    let now = Timestamp::now().as_secs();
+    let held = site_event(&fx.keys, "a.example", CID_A, now - 100);
+    let newer = site_event(&fx.keys, "a.example", CID_B, now - 50);
+    hold(&fx, &held).await;
+
+    let (_newer, has_newer) = relay_holding(std::slice::from_ref(&newer)).await;
+    let (_empty, empty) = relay_holding(&[]).await;
+    resend_through(&fx, &[has_newer.clone(), empty.clone()]).await;
+    assert_eq!(ids_on(&has_newer).await, vec![newer.id]);
+    assert!(ids_on(&empty).await.is_empty());
+    assert_eq!(
+        fx.agent.state.lock().await.withdrawn[&key_of(&held)],
+        Withdrawn {
+            events: BTreeSet::new(),
+            through: Some(now - 51),
+        }
+    );
+
+    resend_through(&fx, std::slice::from_ref(&empty)).await;
+    assert!(ids_on(&empty).await.is_empty());
+}
+
+#[tokio::test]
+async fn a_site_superseded_in_the_same_second_is_withdrawn_by_its_id() {
+    let fx = Fixture::new(default_policy(), FakeKubo::default());
+    let now = Timestamp::now().as_secs();
+    let x = site_event(&fx.keys, "a.example", CID_A, now - 100);
+    let y = site_event(&fx.keys, "a.example", CID_B, now - 100);
+    let (newer, held) = if x.id < y.id { (x, y) } else { (y, x) };
+    hold(&fx, &held).await;
+
+    let (_newer, has_newer) = relay_holding(std::slice::from_ref(&newer)).await;
+    resend_through(&fx, std::slice::from_ref(&has_newer)).await;
+    let state = fx.agent.state.lock().await;
+    let withdrawn = &state.withdrawn[&key_of(&held)];
+    assert_eq!(withdrawn.events, BTreeSet::from([held.id.to_hex()]));
+    assert_eq!(withdrawn.through, None);
+    assert!(!withdrawn.covers(&newer.id.to_hex(), now - 100));
+}
+
+#[tokio::test]
+async fn sites_of_authors_unfollowed_since_the_poll_are_not_sent() {
+    let fx = Fixture::new(default_policy(), FakeKubo::default());
+    let now = Timestamp::now().as_secs();
+    let held = site_event(&fx.keys, "a.example", CID_A, now - 100);
+    hold(&fx, &held).await;
+    fx.agent.replace_targets(HashSet::new());
+
+    let (_empty, empty) = relay_holding(&[]).await;
+    resend_through(&fx, std::slice::from_ref(&empty)).await;
+    assert!(ids_on(&empty).await.is_empty());
+}
+
+#[test]
+fn when_nip05_is_required_only_verified_sites_are_held_for_resending() {
+    let fx = Fixture::new(default_policy(), FakeKubo::default());
+    let mut state = State::default();
+    let mut ids = Vec::new();
+    for (d, status) in [
+        ("verified.example", Some(nip05::STATE_VERIFIED)),
+        ("failed.example", Some(nip05::STATE_ERROR)),
+        ("unchecked.example", None),
+    ] {
+        let event = site_event(&fx.keys, d, CID_A, 100);
+        state.apply_store(&key_of(&event), record_of(&event));
+        if let Some(status) = status {
+            state.set_verification(
+                &key_of(&event),
+                Verification {
+                    status: status.into(),
+                    detail: None,
+                    checked_at: 1,
+                },
+            );
+        }
+        ids.push(event.id);
+    }
+    let targets = HashSet::from([fx.pubkey]);
+    let held_ids = |require| {
+        let mut held: Vec<EventId> = held_site_events(&state, &targets, require)
+            .into_iter()
+            .map(|h| h.event.id)
+            .collect();
+        held.sort();
+        held
+    };
+
+    assert_eq!(held_ids(true), vec![ids[0]]);
+    let mut all = ids.clone();
+    all.sort();
+    assert_eq!(held_ids(false), all);
 }
 
 #[tokio::test]
@@ -225,13 +248,7 @@ async fn a_relay_that_did_not_answer_the_deletion_check_is_not_sent_to() {
     hold(&fx, &held).await;
 
     let (_answering, answering) = relay_holding(&[]).await;
-    let (_refusing, refusing) = serve(
-        LocalRelayBuilder::default()
-            .query_policy(RefusesDeletionQueries)
-            .build(),
-        &[],
-    )
-    .await;
+    let (_refusing, refusing) = refusing_relay(Some(Kind::EventDeletion)).await;
     resend_through(&fx, &[answering.clone(), refusing.clone()]).await;
 
     assert_eq!(ids_on(&answering).await, vec![held.id]);
@@ -359,7 +376,10 @@ fn held_events_that_do_not_match_their_record_or_are_withdrawn_are_not_candidate
     state.apply_store(&key_of(&withdrawn), record_of(&withdrawn));
     state.record_withdrawal(&key_of(&withdrawn), None, Some(100));
 
-    let candidates = resend_candidates(held_site_events(&state, &[fx.pubkey]), 35980);
+    let candidates = resend_candidates(
+        held_site_events(&state, &HashSet::from([fx.pubkey]), false),
+        35980,
+    );
     let ids: Vec<EventId> = candidates.iter().map(|h| h.event.id).collect();
     assert_eq!(ids, vec![good.id]);
 }
@@ -369,11 +389,11 @@ async fn the_check_runs_on_the_first_poll_and_then_once_per_interval() {
     let fx = Fixture::new(default_policy(), FakeKubo::default());
     let mut tasks = JoinSet::new();
     let start = tokio::time::Instant::now();
-    let ran = Arc::new(std::sync::atomic::AtomicUsize::new(0));
-    let check = |ran: &Arc<std::sync::atomic::AtomicUsize>| {
+    let ran = Arc::new(AtomicUsize::new(0));
+    let check = |ran: &Arc<AtomicUsize>| {
         let ran = Arc::clone(ran);
         Some(async move {
-            ran.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            ran.fetch_add(1, Ordering::SeqCst);
         })
     };
 
@@ -385,13 +405,13 @@ async fn the_check_runs_on_the_first_poll_and_then_once_per_interval() {
         &mut tasks
     ));
     while tasks.join_next().await.is_some() {}
-    assert_eq!(ran.load(std::sync::atomic::Ordering::SeqCst), 1);
+    assert_eq!(ran.load(Ordering::SeqCst), 1);
     assert!(
         fx.agent
             .begin_report_round(start + RESEND_CHECK_INTERVAL, check(&ran), &mut tasks)
     );
     while tasks.join_next().await.is_some() {}
-    assert_eq!(ran.load(std::sync::atomic::Ordering::SeqCst), 2);
+    assert_eq!(ran.load(Ordering::SeqCst), 2);
 }
 
 #[tokio::test]
@@ -423,10 +443,7 @@ async fn a_check_skipped_because_the_round_is_running_is_retried_on_the_next_pol
     let start = tokio::time::Instant::now();
     let blocker = fx.agent.reports.lock().await;
 
-    assert!(
-        fx.agent
-            .begin_report_round(start, None::<std::future::Ready<()>>, &mut tasks)
-    );
+    assert!(fx.agent.begin_report_round(start, NO_RESEND, &mut tasks));
     assert!(
         !fx.agent
             .begin_report_round(start, Some(async {}), &mut tasks)
@@ -435,15 +452,15 @@ async fn a_check_skipped_because_the_round_is_running_is_retried_on_the_next_pol
 
     drop(blocker);
     while tasks.join_next().await.is_some() {}
-    let ran = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let ran = Arc::new(AtomicBool::new(false));
     let flag = Arc::clone(&ran);
     assert!(fx.agent.begin_report_round(
         start + Duration::from_secs(1),
-        Some(async move { flag.store(true, std::sync::atomic::Ordering::SeqCst) }),
+        Some(async move { flag.store(true, Ordering::SeqCst) }),
         &mut tasks
     ));
     while tasks.join_next().await.is_some() {}
-    assert!(ran.load(std::sync::atomic::Ordering::SeqCst));
+    assert!(ran.load(Ordering::SeqCst));
 }
 
 #[tokio::test]
@@ -453,10 +470,7 @@ async fn a_poll_without_a_decided_follow_set_runs_the_report_round_only() {
     let mut tasks = JoinSet::new();
     let start = tokio::time::Instant::now();
 
-    assert!(
-        fx.agent
-            .begin_report_round(start, None::<std::future::Ready<()>>, &mut tasks)
-    );
+    assert!(fx.agent.begin_report_round(start, NO_RESEND, &mut tasks));
     while tasks.join_next().await.is_some() {}
     assert_eq!(fx.take_reports().len(), 1);
     assert!(fx.agent.resend.lock().unwrap().take_due(start));

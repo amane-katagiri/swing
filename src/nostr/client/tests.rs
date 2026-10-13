@@ -1,11 +1,14 @@
 use std::collections::BTreeSet;
 use std::time::Duration;
 
-use super::super::fixtures::{follow_set, make_site_event, report, site_event_with};
+use super::super::fixtures::{follow_set, report, site_event_with};
 use super::fetch::{Measured, Streamed, event_bytes};
 use super::*;
 use crate::nostr::site_coordinate;
-use crate::test_support::{CID_A, CID_B, keys};
+use crate::test_support::{
+    CID_A, CID_B, deletion_event, keys, make_site_event, numbered_deletion_event, refusing_relay,
+    relay_holding, serve_relay,
+};
 
 #[test]
 fn relay_send_results_reports_success_and_failure_per_relay() {
@@ -211,24 +214,6 @@ async fn collect_newest_counts_only_relays_that_finished_without_failing() {
     );
 }
 
-#[derive(Debug)]
-struct RefusesQueries;
-
-impl QueryPolicy for RefusesQueries {
-    fn admit_query<'a>(
-        &'a self,
-        _query: &'a mut Filter,
-        _addr: &'a std::net::SocketAddr,
-    ) -> std::pin::Pin<Box<dyn Future<Output = QueryPolicyResult> + Send + 'a>> {
-        Box::pin(async {
-            QueryPolicyResult::Reject {
-                prefix: MachineReadablePrefix::Error,
-                message: "down for maintenance".into(),
-            }
-        })
-    }
-}
-
 async fn fetch_follow_set_from(relays: &[String]) -> Result<Option<Event>> {
     let client = RelayClient::connect(Signer::Local(keys()), relays)
         .await
@@ -240,11 +225,7 @@ async fn fetch_follow_set_from(relays: &[String]) -> Result<Option<Event>> {
 
 #[tokio::test]
 async fn a_fetch_fails_when_no_relay_answers_but_not_when_one_does() {
-    let refusing = LocalRelayBuilder::default()
-        .query_policy(RefusesQueries)
-        .build();
-    refusing.run().await.unwrap();
-    let refusing = refusing.url().await.to_string();
+    let (_refusing, refusing) = refusing_relay(None).await;
     let healthy = LocalRelay::new();
     healthy.run().await.unwrap();
     let healthy = healthy.url().await.to_string();
@@ -392,18 +373,13 @@ impl QueryPolicy for IgnoresFilter {
 }
 
 async fn relay_that_ignores_filters(events: &[Event]) -> (LocalRelay, RelayClient) {
-    let local = LocalRelayBuilder::default()
-        .query_policy(IgnoresFilter)
-        .build();
-    local.run().await.unwrap();
-    let url = local.url().await.to_string();
-    let seeder = Client::default();
-    seeder.add_relay(url.as_str()).await.unwrap();
-    seeder.connect().await;
-    for event in events {
-        seeder.send_event(event).await.unwrap();
-    }
-    seeder.shutdown().await;
+    let (local, url) = serve_relay(
+        LocalRelayBuilder::default()
+            .query_policy(IgnoresFilter)
+            .build(),
+        events,
+    )
+    .await;
     let client = RelayClient::connect(Signer::Local(keys()), &[url])
         .await
         .unwrap();
@@ -654,20 +630,6 @@ async fn a_forged_copy_of_a_verified_event_does_not_hide_the_real_one() {
     client.shutdown().await;
 }
 
-async fn relay_holding(events: &[Event]) -> (LocalRelay, String) {
-    let local = LocalRelay::new();
-    local.run().await.unwrap();
-    let url = local.url().await.to_string();
-    let seeder = Client::default();
-    seeder.add_relay(url.as_str()).await.unwrap();
-    seeder.connect().await;
-    for event in events {
-        seeder.send_event(event).await.unwrap();
-    }
-    seeder.shutdown().await;
-    (local, url)
-}
-
 #[tokio::test]
 async fn paged_fetches_walk_each_relay_past_its_page_limit() {
     let reporter = keys();
@@ -765,11 +727,7 @@ async fn sites_per_relay_tell_a_relay_without_the_site_from_one_that_did_not_ans
     let other = make_site_event(&k, 35980, "b.example", CID_A, now);
     let (_holding, holding) = relay_holding(&[held.clone(), other]).await;
     let (_empty, empty) = relay_holding(&[]).await;
-    let refusing = LocalRelayBuilder::default()
-        .query_policy(RefusesQueries)
-        .build();
-    refusing.run().await.unwrap();
-    let refusing = refusing.url().await.to_string();
+    let (_refusing, refusing) = refusing_relay(None).await;
     let client = RelayClient::connect(
         Signer::Local(keys()),
         &[holding.clone(), empty.clone(), refusing.clone()],
@@ -789,20 +747,9 @@ async fn sites_per_relay_tell_a_relay_without_the_site_from_one_that_did_not_ans
             .map(|a| a.sites.clone())
             .unwrap()
     };
-    assert_eq!(by_url(&holding), vec![Some(Some(held))]);
-    assert_eq!(by_url(&empty), vec![Some(None)]);
-    assert_eq!(by_url(&refusing), vec![None]);
-}
-
-fn deletion_of(k: &Keys, tags: &[[&str; 2]], created_at: u64) -> Event {
-    let mut builder = EventBuilder::new(Kind::EventDeletion, "");
-    for tag in tags {
-        builder = builder.tag(Tag::parse(*tag).unwrap());
-    }
-    builder
-        .custom_created_at(Timestamp::from_secs(created_at))
-        .finalize(k)
-        .unwrap()
+    assert_eq!(by_url(&holding), vec![SiteAnswer::Found(held)]);
+    assert_eq!(by_url(&empty), vec![SiteAnswer::Missing]);
+    assert_eq!(by_url(&refusing), vec![SiteAnswer::Unanswered]);
 }
 
 fn coordinate_of(event: &Event) -> String {
@@ -828,8 +775,8 @@ fn deletion_requests_give_each_author_its_own_filters_and_limit() {
     assert_eq!(first.sites.len(), 2);
     assert_eq!(first.limit, 4);
     for unit in &units {
-        let [by_address, by_id] = unit.filters();
-        for filter in [&by_address, &by_id] {
+        let [by_address, by_id] = &unit.filters;
+        for filter in [by_address, by_id] {
             assert_eq!(filter.authors, Some(BTreeSet::from([unit.author])));
             assert_eq!(filter.kinds, Some(BTreeSet::from([Kind::EventDeletion])));
             assert_eq!(filter.limit, Some(unit.limit));
@@ -853,7 +800,7 @@ fn deletion_requests_give_each_author_its_own_filters_and_limit() {
     }
     let requests: Vec<usize> = units
         .chunks(resend::UNITS_PER_REQ)
-        .map(|chunk| chunk.iter().flat_map(resend::DeletionUnit::filters).count())
+        .map(|chunk| chunk.iter().flat_map(|u| u.filters.iter()).count())
         .collect();
     assert_eq!(requests, vec![10, 10, 4]);
 }
@@ -868,14 +815,14 @@ async fn deletions_naming_another_authors_site_do_not_crowd_out_that_authors_own
     let target = coordinate_of(&held);
     let mut stored: Vec<Event> = (0..20)
         .map(|i| {
-            deletion_of(
+            deletion_event(
                 &flooder,
                 &[["a", &target], ["e", &held.id.to_hex()]],
                 now - i,
             )
         })
         .collect();
-    stored.push(deletion_of(&author, &[["a", &target]], now - 50));
+    stored.push(deletion_event(&author, &[["a", &target]], now - 50));
     let (_relay, url) = relay_holding(&stored).await;
     let client = RelayClient::connect(Signer::Local(keys()), std::slice::from_ref(&url))
         .await
@@ -893,17 +840,6 @@ async fn deletions_naming_another_authors_site_do_not_crowd_out_that_authors_own
     assert!(answers.answered(&relay, 1));
 }
 
-fn numbered_deletion_of(k: &Keys, tags: &[[&str; 2]], created_at: u64, n: usize) -> Event {
-    let mut builder = EventBuilder::new(Kind::EventDeletion, n.to_string());
-    for tag in tags {
-        builder = builder.tag(Tag::parse(*tag).unwrap());
-    }
-    builder
-        .custom_created_at(Timestamp::from_secs(created_at))
-        .finalize(k)
-        .unwrap()
-}
-
 #[tokio::test]
 async fn when_deletions_reach_the_limit_only_sites_newer_than_the_cutoff_are_answered() {
     let author = keys();
@@ -915,7 +851,7 @@ async fn when_deletions_reach_the_limit_only_sites_newer_than_the_cutoff_are_ans
     let quiet_site = make_site_event(&quiet, 35980, "a.example", CID_A, now - 300);
     let target = coordinate_of(&withdrawn);
     let stored: Vec<Event> = (0..10)
-        .map(|i| deletion_of(&author, &[["a", &target]], now - 100 - i))
+        .map(|i| deletion_event(&author, &[["a", &target]], now - 100 - i))
         .collect();
     let (_relay, url) = relay_holding(&stored).await;
     let client = RelayClient::connect(Signer::Local(keys()), std::slice::from_ref(&url))
@@ -947,9 +883,9 @@ async fn a_site_created_in_the_same_second_as_the_cutoff_is_unknown() {
     let withdrawn = make_site_event(&author, 35980, "w.example", CID_A, now - 400);
     let id = withdrawn.id.to_hex();
     let mut stored: Vec<Event> = (0..4)
-        .map(|n| numbered_deletion_of(&author, &[["e", &id]], now - 100, n))
+        .map(|n| numbered_deletion_event(&author, &[["e", &id]], now - 100, &n.to_string()))
         .collect();
-    stored.push(deletion_of(&author, &[["e", &id]], now - 300));
+    stored.push(deletion_event(&author, &[["e", &id]], now - 300));
     let (_relay, url) = relay_holding(&stored).await;
     let client = RelayClient::connect(Signer::Local(keys()), std::slice::from_ref(&url))
         .await
@@ -999,7 +935,7 @@ fn the_deletion_limit_per_filter_is_capped() {
     let units = resend::deletion_units(35980, &refs);
     assert_eq!(units.len(), 1);
     assert_eq!(units[0].limit, budget::MAX_DELETIONS_PER_FILTER);
-    for filter in units[0].filters() {
+    for filter in &units[0].filters {
         assert_eq!(filter.limit, Some(budget::MAX_DELETIONS_PER_FILTER));
     }
 }
@@ -1010,11 +946,7 @@ async fn a_relay_that_refuses_the_deletion_request_has_not_answered_it() {
     let now = Timestamp::now().as_secs();
     let held = make_site_event(&author, 35980, "a.example", CID_A, now - 100);
     let (_healthy, healthy) = relay_holding(&[]).await;
-    let refusing = LocalRelayBuilder::default()
-        .query_policy(RefusesQueries)
-        .build();
-    refusing.run().await.unwrap();
-    let refusing = refusing.url().await.to_string();
+    let (_refusing, refusing) = refusing_relay(None).await;
     let client = RelayClient::connect(Signer::Local(keys()), &[healthy.clone(), refusing.clone()])
         .await
         .unwrap();

@@ -47,6 +47,8 @@ impl Nip05Verify for FakeNip05 {
 
 pub(super) const REPORT_TTL: u64 = 3 * 86_400;
 
+pub(super) const NO_RESEND: Option<std::future::Ready<()>> = None;
+
 #[derive(Default)]
 pub(super) struct FakeRelayState {
     pub(super) stored: Vec<Event>,
