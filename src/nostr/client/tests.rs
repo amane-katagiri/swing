@@ -881,11 +881,11 @@ async fn a_site_created_in_the_same_second_as_the_cutoff_is_unknown() {
     let now = Timestamp::now().as_secs();
     let tied = make_site_event(&author, 35980, "t.example", CID_A, now - 100);
     let withdrawn = make_site_event(&author, 35980, "w.example", CID_A, now - 400);
-    let id = withdrawn.id.to_hex();
+    let target = coordinate_of(&withdrawn);
     let mut stored: Vec<Event> = (0..4)
-        .map(|n| numbered_deletion_event(&author, &[["e", &id]], now - 100, &n.to_string()))
+        .map(|n| numbered_deletion_event(&author, &[["a", &target]], now - 100, &n.to_string()))
         .collect();
-    stored.push(deletion_event(&author, &[["e", &id]], now - 300));
+    stored.push(deletion_event(&author, &[["a", &target]], now - 300));
     let (_relay, url) = relay_holding(&stored).await;
     let client = RelayClient::connect(Signer::Local(keys()), std::slice::from_ref(&url))
         .await
@@ -899,7 +899,41 @@ async fn a_site_created_in_the_same_second_as_the_cutoff_is_unknown() {
     let relay = RelayUrl::parse(&url).unwrap();
     assert!(!answers.answered(&relay, 0));
     assert!(answers.withdrawals.of(&tied, 35980).is_none());
-    assert!(answers.withdrawals.of(&withdrawn, 35980).unwrap().by_id);
+    assert_eq!(
+        answers.withdrawals.of(&withdrawn, 35980).unwrap().through,
+        Some(now - 100)
+    );
+}
+
+#[tokio::test]
+async fn when_deletions_by_id_reach_the_limit_no_site_of_the_author_is_answered() {
+    let author = keys();
+    let now = Timestamp::now().as_secs();
+    let newer = make_site_event(&author, 35980, "n.example", CID_A, now - 50);
+    let withdrawn = make_site_event(&author, 35980, "w.example", CID_A, now - 400);
+    let id = withdrawn.id.to_hex();
+    let mut stored: Vec<Event> = (0..4)
+        .map(|i| deletion_event(&author, &[["e", &id]], now - 100 - i))
+        .collect();
+    stored.push(deletion_event(
+        &author,
+        &[["e", &newer.id.to_hex()]],
+        now - 500,
+    ));
+    let (_relay, url) = relay_holding(&stored).await;
+    let client = RelayClient::connect(Signer::Local(keys()), std::slice::from_ref(&url))
+        .await
+        .unwrap();
+
+    let answers = client
+        .fetch_site_deletions(35980, &[&newer, &withdrawn])
+        .await;
+    client.shutdown().await;
+
+    let relay = RelayUrl::parse(&url).unwrap();
+    assert!(answers.withdrawals.of(&newer, 35980).is_none());
+    assert!(!answers.answered(&relay, 0));
+    assert!(answers.withdrawals.of(&withdrawn, 35980).is_some());
 }
 
 #[test]
@@ -916,12 +950,12 @@ fn the_cutoff_is_the_limit_th_newest_of_the_counted_deletions() {
 }
 
 #[test]
-fn a_site_is_answered_only_when_newer_than_every_cutoff() {
+fn a_site_is_answered_only_when_newer_than_the_address_cutoff_and_ids_are_not_cut() {
     assert!(resend::answered_past([None, None], 5));
     assert!(resend::answered_past([Some(4), None], 5));
     assert!(!resend::answered_past([Some(5), None], 5));
+    assert!(!resend::answered_past([None, Some(4)], 5));
     assert!(!resend::answered_past([None, Some(6)], 5));
-    assert!(!resend::answered_past([Some(4), Some(5)], 5));
 }
 
 #[test]

@@ -11,7 +11,7 @@
 
 ## 手順
 
-1. 対象を集める。state の `sites` のうち、作者が今の Follow Set の対象 pubkey にいるサイトの、最新の版（`created_at` が最大の版）の `event`。対象 pubkey は、poll から渡されたもののうち、確認を始めた時点でも agent の対象（`Agent::replace_targets` で置き換える集合）にあるものだけにする（報告の回の間に Follow Set が変わってフォローを外した相手を除く）。`event` の無い版（保存する前の形式で記録した版や、署名が正しくなかった版）は対象にしない。`remove_on_unfollow = false` で残している、フォローを外した相手のサイトも対象にしない。`[policy].nip05 = "require"` のときは、state の `verifications` の `status` が `verified` でないサイト（確認していないサイトを含む）も対象にしない（debug）。
+1. 対象を集める。state の `sites` のうち、作者が今の Follow Set の対象 pubkey にいるサイトの、最新の版（`created_at` が最大の版）の `event`。対象 pubkey は、poll から渡されたもののうち、確認を始めた時点でも agent の対象（`Agent::replace_targets` で置き換える集合）にあるものだけにする（報告の回の間に Follow Set が変わってフォローを外した相手を除く）。`event` の無い版（`event` を保存する前の形式で記録した版や、署名が正しくなくて `event` を記録しなかった版。[`state.json`](state.md)）は対象にしない。`remove_on_unfollow = false` で残している、フォローを外した相手のサイトも対象にしない。`[policy].nip05 = "require"` のときは、state の `verifications` の `status` が `verified` でないサイト（確認していないサイトを含む）も対象にしない（debug）。
 2. 集めたイベントを state のロックの外で確かめ、次のものは除く。対象が無ければ終わる。
    - 署名が正しくない、今の `[nostr].site_event_kind` のサイトイベントとしてパースできない、または作者と `d` が state のキーと一致しない（`nostr::saved_site_event`。debug）。
    - パースした `cid` と `created_at` が、その版の記録（`VersionRecord` の `cid`・`created_at`）と一致しない（warn）。

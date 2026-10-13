@@ -23,10 +23,7 @@ pub use report::{
     MAX_REPORT_AGE, ReplicaReport, build_replica_report_builder, parse_replica_report,
     site_coordinate,
 };
-pub use resend::{
-    DeletionMatch, ResendPlan, Withdrawal, Withdrawals, keep_newest_site, plan_site_resends,
-    saved_site_event,
-};
+pub use resend::{ResendPlan, Withdrawals, keep_newest_site, plan_site_resends, saved_site_event};
 pub use site::{
     SignedSite, SiteEvent, SiteFields, build_site_event_builder, build_site_note_builder,
     canonical_cid, cap_sites_per_author, is_unsafe_char, parse_site_event, select_latest,

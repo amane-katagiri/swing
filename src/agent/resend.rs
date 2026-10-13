@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -102,7 +102,7 @@ fn held_site_events(state: &State, targets: &HashSet<PublicKey>, require_nip05: 
                 return None;
             }
             let record = state.latest_version(key)?;
-            let event = record.event.clone()?;
+            record.event.as_ref()?;
             if require_nip05
                 && state
                     .verifications
@@ -118,7 +118,7 @@ fn held_site_events(state: &State, targets: &HashSet<PublicKey>, require_nip05: 
                 d: d.to_string(),
                 cid: record.cid.clone(),
                 created_at: record.created_at,
-                event,
+                event: record.event.clone()?,
                 withdrawn: state.withdrawn.get(key).cloned(),
             })
         })
@@ -149,25 +149,21 @@ fn resend_candidates(held: Vec<Held>, site_event_kind: u16) -> Vec<Held> {
         .collect()
 }
 
-struct Withdrawing {
-    key: SiteKey,
-    event_id_hex: Option<String>,
-    through: Option<u64>,
-}
-
 // A newer version in the same second only outranks the held one by id, so covering that second would also cover the newer version.
-fn superseded(held: Held, newer: &Event) -> Withdrawing {
+fn superseded(held: Held, newer: &Event) -> (SiteKey, Withdrawn) {
     let newer_at = newer.created_at.as_secs();
-    let (event_id_hex, through) = if newer_at > held.created_at {
-        (None, Some(newer_at - 1))
+    let withdrawn = if newer_at > held.created_at {
+        Withdrawn {
+            events: BTreeSet::new(),
+            through: Some(newer_at - 1),
+        }
     } else {
-        (Some(held.event.id.to_hex()), None)
+        Withdrawn {
+            events: BTreeSet::from([held.event.id.to_hex()]),
+            through: None,
+        }
     };
-    Withdrawing {
-        key: held.key,
-        event_id_hex,
-        through,
-    }
+    (held.key, withdrawn)
 }
 
 struct Outgoing {
@@ -238,11 +234,7 @@ pub(super) async fn resend_held_sites<C, N, R>(
     for (i, (h, relays)) in wanted.into_iter().enumerate() {
         if let Some(w) = deletions.withdrawals.of(&h.event, kind) {
             info!(site = %h.d, pubkey = %h.pubkey, event_id = %h.event.id, "the author deleted the held site event; not sending it again");
-            withdrawn.push(Withdrawing {
-                event_id_hex: w.by_id.then(|| h.event.id.to_hex()),
-                key: h.key,
-                through: w.through,
-            });
+            withdrawn.push((h.key, w));
             continue;
         }
         let relays: Vec<RelayUrl> = relays
@@ -263,7 +255,7 @@ pub(super) async fn resend_held_sites<C, N, R>(
     send_held(relay, agent, sends).await;
 }
 
-async fn record_withdrawals<C, N, R>(agent: &Agent<C, N, R>, withdrawn: Vec<Withdrawing>)
+async fn record_withdrawals<C, N, R>(agent: &Agent<C, N, R>, withdrawn: Vec<(SiteKey, Withdrawn)>)
 where
     C: KuboStore,
     N: Nip05Verify,
@@ -274,8 +266,8 @@ where
     }
     let mut state = agent.state.lock().await;
     let mut changed = false;
-    for w in withdrawn {
-        changed |= state.record_withdrawal(&w.key, w.event_id_hex, w.through);
+    for (key, w) in withdrawn {
+        changed |= state.record_withdrawal(&key, w);
     }
     if changed {
         agent.save(&state, "recording withdrawn site events").await;

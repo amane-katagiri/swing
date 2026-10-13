@@ -1,6 +1,8 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 
 use nostr_sdk::prelude::*;
+
+use crate::state::Withdrawn;
 
 use super::{
     MAX_FUTURE_SKEW, RelayAnswers, SiteAnswer, SiteEvent, is_newer_replaceable, parse_site_event,
@@ -82,9 +84,9 @@ pub fn plan_site_resends<'a>(held: &[&Event], answers: &'a [RelayAnswers]) -> Ve
 }
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
-pub struct DeletionMatch {
-    pub by_id: bool,
-    pub by_address: bool,
+pub(super) struct DeletionMatch {
+    pub(super) by_id: bool,
+    pub(super) by_address: bool,
 }
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
@@ -93,14 +95,8 @@ pub struct Withdrawals {
     addresses: HashMap<(PublicKey, String), u64>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Withdrawal {
-    pub by_id: bool,
-    pub through: Option<u64>,
-}
-
 impl Withdrawals {
-    pub fn note(
+    pub(super) fn note(
         &mut self,
         deletion: &Event,
         ids: &HashSet<String>,
@@ -135,7 +131,7 @@ impl Withdrawals {
         found
     }
 
-    pub fn merge(&mut self, other: Withdrawals) {
+    pub(super) fn merge(&mut self, other: Withdrawals) {
         self.ids.extend(other.ids);
         for (key, created_at) in other.addresses {
             let at = self.addresses.entry(key).or_insert(created_at);
@@ -143,8 +139,14 @@ impl Withdrawals {
         }
     }
 
-    pub fn of(&self, held: &Event, site_event_kind: u16) -> Option<Withdrawal> {
-        let by_id = self.ids.contains(&(held.pubkey, held.id.to_hex()));
+    pub fn of(&self, held: &Event, site_event_kind: u16) -> Option<Withdrawn> {
+        let id = held.id.to_hex();
+        let events: BTreeSet<String> = self
+            .ids
+            .contains(&(held.pubkey, id.clone()))
+            .then_some(id)
+            .into_iter()
+            .collect();
         let through = held
             .tags
             .identifier()
@@ -153,7 +155,7 @@ impl Withdrawals {
                 self.addresses.get(&(held.pubkey, coordinate)).copied()
             })
             .filter(|at| held.created_at.as_secs() <= *at);
-        (by_id || through.is_some()).then_some(Withdrawal { by_id, through })
+        (!events.is_empty() || through.is_some()).then_some(Withdrawn { events, through })
     }
 }
 

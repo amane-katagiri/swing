@@ -113,10 +113,9 @@ impl Returned {
     }
 }
 
-pub(super) fn answered_past(cutoffs: [Option<u64>; 2], created_at: u64) -> bool {
-    cutoffs
-        .iter()
-        .all(|cutoff| cutoff.is_none_or(|cutoff| created_at > cutoff))
+// An `e` deletion names the version whatever its own time, so a cut `#e` answer can hide one at any `created_at`.
+pub(super) fn answered_past([by_address, by_id]: [Option<u64>; 2], created_at: u64) -> bool {
+    by_id.is_none() && by_address.is_none_or(|cutoff| created_at > cutoff)
 }
 
 struct SitesReq {
@@ -133,7 +132,7 @@ struct DeletionReq {
 
 impl DeletionReq {
     fn note(&mut self, units: &[DeletionUnit], event: Event, now: u64) {
-        if event.kind != Kind::EventDeletion || !self.seen.insert(event.id) {
+        if !self.seen.insert(event.id) {
             return;
         }
         let created_at = event.created_at.as_secs();
@@ -167,8 +166,14 @@ fn answered_sites(
         for (k, returned) in req.returned.iter().enumerate() {
             let unit = &units[req.first + k];
             let cutoffs = returned.each_ref().map(|r| r.cutoff(unit.limit));
-            if let Some(cutoff) = cutoffs.iter().flatten().max() {
-                warn!(relay = %relay, pubkey = %unit.author, cutoff, "deletions by the author reach the request limit; the author's held site events at or before the cutoff are not sent to this relay this time");
+            match cutoffs {
+                [_, Some(cutoff)] => {
+                    warn!(relay = %relay, pubkey = %unit.author, cutoff, "deletions by the author naming held site events by id reach the request limit; none of those held site events is sent to this relay this time");
+                }
+                [Some(cutoff), None] => {
+                    warn!(relay = %relay, pubkey = %unit.author, cutoff, "deletions by the author reach the request limit; the author's held site events at or before the cutoff are not sent to this relay this time");
+                }
+                [None, None] => {}
             }
             if !request.complete {
                 continue;
@@ -178,7 +183,7 @@ fn answered_sites(
                 if answered_past(cutoffs, created_at) {
                     answered[i] = true;
                 } else {
-                    debug!(relay = %relay, event_id = %held[i].id, created_at, "the held site event is not newer than the cutoff of the deletions returned; whether the author deleted it is unknown on this relay");
+                    debug!(relay = %relay, event_id = %held[i].id, created_at, "the deletions returned were cut by the request limit; whether the author deleted the held site event is unknown on this relay");
                 }
             }
         }

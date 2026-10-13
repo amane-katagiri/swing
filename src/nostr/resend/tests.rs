@@ -148,7 +148,7 @@ fn asked(held: &Event) -> (HashSet<String>, HashSet<String>) {
     )
 }
 
-fn withdrawal_by(held: &Event, deletions: &[Event]) -> Option<Withdrawal> {
+fn withdrawal_by(held: &Event, deletions: &[Event]) -> Option<Withdrawn> {
     let (ids, coordinates) = asked(held);
     let mut index = Withdrawals::default();
     for deletion in deletions {
@@ -166,9 +166,9 @@ fn deletions_by_the_author_withdraw_the_held_version() {
 
     assert_eq!(
         withdrawal_by(&held, &[deletion(&k, &[["e", &id]], 150)]),
-        Some(Withdrawal {
-            by_id: true,
-            through: None
+        Some(Withdrawn {
+            events: BTreeSet::from([held.id.to_hex()]),
+            through: None,
         })
     );
     assert_eq!(
@@ -180,9 +180,9 @@ fn deletions_by_the_author_withdraw_the_held_version() {
                 deletion(&k, &[["a", &coordinate]], 210),
             ]
         ),
-        Some(Withdrawal {
-            by_id: false,
-            through: Some(250)
+        Some(Withdrawn {
+            events: BTreeSet::new(),
+            through: Some(250),
         })
     );
 
@@ -240,16 +240,16 @@ fn a_deletion_dated_too_far_ahead_withdraws_by_id_and_by_address_up_to_the_skew(
 
     assert_eq!(
         withdrawal_by(&held, &[deletion(&k, &[["e", &id]], NOW + 10_000)]),
-        Some(Withdrawal {
-            by_id: true,
-            through: None
+        Some(Withdrawn {
+            events: BTreeSet::from([held.id.to_hex()]),
+            through: None,
         })
     );
     assert_eq!(
         withdrawal_by(&held, &[deletion(&k, &[["a", coordinate]], NOW + 10_000)]),
-        Some(Withdrawal {
-            by_id: false,
-            through: Some(NOW + MAX_FUTURE_SKEW)
+        Some(Withdrawn {
+            events: BTreeSet::new(),
+            through: Some(NOW + MAX_FUTURE_SKEW),
         })
     );
 }
@@ -306,9 +306,9 @@ fn merged_indexes_keep_every_id_and_the_latest_address_deletion() {
     first.merge(second);
     assert_eq!(
         first.of(&held, KIND),
-        Some(Withdrawal {
-            by_id: true,
-            through: Some(300)
+        Some(Withdrawn {
+            events: BTreeSet::from([held.id.to_hex()]),
+            through: Some(300),
         })
     );
 }

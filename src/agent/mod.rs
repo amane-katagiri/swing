@@ -55,7 +55,7 @@ where
     N: Nip05Verify + Send + Sync + 'static,
     R: ReportRelay + Send + Sync + 'static,
 {
-    // Signing a report can wait on the signer app, so the round runs beside the event loop, never twice at once, and the resend follows it so their fetches never overlap.
+    // The resend runs in the report round's task so its fetches never overlap the reports'.
     fn start_report_round(
         self: &Arc<Self>,
         relay: &Arc<RelayClient>,

@@ -231,8 +231,10 @@ async fn a_newer_version_after_an_address_withdrawal_is_sent_again() {
     hold(&fx, &newer).await;
     fx.agent.state.lock().await.record_withdrawal(
         &key_of(&newer),
-        Some("00".repeat(32)),
-        Some(now - 100),
+        Withdrawn {
+            events: BTreeSet::from(["00".repeat(32)]),
+            through: Some(now - 100),
+        },
     );
 
     let (_empty, empty) = relay_holding(&[]).await;
@@ -374,7 +376,13 @@ fn held_events_that_do_not_match_their_record_or_are_withdrawn_are_not_candidate
         },
     );
     state.apply_store(&key_of(&withdrawn), record_of(&withdrawn));
-    state.record_withdrawal(&key_of(&withdrawn), None, Some(100));
+    state.record_withdrawal(
+        &key_of(&withdrawn),
+        Withdrawn {
+            events: BTreeSet::new(),
+            through: Some(100),
+        },
+    );
 
     let candidates = resend_candidates(
         held_site_events(&state, &HashSet::from([fx.pubkey]), false),

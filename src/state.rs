@@ -174,11 +174,19 @@ impl State {
 
     pub fn apply_store(&mut self, key: &SiteKey, record: VersionRecord) {
         let versions = self.sites.entry(key.clone()).or_default();
+        let newer =
+            latest_index(versions).is_none_or(|i| record.created_at > versions[i].created_at);
         versions.push(record);
         let latest = latest_index(versions);
         for (i, v) in versions.iter_mut().enumerate() {
             if Some(i) != latest {
                 v.event = None;
+            }
+        }
+        if newer && let Some(withdrawn) = self.withdrawn.get_mut(key) {
+            withdrawn.events.clear();
+            if withdrawn.through.is_none() {
+                self.withdrawn.remove(key);
             }
         }
     }
@@ -197,10 +205,7 @@ impl State {
         };
         if latest.cid != cid
             || latest.created_at != event.created_at.as_secs()
-            || latest
-                .event
-                .as_ref()
-                .is_some_and(|held| held.verify().is_ok())
+            || latest.event.is_some()
             || event.verify().is_err()
         {
             return false;
@@ -234,19 +239,14 @@ impl State {
         self.sites.remove(key).unwrap_or_default()
     }
 
-    pub fn record_withdrawal(
-        &mut self,
-        key: &SiteKey,
-        event_id_hex: Option<String>,
-        through: Option<u64>,
-    ) -> bool {
+    pub fn record_withdrawal(&mut self, key: &SiteKey, withdrawn: Withdrawn) -> bool {
         if !self.sites.contains_key(key) {
             return false;
         }
         let entry = self.withdrawn.entry(key.clone()).or_default();
         let before = entry.clone();
-        entry.events.extend(event_id_hex);
-        if let Some(at) = through {
+        entry.events.extend(withdrawn.events);
+        if let Some(at) = withdrawn.through {
             entry.through = Some(entry.through.map_or(at, |t| t.max(at)));
         }
         *entry != before
@@ -407,7 +407,7 @@ mod tests {
     }
 
     #[test]
-    fn an_event_with_a_bad_signature_is_not_filled_and_is_replaced_by_a_good_one() {
+    fn an_event_with_a_bad_signature_is_not_filled() {
         let key = site_key("aa", "x.example");
         let good = signed(20);
         let mut state = State::default();
@@ -415,14 +415,6 @@ mod tests {
 
         assert!(!state.fill_latest_event(&key, "new", &with_bad_signature(&good)));
         assert_eq!(state.latest_version(&key).unwrap().event, None);
-
-        state.apply_store(
-            &key,
-            record("newer", 30, Some(with_bad_signature(&signed(30)))),
-        );
-        let replacement = signed(30);
-        assert!(state.fill_latest_event(&key, "newer", &replacement));
-        assert_eq!(state.latest_version(&key).unwrap().event, Some(replacement));
     }
 
     #[test]
@@ -437,16 +429,48 @@ mod tests {
         assert!(!Withdrawn::default().covers("aa", 1));
     }
 
+    fn by_id(event_id_hex: &str) -> Withdrawn {
+        Withdrawn {
+            events: BTreeSet::from([event_id_hex.to_string()]),
+            through: None,
+        }
+    }
+
+    fn through(at: u64) -> Withdrawn {
+        Withdrawn {
+            events: BTreeSet::new(),
+            through: Some(at),
+        }
+    }
+
+    #[test]
+    fn a_newer_version_drops_the_withdrawn_ids_but_keeps_the_range() {
+        let key = site_key("aa", "x.example");
+        let mut state = State::default();
+        state.apply_store(&key, record("one", 10, None));
+        state.record_withdrawal(&key, by_id("e1"));
+        state.apply_store(&key, record("older", 5, None));
+        state.apply_store(&key, record("same", 10, None));
+        assert_eq!(state.withdrawn[&key], by_id("e1"));
+        state.apply_store(&key, record("two", 20, None));
+        assert!(state.withdrawn.is_empty());
+
+        state.record_withdrawal(&key, by_id("e2"));
+        state.record_withdrawal(&key, through(15));
+        state.apply_store(&key, record("three", 30, None));
+        assert_eq!(state.withdrawn[&key], through(15));
+    }
+
     #[tokio::test]
     async fn withdrawals_are_kept_for_stored_sites_and_dropped_with_them() {
         let key = site_key("aa", "x.example");
         let mut state = State::default();
-        assert!(!state.record_withdrawal(&key, Some("e1".into()), None));
+        assert!(!state.record_withdrawal(&key, by_id("e1")));
         state.apply_store(&key, record("one", 10, None));
-        assert!(state.record_withdrawal(&key, Some("e1".into()), None));
-        assert!(!state.record_withdrawal(&key, Some("e1".into()), None));
-        assert!(state.record_withdrawal(&key, None, Some(20)));
-        assert!(!state.record_withdrawal(&key, None, Some(15)));
+        assert!(state.record_withdrawal(&key, by_id("e1")));
+        assert!(!state.record_withdrawal(&key, by_id("e1")));
+        assert!(state.record_withdrawal(&key, through(20)));
+        assert!(!state.record_withdrawal(&key, through(15)));
         assert_eq!(
             state.withdrawn[&key],
             Withdrawn {
@@ -464,7 +488,7 @@ mod tests {
         state.remove_versions(&key, &["one".to_string()]);
         assert!(state.withdrawn.is_empty());
         state.apply_store(&key, record("two", 30, None));
-        state.record_withdrawal(&key, None, Some(30));
+        state.record_withdrawal(&key, through(30));
         state.remove_account("aa");
         assert!(state.withdrawn.is_empty());
     }
