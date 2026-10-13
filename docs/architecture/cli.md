@@ -8,7 +8,7 @@
 - 「Follow Set」は kind 30000、`d = mirror_set` の作者ごとに最新のもの。「サイトごとの最新のサイトイベント」は sites・replicas・webring で `nostr::select_latest` が選ぶもの。どちらも新しさの比べ方は [`nostr.md`](nostr.md#未来ずれの許容nostrmax_future_skew)。
 - ファイルを書くのは次のコマンドだけで、ほかは読み取り専用。
   - `up`
-  - `publish`: MFS
+  - `publish`: MFS（`--dry-run` では何も書かない）
   - `service install`/`uninstall`: OS のサービス登録と、Windows・macOS では `swing-tray` の自動起動の登録（[`service.md`](service.md#タスクトレイの自動起動windows-と-macos)）
   - `signer pair`: `<state_dir>/remote-signer.json`
   - `dashboard rotate-token`: `swing up` が動いていなければ `<state_dir>/dashboard.token`
@@ -18,7 +18,7 @@
   - `listen` が未指定アドレス（`0.0.0.0` / `::`）でも、接続先と `Host` ヘッダはループバックの同じポートにする。
   - API に接続できなければ、`status`・`stats`・`mirror add`・`mirror remove`・`dashboard open` は `swing up is not running (cannot connect to <addr>)` で非ゼロ終了し、`stop` は `not running` を出して終了コード 0 で終わる。
 - エラーで終了するときは `Error: <メッセージ>` と、原因があれば `Caused by:` に続けて 1 つずつ（2 つ以上なら番号付きで）標準エラーに出し、終了コード 1 で終わる（`format::error_report`）。メッセージと原因はそれぞれ `format::Sanitized` を通すので、改行を含まず 1 行ずつになる。`RUST_BACKTRACE` などでバックトレースを取っていれば続けて出す。`swing up --log-file` のときは同じエラーをログにも出す。
-- `sites`・`replicas`・`webring`・`mirror list`・`publish` は API を経由せず relay/Kubo に直接つなぐので、`swing up` が動いていなくても使える。これらは秘密鍵か署名アプリの接続情報が要り、どちらも無ければエラー終了する（[`signer.md`](signer.md#signer)）。
+- `sites`・`replicas`・`webring`・`mirror list`・`publish` は API を経由せず relay/Kubo に直接つなぐので、`swing up` が動いていなくても使える。これらは秘密鍵か署名アプリの接続情報が要り、どちらも無ければエラー終了する（[`signer.md`](signer.md#signer)）。ただし `publish --dry-run` は鍵が無くても、分かる範囲を確かめて続ける（[`publish/dry-run.md`](publish/dry-run.md)）。
 - API 経由のコマンドは鍵が無くても動く。ただし鍵の無い `swing up` はセットアップモード（[up](#up)）で、そこでは `status`・`mirror add`・`mirror remove` は 503 `agent is not configured` を返す。
 
 ## up

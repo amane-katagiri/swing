@@ -14,6 +14,7 @@ use crate::signer::Signer;
 
 mod checks;
 mod clock;
+pub mod dry_run;
 pub mod links;
 mod new_files;
 mod staged;
@@ -223,6 +224,17 @@ impl RelayState {
         }
     }
 
+    pub async fn clocks_only(relays: &[String], previous_unknown: String) -> Self {
+        Self {
+            previous: Err(previous_unknown),
+            relay_offsets: clock::probe_relay_offsets(relays).await,
+        }
+    }
+
+    pub fn relays_answered(&self) -> usize {
+        self.relay_offsets.len()
+    }
+
     fn previous_created_at(&self) -> Option<u64> {
         self.previous
             .as_ref()
@@ -234,6 +246,14 @@ impl RelayState {
 
 pub async fn plan_version(ipfs: &IpfsClient, site_path: &str, relays: &RelayState) -> Result<u64> {
     let newest = list_newest_version(ipfs, site_path).await?;
+    Ok(date_version(site_path, newest, relays)?)
+}
+
+fn date_version(
+    site_path: &str,
+    newest: Option<u64>,
+    relays: &RelayState,
+) -> Result<u64, ClockError> {
     let now = Timestamp::now().as_secs();
     let created_at = clock::version_time(site_path, newest, relays.previous_created_at(), now)?;
     clock::refuse_clock_ahead(&relays.relay_offsets)?;
@@ -518,6 +538,34 @@ fn check_arguments<'a>(
     Ok(title)
 }
 
+struct Prepared<'a> {
+    title: Option<&'a str>,
+    modes: Modes,
+}
+
+fn prepare<'a>(config: &Config, dir: &Path, request: &'a Request) -> Result<Prepared<'a>> {
+    let url = request.url.as_deref();
+    let title = check_arguments(
+        &request.d,
+        url,
+        request.title.as_deref(),
+        request.message.as_deref(),
+    )?;
+    check_note_request(request.note, url).map_err(|e| anyhow::anyhow!("invalid --note: {e}"))?;
+    let modes = resolve_modes(&request.modes, &config.publish)
+        .map_err(|(name, e)| e.context(format!("invalid --{name}")))?;
+    refuse_protected_paths(dir, config)?;
+    Ok(Prepared { title, modes })
+}
+
+fn print_section<S: AsRef<str>>(title: &str, lines: impl IntoIterator<Item = S>) {
+    println!();
+    println!("{title}");
+    for line in lines {
+        println!("  {}", Sanitized(line.as_ref()));
+    }
+}
+
 fn print_header(d: &str, url: Option<&str>, title: Option<&str>, message: Option<&str>) {
     println!("Site: {d}");
     if let Some(url) = url {
@@ -537,11 +585,7 @@ async fn run_nip05_check(mode: CheckMode, d: &str, pubkey_hex: &str) -> Result<(
     }
     let verifier = nip05::HttpNip05Verifier::new();
     let outcome = check_nip05(&verifier, mode, d, pubkey_hex).await;
-
-    println!();
-    println!("NIP-05");
-    println!("  {}", Sanitized(&outcome.line));
-
+    print_section("NIP-05", [&outcome.line]);
     if let Some(msg) = outcome.abort {
         anyhow::bail!(msg);
     }
@@ -560,28 +604,34 @@ pub async fn scan_links(
     Ok((site, Some(report)))
 }
 
-fn run_local_checks(
-    entries: &[SiteEntry],
+async fn read_and_check(
+    dir: &Path,
     modes: &Modes,
-    links: Option<links::LinkReport>,
+    url: Option<&str>,
     dotfiles_allow: &[String],
-) -> Result<()> {
+) -> Result<(SiteListing, Vec<SiteEntry>, LocalChecks)> {
+    let site = SiteListing::read_async(dir).await?;
+    let (site, links) = scan_links(site, modes.check_links, url).await?;
+    let entries = site.entries();
     let local = LocalChecks::evaluate(
-        entries,
+        &entries,
         modes.check_dotfiles,
         modes.check_size,
         modes.check_links,
         links,
         dotfiles_allow,
     );
-    if local.all_off() {
-        return Ok(());
+    Ok((site, entries, local))
+}
+
+fn print_local_checks(local: &LocalChecks) {
+    if !local.all_off() {
+        print_section("Checks", local.lines());
     }
-    println!();
-    println!("Checks");
-    for line in local.lines() {
-        println!("  {}", Sanitized(line));
-    }
+}
+
+fn run_local_checks(local: &LocalChecks) -> Result<()> {
+    print_local_checks(local);
     if let Some(msg) = local.abort_message() {
         anyhow::bail!(msg);
     }
@@ -611,11 +661,7 @@ async fn confirm_new_files(
 ) -> Result<()> {
     let previous_files = PreviousFiles::load(ipfs, previous).await;
     let new_files = previous_files.new_files(entries);
-    println!();
-    println!("New files");
-    for line in previous_files.lines(&new_files) {
-        println!("  {}", Sanitized(line));
-    }
+    print_section("New files", previous_files.lines(&new_files));
     if new_files.is_empty() || yes {
         return Ok(());
     }
@@ -636,9 +682,7 @@ fn report_unchanged(mode: CheckMode, relays: &RelayState, cid: &str) -> bool {
         return false;
     }
     let unchanged = check_unchanged(mode, relays, cid);
-    println!();
-    println!("Previous version");
-    println!("  {}", Sanitized(unchanged.line()));
+    print_section("Previous version", [unchanged.line()]);
     unchanged.stops_publish()
 }
 
@@ -720,41 +764,29 @@ pub struct Request {
 }
 
 pub async fn run(config: Config, dir: &Path, request: Request) -> Result<()> {
-    let Request {
-        d,
-        url,
-        title,
-        message,
-        note,
-        modes: overrides,
-        yes,
-    } = request;
-    let url = url.as_deref();
-    let message = message.as_deref();
-    let title = check_arguments(&d, url, title.as_deref(), message)?;
-    check_note_request(note, url).map_err(|e| anyhow::anyhow!("invalid --note: {e}"))?;
-    let modes = resolve_modes(&overrides, &config.publish)
-        .map_err(|(name, e)| e.context(format!("invalid --{name}")))?;
-    refuse_protected_paths(dir, &config)?;
+    let Prepared { title, modes } = prepare(&config, dir, &request)?;
+    let d = &request.d;
+    let url = request.url.as_deref();
+    let message = request.message.as_deref();
+    let (note, yes) = (request.note, request.yes);
 
-    print_header(&d, url, title, message);
+    print_header(d, url, title, message);
 
     let signer = Signer::require(&config)?;
     let pubkey_hex = signer.public_key().to_hex();
 
-    run_nip05_check(modes.nip05, &d, &pubkey_hex).await?;
-    let site = SiteListing::read_async(dir).await?;
-    let (site, links) = scan_links(site, modes.check_links, url).await?;
-    let entries = site.entries();
-    run_local_checks(&entries, &modes, links, &config.publish.dotfiles_allow)?;
+    run_nip05_check(modes.nip05, d, &pubkey_hex).await?;
+    let (site, entries, local) =
+        read_and_check(dir, &modes, url, &config.publish.dotfiles_allow).await?;
+    run_local_checks(&local)?;
 
     let ipfs = config.ipfs_client().await?;
     let remote_signer = signer.is_remote();
     let relay = RelayClient::connect(signer, &config.nostr.relays).await?;
     let site_event_kind = config.nostr.site_event_kind;
-    let relays = RelayState::fetch(&relay, site_event_kind, &d).await;
+    let relays = RelayState::fetch(&relay, site_event_kind, d).await;
     let layout = MfsLayout::new(config.ipfs.mfs_root.clone());
-    let site_path = layout.publish_site(&pubkey_hex, &d);
+    let site_path = layout.publish_site(&pubkey_hex, d);
     let checked = match plan_version(&ipfs, &site_path, &relays).await {
         Ok(_) => confirm_new_files(&ipfs, &relays.previous, &entries, yes).await,
         Err(e) => Err(e),
@@ -767,7 +799,7 @@ pub async fn run(config: Config, dir: &Path, request: Request) -> Result<()> {
     println!();
     println!("IPFS");
 
-    let stage = match add_and_measure(&ipfs, &layout, &pubkey_hex, &d, &relays, site).await {
+    let stage = match add_and_measure(&ipfs, &layout, &pubkey_hex, d, &relays, site).await {
         Ok(stage) => stage,
         Err(e) => {
             relay.shutdown().await;
@@ -795,7 +827,7 @@ pub async fn run(config: Config, dir: &Path, request: Request) -> Result<()> {
         stage.version,
         &SiteAnnouncement {
             site_event_kind,
-            d: &d,
+            d,
             cid: &stage.cid,
             url,
             size: stage.size,

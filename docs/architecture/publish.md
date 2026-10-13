@@ -16,7 +16,7 @@ CLI の `swing publish`（[`cli/publish.md`](cli/publish.md)）とダッシュ�
 10. 投稿を頼まれていれば[通常の投稿](#通常の投稿)。
 11. [古い版の削除](#古い版の削除)。
 
-7 以降で失敗したときに MFS に置いた版をどうするかは[告知できなかった版の後始末](#告知できなかった版の後始末)。
+7 以降で失敗したときに MFS に置いた版をどうするかは[告知できなかった版の後始末](#告知できなかった版の後始末)。CLI の `--dry-run` は同じ段階の関数を使い、何も書かずに 8 まで確かめる（子ページ [`publish/dry-run.md`](publish/dry-run.md)）。
 
 ## 保護パスの拒否
 
@@ -109,3 +109,7 @@ relay が持つ自分のサイトイベントが未来ずれの許容を超え�
 ## 古い版の削除
 
 `publish::prune_old_versions_collect`。受理された後、[版](#版)のうち今回の版は必ず残し、それ以外を新しい順に `[publish].keep_versions - 1` 個残して消す。一覧や削除に失敗しても publish は成功のままで、失敗の内容だけを返す。
+
+## 確かめるだけの実行（dry run）
+
+CLI の `swing publish --dry-run` は、上の段階の関数を同じ順に呼び、何も書かずに 8（同じ内容かの確認）まで確かめる。CID は `only-hash=true` の add で求める。段階ごとの分岐と、鍵・Kubo・relay が無いときの扱いは子ページ [`publish/dry-run.md`](publish/dry-run.md)。

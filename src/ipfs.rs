@@ -111,6 +111,9 @@ fn percent_encode_relative_path(rel: &str) -> String {
         .join("/")
 }
 
+const ADD_QUERY: &str =
+    "recursive=true&cid-version=1&pin=false&quieter=true&wrap-with-directory=false";
+
 #[derive(Debug, Deserialize)]
 struct AddResponseLine {
     #[serde(rename = "Hash")]
@@ -281,13 +284,19 @@ impl IpfsClient {
 
     // Not added with to-files: Kubo answers success without placing anything when the path already exists.
     pub async fn add_site(&self, site: SiteListing) -> Result<String> {
+        self.add_listing(site, false).await
+    }
+
+    pub async fn hash_site(&self, site: SiteListing) -> Result<String> {
+        self.add_listing(site, true).await
+    }
+
+    async fn add_listing(&self, site: SiteListing, only_hash: bool) -> Result<String> {
         if site.is_empty() {
             bail!("directory is empty: {}", site.dir().display());
         }
         let boundary = crate::auth::random_hex(16);
-        let url = self.url(
-            "/api/v0/add?recursive=true&cid-version=1&pin=false&quieter=true&wrap-with-directory=false",
-        );
+        let url = self.url(&format!("/api/v0/add?{ADD_QUERY}&only-hash={only_hash}"));
         let last_progress = std::sync::Arc::new(std::sync::Mutex::new(tokio::time::Instant::now()));
         let progress = std::sync::Arc::clone(&last_progress);
         let request = self
@@ -590,6 +599,37 @@ mod tests {
                 axum::Json(serde_json::json!({ "Objects": [{ "Hash": q["arg"], "Links": links }] }))
             }),
         )
+    }
+
+    #[tokio::test]
+    async fn hash_site_sends_the_add_query_with_only_hash() {
+        use axum::extract::RawQuery;
+        let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+        let log = seen.clone();
+        let router = axum::Router::new().route(
+            "/api/v0/add",
+            axum::routing::post(
+                move |RawQuery(q): RawQuery, _body: axum::body::Bytes| async move {
+                    log.lock().unwrap().push(q.unwrap_or_default());
+                    r#"{"Name":"x","Hash":"bafyx","Size":"3"}"#
+                },
+            ),
+        );
+        let addr = crate::test_support::serve_router(router).await;
+        let client = IpfsClient::new(format!("http://{addr}"));
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("index.html"), b"hi").unwrap();
+        let listing = || SiteListing::read(dir.path()).unwrap();
+        assert_eq!(client.add_site(listing()).await.unwrap(), "bafyx");
+        assert_eq!(client.hash_site(listing()).await.unwrap(), "bafyx");
+        let seen = seen.lock().unwrap().clone();
+        assert_eq!(
+            seen,
+            [
+                format!("{ADD_QUERY}&only-hash=false"),
+                format!("{ADD_QUERY}&only-hash=true"),
+            ]
+        );
     }
 
     #[tokio::test]

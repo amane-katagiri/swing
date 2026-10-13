@@ -201,25 +201,34 @@ impl LocalChecks {
         lines
     }
 
-    pub fn abort_message(&self) -> Option<String> {
+    pub fn abort_reasons(&self) -> Vec<(&'static str, String)> {
         let mut reasons = Vec::new();
         if self.dotfiles_mode == CheckMode::Require && self.dotfiles_found() {
-            reasons.push(
+            reasons.push((
+                "dotfiles",
                 "dotfiles found: remove them, add their names to [publish].dotfiles_allow, or set --check-dotfiles / [publish].check_dotfiles to warn or off"
                     .to_string(),
-            );
+            ));
         }
         if self.size_mode == CheckMode::Require && self.size_over() {
-            reasons.push(format!(
-                "the site is larger than {}: make it smaller, or set --check-size / [publish].check_size to warn or off",
-                format_bytes(SIZE_GUIDELINE)
+            reasons.push((
+                "size",
+                format!(
+                    "the site is larger than {}: make it smaller, or set --check-size / [publish].check_size to warn or off",
+                    format_bytes(SIZE_GUIDELINE)
+                ),
             ));
         }
         if self.links_mode == CheckMode::Require
             && let Some(reason) = self.links.as_ref().and_then(LinkReport::abort_reason)
         {
-            reasons.push(reason);
+            reasons.push(("links", reason));
         }
+        reasons
+    }
+
+    pub fn abort_message(&self) -> Option<String> {
+        let reasons: Vec<String> = self.abort_reasons().into_iter().map(|(_, r)| r).collect();
         (!reasons.is_empty()).then(|| reasons.join("; "))
     }
 }

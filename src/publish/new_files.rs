@@ -19,20 +19,37 @@ pub enum PreviousFiles {
 
 impl PreviousFiles {
     pub async fn load(ipfs: &IpfsClient, previous: &Result<Option<SiteEvent>, String>) -> Self {
+        Self::load_with(Ok(ipfs), previous).await
+    }
+
+    pub async fn load_with(
+        ipfs: Result<&IpfsClient, &str>,
+        previous: &Result<Option<SiteEvent>, String>,
+    ) -> Self {
         match previous {
             Err(e) => Self::Unknown(format!("could not fetch it from the relays: {e}")),
             Ok(None) => Self::NoPrevious,
-            Ok(Some(site)) => match ipfs.list_files_local(&site.cid, MAX_PREVIOUS_ENTRIES).await {
-                Ok(paths) => Self::Listed {
-                    cid: site.cid.clone(),
-                    created_at: site.created_at,
-                    paths,
-                },
+            Ok(Some(site)) => match ipfs {
+                Ok(ipfs) => Self::list(ipfs, site).await,
                 Err(e) => Self::Unknown(format!(
-                    "could not list {} in the local Kubo: {e:#}",
+                    "could not list {} in the local Kubo: {e}",
                     site.cid
                 )),
             },
+        }
+    }
+
+    async fn list(ipfs: &IpfsClient, site: &SiteEvent) -> Self {
+        match ipfs.list_files_local(&site.cid, MAX_PREVIOUS_ENTRIES).await {
+            Ok(paths) => Self::Listed {
+                cid: site.cid.clone(),
+                created_at: site.created_at,
+                paths,
+            },
+            Err(e) => Self::Unknown(format!(
+                "could not list {} in the local Kubo: {e:#}",
+                site.cid
+            )),
         }
     }
 

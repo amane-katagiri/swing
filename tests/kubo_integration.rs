@@ -236,6 +236,38 @@ async fn missing_cid_fails_fast_and_is_never_fetched_by_mfs_put() {
 
 #[tokio::test]
 #[ignore]
+async fn hash_site_matches_add_site_without_storing_anything() {
+    let client = IpfsClient::new(kubo_api());
+    let unique = format!(
+        "{}",
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    );
+    let dir = site_fixture();
+    std::fs::write(dir.path().join("unique.txt"), unique.as_bytes()).unwrap();
+
+    let hashed = client
+        .hash_site(ipfs::SiteListing::read(dir.path()).unwrap())
+        .await
+        .expect("hash_site");
+    let err = client.dag_size_local(&[hashed.as_str()]).await.unwrap_err();
+    assert!(ipfs::is_block_missing(&err), "{err:#}");
+    let pins = rpc(&format!("pin/ls?arg={hashed}&type=all")).await;
+    assert!(!pins.status().is_success());
+
+    let root = unique_root("hash");
+    let added = client
+        .add_dir(dir.path(), &format!("{root}/x"))
+        .await
+        .expect("add_dir");
+    assert_eq!(hashed, added);
+    client.mfs_remove(&root).await.unwrap();
+}
+
+#[tokio::test]
+#[ignore]
 async fn dag_size_local_fails_fast_on_an_incomplete_dag() {
     let client = IpfsClient::new(kubo_api());
     let root = unique_root("incomplete");

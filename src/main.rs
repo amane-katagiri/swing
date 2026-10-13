@@ -171,6 +171,17 @@ enum Command {
             help = "Publish files that are new since your latest version without asking (required when stdin is not a terminal)"
         )]
         yes: bool,
+        #[arg(
+            long,
+            help = "Run the checks and compute the CID without adding, signing or publishing anything; exits non-zero if the publish would stop"
+        )]
+        dry_run: bool,
+        #[arg(
+            long,
+            requires = "dry_run",
+            help = "With --dry-run, print the result as a single JSON object on stdout"
+        )]
+        json: bool,
         #[arg(help = "Directory containing the built static site")]
         dir: PathBuf,
     },
@@ -412,7 +423,7 @@ enum MirrorCommand {
     },
 }
 
-fn init_tracing(log_file: Option<&PathBuf>, default_filter: &str) -> Result<()> {
+fn init_tracing(log_file: Option<&PathBuf>, default_filter: &str, stderr: bool) -> Result<()> {
     let filter =
         EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(default_filter));
     match log_file {
@@ -434,6 +445,13 @@ fn init_tracing(log_file: Option<&PathBuf>, default_filter: &str) -> Result<()> 
                 .with_writer(file)
                 .init();
         }
+        None if stderr => {
+            tracing_subscriber::fmt()
+                .with_env_filter(filter)
+                .fmt_fields(swing::logging::SanitizedFields)
+                .with_writer(std::io::stderr)
+                .init();
+        }
         None => {
             tracing_subscriber::fmt()
                 .with_env_filter(filter)
@@ -450,7 +468,8 @@ fn main() -> Result<()> {
         Command::Up { log_file, .. } => (log_file.as_ref(), "info"),
         _ => (None, "info,nostr_sdk=warn,nostr_connect=warn"),
     };
-    init_tracing(log_file, default_filter)?;
+    let json_stdout = matches!(&cli.command, Command::Publish { json: true, .. });
+    init_tracing(log_file, default_filter, json_stdout)?;
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()?;
@@ -566,6 +585,8 @@ async fn run_other(command: Command) -> Result<()> {
             message,
             note,
             yes,
+            dry_run,
+            json,
             dir,
         } => {
             let cfg = config::Config::load(config.as_deref())?;
@@ -578,7 +599,11 @@ async fn run_other(command: Command) -> Result<()> {
                 modes: (*modes).into(),
                 yes,
             };
-            publish::run(cfg, &dir, request).await
+            if dry_run {
+                publish::dry_run::run(cfg, &dir, request, json).await
+            } else {
+                publish::run(cfg, &dir, request).await
+            }
         }
         Command::Mirror { action } => match action {
             MirrorCommand::List { config } => {
@@ -667,5 +692,20 @@ mod tests {
         assert_eq!(modes.check_size.as_deref(), Some("off"));
         assert_eq!(modes.check_dotfiles, None);
         assert_eq!(dir, PathBuf::from("site"));
+    }
+
+    #[test]
+    fn publish_takes_json_only_with_dry_run() {
+        let base = ["swing", "publish", "--site", "example.com"];
+        let parse = |extra: &[&str]| {
+            Cli::try_parse_from(base.iter().chain(extra).chain(&["site"]).copied())
+        };
+        let err = parse(&["--json"]).err().unwrap();
+        assert_eq!(err.kind(), clap::error::ErrorKind::MissingRequiredArgument);
+        let cli = parse(&["--dry-run", "--json"]).unwrap();
+        let Command::Publish { dry_run, json, .. } = cli.command else {
+            panic!("not publish");
+        };
+        assert!(dry_run && json);
     }
 }
