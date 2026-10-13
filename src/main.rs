@@ -94,7 +94,7 @@ enum Command {
         #[arg(
             long,
             value_name = "PATH",
-            help = "Append logs to this file instead of stderr"
+            help = "Append logs to this file instead of stdout"
         )]
         log_file: Option<PathBuf>,
         #[arg(
