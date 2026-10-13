@@ -893,31 +893,115 @@ async fn deletions_naming_another_authors_site_do_not_crowd_out_that_authors_own
     assert!(answers.answered(&relay, 1));
 }
 
+fn numbered_deletion_of(k: &Keys, tags: &[[&str; 2]], created_at: u64, n: usize) -> Event {
+    let mut builder = EventBuilder::new(Kind::EventDeletion, n.to_string());
+    for tag in tags {
+        builder = builder.tag(Tag::parse(*tag).unwrap());
+    }
+    builder
+        .custom_created_at(Timestamp::from_secs(created_at))
+        .finalize(k)
+        .unwrap()
+}
+
 #[tokio::test]
-async fn an_author_whose_deletions_reach_the_limit_is_unknown_on_that_relay() {
-    let busy = keys();
+async fn when_deletions_reach_the_limit_only_sites_newer_than_the_cutoff_are_answered() {
+    let author = keys();
     let quiet = keys();
     let now = Timestamp::now().as_secs();
-    let busy_site = make_site_event(&busy, 35980, "a.example", CID_A, now - 100);
-    let quiet_site = make_site_event(&quiet, 35980, "a.example", CID_A, now - 100);
-    let coordinate = coordinate_of(&busy_site);
-    let earlier: Vec<Event> = (0..2)
-        .map(|i| deletion_of(&busy, &[["a", &coordinate]], now - 500 - i))
+    let newer = make_site_event(&author, 35980, "n.example", CID_A, now - 50);
+    let older = make_site_event(&author, 35980, "o.example", CID_A, now - 200);
+    let withdrawn = make_site_event(&author, 35980, "w.example", CID_A, now - 400);
+    let quiet_site = make_site_event(&quiet, 35980, "a.example", CID_A, now - 300);
+    let target = coordinate_of(&withdrawn);
+    let stored: Vec<Event> = (0..10)
+        .map(|i| deletion_of(&author, &[["a", &target]], now - 100 - i))
         .collect();
-    let (_relay, url) = relay_holding(&earlier).await;
+    let (_relay, url) = relay_holding(&stored).await;
     let client = RelayClient::connect(Signer::Local(keys()), std::slice::from_ref(&url))
         .await
         .unwrap();
 
     let answers = client
-        .fetch_site_deletions(35980, &[&busy_site, &quiet_site])
+        .fetch_site_deletions(35980, &[&newer, &older, &withdrawn, &quiet_site])
         .await;
     client.shutdown().await;
 
     let relay = RelayUrl::parse(&url).unwrap();
-    assert!(answers.withdrawals.of(&busy_site, 35980).is_none());
+    assert!(answers.answered(&relay, 0));
+    assert!(!answers.answered(&relay, 1));
+    assert!(answers.answered(&relay, 3));
+    assert!(answers.withdrawals.of(&newer, 35980).is_none());
+    assert!(answers.withdrawals.of(&older, 35980).is_none());
+    assert_eq!(
+        answers.withdrawals.of(&withdrawn, 35980).unwrap().through,
+        Some(now - 100)
+    );
+}
+
+#[tokio::test]
+async fn a_site_created_in_the_same_second_as_the_cutoff_is_unknown() {
+    let author = keys();
+    let now = Timestamp::now().as_secs();
+    let tied = make_site_event(&author, 35980, "t.example", CID_A, now - 100);
+    let withdrawn = make_site_event(&author, 35980, "w.example", CID_A, now - 400);
+    let id = withdrawn.id.to_hex();
+    let mut stored: Vec<Event> = (0..4)
+        .map(|n| numbered_deletion_of(&author, &[["e", &id]], now - 100, n))
+        .collect();
+    stored.push(deletion_of(&author, &[["e", &id]], now - 300));
+    let (_relay, url) = relay_holding(&stored).await;
+    let client = RelayClient::connect(Signer::Local(keys()), std::slice::from_ref(&url))
+        .await
+        .unwrap();
+
+    let answers = client
+        .fetch_site_deletions(35980, &[&tied, &withdrawn])
+        .await;
+    client.shutdown().await;
+
+    let relay = RelayUrl::parse(&url).unwrap();
     assert!(!answers.answered(&relay, 0));
-    assert!(answers.answered(&relay, 1));
+    assert!(answers.withdrawals.of(&tied, 35980).is_none());
+    assert!(answers.withdrawals.of(&withdrawn, 35980).unwrap().by_id);
+}
+
+#[test]
+fn the_cutoff_is_the_limit_th_newest_of_the_counted_deletions() {
+    let mut returned = resend::Returned::default();
+    for at in [90, 100, 80] {
+        returned.add(at, 4);
+    }
+    assert_eq!(returned.cutoff(4), None);
+    for at in [70, 10] {
+        returned.add(at, 4);
+    }
+    assert_eq!(returned.cutoff(4), Some(70));
+}
+
+#[test]
+fn a_site_is_answered_only_when_newer_than_every_cutoff() {
+    assert!(resend::answered_past([None, None], 5));
+    assert!(resend::answered_past([Some(4), None], 5));
+    assert!(!resend::answered_past([Some(5), None], 5));
+    assert!(!resend::answered_past([None, Some(6)], 5));
+    assert!(!resend::answered_past([Some(4), Some(5)], 5));
+}
+
+#[test]
+fn the_deletion_limit_per_filter_is_capped() {
+    let author = keys();
+    let held: Vec<Event> = (0..60)
+        .map(|i| make_site_event(&author, 35980, &format!("s{i}.example"), CID_A, 100))
+        .collect();
+    let refs: Vec<&Event> = held.iter().collect();
+
+    let units = resend::deletion_units(35980, &refs);
+    assert_eq!(units.len(), 1);
+    assert_eq!(units[0].limit, budget::MAX_DELETIONS_PER_FILTER);
+    for filter in units[0].filters() {
+        assert_eq!(filter.limit, Some(budget::MAX_DELETIONS_PER_FILTER));
+    }
 }
 
 #[tokio::test]

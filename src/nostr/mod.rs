@@ -59,6 +59,8 @@ pub mod budget {
     pub const MAX_CRAWL_NODES: usize = 1000;
     pub const MAX_REFERENCING_LISTED: usize = 50;
     pub const MAX_RELAY_FETCH_LIMIT: usize = 10_000;
+    // Below the result caps relays commonly impose, so a cut answer reaches our own limit and is noticed.
+    pub const MAX_DELETIONS_PER_FILTER: usize = 100;
     pub const AUTHORS_PER_FILTER: usize = 50;
     pub const AUTHORS_PER_SPLIT_REQ: usize = 10;
     pub const COORDINATES_PER_FILTER: usize = 250;

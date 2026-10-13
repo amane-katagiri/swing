@@ -43,11 +43,12 @@ agent の保存した版のサイトイベントの再送（[`../agent/resend.md
 
 `fetch_sites_per_relay` は、対象のサイトを `AUTHORS_PER_SPLIT_REQ`（10）件ずつ 1 つの REQ にまとめ、その中でサイトごとに別のフィルタ（kind・作者・`d`、`limit` 2）を置く。受け取ったイベントは、作者・kind・`d` が一致してサイトイベントとしてパースでき、`created_at` が未来ずれの許容内のものだけを、NIP-01 の置き換え規則でサイトごとに最新の 1 件へ畳み込む（`nostr::keep_newest_site`）。結果（`RelayAnswers`）は relay ごと・サイトごとに「答えていない」「答えたが無い」「最新の 1 件」のどれか。
 
-`fetch_site_deletions` は、送り直す予定のサイトの作者ごとに（作者のサイトが `COORDINATES_PER_FILTER`（250）件を超えたら 250 件ずつに分けて）2 つのフィルタを作る。kind 5・その作者 1 人で、`#a` にその作者のサイトの座標を並べたものと、`#e` にその作者の保存している版の `id` を並べたもの（`#a` と `#e` を 1 つのフィルタに入れると両方を満たすものしか返らないので分ける）。`limit` はどちらもその作者のサイトの数 × 2。これを `AUTHORS_PER_SPLIT_REQ` 個のフィルタ（5 人分）ずつ 1 つの REQ にまとめる。作者ごとにフィルタと `limit` を分けるのは、ある作者がほかの作者のサイトを指す削除要求を大量に出しても、ほかの作者の削除要求を押し出せないようにするため（フィルタの作者が 1 人なので、ほかの作者のイベントは当たらない）。
+`fetch_site_deletions` は、送り直す予定のサイトの作者ごとに（作者のサイトが `COORDINATES_PER_FILTER`（250）件を超えたら 250 件ずつに分けて）2 つのフィルタを作る。kind 5・その作者 1 人で、`#a` にその作者のサイトの座標を並べたものと、`#e` にその作者の保存している版の `id` を並べたもの（`#a` と `#e` を 1 つのフィルタに入れると両方を満たすものしか返らないので分ける）。`limit` はどちらもその作者のサイトの数 × 2 と `MAX_DELETIONS_PER_FILTER`（100）の小さい方。これを `AUTHORS_PER_SPLIT_REQ` 個のフィルタ（5 人分）ずつ 1 つの REQ にまとめる。作者ごとにフィルタと `limit` を分けるのは、ある作者がほかの作者のサイトを指す削除要求を大量に出しても、ほかの作者の削除要求を押し出せないようにするため（フィルタの作者が 1 人なので、ほかの作者のイベントは当たらない）。
 
 - 受け取った kind 5 は、`id` で重複を除き、作者がそのフィルタの作者のものだけを、要求した `e`（保存している版の `id`）と `a`（そのサイトの座標）のタグだけ索引に入れる（`nostr::Withdrawals`。`e` は作者と `id` の組の集合、`a` は作者と座標の組ごとに最大の `created_at`）。`created_at` が未来ずれの許容を超える削除要求は索引に入れない。
-- 作者ごとに、`#a` と `#e` のそれぞれに当たった件数を数え、どちらかが `limit` に達したら、その relay ではその作者のサイトを「答えていない」とし、warn を出す（`limit` で切られて削除要求を見落としているかもしれないため）。
-- 結果（`DeletionAnswers`）は、全 relay の全 REQ（答えていない REQ の途中までの分も含む）の索引を合わせたものと、relay ごと・サイトごとの「答えたか」（その作者を含む REQ に答え、その作者が `limit` に達していない）。
+- 作者ごとに、`#a` と `#e` のそれぞれに当たった削除要求（索引に入れたかによらず、要求したタグを持つもの）を数える。件数が `limit` に達したフィルタは、当たったもののうち `created_at` が新しい方から `limit` 番目の値をそのフィルタの境（cutoff）とし、warn を出す。NIP-01 で relay は `limit` のある REQ に新しい順に答え、切るのは古い方なので、境より新しい削除要求は見落としていない。2 つのフィルタは 1 つの REQ で返るため、もう一方のフィルタの分として来た古いものも数に入り得るが、`limit` 番目を取るので境は relay が実際に切った位置より古くならない。
+- サイトが relay で「答えた」のは、その作者を含む REQ に答え、2 つのフィルタのそれぞれが `limit` に達していないか、保存している版の `created_at` がそのフィルタの境より大きいとき。境と同じ秒の版は、同じ秒の削除要求のどれを relay が切ったか分からないので「答えていない」とする（debug）。
+- 結果（`DeletionAnswers`）は、全 relay の全 REQ（答えていない REQ・境で切られた答えの分も含む）の索引を合わせたものと、relay ごと・サイトごとの「答えたか」。
 
 ## 定数
 
@@ -59,6 +60,7 @@ agent の保存した版のサイトイベントの再送（[`../agent/resend.md
 | `MAX_CRAWL_NODES` | 1000 | `webring::crawl`。`Crawl.depths` がこれを超えないように新規ノードの追加を止め、弾いた件数を `Crawl.over_budget`（テキスト出力・`/api/webring` の `over_budget`）に積む。追加しなかったノードは次のレベルの取得にも現れない |
 | `MAX_REFERENCING_LISTED` | 50 | `webring::crawl`。`#p` で見つかる「起点を名指ししているだけの相手」（`Crawl.referencing`）の一覧を先頭 50 件までに切り詰める。超えた件数は `Crawl.referencing_dropped` に積む。たどり方は [`../webring.md`](../webring.md#たどり方webringcrawl) |
 | `MAX_RELAY_FETCH_LIMIT` | 10,000 | relay 1 台への 1 回の REQ に付ける `limit` の上限（下記）。1 回の REQ で全 relay から受け取って残す件数の上限も同じ値 |
+| `MAX_DELETIONS_PER_FILTER` | 100 | `fetch_site_deletions` の 1 つのフィルタの `limit` の上限。relay が自分の上限で黙って切るより先にこちらの `limit` に達し、切られたことが分かるようにする |
 | `COORDINATES_PER_FILTER` | 250 | `fetch_replica_reports`・`fetch_replica_reports_by` が 1 つのフィルタの `#a` に入れる座標の数。超える分は組に分けて別の REQ にする。`fetch_site_deletions` が 1 人の作者のフィルタに入れるサイトの数にも使う |
 | `AUTHORS_PER_FILTER` / `AUTHORS_PER_SPLIT_REQ` | 50 / 10 | 作者を並べる取得の組の大きさ（下記）。`AUTHORS_PER_SPLIT_REQ` は `fetch_sites_per_relay` が 1 つの REQ にまとめるサイトの数と、`fetch_site_deletions` が 1 つの REQ に置くフィルタの数にも使う |
 | `MAX_FETCH_TOTAL_EVENTS` / `MAX_FETCH_TOTAL_BYTES` / `FETCH_CONCURRENCY` | 50,000 / 64 MiB / 4 | 複数の REQ に分ける取得の合計の上限と並行数（上記） |

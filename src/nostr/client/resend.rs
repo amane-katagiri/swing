@@ -1,4 +1,5 @@
-use std::collections::{BTreeMap, HashSet};
+use std::cmp::Reverse;
+use std::collections::{BTreeMap, BinaryHeap, HashSet};
 
 use anyhow::{Context, Result};
 use nostr_sdk::prelude::*;
@@ -84,16 +85,43 @@ pub(super) fn deletion_units(site_event_kind: u16, held: &[&Event]) -> Vec<Delet
                                 .map(|d| site_coordinate(site_event_kind, &author, &d).to_string())
                         })
                         .collect(),
-                    limit: capped_limit(chunk.len(), 2),
+                    limit: capped_limit(chunk.len(), 2).min(budget::MAX_DELETIONS_PER_FILTER),
                 })
                 .collect::<Vec<_>>()
         })
         .collect()
 }
 
+#[derive(Default)]
+pub(super) struct Returned {
+    count: usize,
+    newest: BinaryHeap<Reverse<u64>>,
+}
+
+impl Returned {
+    pub(super) fn add(&mut self, created_at: u64, limit: usize) {
+        self.count += 1;
+        self.newest.push(Reverse(created_at));
+        if self.newest.len() > limit {
+            self.newest.pop();
+        }
+    }
+
+    // Both filters share one REQ, so an event counted here may have come for the other filter; the limit-th newest is still the relay's cutoff for this one.
+    pub(super) fn cutoff(&self, limit: usize) -> Option<u64> {
+        (self.count >= limit).then(|| self.newest.peek().map_or(0, |Reverse(at)| *at))
+    }
+}
+
+pub(super) fn answered_past(cutoffs: [Option<u64>; 2], created_at: u64) -> bool {
+    cutoffs
+        .iter()
+        .all(|cutoff| cutoff.is_none_or(|cutoff| created_at > cutoff))
+}
+
 struct DeletionReq {
     first: usize,
-    counts: Vec<(usize, usize)>,
+    returned: Vec<[Returned; 2]>,
     seen: HashSet<EventId>,
     withdrawals: Withdrawals,
 }
@@ -190,7 +218,7 @@ impl RelayClient {
                 let len = units[first..].len().min(UNITS_PER_REQ);
                 DeletionReq {
                     first,
-                    counts: vec![(0, 0); len],
+                    returned: (0..len).map(|_| Default::default()).collect(),
                     seen: HashSet::new(),
                     withdrawals: Withdrawals::default(),
                 }
@@ -199,7 +227,8 @@ impl RelayClient {
                 if event.kind != Kind::EventDeletion || !req.seen.insert(event.id) {
                     return;
                 }
-                for (k, count) in req.counts.iter_mut().enumerate() {
+                let created_at = event.created_at.as_secs();
+                for (k, [by_address, by_id]) in req.returned.iter_mut().enumerate() {
                     let unit = &units[req.first + k];
                     if unit.author != event.pubkey {
                         continue;
@@ -207,8 +236,12 @@ impl RelayClient {
                     let found = req
                         .withdrawals
                         .note(&event, &unit.ids, &unit.coordinates, now);
-                    count.0 += usize::from(found.by_address);
-                    count.1 += usize::from(found.by_id);
+                    if found.by_address {
+                        by_address.add(created_at, unit.limit);
+                    }
+                    if found.by_id {
+                        by_id.add(created_at, unit.limit);
+                    }
                 }
             },
         )
@@ -220,15 +253,21 @@ impl RelayClient {
                 let mut answered = vec![false; held.len()];
                 for request in requests {
                     let req = request.value;
-                    for (k, (by_address, by_id)) in req.counts.iter().enumerate() {
+                    for (k, returned) in req.returned.iter().enumerate() {
                         let unit = &units[req.first + k];
-                        let full = *by_address >= unit.limit || *by_id >= unit.limit;
-                        if full {
-                            tracing::warn!(relay = %relay, pubkey = %unit.author, "deletions by the author reach the request limit; not sending the author's held site events to this relay this time");
+                        let cutoffs = returned.each_ref().map(|r| r.cutoff(unit.limit));
+                        if let Some(cutoff) = cutoffs.iter().flatten().max() {
+                            tracing::warn!(relay = %relay, pubkey = %unit.author, cutoff, "deletions by the author reach the request limit; the author's held site events at or before the cutoff are not sent to this relay this time");
                         }
-                        if request.complete && !full {
-                            for &i in &unit.sites {
+                        if !request.complete {
+                            continue;
+                        }
+                        for &i in &unit.sites {
+                            let created_at = held[i].created_at.as_secs();
+                            if answered_past(cutoffs, created_at) {
                                 answered[i] = true;
+                            } else {
+                                tracing::debug!(relay = %relay, event_id = %held[i].id, created_at, "the held site event is not newer than the cutoff of the deletions returned; whether the author deleted it is unknown on this relay");
                             }
                         }
                     }

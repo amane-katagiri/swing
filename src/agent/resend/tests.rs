@@ -239,12 +239,14 @@ async fn a_relay_that_did_not_answer_the_deletion_check_is_not_sent_to() {
 }
 
 #[tokio::test]
-async fn an_author_whose_deletions_fill_the_limit_is_not_sent_on_that_relay() {
+async fn when_deletions_fill_the_limit_only_sites_newer_than_the_cutoff_are_sent() {
     let fx = Fixture::new(default_policy(), FakeKubo::default());
     let now = Timestamp::now().as_secs();
-    let held = site_event(&fx.keys, "a.example", CID_A, now - 100);
-    hold(&fx, &held).await;
-    let earlier: Vec<Event> = (0..2)
+    let newer = site_event(&fx.keys, "a.example", CID_A, now - 100);
+    let older = site_event(&fx.keys, "b.example", CID_A, now - 1000);
+    hold(&fx, &newer).await;
+    hold(&fx, &older).await;
+    let earlier: Vec<Event> = (0..6)
         .map(|i| {
             deletion(
                 &fx.keys,
@@ -258,8 +260,45 @@ async fn an_author_whose_deletions_fill_the_limit_is_not_sent_on_that_relay() {
     let (_empty, empty) = relay_holding(&[]).await;
     resend_through(&fx, &[full.clone(), empty.clone()]).await;
 
-    assert!(ids_on(&full).await.is_empty());
-    assert_eq!(ids_on(&empty).await, vec![held.id]);
+    assert_eq!(ids_on(&full).await, vec![newer.id]);
+    let mut both = vec![newer.id, older.id];
+    both.sort();
+    assert_eq!(ids_on(&empty).await, both);
+    assert!(fx.agent.state.lock().await.withdrawn.is_empty());
+}
+
+#[tokio::test]
+async fn sites_held_back_by_the_cutoff_are_decided_once_the_deleted_ones_are_recorded() {
+    let fx = Fixture::new(default_policy(), FakeKubo::default());
+    let now = Timestamp::now().as_secs();
+    let kept = site_event(&fx.keys, "k.example", CID_A, now - 1000);
+    let gone: Vec<Event> = (0..2)
+        .map(|i| site_event(&fx.keys, &format!("g{i}.example"), CID_A, now - 2000))
+        .collect();
+    hold(&fx, &kept).await;
+    for event in &gone {
+        hold(&fx, event).await;
+    }
+    let deletions: Vec<Event> = (0..8)
+        .map(|i| {
+            let d = format!("g{}.example", i % 2);
+            deletion(&fx.keys, &[["a", &coordinate(&fx, &d)]], now - 100 - i)
+        })
+        .collect();
+
+    let (_relay, url) = relay_holding(&deletions).await;
+    resend_through(&fx, std::slice::from_ref(&url)).await;
+    assert!(ids_on(&url).await.is_empty());
+    {
+        let state = fx.agent.state.lock().await;
+        for event in &gone {
+            assert!(state.withdrawn[&key_of(event)].through.is_some());
+        }
+        assert!(!state.withdrawn.contains_key(&key_of(&kept)));
+    }
+
+    resend_through(&fx, std::slice::from_ref(&url)).await;
+    assert_eq!(ids_on(&url).await, vec![kept.id]);
 }
 
 #[tokio::test]
