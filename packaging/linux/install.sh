@@ -12,6 +12,7 @@ SYSTEM_UNIT=/etc/systemd/system/swing.service
 
 TMP=
 STOPPED=
+FOREIGN=
 LIB=
 BIN=
 
@@ -299,7 +300,10 @@ stop_service() {
     return 0
   fi
   if [ -f "$(user_unit)" ] && systemctl --user is-active --quiet swing 2>/dev/null; then
-    service_is_ours || return 0
+    if ! service_is_ours; then
+      FOREIGN=1
+      return 0
+    fi
     info "stopping the swing service"
     if [ -x "$LIB/swing" ]; then
       "$LIB/swing" service stop || die "could not stop the swing service; nothing was changed"
@@ -424,6 +428,9 @@ do_install() {
   check_dir "$BIN"
 
   stop_service
+  if [ -n "$SERVICE" ] && [ -z "$STOPPED" ] && [ -z "$FOREIGN" ] && [ -f "$(user_unit)" ]; then
+    service_is_ours || FOREIGN=1
+  fi
   rm -f "$LIB/.swing-check.$$"
 
   info "installing into $LIB"
@@ -472,6 +479,10 @@ do_install() {
   installed=$("$LIB/swing" --version 2>&1) || warn "$LIB/swing does not run on this system"
   info "installed ${installed:-swing} at $link"
 
+  if [ -n "$SERVICE" ] && [ -n "$FOREIGN" ]; then
+    warn "not registering the swing service because it runs another swing; to make it run this one: swing service install"
+    SERVICE=
+  fi
   if [ -n "$SERVICE" ]; then
     info "registering the swing service"
     "$LIB/swing" service install || die "swing service install failed"

@@ -246,6 +246,28 @@ if [ "$(id -u)" != 0 ]; then
   check "service install called" contains "$FAKE_LOG" "swing service install"
   check "dashboard hint printed" sh -c "printf '%s' \"\$1\" | grep -q 'swing dashboard open'" _ "$out"
   check "skill hint printed" sh -c "printf '%s' \"\$1\" | grep -q 'swing skill install'" _ "$out"
+
+  echo "--- --service leaves a stopped service of another swing alone"
+  rm -f "$FAKE_STATE/active"
+  lib=$H/.local/lib/swing
+  unit_for "$H/.config/systemd/user/swing.service" "$H/elsewhere/swing"
+  : >"$FAKE_LOG"
+  out=$(REL=v0.2.0 run sh "$INSTALL" --service 2>&1) || fail "--service with a foreign service exits 0"
+  check "foreign service not registered" lacks "$FAKE_LOG" "service install"
+  check "foreign service not started" lacks "$FAKE_LOG" "service start"
+  check "foreign unit kept" contains "$H/.config/systemd/user/swing.service" "$H/elsewhere/swing"
+  check "not registering reported" sh -c "printf '%s' \"\$1\" | grep -q 'not registering the swing service'" _ "$out"
+  check "binary still replaced" [ "$(run "$lib/swing" --version)" = "swing 0.2.0" ]
+  check "no check binary left behind" no_dotfiles "$lib"
+
+  echo "--- --service leaves a running service of another swing alone"
+  touch "$FAKE_STATE/active"
+  : >"$FAKE_LOG"
+  out=$(run sh "$INSTALL" --service 2>&1) || fail "--service with a running foreign service exits 0"
+  check "running foreign service not stopped" lacks "$FAKE_LOG" "service stop"
+  check "running foreign service not registered" lacks "$FAKE_LOG" "service install"
+  check "running foreign service still active" [ -f "$FAKE_STATE/active" ]
+  check "ownership checked once" [ "$(grep -c 'service status' "$FAKE_LOG")" = 1 ]
 else
   echo "skip --service (install.sh refuses it as root)"
 fi

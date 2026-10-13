@@ -47,7 +47,7 @@ curl -fsSL .../install.sh | sh -s -- --version v0.1.0
 9. ファイルを `lib/swing/` に置く。同じディレクトリに `.<名前>.<pid>` で書いてから `mv -f` する（1 ファイルごとにアトミック）。
 10. 前回の `manifest` に載っていて今回は無いファイル（[一覧の読み方](#一覧の読み方)に合うものだけ）を消し、`manifest` を書き直す。
 11. `bin/swing` を `lib/swing/swing` へのシンボリックリンクにする（一時名で作って `mv -f`）。`current_exe()` は実体のパスを返すので、`ipfs` は `lib/swing` で見つかり（[`kubo.md`](kubo.md#バイナリの検出kubolocate_binary)）、サービスの `ExecStart` も `lib/swing/swing` になる。
-12. `lib/swing/swing --version` が動かなければ警告する。サービスを起動し直す（`--service` なら `swing service install`。失敗したら失敗する。下記）。`bin` が PATH に無ければ警告する。最後に次の手順（`swing service install`（`--service` のときは出さない）・`swing dashboard open`・`swing skill install`）・データの場所・アンインストーラの場所を表示する。
+12. `lib/swing/swing --version` が動かなければ警告する。サービスを起動し直す（`--service` なら `swing service install`。失敗したら失敗する。ほかの swing のユーザー unit があれば登録しない。下記）。`bin` が PATH に無ければ警告する。最後に次の手順（`swing service install`（`--service` で登録したときは出さない）・`swing dashboard open`・`swing skill install`）・データの場所・アンインストーラの場所を表示する。
 
 どれかの検証が失敗したら、`lib/swing/` と `bin/` には何も書かない（ダウンロードと照合は置き換えの前にすべて終える）。一時ディレクトリは `trap` で消す。
 
@@ -83,7 +83,7 @@ curl -fsSL .../install.sh | sh -s -- --version v0.1.0
 
 ## 更新（再実行）
 
-同じコマンドを再実行すると、その場で更新する。動いているサービスは、[登録の持ち主の確認](#登録の持ち主の確認)で `lib/swing` の `swing` を起動するものだと分かったときだけ扱う。そうでなければ止めも起動し直しもせず、`leaving the swing service as is; ...` と `swing` の出力を表示して更新を続ける。ただし `--service` なら、持ち主に関わらず最後に `swing service install` で登録し直す。
+同じコマンドを再実行すると、その場で更新する。動いているサービスは、[登録の持ち主の確認](#登録の持ち主の確認)で `lib/swing` の `swing` を起動するものだと分かったときだけ扱う。そうでなければ止めも起動し直しもせず、`leaving the swing service as is; ...` と `swing` の出力を表示して更新を続ける。`--service` でも、ユーザー unit があってこの確認で `lib/swing` の `swing` を起動するものでないと分かったら（active でなくても確かめる）、`swing service install` を実行せず、`not registering the swing service because it runs another swing; ...` と警告して、`--service` なしと同じ次の手順を表示する。
 
 | サービス | 置き換えの前 | 置き換えの後 |
 |---|---|---|
