@@ -59,7 +59,7 @@ API は `swing up` の寿命で動き続ける（[`../up.md`](../up.md)）。
 | GET | `/api/webring` | フォローのグラフ（`swing webring` と同じ） | [nostr.md](http-api/nostr.md#get-apiwebringrootkeydepthn) |
 | GET | `/api/replicas` | レプリカ報告の集計（`swing replicas` と同じ） | [nostr.md](http-api/nostr.md#get-apireplicaskeykey) |
 | POST | `/api/publish/upload` | フォルダをアップロードして publish | [publish.md](http-api/publish.md#post-apipublishupload) |
-| POST | `/api/publish/check` | アップロードする前の確認（ドットファイル・サイズ・リンク。何も保存しない） | [publish.md](http-api/publish.md#post-apipublishcheck) |
+| POST | `/api/publish/check` | アップロードする前の確認（NIP-05・ドットファイル・サイズ・リンク。何も保存しない） | [publish.md](http-api/publish.md#post-apipublishcheck) |
 | GET | `/api/publish/sites` | 自分が公開したサイトの一覧 | [publish.md](http-api/publish.md#get-apipublishsites) |
 | GET | `/api/publish/previous-files` | 自分のサイトの最新版に入っているファイルの一覧（増えたファイルの確認用） | [publish.md](http-api/publish.md#get-apipublishprevious-filessited) |
 | GET | `/api/config` | 設定の一覧 | [config.md](http-api/config.md#get-apiconfig) |

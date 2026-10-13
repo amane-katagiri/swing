@@ -12,7 +12,7 @@ use crate::publish::{self, links};
 use super::AppState;
 use super::dto;
 use super::error::{ApiError, internal};
-use super::publish::{resolve_modes, validate_site_and_url};
+use super::publish::{resolve_modes, validate_site_and_url, verify_own_nip05};
 use super::upload::{
     MAX_PATH_LEN, MAX_UPLOAD_FILES, PathRules, multipart_error_to_api, read_field_bytes,
     read_text_field,
@@ -28,6 +28,7 @@ struct ListedFile {
 
 #[derive(Debug, Serialize)]
 pub struct PublishCheckDto {
+    pub nip05: dto::Nip05ResultDto,
     pub checks: dto::PublishChecksDto,
     pub abort: Option<String>,
 }
@@ -55,8 +56,9 @@ async fn receive_check(multipart: &mut Multipart) -> Result<ParsedCheck, ApiErro
         match field.name().unwrap_or("") {
             "site" => site = Some(read_text_field(field).await?),
             "url" => url = Some(read_text_field(field).await?),
-            name @ ("check_dotfiles" | "check_size" | "check_links") => {
+            name @ ("nip05" | "check_dotfiles" | "check_size" | "check_links") => {
                 let slot = match name {
+                    "nip05" => &mut modes.nip05,
                     "check_dotfiles" => &mut modes.check_dotfiles,
                     "check_size" => &mut modes.check_size,
                     _ => &mut modes.check_links,
@@ -190,8 +192,18 @@ pub async fn publish_check(
     let entries = site_entries(&parsed.listing, state.config.dashboard.max_upload)?;
     check_contents(&parsed.listing, &parsed.contents)?;
 
+    let pubkey_hex = match modes.nip05 {
+        CheckMode::Off => None,
+        _ => Some(state.require_own_pubkey()?.to_hex()),
+    };
+
     let allow = state.config.publish.dotfiles_allow.clone();
-    let ParsedCheck { url, contents, .. } = parsed;
+    let ParsedCheck {
+        site,
+        url,
+        contents,
+        ..
+    } = parsed;
     let local = tokio::task::spawn_blocking(move || {
         let mut contents = contents;
         let report = if modes.check_links == CheckMode::Off {
@@ -212,14 +224,26 @@ pub async fn publish_check(
             report,
             &allow,
         ))
-    })
-    .await
-    .map_err(|e| internal("the check task failed", e))?
-    .map_err(|e| internal("checking the files failed", e))?;
+    });
+    let nip05 = async {
+        match pubkey_hex.as_deref() {
+            Some(pubkey_hex) => verify_own_nip05(modes.nip05, &site, pubkey_hex).await,
+            None => (dto::nip05_off_dto(), None),
+        }
+    };
+    let (local, (nip05, nip05_abort)) = tokio::join!(local, nip05);
+    let local = local
+        .map_err(|e| internal("the check task failed", e))?
+        .map_err(|e| internal("checking the files failed", e))?;
 
+    let abort = [nip05_abort, local.abort_message()]
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>();
     Ok(Json(PublishCheckDto {
+        nip05,
         checks: dto::publish_checks_dto(&local, None),
-        abort: local.abort_message(),
+        abort: (!abort.is_empty()).then(|| abort.join("; ")),
     }))
 }
 
@@ -318,6 +342,64 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn check_leaves_nip05_off_by_default_and_when_asked() {
+        for parts in [
+            vec![("site", None, &b"example.com"[..])],
+            vec![("site", None, b"example.com"), ("nip05", None, b"off")],
+        ] {
+            let mut parts = parts;
+            parts.push(("files", None, br#"[{"path":"index.html","size":1}]"#));
+            let (status, body) = check_with(&parts).await;
+            assert_eq!(status, StatusCode::OK, "{body}");
+            assert_eq!(body["nip05"]["status"], "off");
+            assert!(body["nip05"]["detail"].is_null());
+            assert!(body["abort"].is_null());
+        }
+    }
+
+    #[tokio::test]
+    async fn check_nip05_warn_reports_the_result_without_stopping() {
+        let (status, body) = check_with(&[
+            ("site", None, b"my-site"),
+            ("nip05", None, b"warn"),
+            ("files", None, br#"[{"path":"index.html","size":1}]"#),
+        ])
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["nip05"]["status"], "not_applicable");
+        assert!(body["abort"].is_null());
+    }
+
+    #[tokio::test]
+    async fn check_nip05_require_returns_the_reason_upload_would_stop_with_first() {
+        let (status, body) = check_with(&[
+            ("site", None, b"my-site"),
+            ("nip05", None, b"require"),
+            ("check_links", None, b"off"),
+            ("files", None, br#"[{"path":"index.html","size":1}]"#),
+        ])
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["nip05"]["status"], "not_applicable");
+        assert_eq!(
+            body["abort"],
+            "NIP-05 verification required, but \"my-site\" is not a valid domain name"
+        );
+
+        let (status, body) = check_with(&[
+            ("site", None, b"my-site"),
+            ("nip05", None, b"require"),
+            ("files", None, br#"[{"path":".env","size":1}]"#),
+        ])
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let abort = body["abort"].as_str().unwrap();
+        let (first, rest) = abort.split_once("; ").unwrap();
+        assert!(first.starts_with("NIP-05 verification required"), "{abort}");
+        assert!(rest.contains("dotfiles_allow"), "{abort}");
+    }
+
+    #[tokio::test]
     async fn check_validates_paths_like_upload() {
         for listing in [
             &br#"[{"path":"../x","size":1}]"#[..],
@@ -371,6 +453,11 @@ mod tests {
         for parts in [
             vec![("files", None, &br#"[{"path":"a","size":1}]"#[..])],
             vec![("site", None, &b"example.com"[..])],
+            vec![
+                ("site", None, b"example.com"),
+                ("nip05", None, b"strict"),
+                ("files", None, br#"[{"path":"a","size":1}]"#),
+            ],
             vec![
                 ("site", None, b"example.com"),
                 ("check_links", None, b"strict"),

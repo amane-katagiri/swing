@@ -80,22 +80,25 @@
 
 ## POST /api/publish/check
 
-公開画面が、アップロードする前にドットファイル・サイズ・リンクの確認の結果を出すために使う。ファイルの中身は走査するものだけを受け取り、何も保存せず、Kubo にも relay にも触らない。判定は upload と同じ関数（[ローカルの確認](../../publish.md#サイトの一覧とローカルの確認)。リンクは `links::evaluate`）で、upload は自分でもう一度判定する（この API を経たかどうかは見ない）。多重実行の排他（409）は無い。
+公開画面が、アップロードする前に NIP-05 とドットファイル・サイズ・リンクの確認の結果を出すために使う。ファイルの中身は走査するものだけを受け取り、何も保存せず、Kubo にも relay にも触らない。判定は upload と同じ関数（NIP-05 は `publish::check_nip05` と `HttpNip05Verifier::public_only`、[ローカルの確認](../../publish.md#サイトの一覧とローカルの確認)。リンクは `links::evaluate`）で、upload は自分でもう一度判定する（この API を経たかどうかは見ない）。多重実行の排他（409）は無い。時計と前の版と同じ内容かは確かめない。
 
 `multipart/form-data`。パート:
 
-- `site`（必須）・`url`・`check_dotfiles`・`check_size`・`check_links`（省略可）。モードの省略時は `[publish]` の同名の設定。`site`・`url` とモードは upload と同じ規則で検証して 400（`invalid site: ...`・`invalid url: ...`・`invalid check_links: ...` など）。知らない名前のパートは読み捨てる。
+- `site`（必須）・`url`・`nip05`・`check_dotfiles`・`check_size`・`check_links`（省略可）。モードの省略時は `[publish]` の同名の設定。`site`・`url` とモードは upload と同じ規則で検証して 400（`invalid site: ...`・`invalid url: ...`・`invalid nip05: ...`・`invalid check_links: ...` など）。知らない名前のパートは読み捨てる。
 - `files`（必須）: 全ファイルの送信名と大きさの JSON 配列 `[{"path": "index.html", "size": 1234}, …]`。`MAX_UPLOAD_FILES × (MAX_PATH_LEN + 64)` バイトまで。形が違えば 400 `invalid files: ...`。空なら 400。`MAX_UPLOAD_FILES`（10,000）件まで。各 `path` は upload と同じ[パスの検証](#post-apipublishupload)（`upload::PathRules`。空・`/` 始まり・`..`・空のセグメント・予約デバイス名・大文字小文字だけ違う重複・ファイルとディレクトリの衝突）で、違反は 400。`size` の合計が `[dashboard].max_upload` を超えたら 413。
 - `file`（任意、複数）: `filename` が `files` の `path` で、そのファイルの中身。`files` に無いもの、[リンクの確認が読まない](../../publish/links.md#読むファイル)もの（拡張子が対象外か `size` が 4 MiB 超）、1 つが 4 MiB を超えるもの、同じ名前の 2 つ目は 400。リンクの確認が読むファイルの中身が無ければ、そのファイルは読まなかった（`skipped`）として数える。
 
 ディレクトリは `files` のパスの親から作る。並び順はセグメントごとの比較で、upload の一覧と同じ順になる。ボディの上限とタイムアウトは upload と同じ（`[dashboard].max_upload`、30 分）。
 
+`nip05` が `off` でなければ、ここまでの検証の後に自分の公開鍵を upload と同じ `require_own_pubkey` で求め（無ければ 503。セットアップモードなら `agent is not configured`、それ以外は `agent is not ready`）、`site` を検証する。NIP-05 の検証とドットファイル・サイズ・リンクの確認は並行して走らせる。`off` なら公開鍵は求めない。
+
 ```json
-{ "checks": { "dotfiles": {…}, "size": {…}, "links": {…}, "unchanged": null }, "abort": null }
+{ "nip05": { "status": "verified", "detail": null }, "checks": { "dotfiles": {…}, "size": {…}, "links": {…}, "unchanged": null }, "abort": null }
 ```
 
-- `checks` は[upload の応答](#post-apipublishupload)の `checks` と同じ形で、`unchanged` は常に `null`。
-- `abort` は `require` の項目が引っかかったときに upload が返す止める理由（`LocalChecks::abort_message`）、無ければ `null`。
+- `nip05` は[upload の応答](#post-apipublishupload)の `nip05` と同じ形。
+- `checks` は upload の応答の `checks` と同じ形で、`unchanged` は常に `null`。
+- `abort` は `require` の項目が引っかかったときに upload が返す止める理由、無ければ `null`。NIP-05 の理由（upload の NIP-05 の 422 と同じ文）が先で、ドットファイル・サイズ・リンクの理由（`LocalChecks::abort_message`）が続く。両方あれば `; ` でつなぐ（upload は NIP-05 で止まるとほかを確かめないので、つないだものは返さない。順は upload が確かめる順）。
 
 ## GET /api/publish/sites
 

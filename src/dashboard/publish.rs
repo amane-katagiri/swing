@@ -31,21 +31,30 @@ fn check_failed(error: String, mut body: serde_json::Value) -> Response {
     (StatusCode::UNPROCESSABLE_ENTITY, Json(body)).into_response()
 }
 
+pub(super) async fn verify_own_nip05(
+    nip05_mode: config::CheckMode,
+    site: &str,
+    pubkey_hex: &str,
+) -> (dto::Nip05ResultDto, Option<String>) {
+    if nip05_mode == config::CheckMode::Off {
+        return (dto::nip05_off_dto(), None);
+    }
+    let verifier = nip05::HttpNip05Verifier::public_only();
+    let outcome = publish::check_nip05(&verifier, nip05_mode, site, pubkey_hex).await;
+    (dto::nip05_result_dto(&outcome.result), outcome.abort)
+}
+
 async fn run_publish_nip05(
     nip05_mode: config::CheckMode,
     site: &str,
     pubkey_hex: &str,
 ) -> Result<dto::Nip05ResultDto, Response> {
-    if nip05_mode == config::CheckMode::Off {
-        return Ok(dto::nip05_off_dto());
-    }
-    let verifier = nip05::HttpNip05Verifier::public_only();
-    let outcome = publish::check_nip05(&verifier, nip05_mode, site, pubkey_hex).await;
-    if let Some(abort) = outcome.abort {
-        let body = serde_json::json!({ "nip05": dto::nip05_result_dto(&outcome.result) });
+    let (result, abort) = verify_own_nip05(nip05_mode, site, pubkey_hex).await;
+    if let Some(abort) = abort {
+        let body = serde_json::json!({ "nip05": result });
         return Err(check_failed(abort, body));
     }
-    Ok(dto::nip05_result_dto(&outcome.result))
+    Ok(result)
 }
 
 fn stage_error(e: anyhow::Error) -> ApiError {
