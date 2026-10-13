@@ -272,4 +272,31 @@ mod tests {
         );
         assert!(!fill_saved_events(&mut state, &[fetched]));
     }
+
+    #[test]
+    fn a_later_signing_of_the_stored_cid_replaces_the_kept_event() {
+        let fx = Fixture::new(default_policy(), FakeKubo::default());
+        let mut state = State::default();
+        let stored = fx.event("a.example", "bafy-a", None, 100);
+        let resigned = fx.event("a.example", "bafy-a", None, 200);
+        state.apply_store(
+            &fx.key("a.example"),
+            VersionRecord {
+                cid: "bafy-a".into(),
+                size: 1,
+                created_at: 100,
+                stored_at: 1,
+                event: Some(stored.event),
+            },
+        );
+
+        assert!(fill_saved_events(
+            &mut state,
+            std::slice::from_ref(&resigned)
+        ));
+        let latest = state.latest_version(&fx.key("a.example")).unwrap();
+        assert_eq!(latest.event, Some(resigned.event.clone()));
+        assert_eq!(latest.created_at, 100);
+        assert!(!fill_saved_events(&mut state, &[resigned]));
+    }
 }

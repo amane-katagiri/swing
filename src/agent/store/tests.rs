@@ -776,3 +776,17 @@ async fn verifications_of_unstored_sites_are_pruned_per_account() {
     }
     assert_eq!(fx.agent.state.lock().await.verifications.len(), 2);
 }
+
+#[tokio::test]
+async fn a_later_signing_of_the_stored_cid_moves_the_version_forward_for_the_policy() {
+    let fx = Fixture::new(default_policy(), sized(&[("bafy-a", 20)]));
+    fx.apply(fx.event(D, "bafy-a", Some(20), 200)).await;
+    let resigned = fx.event(D, "bafy-a", Some(20), 400);
+    let mut state = fx.agent.state.lock().await;
+    assert!(state.fill_latest_event(&fx.key(D), "bafy-a", &resigned.event));
+
+    let infos = version_infos(&state, &fx.key(D));
+    assert_eq!(infos.len(), 1);
+    assert_eq!(infos[0].created_at, 400);
+    assert_eq!(state.sites[&fx.key(D)][0].created_at, 200);
+}

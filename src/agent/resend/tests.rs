@@ -140,14 +140,17 @@ async fn sites_of_authors_unfollowed_since_the_poll_are_not_sent() {
     assert!(ids_on(&empty).await.is_empty());
 }
 
-#[tokio::test]
-async fn sites_of_authors_unfollowed_during_the_fetches_are_not_sent() {
-    let fx = Fixture::new(default_policy(), FakeKubo::default());
-    let now = Timestamp::now().as_secs();
-    let followed = site_event(&fx.keys, "a.example", CID_A, now - 100);
-    let unfollowed = site_event(&Keys::generate(), "b.example", CID_A, now - 100);
-    fx.agent.replace_targets(HashSet::from([fx.pubkey]));
+fn outgoing(event: &Event, to: &[RelayUrl]) -> Outgoing {
+    Outgoing {
+        key: key_of(event),
+        cid: nostr::parse_site_event(event, 35980).unwrap().cid,
+        event: event.clone(),
+        d: event.tags.identifier().unwrap(),
+        relays: to.to_vec(),
+    }
+}
 
+async fn send_to_empty(fx: &Fixture, events: &[&Event]) -> Vec<EventId> {
     let (_empty, empty) = relay_holding(&[]).await;
     let client = RelayClient::connect(
         Signer::Local(Keys::generate()),
@@ -156,17 +159,82 @@ async fn sites_of_authors_unfollowed_during_the_fetches_are_not_sent() {
     .await
     .unwrap();
     let to = vec![RelayUrl::parse(&empty).unwrap()];
-    let sends = [(&followed, "a.example"), (&unfollowed, "b.example")]
-        .map(|(event, d)| Outgoing {
-            event: event.clone(),
-            d: d.into(),
-            relays: to.clone(),
-        })
-        .into();
+    let sends = events.iter().map(|event| outgoing(event, &to)).collect();
     send_held(&client, &fx.agent, sends).await;
     client.shutdown().await;
+    ids_on(&empty).await
+}
 
-    assert_eq!(ids_on(&empty).await, vec![followed.id]);
+#[tokio::test]
+async fn sites_of_authors_unfollowed_during_the_fetches_are_not_sent() {
+    let fx = Fixture::new(default_policy(), FakeKubo::default());
+    let now = Timestamp::now().as_secs();
+    let followed = site_event(&fx.keys, "a.example", CID_A, now - 100);
+    let unfollowed = site_event(&Keys::generate(), "b.example", CID_A, now - 100);
+    hold(&fx, &followed).await;
+    hold(&fx, &unfollowed).await;
+    fx.agent.replace_targets(HashSet::from([fx.pubkey]));
+
+    assert_eq!(
+        send_to_empty(&fx, &[&followed, &unfollowed]).await,
+        vec![followed.id]
+    );
+}
+
+#[tokio::test]
+async fn sites_replaced_or_withdrawn_during_the_fetches_are_not_sent() {
+    let fx = Fixture::new(default_policy(), FakeKubo::default());
+    let now = Timestamp::now().as_secs();
+    let kept = site_event(&fx.keys, "a.example", CID_A, now - 100);
+    let replaced = site_event(&fx.keys, "b.example", CID_A, now - 100);
+    let resigned = site_event(&fx.keys, "c.example", CID_A, now - 100);
+    let withdrawn = site_event(&fx.keys, "d.example", CID_A, now - 100);
+    for event in [&kept, &replaced, &resigned, &withdrawn] {
+        hold(&fx, event).await;
+    }
+    hold(&fx, &site_event(&fx.keys, "b.example", CID_B, now - 50)).await;
+    {
+        let mut state = fx.agent.state.lock().await;
+        let later = site_event(&fx.keys, "c.example", CID_A, now - 50);
+        assert!(state.fill_latest_event(&key_of(&resigned), CID_A, &later));
+        state.record_withdrawal(
+            &key_of(&withdrawn),
+            Withdrawn {
+                events: BTreeSet::from([withdrawn.id.to_hex()]),
+                through: None,
+            },
+        );
+    }
+
+    assert_eq!(
+        send_to_empty(&fx, &[&kept, &replaced, &resigned, &withdrawn]).await,
+        vec![kept.id]
+    );
+}
+
+#[tokio::test]
+async fn a_later_signing_of_the_held_cid_is_kept_and_sent_on_the_next_check() {
+    let fx = Fixture::new(default_policy(), FakeKubo::default());
+    let now = Timestamp::now().as_secs();
+    let held = site_event(&fx.keys, "a.example", CID_A, now - 100);
+    let resigned = site_event(&fx.keys, "a.example", CID_A, now - 50);
+    hold(&fx, &held).await;
+
+    let (_resigned, has_resigned) = relay_holding(std::slice::from_ref(&resigned)).await;
+    let (_empty, empty) = relay_holding(&[]).await;
+    resend_through(&fx, &[has_resigned.clone(), empty.clone()]).await;
+    assert!(ids_on(&empty).await.is_empty());
+    {
+        let state = fx.agent.state.lock().await;
+        assert!(state.withdrawn.is_empty());
+        let latest = state.latest_version(&key_of(&held)).unwrap();
+        assert_eq!(latest.event, Some(resigned.clone()));
+        assert_eq!(latest.created_at, now - 100);
+    }
+
+    resend_through(&fx, &[has_resigned.clone(), empty.clone()]).await;
+    assert_eq!(ids_on(&empty).await, vec![resigned.id]);
+    assert_eq!(ids_on(&has_resigned).await, vec![resigned.id]);
 }
 
 #[tokio::test]

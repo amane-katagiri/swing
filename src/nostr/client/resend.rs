@@ -2,7 +2,7 @@ use std::cmp::Reverse;
 use std::collections::{BTreeMap, BinaryHeap, HashSet};
 
 use nostr_sdk::prelude::*;
-use tracing::{debug, warn};
+use tracing::debug;
 
 use super::RelayClient;
 use super::fetch::{Folded, capped_limit, fold_per_relay};
@@ -171,18 +171,18 @@ fn answered_sites(
         let req = &request.value;
         for (k, returned) in req.returned.iter().enumerate() {
             let unit = &units[req.first + k];
+            if !request.complete {
+                continue;
+            }
             let cutoffs = returned.each_ref().map(|r| r.cutoff(unit.limit));
             match cutoffs {
                 [_, Some(cutoff)] => {
-                    warn!(relay = %relay, pubkey = %unit.author, cutoff, "deletions by the author naming held site events by id reach the request limit; none of those held site events is sent to this relay this time");
+                    debug!(relay = %relay, pubkey = %unit.author, cutoff, "deletions by the author naming held site events by id reach the request limit; none of those held site events is sent to this relay this time");
                 }
                 [Some(cutoff), None] => {
-                    warn!(relay = %relay, pubkey = %unit.author, cutoff, "deletions by the author reach the request limit; the author's held site events at or before the cutoff are not sent to this relay this time");
+                    debug!(relay = %relay, pubkey = %unit.author, cutoff, "deletions by the author reach the request limit; the author's held site events at or before the cutoff are not sent to this relay this time");
                 }
                 [None, None] => {}
-            }
-            if !request.complete {
-                continue;
             }
             for &i in &unit.sites {
                 let created_at = held[i].created_at.as_secs();
@@ -310,3 +310,6 @@ impl RelayClient {
         }
     }
 }
+
+#[cfg(test)]
+mod tests;

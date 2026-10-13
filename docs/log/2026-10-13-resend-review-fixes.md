@@ -75,3 +75,30 @@ v0.1.6 からの「保存した版のサイトイベントの再送」をレビ�
 - 送る直前に対象から外れた作者のサイトは送らない。
 - 確認の間に新しい版を保存したサイトには、古い版の取り下げを記録しない。
 - `cargo fmt --all`・`cargo clippy --workspace --all-targets -- -D warnings`・`cargo test --workspace` が通る。
+
+## 四度目の見直し
+
+### 決めたこと
+
+- **同じ `cid` の後の署名は取り下げではなく、保存している版のイベントとして持ち替える。** 作者が `title`・`url` を変えたり告知し直したりして同じ `cid` を後の `created_at` で署名し直すと、`policy::decide` は `duplicate_cid` で版として記録せず、`fill_latest_event` は `created_at` が版と同じイベントしか入れず、送り直しの確認は relay にある新しい版で「置き換えて取り下げた」とみなして `through` を記録していた。そのサイトは以後ずっと送り直されなかった。過去分の取得と送り直しの確認の両方で、同じ `cid` の NIP-01 で新しい署名を持ち替える。確認では、その回は古い版を送らず、次の確認から新しい署名を持たない relay へ送る。protocol.md 9.1 に書いた。
+- **版の `created_at` は変えない。** 版の `created_at` を新しい署名の時刻に進める案もあったが、版の MFS のパスは `<site>/<created_at>` で、state と MFS の突き合わせ（health・sweep）は state の `created_at` からパスを作る。進めると、今のパスは state から参照されない残りものとして sweep に消され、内容のピンが外れる。パスを動かすのは Kubo への書き込みを state の更新と組にする必要があり、割に合わない。そこで `event` だけを置き換え、`event` の `created_at` が版の `created_at` 以上であることを許した。送り直しの確認は、版と保存しているイベントの対応を `cid` とイベントの `id` で確かめる（`created_at` の一致では見ない）。
+- **保存ポリシーの「新しいか」は持ち替えた署名の時刻で見る。** 版の `created_at` のままだと、持ち替えた署名より古い別の `cid` の版を新しい版として保存してしまう。`VersionRecord::announced_at`（版と `event` の `created_at` の大きい方）を `version_infos` で使う。最新の版にしか `event` は無いので、版の並びと保持期間の判定は変わらない。
+- **取り下げに当たる署名は持ち替えない。** `withdrawn` に当たる署名を持ち替えても送らないうえ、版のイベントを入れ替える意味が無い。持ち替えたら `withdrawn.events` を空にする（新しい版を記録したときと同じく、置き換えられたイベントはもう送らない）。
+- **送る直前の確かめ直しを広げる。** 作者が対象にいるかに加えて、state のロックを 1 回取って、最新の版が確認を始めたときの版（`cid` とイベントの `id`）のままか、記録した取り下げに当たらないかを確かめる。2 回の取得の間に新しい版の保存・署名の持ち替え・ほかの確認の取り下げの記録があり得るため。
+- **削除要求の境のログは答えた REQ だけ、debug で出す。** 作者が削除要求を出し続ける限り、1 時間ごとの確認のたびに warn が出ていた。境を使うのは答えた REQ だけなので、ログもそれに揃えた。
+- **送信がエラーのときは「どの relay も受理しなかった」を重ねて出さない。**
+
+### 作ったもの・変えたもの
+
+- `State::fill_latest_event`: `event` の無い版には `created_at` が版以上の、ある版には `nostr::is_newer_replaceable` で新しい、同じ `cid` の署名の正しいイベントを入れる。`withdrawn.events` を空にする処理を `apply_store` と共有した。
+- `agent::resend`: `Held` は版の `created_at`（`version_at`）を持ち、イベントの時刻はイベントから取る。`ResendPlan::Superseded` の新しい版の `cid` が同じなら `adopt_resigned` で持ち替える。`superseded` はイベント 2 つから `Withdrawn` だけを返す。版との対応の確かめを `still_held` にまとめ、取り下げの記録・持ち替え・送信で使う。`Retry` は `Default` を導出した。
+- relay ごとの取得・削除要求の取得のテストを `nostr/client/tests.rs` から `nostr/client/resend/tests.rs` に移した。
+- ドキュメント: protocol.md 9.1、`agent.md`・`agent/state.md`・`agent/resend.md`・`agent/policy.md`・`nostr/fetch.md`・`testing.md`、`docs/guide/publish.md`。
+
+### 確かめたこと
+
+- relay に同じ `cid` の後の署名があると、その回はどこにも送らず、取り下げを記録せず、state のイベントがその署名になる（版の `created_at` は変わらない）。次の確認で、それを持たない relay に送られる。
+- 過去分の取得で同じ `cid` の後の署名を受け取ると持ち替え、同じものを再び受け取っても変わらない。古い署名・署名の正しくないもの・`cid` の違うもの・取り下げに当たるものは入れない。持ち替えると `events` が空になり `through` は残る。
+- 持ち替えた後は、保存ポリシーの版の時刻が新しい署名の時刻になる。
+- 送る直前に、別の版を保存したサイト・署名を持ち替えたサイト・取り下げを記録したサイトは送らない。
+- `cargo fmt --all`・`cargo clippy --workspace --all-targets -- -D warnings`・`cargo test --workspace` が通る。

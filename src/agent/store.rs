@@ -141,7 +141,7 @@ pub(super) fn version_infos(state: &State, key: &SiteKey) -> Vec<VersionInfo> {
                 .map(|v| VersionInfo {
                     cid: v.cid.clone(),
                     size: v.size,
-                    created_at: v.created_at,
+                    created_at: v.announced_at(),
                     stored_at: v.stored_at,
                 })
                 .collect()

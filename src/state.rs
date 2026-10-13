@@ -15,6 +15,14 @@ pub struct VersionRecord {
     pub event: Option<Event>,
 }
 
+impl VersionRecord {
+    pub fn announced_at(&self) -> u64 {
+        self.event.as_ref().map_or(self.created_at, |e| {
+            e.created_at.as_secs().max(self.created_at)
+        })
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Verification {
     pub status: String,
@@ -183,7 +191,13 @@ impl State {
                 v.event = None;
             }
         }
-        if newer && let Some(withdrawn) = self.withdrawn.get_mut(key) {
+        if newer {
+            self.forget_withdrawn_ids(key);
+        }
+    }
+
+    fn forget_withdrawn_ids(&mut self, key: &str) {
+        if let Some(withdrawn) = self.withdrawn.get_mut(key) {
             withdrawn.events.clear();
             if withdrawn.through.is_none() {
                 self.withdrawn.remove(key);
@@ -196,6 +210,7 @@ impl State {
         latest_index(versions).map(|i| &versions[i])
     }
 
+    // The record's `created_at` names the version's MFS path, so a later signing of the same CID replaces only the event.
     pub fn fill_latest_event(&mut self, key: &str, cid: &str, event: &Event) -> bool {
         let Some(versions) = self.sites.get_mut(key) else {
             return false;
@@ -203,14 +218,24 @@ impl State {
         let Some(latest) = latest_index(versions).map(|i| &mut versions[i]) else {
             return false;
         };
+        let created_at = event.created_at.as_secs();
+        let newer = match &latest.event {
+            Some(held) => crate::nostr::is_newer_replaceable(event, held),
+            None => created_at >= latest.created_at,
+        };
         if latest.cid != cid
-            || latest.created_at != event.created_at.as_secs()
-            || latest.event.is_some()
+            || !newer
+            || self
+                .withdrawn
+                .get(key)
+                .is_some_and(|w| w.covers(&event.id.to_hex(), created_at))
             || event.verify().is_err()
         {
             return false;
         }
-        latest.event = Some(event.clone());
+        if latest.event.replace(event.clone()).is_some() {
+            self.forget_withdrawn_ids(key);
+        }
         true
     }
 
@@ -383,19 +408,20 @@ mod tests {
     }
 
     #[test]
-    fn a_missing_event_is_filled_only_into_the_matching_latest_version() {
+    fn a_missing_event_is_filled_only_into_the_latest_version_with_its_cid() {
         let key = site_key("aa", "x.example");
         let mut state = State::default();
         state.apply_store(&key, record("old", 10, None));
         state.apply_store(&key, record("new", 20, None));
 
         assert!(!state.fill_latest_event(&key, "old", &signed(10)));
-        assert!(!state.fill_latest_event(&key, "new", &signed(21)));
+        assert!(!state.fill_latest_event(&key, "new", &signed(19)));
         assert!(!state.fill_latest_event(&key, "other", &signed(20)));
         assert!(!state.fill_latest_event("aa:none.example", "new", &signed(20)));
         let event = signed(20);
         assert!(state.fill_latest_event(&key, "new", &event));
-        assert!(!state.fill_latest_event(&key, "new", &signed(20)));
+        assert!(!state.fill_latest_event(&key, "new", &event));
+        assert!(!state.fill_latest_event(&key, "new", &signed(19)));
         assert_eq!(state.latest_version(&key).unwrap().event, Some(event));
         assert_eq!(state.sites[&key][0].event, None);
     }
@@ -415,6 +441,44 @@ mod tests {
 
         assert!(!state.fill_latest_event(&key, "new", &with_bad_signature(&good)));
         assert_eq!(state.latest_version(&key).unwrap().event, None);
+    }
+
+    #[test]
+    fn a_later_signing_of_the_latest_cid_replaces_its_event_but_keeps_its_time() {
+        let key = site_key("aa", "x.example");
+        let mut state = State::default();
+        state.apply_store(&key, record("new", 20, Some(signed(20))));
+        state.record_withdrawal(&key, by_id("e1"));
+        state.record_withdrawal(&key, through(15));
+        let later = signed(30);
+
+        assert!(!state.fill_latest_event(&key, "other", &later));
+        assert!(!state.fill_latest_event(&key, "new", &with_bad_signature(&later)));
+        assert!(state.fill_latest_event(&key, "new", &later));
+        let latest = state.latest_version(&key).unwrap();
+        assert_eq!(latest.event, Some(later.clone()));
+        assert_eq!(latest.created_at, 20);
+        assert_eq!(latest.announced_at(), 30);
+        assert_eq!(state.withdrawn[&key], through(15));
+        assert!(!state.fill_latest_event(&key, "new", &signed(25)));
+
+        let unsigned = site_key("aa", "y.example");
+        state.apply_store(&unsigned, record("old-format", 20, None));
+        assert!(state.fill_latest_event(&unsigned, "old-format", &later));
+        assert_eq!(state.sites[&unsigned][0].created_at, 20);
+    }
+
+    #[test]
+    fn a_signing_covered_by_a_withdrawal_is_not_kept() {
+        let key = site_key("aa", "x.example");
+        let held = signed(20);
+        let mut state = State::default();
+        state.apply_store(&key, record("new", 20, Some(held.clone())));
+        state.record_withdrawal(&key, through(30));
+
+        assert!(!state.fill_latest_event(&key, "new", &signed(30)));
+        assert_eq!(state.latest_version(&key).unwrap().event, Some(held));
+        assert!(state.fill_latest_event(&key, "new", &signed(31)));
     }
 
     #[test]
