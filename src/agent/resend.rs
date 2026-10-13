@@ -94,6 +94,13 @@ fn still_held(state: &State, key: &str, cid: &str, id: EventId) -> bool {
     })
 }
 
+fn nip05_verified(state: &State, key: &str) -> bool {
+    state
+        .verifications
+        .get(key)
+        .is_some_and(|v| v.status == nip05::STATE_VERIFIED)
+}
+
 fn held_site_events(state: &State, targets: &HashSet<PublicKey>, require_nip05: bool) -> Vec<Held> {
     let targets: HashSet<String> = targets.iter().map(|pk| pk.to_hex()).collect();
     state
@@ -106,12 +113,7 @@ fn held_site_events(state: &State, targets: &HashSet<PublicKey>, require_nip05: 
             }
             let record = state.latest_version(key)?;
             let event = record.event.as_ref()?;
-            if require_nip05
-                && state
-                    .verifications
-                    .get(key)
-                    .is_none_or(|v| v.status != nip05::STATE_VERIFIED)
-            {
+            if require_nip05 && !nip05_verified(state, key) {
                 debug!(site_key = %key, "the site is not verified by NIP-05; not sending its held site event");
                 return None;
             }
@@ -168,12 +170,48 @@ fn superseded(held: &Event, newer: &Event) -> Withdrawn {
     }
 }
 
-struct Outgoing {
-    key: SiteKey,
-    cid: String,
-    event: Event,
-    d: String,
-    relays: Vec<RelayUrl>,
+type Classified = (
+    Vec<(Held, Withdrawn)>,
+    Vec<(Held, Event)>,
+    Vec<(Held, Vec<RelayUrl>)>,
+);
+
+fn classify(
+    candidates: Vec<Held>,
+    plans: Vec<ResendPlan<'_>>,
+    kind: u16,
+    backoff: &Backoff,
+    now: u64,
+) -> Classified {
+    let mut withdrawn = Vec::new();
+    let mut resigned = Vec::new();
+    let mut wanted = Vec::new();
+    for (h, plan) in candidates.into_iter().zip(plans) {
+        match plan {
+            ResendPlan::Superseded(newer)
+                if nostr::saved_site_event(newer, &h.pubkey, &h.d, kind)
+                    .is_some_and(|site| site.cid == h.cid) =>
+            {
+                info!(site = %h.d, pubkey = %h.pubkey, event_id = %h.event.id, newer_id = %newer.id, "a relay holds a newer signing of the held site event's CID; keeping that one instead");
+                resigned.push((h, newer.clone()));
+            }
+            ResendPlan::Superseded(newer) => {
+                info!(site = %h.d, pubkey = %h.pubkey, event_id = %h.event.id, newer_id = %newer.id, "a relay holds a newer version of the held site event; not sending it again");
+                let w = superseded(&h.event, newer);
+                withdrawn.push((h, w));
+            }
+            ResendPlan::SendTo(relays) => {
+                let relays: Vec<RelayUrl> = relays
+                    .into_iter()
+                    .filter(|r| backoff.ready(r, h.event.id, now))
+                    .collect();
+                if !relays.is_empty() {
+                    wanted.push((h, relays));
+                }
+            }
+        }
+    }
+    (withdrawn, resigned, wanted)
 }
 
 pub(super) async fn resend_held_sites<C, N, R>(
@@ -204,40 +242,26 @@ pub(super) async fn resend_held_sites<C, N, R>(
     let answers = relay.fetch_sites_per_relay(kind, &sites).await;
     let events: Vec<&Event> = candidates.iter().map(|h| &h.event).collect();
     let plans = nostr::plan_site_resends(&events, &answers);
-    let now = now_secs();
-    let mut withdrawn = Vec::new();
-    let mut resigned = Vec::new();
-    let mut wanted: Vec<(Held, Vec<RelayUrl>)> = Vec::new();
-    {
+    let (withdrawn, resigned, wanted) = {
         let resend = agent.resend.lock().unwrap();
-        for (h, plan) in candidates.into_iter().zip(plans) {
-            match plan {
-                ResendPlan::Superseded(newer)
-                    if nostr::saved_site_event(newer, &h.pubkey, &h.d, kind)
-                        .is_some_and(|site| site.cid == h.cid) =>
-                {
-                    info!(site = %h.d, pubkey = %h.pubkey, event_id = %h.event.id, newer_id = %newer.id, "a relay holds a newer signing of the held site event's CID; keeping that one instead");
-                    resigned.push((h, newer.clone()));
-                }
-                ResendPlan::Superseded(newer) => {
-                    info!(site = %h.d, pubkey = %h.pubkey, event_id = %h.event.id, newer_id = %newer.id, "a relay holds a newer version of the held site event; not sending it again");
-                    let w = superseded(&h.event, newer);
-                    withdrawn.push((h, w));
-                }
-                ResendPlan::SendTo(relays) => {
-                    let relays: Vec<RelayUrl> = relays
-                        .into_iter()
-                        .filter(|r| resend.backoff.ready(r, h.event.id, now))
-                        .collect();
-                    if !relays.is_empty() {
-                        wanted.push((h, relays));
-                    }
-                }
-            }
-        }
-    }
-    record_withdrawals(agent, withdrawn).await;
-    adopt_resigned(agent, resigned).await;
+        classify(candidates, plans, kind, &resend.backoff, now_secs())
+    };
+    apply_if_still_held(
+        agent,
+        withdrawn,
+        "recording withdrawn site events",
+        "recording the withdrawal of the held site event",
+        |state, h, w| state.record_withdrawal(&h.key, w),
+    )
+    .await;
+    apply_if_still_held(
+        agent,
+        resigned,
+        "keeping site events",
+        "keeping the newer signing of the held site event",
+        |state, h, newer| state.fill_latest_event(&h.key, &h.cid, &newer),
+    )
+    .await;
     if wanted.is_empty() {
         return;
     }
@@ -259,87 +283,79 @@ pub(super) async fn resend_held_sites<C, N, R>(
             debug!(site = %h.d, event_id = %h.event.id, "no relay lacking the held site event answered the deletion check; not sending it this time");
             continue;
         }
-        sends.push(Outgoing {
-            key: h.key,
-            cid: h.cid,
-            event: h.event,
-            d: h.d,
-            relays,
-        });
+        sends.push((h, relays));
     }
-    record_withdrawals(agent, withdrawn).await;
+    apply_if_still_held(
+        agent,
+        withdrawn,
+        "recording withdrawn site events",
+        "recording the withdrawal of the held site event",
+        |state, h, w| state.record_withdrawal(&h.key, w),
+    )
+    .await;
     send_held(relay, agent, sends).await;
 }
 
-async fn record_withdrawals<C, N, R>(agent: &Agent<C, N, R>, withdrawn: Vec<(Held, Withdrawn)>)
-where
+async fn apply_if_still_held<C, N, R, T>(
+    agent: &Agent<C, N, R>,
+    items: Vec<(Held, T)>,
+    save_label: &str,
+    skipped: &str,
+    apply: impl Fn(&mut State, &Held, T) -> bool,
+) where
     C: KuboStore,
     N: Nip05Verify,
     R: ReportRelay,
 {
-    if withdrawn.is_empty() {
+    if items.is_empty() {
         return;
     }
     let mut state = agent.state.lock().await;
     let mut changed = false;
-    for (h, w) in withdrawn {
+    for (h, value) in items {
         if !still_held(&state, &h.key, &h.cid, h.event.id) {
-            debug!(site_key = %h.key, event_id = %h.event.id, "the stored version changed during the check; not recording the withdrawal of the held site event");
+            debug!(site_key = %h.key, event_id = %h.event.id, "the stored version changed during the check; not {skipped}");
             continue;
         }
-        changed |= state.record_withdrawal(&h.key, w);
+        changed |= apply(&mut state, &h, value);
     }
     if changed {
-        agent.save(&state, "recording withdrawn site events").await;
+        agent.save(&state, save_label).await;
     }
 }
 
-async fn adopt_resigned<C, N, R>(agent: &Agent<C, N, R>, resigned: Vec<(Held, Event)>)
-where
+async fn send_held<C, N, R>(
+    relay: &RelayClient,
+    agent: &Agent<C, N, R>,
+    sends: Vec<(Held, Vec<RelayUrl>)>,
+) where
     C: KuboStore,
     N: Nip05Verify,
     R: ReportRelay,
 {
-    if resigned.is_empty() {
-        return;
-    }
-    let mut state = agent.state.lock().await;
-    let mut changed = false;
-    for (h, newer) in resigned {
-        if !still_held(&state, &h.key, &h.cid, h.event.id) {
-            debug!(site_key = %h.key, event_id = %h.event.id, "the stored version changed during the check; not keeping the newer signing of the held site event");
-            continue;
-        }
-        changed |= state.fill_latest_event(&h.key, &h.cid, &newer);
-    }
-    if changed {
-        agent.save(&state, "keeping site events").await;
-    }
-}
-
-async fn send_held<C, N, R>(relay: &RelayClient, agent: &Agent<C, N, R>, sends: Vec<Outgoing>)
-where
-    C: KuboStore,
-    N: Nip05Verify,
-    R: ReportRelay,
-{
-    let sends: Vec<Outgoing> = {
+    let require_nip05 = agent.config.policy.nip05 == CheckMode::Require;
+    let sends: Vec<(Held, Vec<RelayUrl>)> = {
         let state = agent.state.lock().await;
         sends
             .into_iter()
-            .filter(|send| {
-                if !agent.is_target(&send.event.pubkey) {
-                    debug!(site = %send.d, pubkey = %send.event.pubkey, "the author is no longer followed; not sending the held site event");
+            .filter(|(h, _)| {
+                if !agent.is_target(&h.pubkey) {
+                    debug!(site = %h.d, pubkey = %h.pubkey, "the author is no longer followed; not sending the held site event");
                     return false;
                 }
-                if !still_held(&state, &send.key, &send.cid, send.event.id) {
-                    debug!(site = %send.d, event_id = %send.event.id, "the stored version changed during the check; not sending the held site event");
+                if require_nip05 && !nip05_verified(&state, &h.key) {
+                    debug!(site = %h.d, "the site is no longer verified by NIP-05; not sending the held site event");
                     return false;
                 }
-                if state.withdrawn.get(&send.key).is_some_and(|w| {
-                    w.covers(&send.event.id.to_hex(), send.event.created_at.as_secs())
-                }) {
-                    debug!(site = %send.d, event_id = %send.event.id, "the author withdrew the held site event during the check; not sending it");
+                if !still_held(&state, &h.key, &h.cid, h.event.id) {
+                    debug!(site = %h.d, event_id = %h.event.id, "the stored version changed during the check; not sending the held site event");
+                    return false;
+                }
+                if state
+                    .withdrawn
+                    .get(&h.key)
+                    .is_some_and(|w| w.covers(&h.event.id.to_hex(), h.event.created_at.as_secs())) {
+                    debug!(site = %h.d, event_id = %h.event.id, "the author withdrew the held site event during the check; not sending it");
                     return false;
                 }
                 true
@@ -350,35 +366,35 @@ where
         return;
     }
     let results = futures_util::stream::iter(sends)
-        .map(|send| async move {
-            let names: Vec<&str> = send.relays.iter().map(|u| u.as_str()).collect();
-            info!(site = %send.d, pubkey = %send.event.pubkey, event_id = %send.event.id, relays = ?names, "relays lack the held site event; sending it again");
-            let output = relay.publish_to(&send.event, &send.relays).await;
-            (send, output)
+        .map(|(h, relays)| async move {
+            let names: Vec<&str> = relays.iter().map(|u| u.as_str()).collect();
+            info!(site = %h.d, pubkey = %h.pubkey, event_id = %h.event.id, relays = ?names, "relays lack the held site event; sending it again");
+            let output = relay.publish_to(&h.event, &relays).await;
+            (h, relays, output)
         })
         .buffer_unordered(budget::FETCH_CONCURRENCY);
     let record = async {
         let mut results = std::pin::pin!(results);
-        while let Some((send, output)) = results.next().await {
+        while let Some((h, relays, output)) = results.next().await {
             let accepted: HashSet<RelayUrl> = match output {
                 Ok(output) => {
                     if output.success.is_empty() {
-                        warn!(site = %send.d, event_id = %send.event.id, "no relay accepted the held site event");
+                        warn!(site = %h.d, event_id = %h.event.id, "no relay accepted the held site event");
                     }
                     output.success.into_keys().collect()
                 }
                 Err(e) => {
-                    warn!(site = %send.d, event_id = %send.event.id, error = %e, "sending the held site event again failed");
+                    warn!(site = %h.d, event_id = %h.event.id, error = %e, "sending the held site event again failed");
                     HashSet::new()
                 }
             };
             let now = now_secs();
             let mut resend = agent.resend.lock().unwrap();
-            for r in &send.relays {
+            for r in &relays {
                 if accepted.contains(r) {
-                    resend.backoff.accepted(r, send.event.id);
+                    resend.backoff.accepted(r, h.event.id);
                 } else {
-                    resend.backoff.failed(r, send.event.id, now);
+                    resend.backoff.failed(r, h.event.id, now);
                 }
             }
         }

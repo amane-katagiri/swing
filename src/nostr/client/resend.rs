@@ -168,12 +168,12 @@ fn answered_sites(
 ) -> Vec<bool> {
     let mut answered = vec![false; held.len()];
     for request in requests {
+        if !request.complete {
+            continue;
+        }
         let req = &request.value;
         for (k, returned) in req.returned.iter().enumerate() {
             let unit = &units[req.first + k];
-            if !request.complete {
-                continue;
-            }
             let cutoffs = returned.each_ref().map(|r| r.cutoff(unit.limit));
             match cutoffs {
                 [_, Some(cutoff)] => {

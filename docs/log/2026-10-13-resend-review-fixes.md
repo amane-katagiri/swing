@@ -102,3 +102,17 @@ v0.1.6 からの「保存した版のサイトイベントの再送」をレビ�
 - 持ち替えた後は、保存ポリシーの版の時刻が新しい署名の時刻になる。
 - 送る直前に、別の版を保存したサイト・署名を持ち替えたサイト・取り下げを記録したサイトは送らない。
 - `cargo fmt --all`・`cargo clippy --workspace --all-targets -- -D warnings`・`cargo test --workspace` が通る。
+
+## 五度目の見直し
+
+### 決めたこと
+
+- **送る直前の確かめ直しに NIP-05 を加える。** `policy.nip05` が `require` のとき、集めた後に検証済みでなくなったサイトは送らない。集めるときと同じ条件を `nip05_verified` にまとめて共有した。
+- 取り下げの記録と署名の持ち替えは、ロックを取り、保存している版が変わっていなければ適用し、変わっていれば保存する、という同じ流れだったので `apply_if_still_held` にまとめた。`Held` の写しだった `Outgoing` をやめ、`(Held, Vec<RelayUrl>)` を `send_held` に渡す。
+- 候補を取り下げ・持ち替え・送る対象に分ける処理を `classify` に切り出した。
+- 削除要求の答えの判定で、`complete` でない REQ を飛ばす判定を REQ ごとのループの先頭に移した。動作は変わらない。
+
+### 確かめたこと
+
+- NIP-05 が `require` で、集めた後に検証済みでなくなったサイトは送らず、検証済みのサイトだけ送る。
+- `cargo fmt --all`・`cargo clippy --workspace --all-targets -- -D warnings`・`cargo test --workspace` が通る。

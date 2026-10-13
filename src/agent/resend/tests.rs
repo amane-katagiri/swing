@@ -140,14 +140,17 @@ async fn sites_of_authors_unfollowed_since_the_poll_are_not_sent() {
     assert!(ids_on(&empty).await.is_empty());
 }
 
-fn outgoing(event: &Event, to: &[RelayUrl]) -> Outgoing {
-    Outgoing {
+fn outgoing(event: &Event, to: &[RelayUrl]) -> (Held, Vec<RelayUrl>) {
+    let held = Held {
         key: key_of(event),
-        cid: nostr::parse_site_event(event, 35980).unwrap().cid,
-        event: event.clone(),
+        pubkey: event.pubkey,
         d: event.tags.identifier().unwrap(),
-        relays: to.to_vec(),
-    }
+        cid: nostr::parse_site_event(event, 35980).unwrap().cid,
+        version_at: event.created_at.as_secs(),
+        event: event.clone(),
+        withdrawn: None,
+    };
+    (held, to.to_vec())
 }
 
 async fn send_to_empty(fx: &Fixture, events: &[&Event]) -> Vec<EventId> {
@@ -213,6 +216,38 @@ async fn sites_replaced_or_withdrawn_during_the_fetches_are_not_sent() {
 }
 
 #[tokio::test]
+async fn sites_no_longer_verified_by_nip05_during_the_fetches_are_not_sent() {
+    let fx = Fixture::new(nip05_policy(CheckMode::Require), FakeKubo::default());
+    let now = Timestamp::now().as_secs();
+    let verified = site_event(&fx.keys, "a.example", CID_A, now - 100);
+    let flipped = site_event(&fx.keys, "b.example", CID_A, now - 100);
+    for event in [&verified, &flipped] {
+        hold(&fx, event).await;
+    }
+    {
+        let mut state = fx.agent.state.lock().await;
+        for (event, status) in [
+            (&verified, nip05::STATE_VERIFIED),
+            (&flipped, nip05::STATE_ERROR),
+        ] {
+            state.set_verification(
+                &key_of(event),
+                Verification {
+                    status: status.into(),
+                    detail: None,
+                    checked_at: 1,
+                },
+            );
+        }
+    }
+
+    assert_eq!(
+        send_to_empty(&fx, &[&verified, &flipped]).await,
+        vec![verified.id]
+    );
+}
+
+#[tokio::test]
 async fn a_later_signing_of_the_held_cid_is_kept_and_sent_on_the_next_check() {
     let fx = Fixture::new(default_policy(), FakeKubo::default());
     let now = Timestamp::now().as_secs();
@@ -264,7 +299,14 @@ async fn a_withdrawal_is_not_recorded_once_a_newer_version_is_stored_during_the_
             (h, w)
         })
         .collect();
-    record_withdrawals(&fx.agent, withdrawn).await;
+    apply_if_still_held(
+        &fx.agent,
+        withdrawn,
+        "recording withdrawn site events",
+        "recording the withdrawal of the held site event",
+        |state, h, w| state.record_withdrawal(&h.key, w),
+    )
+    .await;
 
     assert!(
         !fx.agent
