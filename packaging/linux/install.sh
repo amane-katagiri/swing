@@ -490,6 +490,7 @@ do_install() {
   else
     printf '\nNext steps:\n  swing service install   # run swing at login (or: swing up)\n  swing dashboard open    # open the dashboard to finish the setup\n'
   fi
+  printf '\nTo check your site with an AI coding agent before publishing it:\n  swing skill install\n'
   printf 'Your configuration and data live in %s\n' "$(safe "$(data_dir)")"
   printf 'Uninstall with: %s\n' "$(safe "$LIB/swing-uninstall.sh")"
 }

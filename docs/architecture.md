@@ -6,7 +6,7 @@
 |---|---|
 | このファイル | 構成要素、リポジトリ構成、CLI の一覧、設定と環境変数、各ファイルへの索引 |
 | [`architecture/config.md`](architecture/config.md) | 設定ファイルと環境変数の読み込み・解決、設定キーのカタログ（`settings/`）とダッシュボードからの書き込み |
-| [`architecture/cli.md`](architecture/cli.md) | 各サブコマンドの動作と出力。子ページは `publish` の [`cli/publish.md`](architecture/cli/publish.md) と、表示系と Follow Set の操作の [`cli/views.md`](architecture/cli/views.md) |
+| [`architecture/cli.md`](architecture/cli.md) | 各サブコマンドの動作と出力。子ページは `publish` の [`cli/publish.md`](architecture/cli/publish.md)、表示系と Follow Set の操作の [`cli/views.md`](architecture/cli/views.md)、エージェント向けのスキルの [`cli/skill.md`](architecture/cli/skill.md) |
 | [`architecture/publish.md`](architecture/publish.md) | `swing publish` とダッシュボードの公開が共有する処理: 保護パス・ローカルの確認（リンクの確認は子ページ [`publish/links.md`](architecture/publish/links.md)、`--dry-run` は [`publish/dry-run.md`](architecture/publish/dry-run.md)）・時計の確認と `created_at`・版の配置と後始末・古い版の削除 |
 | [`architecture/mirror.md`](architecture/mirror.md) | `mirror list`/`add`/`remove`・`sites` とダッシュボードの API が共有する処理: 使う Follow Set の選び方・Follow Set の書き換え・sites の集計（レプリカ数、unfollow の一覧） |
 | [`architecture/webring.md`](architecture/webring.md) | `webring` と `/api/webring` が共有する処理: Follow Set のたどり方・グラフ・ノードの名前 |
@@ -79,6 +79,7 @@
 | `auth.rs`・`api_client.rs`・`login.rs` | トークン・セッション・ログインコード、CLI のダッシュボード API クライアント、`swing dashboard open`/`rotate-token`。[dashboard/security.md](architecture/dashboard/security.md) |
 | `activity.rs` | 最新の publish・レプリカ報告の時刻（`/api/activity` 用、メモリだけ） |
 | `fingerprint.rs` | 絵文字のフィンガープリント（`packaging/twemoji/` で作る `web/emoji.svg` も）。[dashboard/fingerprint.md](architecture/dashboard/fingerprint.md) |
+| `skill.rs` | `swing skill`: 埋め込んだ `skills/swing-publish/SKILL.md` に版を入れて書き出す。[cli/skill.md](architecture/cli/skill.md) |
 | `test_support.rs` | テスト用のフィクスチャ（`FakeKubo` など） |
 
 ほか:
@@ -86,6 +87,7 @@
 | パス | 役割 |
 |---|---|
 | `web/` | ダッシュボードのフロント。ビルド工程なしでバイナリに埋め込む（`fonts/`: 同梱フォント PixelMplus12、`emoji/`: 絵文字のフィンガープリントの一覧、`mascots/`: 同梱のマスコットパック）。[dashboard/web.md](architecture/dashboard/web.md) |
+| `skills/` | AI エージェント向けのスキルの正本（`swing-publish/SKILL.md`）。`swing` に埋め込む。[cli/skill.md](architecture/cli/skill.md) |
 | `tests/` | 統合テスト（`#[ignore]`。[testing.md](architecture/testing.md)） |
 | `tray/` | タスクトレイ `swing-tray` の別クレート（workspace のメンバー。`src/`・`assets/`・`macos/`）。[tray.md](architecture/tray.md) |
 | `build.rs`・`assets/swing.ico` | Windows 向けに exe へアイコンとバージョン情報を埋め込む。アイコンは `tray/assets/` の画像とともに `web/favicon.svg` から書き出した派生物（[tray.md](architecture/tray.md#アイコン)） |
@@ -125,6 +127,8 @@ swing signer pair [--relay <URL>]...   [--config <path>]
 swing key generate
 swing config example
 swing config env-example
+swing skill show
+swing skill install [--dir <skills_dir>] [--force]
 
 swing-tray [--config <path>]
 ```

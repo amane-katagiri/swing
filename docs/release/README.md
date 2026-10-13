@@ -89,6 +89,8 @@ Linux でシステムユニットにするときは `sudo ./swing service instal
 
 保存したサイトは `http://localhost:8080/ipfs/<cid>/` で閲覧できます。
 
+自分のサイトを公開する前に、Claude Code などの AI エージェントに IPFS で配りやすいかを確かめてもらうなら、`./swing skill install` でこの版に合ったスキルを `~/.claude/skills/swing-publish/` に書き出します（ほかのエージェントには `--dir <スキルのディレクトリ>`）。エージェントは確かめるだけで、公開のコマンドは自分で実行します。
+
 ## 注意
 
 - SWING は公開の IPFS ネットワークをそのまま使うので、匿名性はありません。他の参加者から、あなたの IP アドレスと保存しているサイトの関係が見えます。

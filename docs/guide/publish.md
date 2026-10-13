@@ -94,6 +94,20 @@ swing publish --site example.jp --url https://example.jp/ --dry-run ./public
 
 本番なら止まる理由（`require` の確認に引っかかる・時計のずれ）があれば、全部を表示してから終了コード 1 で終わり、無ければ 0 で終わります。`swing up` が動いていない・鍵をまだ設定していない環境でも使えます。そのとき分からないもの（CID・前の版・NIP-05 など）は「確かめられなかった」と理由付きで表示し、止める理由には数えません。`--json` を付けると結果を JSON で標準出力に出します（CI やスクリプト、AI エージェントから使うとき向け）。出力の形と終了コードの詳細は [`docs/architecture/cli/publish.md`](../architecture/cli/publish.md#確かめるだけの実行--dry-run) を参照してください。
 
+## AI エージェントで確かめる
+
+Claude Code や Codex など、Agent Skills 形式のスキル（`SKILL.md`）を読む AI エージェントに、サイトの確認を任せられます。`swing` には、その版に合ったスキル `swing-publish` が入っています。
+
+```bash
+swing skill install                       # ~/.claude/skills/swing-publish/SKILL.md に書き出す
+swing skill install --dir <スキルのディレクトリ>  # ほかのエージェント（<ディレクトリ>/swing-publish/SKILL.md）
+swing skill show                          # 標準出力に出す
+```
+
+スキルを読んだエージェントは、`swing publish --dry-run --json` の結果と、[チェックリスト](../site-guide.md)のうち自動で確かめられない項目（CDN からの読み込み・自分のドメインの絶対 URL・拡張子なしの URL・シークレットなど）をサイトのソースとビルド出力から確かめ、直し方を提案します。エージェントは本番の publish を実行せず、最後に実行するコマンドを示して止まります。公開は、そのコマンドを自分で確かめてから実行してください。
+
+`swing` を更新したら `swing skill install` をもう一度実行すると、スキルも同じ版になります（同じなら何もしません）。書き出し先に別の `SKILL.md` があるときは、`--force` を付けない限り上書きしません。Docker Compose では `docker compose run --rm --no-deps -T mirror skill show > SKILL.md` で取り出して、エージェントのスキルのディレクトリ（Claude Code なら `~/.claude/skills/swing-publish/`）に置きます。インストーラーや `install.sh`・Homebrew は、このコマンドを実行するまでエージェントの設定に何も書きません。
+
 ## ほかの人にミラーしてもらう
 
 サイトをミラーしてもらうには、自分の公開鍵（npub）を相手に伝えます。[SWING Connect](https://swing-connect.pages.dev/) を使うと、公開鍵とミラーの手順をまとめたページへのリンクを作れるので、自分のサイトに貼っておけます。

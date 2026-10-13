@@ -2,6 +2,7 @@ FROM rust:1.97-slim-trixie AS builder
 WORKDIR /build
 COPY Cargo.toml Cargo.lock build.rs ./
 COPY assets ./assets
+COPY skills ./skills
 COPY src ./src
 COPY tray ./tray
 COPY web ./web

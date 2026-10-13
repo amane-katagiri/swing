@@ -245,6 +245,7 @@ if [ "$(id -u)" != 0 ]; then
   out=$(run sh "$INSTALL" --service 2>&1) || fail "--service exits 0"
   check "service install called" contains "$FAKE_LOG" "swing service install"
   check "dashboard hint printed" sh -c "printf '%s' \"\$1\" | grep -q 'swing dashboard open'" _ "$out"
+  check "skill hint printed" sh -c "printf '%s' \"\$1\" | grep -q 'swing skill install'" _ "$out"
 else
   echo "skip --service (install.sh refuses it as root)"
 fi

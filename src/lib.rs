@@ -29,6 +29,7 @@ pub mod service;
 pub mod settings;
 pub mod shutdown;
 pub mod signer;
+pub mod skill;
 pub mod state;
 pub mod stats;
 pub mod stop;

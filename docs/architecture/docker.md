@@ -4,7 +4,7 @@
 
 ## Dockerfile
 
-- builder に `Cargo.toml`・`Cargo.lock`・`build.rs`・`assets/`・`src/`・`tray/`・`web/` を COPY し、`cargo build --release --locked` で `swing` だけをビルドする（`tray/` は workspace のメンバーなので入れるがビルドしない）。
+- builder に `Cargo.toml`・`Cargo.lock`・`build.rs`・`assets/`・`skills/`・`src/`・`tray/`・`web/` を COPY し、`cargo build --release --locked` で `swing` だけをビルドする（`tray/` は workspace のメンバーなので入れるがビルドしない）。
 - builder `rust:1.97-slim-trixie`、runtime `debian:trixie-slim`。
 - runtime には `/usr/local/bin/swing` だけを置き、ユーザー `swing`（uid/gid 1000）で実行する。`/data` はそのユーザー所有の `VOLUME`。
 - `WORKDIR /data`。ユーザー `swing` にはホームディレクトリが無い（`HOME` は存在しない `/home/swing`）ので、`--config`／`SWING_CONFIG` が無ければ設定ファイルは `/data/swing.toml`（volume の中。[`config.md`](config.md#設定ファイルの場所) の 4）になり、セットアップモードもここに書く。

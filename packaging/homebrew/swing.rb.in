@@ -30,6 +30,9 @@ class Swing < Formula
 
       After `brew upgrade swing`, run `swing service install` again to restart on the new version.
       `brew uninstall swing` leaves the login items and data behind; run `swing service uninstall` first.
+
+      To check your site with an AI coding agent before publishing it, add the agent skill:
+        swing skill install
     EOS
   end
 

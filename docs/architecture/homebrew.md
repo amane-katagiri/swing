@@ -25,7 +25,7 @@ macOS 向けに、tap `amane-katagiri/swing`（リポジトリ `amane-katagiri/h
 | `url`・`sha256` | `Hardware::CPU.arm?` で `aarch64-apple-darwin` と `x86_64-apple-darwin` のアーカイブを選ぶ。`version` は書かず URL から読み取らせる |
 | `depends_on` | `"kubo"`・`:macos`。Linux 向けの指定は無い |
 | `install` | `swing` と `SWING.app` を `libexec` に、`swing.example.toml` を `pkgshare` に入れる。`bin/swing` は `bin.write_exec_script opt_libexec/"swing"` で作るスクリプトで、中身は `exec "<prefix>/opt/swing/libexec/swing" "$@"` |
-| `caveats` | `swing service install`・`swing dashboard open`、設定とデータ・ログの場所、`brew upgrade` 後に `swing service install` をやり直すこと、`brew uninstall` の前に `swing service uninstall` を実行すること |
+| `caveats` | `swing service install`・`swing dashboard open`、AI エージェントでサイトを確かめるための `swing skill install`、設定とデータ・ログの場所、`brew upgrade` 後に `swing service install` をやり直すこと、`brew uninstall` の前に `swing service uninstall` を実行すること |
 | `test` | `swing --version` にバージョンが含まれること |
 | `service do` | 無い。LaunchAgent は `swing service install` が登録する（下記） |
 

@@ -5,8 +5,8 @@ use anyhow::{Context, Result};
 use clap::{Args, Parser, Subcommand};
 use swing::shutdown::{self, Exit};
 use swing::{
-    config, health, key, login, mirror, pair, publish, replicas, service, settings, stats, stop,
-    up, webring,
+    config, health, key, login, mirror, pair, publish, replicas, service, settings, skill, stats,
+    stop, up, webring,
 };
 use tracing::info;
 use tracing_subscriber::EnvFilter;
@@ -261,6 +261,33 @@ enum Command {
     Config {
         #[command(subcommand)]
         action: ConfigCommand,
+    },
+    #[command(
+        about = "Print or install the swing-publish skill for AI coding agents (no config file read)"
+    )]
+    Skill {
+        #[command(subcommand)]
+        action: SkillCommand,
+    },
+}
+
+#[derive(Subcommand)]
+enum SkillCommand {
+    #[command(about = "Print the SKILL.md of the swing-publish skill for this version of swing")]
+    Show,
+    #[command(about = "Write the skill to ~/.claude/skills/swing-publish/SKILL.md, or under --dir")]
+    Install {
+        #[arg(
+            long,
+            value_name = "SKILLS_DIR",
+            help = "Skills directory of your agent; writes <SKILLS_DIR>/swing-publish/SKILL.md (default: ~/.claude/skills)"
+        )]
+        dir: Option<PathBuf>,
+        #[arg(
+            long,
+            help = "Overwrite SKILL.md even if it is not the swing-publish skill"
+        )]
+        force: bool,
     },
 }
 
@@ -662,6 +689,13 @@ async fn run_other(command: Command) -> Result<()> {
                 print!("{}", settings::render_env_example());
                 Ok(())
             }
+        },
+        Command::Skill { action } => match action {
+            SkillCommand::Show => {
+                print!("{}", skill::render());
+                Ok(())
+            }
+            SkillCommand::Install { dir, force } => skill::install(dir.as_deref(), force),
         },
     }
 }

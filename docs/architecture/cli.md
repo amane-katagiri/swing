@@ -1,6 +1,6 @@
 # CLI（main.rs と各サブコマンド）
 
-サブコマンドの一覧は [`../architecture.md#cli`](../architecture.md#cli)、設定ファイルの探し方は [`config.md`](config.md)、出力例は README を参照。子ページは [`cli/publish.md`](cli/publish.md)（`publish`）と [`cli/views.md`](cli/views.md)（`mirror list` / `add` / `remove`・`sites`・`replicas`・`status`・`stats`・`webring`）。
+サブコマンドの一覧は [`../architecture.md#cli`](../architecture.md#cli)、設定ファイルの探し方は [`config.md`](config.md)、出力例は README を参照。子ページは [`cli/publish.md`](cli/publish.md)（`publish`）、[`cli/views.md`](cli/views.md)（`mirror list` / `add` / `remove`・`sites`・`replicas`・`status`・`stats`・`webring`）、[`cli/skill.md`](cli/skill.md)（`skill show` / `install`）。
 
 ## 共通
 
@@ -12,6 +12,7 @@
   - `service install`/`uninstall`: OS のサービス登録と、Windows・macOS では `swing-tray` の自動起動の登録（[`service.md`](service.md#タスクトレイの自動起動windows-と-macos)）
   - `signer pair`: `<state_dir>/remote-signer.json`
   - `dashboard rotate-token`: `swing up` が動いていなければ `<state_dir>/dashboard.token`
+  - `skill install`: `<skills_dir>/swing-publish/SKILL.md`（[`cli/skill.md`](cli/skill.md)）
 - `mirror add` / `remove` は Follow Set を relay に送る。受理された後の agent の動きは [`dashboard.md#概要`](dashboard.md#概要)。`stop` と `service start`/`stop` は動いているプロセスやサービスを起動・停止させるだけ。
 - `status`・`stats`・`mirror add`・`mirror remove`・`stop`・`dashboard open`・`dashboard rotate-token`（と Windows の `service stop`）は relay/Kubo に直接つながず、動いている `swing up` のダッシュボード API（`[dashboard].listen`、既定 `127.0.0.1:8082`）を `src/api_client.rs::ApiClient` で叩く。
   - `<[agent].state_dir>/dashboard.token` を `Authorization: Bearer` で送る。相手がそのトークンを知っていると確かめられなければ送らずにエラー終了する（[`dashboard/security.md`](dashboard/security.md#cli-と-swing-trayapiclient)）。そのため `swing up` と同じ設定（同じ `state_dir`）を読めて、そのファイルを読めるユーザーで実行する。
@@ -78,3 +79,7 @@ NIP-46 の署名アプリと、ターミナルに出した QR コードでペア
 ## config example / config env-example
 
 設定ファイルを読まない（`--config` を取らない）。`src/settings/catalog.rs::SETTINGS` の設定カタログから、リポジトリ直下の `swing.example.toml`／`.env.example` と同じ内容を標準出力に印字する（[`config.md`](config.md)）。両ファイルがこの出力と一致することを `cargo test` が確かめる。
+
+## skill show / skill install
+
+AI エージェント向けのスキル `swing-publish` の `SKILL.md` を、版を埋めて標準出力に出す（`show`）か、エージェントのスキルのディレクトリに書き出す（`install [--dir <skills_dir>] [--force]`）。設定ファイルを読まない。書き出し先と上書きの規則は [`cli/skill.md`](cli/skill.md)。

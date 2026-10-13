@@ -15,6 +15,7 @@ SWING（Nostr + IPFS 個人サイト相互ミラー）のリポジトリで作�
 | `docs/mascot-guide.md` | Desktop 画面のマスコットのパックを作る人向けの手引き（コマの用意・描き方・確かめ方） | パック形式や検証規則を変えたら `docs/architecture/dashboard/mascot/pack.md` と同じ変更で更新する。値の正本は architecture 側に置き、ここでは目安と手順だけを書く |
 | `docs/guide/` | 利用者向けの手引き。`install.md`（導入・起動・置き場所・サービス登録）・`docker.md`（Docker Compose・バイナリへの移り方）・`usage.md`（ミラーの管理・ダッシュボード）・`publish.md`（公開・レプリカ・Webring・ゲートウェイ）・`operation.md`（保存量・運用の目安・設定一覧）・`security.md`（プライバシー・外からの利用・署名アプリ） | README の「はじめかた」より先の使い方はここに書く。使い方を変えたら同じ変更で更新する。仕様の詳細は architecture へリンクして重複させない |
 | `docs/site-guide.md` | `swing publish` でサイトを公開する人向けの、IPFS で配りやすい静的サイトにするためのチェックリスト | publish の処理（追加するファイルの範囲・CID の作り方）やミラー側のポリシー（上限・既定値・判定の順序）を変えたら同じ変更で更新する。値の正本は `docs/guide/operation.md` の設定一覧と architecture 側に置き、ここでは目安と理由だけを書く |
+| `skills/swing-publish/SKILL.md` | AI エージェント向けの、サイトの確認と公開の手順（Agent Skills 形式、英語）。`swing skill show`・`install` で版を埋めて書き出す（[`docs/architecture/cli/skill.md`](docs/architecture/cli/skill.md)）。手引きへのリンクは `{{version}}` を使った版付きの URL にする | publish の引数・dry run の出力や JSON スキーマ・`docs/site-guide.md` のチェックリスト・`docs/guide/publish.md` の手順を変えたら同じ変更で更新する。値の正本は `docs/guide/operation.md` と architecture 側に置き、上限や既定値の数値は書き写さない |
 | `docs/extensions.md` | 将来のイベント拡張の命名規約と予約表 | 新しい kind や d タグを使う前にここへ追記する |
 | `docs/todo.md` | 残タスク | 着手したら消す、見つけたら足す。完了済みは log へ |
 | `docs/log/YYYY-MM-DD-<slug>.md` | 実装ログ。その回で何を決め、何を作り、何を検証したか。`<slug>` は英語の kebab-case（本文は日本語でよい） | 追記のみ。過去のログは書き換えない。1 回の作業単位で 1 ファイル |
