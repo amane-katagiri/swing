@@ -4,7 +4,7 @@
 
 | 文書 | 内容 |
 |---|---|
-| このファイル | 構成要素、リポジトリ構成、CLI の一覧、設定と環境変数、テストと各ファイルへの索引 |
+| このファイル | 構成要素、リポジトリ構成、CLI の一覧、設定と環境変数、各ファイルへの索引 |
 | [`architecture/config.md`](architecture/config.md) | 設定ファイルと環境変数の読み込み・解決、設定キーのカタログ（`settings/`）とダッシュボードからの書き込み |
 | [`architecture/cli.md`](architecture/cli.md) | 各サブコマンドの動作と出力。子ページは `publish` の [`cli/publish.md`](architecture/cli/publish.md) と、表示系と Follow Set の操作の [`cli/views.md`](architecture/cli/views.md) |
 | [`architecture/publish.md`](architecture/publish.md) | `swing publish` とダッシュボードの公開が共有する処理: 保護パス・ローカルの確認（リンクの確認は子ページ [`publish/links.md`](architecture/publish/links.md)、`--dry-run` は [`publish/dry-run.md`](architecture/publish/dry-run.md)）・時計の確認と `created_at`・版の配置と後始末・古い版の削除 |
@@ -27,6 +27,7 @@
 | [`architecture/release.md`](architecture/release.md) | ビルドとリリース（手順のスクリプトを含む）、macOS・Homebrew・Windows の動作確認の CI |
 | [`architecture/install-sh.md`](architecture/install-sh.md) | Linux 向けのインストールスクリプト（`packaging/linux/install.sh`）: 入れる物と場所、更新、アンインストール、テスト |
 | [`architecture/homebrew.md`](architecture/homebrew.md) | macOS 向けの Homebrew の formula（`packaging/homebrew/`）: 入れる場所、`brew upgrade` とサービス、tap への公開 |
+| [`architecture/testing.md`](architecture/testing.md) | ユニットテストの置き方、ローカルの Kubo・relay を使う統合テストの動かし方 |
 | [`architecture/installer-windows.md`](architecture/installer-windows.md) | Windows のインストーラー（Inno Setup、`packaging/windows/`）: 中身、インストール・上書き・アンインストールの動作、その確認の CI |
 
 ## 構成要素
@@ -85,7 +86,7 @@
 | パス | 役割 |
 |---|---|
 | `web/` | ダッシュボードのフロント。ビルド工程なしでバイナリに埋め込む（`fonts/`: 同梱フォント PixelMplus12、`emoji/`: 絵文字のフィンガープリントの一覧、`mascots/`: 同梱のマスコットパック）。[dashboard/web.md](architecture/dashboard/web.md) |
-| `tests/` | 統合テスト（`#[ignore]`。下記「[テスト](#テスト)」） |
+| `tests/` | 統合テスト（`#[ignore]`。[testing.md](architecture/testing.md)） |
 | `tray/` | タスクトレイ `swing-tray` の別クレート（workspace のメンバー。`src/`・`assets/`・`macos/`）。[tray.md](architecture/tray.md) |
 | `build.rs`・`assets/swing.ico` | Windows 向けに exe へアイコンとバージョン情報を埋め込む。アイコンは `tray/assets/` の画像とともに `web/favicon.svg` から書き出した派生物（[tray.md](architecture/tray.md#アイコン)） |
 | `Dockerfile`・`compose.yaml`・`docker/` | コンテナと compose（`kubo-init.d/`: 外部 Kubo の設定、`release.Dockerfile`: 配布イメージ、`demo/`: デモ環境）。[docker.md](architecture/docker.md)・[docker/demo/README.md](../docker/demo/README.md) |
@@ -136,27 +137,4 @@ swing-tray [--config <path>]
 
 ## テスト
 
-- ユニットテスト: `cargo test`。大きいテストモジュールは `foo.rs` に `#[cfg(test)] mod tests;` を置いて `foo/tests.rs` に分ける（`config/build/tests.rs`・`nostr/client/tests.rs`・`nostr/site/tests.rs`・`agent/replicas/tests.rs` など）。agent と health のテストは MFS をメモリ上で真似る `FakeKubo`（`src/test_support.rs`）を使い、agent はこれに `FakeNip05` を組み合わせる。ダッシュボードのテストは axum の `Router` に `oneshot` でリクエストを投げ、TCP で listen しない。署名アプリとのやり取りのテストは [`architecture/signer.md#テスト`](architecture/signer.md#テスト)。
-- 統合テスト（`#[ignore]`、ローカルの Kubo / relay が必要。公開ネットワークには接続しない）:
-
-```bash
-# test プロファイルは bootstrap とローカル探索を無効にする
-docker run -d --rm -e IPFS_PROFILE=test -p 127.0.0.1:15001:5001 ipfs/kubo:v0.43.1
-# SWING_TEST_IPFS_API（既定 http://127.0.0.1:15001）、任意で SWING_TEST_EXPECTED_CID
-cargo test --test kubo_integration -- --ignored --test-threads=1
-# agent の保存・sweep・突き合わせ・unfollow を実物の Kubo で通す（health.rs の検査を含む）
-cargo test --lib agent_stores_and_removes_through_real_kubo -- --ignored
-
-docker run -d --rm -p 127.0.0.1:18080:8080 scsibug/nostr-rs-relay
-# SWING_TEST_RELAY（既定 ws://127.0.0.1:18080）。サイトイベント・レプリカ報告・Follow Set の送受信と #p での Follow Set の取得
-cargo test --test nostr_relay_integration -- --ignored --test-threads=1
-```
-
-`kubo::tests` の `#[ignore]` テスト（Kubo の一生・孤児の回収）と `mfs_kubo_integration`（空白・記号・`.`/`..`・日本語・長い名前を含む `d` が、agent と publish の MFS パスで往復し、`find_garbage` が誤検知せず、削除できること）は Kubo のバイナリを子プロセスとして起動する（repo は一時ディレクトリ）。`SWING_TEST_KUBO_BIN` が無ければ何もせずに通る:
-
-```bash
-SWING_TEST_KUBO_BIN=/path/to/ipfs cargo test --lib kubo::tests -- --ignored
-SWING_TEST_KUBO_BIN=/path/to/ipfs cargo test --test mfs_kubo_integration -- --ignored
-```
-
-ビルドとリリース、macOS・Homebrew・Windows の動作確認は [`architecture/release.md`](architecture/release.md)。
+ユニットテストの置き方と、ローカルの Kubo・relay を使う統合テストの動かし方は [`architecture/testing.md`](architecture/testing.md)。ビルドとリリース、macOS・Homebrew・Windows の動作確認は [`architecture/release.md`](architecture/release.md)。

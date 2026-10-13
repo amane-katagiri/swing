@@ -118,4 +118,4 @@ agent・`swing publish`・unmanaged のヘルス待ち（[`up.md#unmanaged`](up.
 - 各 RPC の JSON の形（`TotalSize`、`Hash`、`Type`（`files/stat` は文字列、`Entries[].Type` は数値）など）と、`add` の multipart、`files/cp` が既存のパスを `directory already has entry by that name` で断ること（`mfs_place` が文面で判定する）
 - MFS の保護・GC・`offline=true` の挙動
 
-これを確かめるテストは、統合テスト（`kubo_integration`・`agent_stores_and_removes_through_real_kubo`）と、`SWING_TEST_KUBO_BIN` が要る `kubo::tests` の `#[ignore]` テストと `mfs_kubo_integration`。コマンドは [`../architecture.md#テスト`](../architecture.md#テスト)。
+これを確かめるテストは、統合テスト（`kubo_integration`・`agent_stores_and_removes_through_real_kubo`）と、`SWING_TEST_KUBO_BIN` が要る `kubo::tests` の `#[ignore]` テストと `mfs_kubo_integration`。コマンドは [`testing.md`](testing.md)。
