@@ -1,4 +1,4 @@
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -101,7 +101,7 @@ fn nip05_verified(state: &State, key: &str) -> bool {
         .is_some_and(|v| v.status == nip05::STATE_VERIFIED)
 }
 
-fn held_site_events(state: &State, targets: &HashSet<PublicKey>, require_nip05: bool) -> Vec<Held> {
+fn held_site_events(state: &State, targets: &HashSet<PublicKey>) -> Vec<Held> {
     let targets: HashSet<String> = targets.iter().map(|pk| pk.to_hex()).collect();
     state
         .sites
@@ -113,10 +113,6 @@ fn held_site_events(state: &State, targets: &HashSet<PublicKey>, require_nip05: 
             }
             let record = state.latest_version(key)?;
             let event = record.event.as_ref()?;
-            if require_nip05 && !nip05_verified(state, key) {
-                debug!(site_key = %key, "the site is not verified by NIP-05; not sending its held site event");
-                return None;
-            }
             Some(Held {
                 key: key.clone(),
                 pubkey: PublicKey::from_hex(pubkey_hex).ok()?,
@@ -154,22 +150,6 @@ fn resend_candidates(held: Vec<Held>, site_event_kind: u16) -> Vec<Held> {
         .collect()
 }
 
-// A newer version in the same second only outranks the held one by id, so covering that second would also cover the newer version.
-fn superseded(held: &Event, newer: &Event) -> Withdrawn {
-    let newer_at = newer.created_at.as_secs();
-    if newer_at > held.created_at.as_secs() {
-        Withdrawn {
-            events: BTreeSet::new(),
-            through: Some(newer_at - 1),
-        }
-    } else {
-        Withdrawn {
-            events: BTreeSet::from([held.id.to_hex()]),
-            through: None,
-        }
-    }
-}
-
 type Classified = (
     Vec<(Held, Withdrawn)>,
     Vec<(Held, Event)>,
@@ -197,7 +177,7 @@ fn classify(
             }
             ResendPlan::Superseded(newer) => {
                 info!(site = %h.d, pubkey = %h.pubkey, event_id = %h.event.id, newer_id = %newer.id, "a relay holds a newer version of the held site event; not sending it again");
-                let w = superseded(&h.event, newer);
+                let w = Withdrawn::superseded(&h.event, newer);
                 withdrawn.push((h, w));
             }
             ResendPlan::SendTo(relays) => {
@@ -230,8 +210,11 @@ pub(super) async fn resend_held_sites<C, N, R>(
         .copied()
         .filter(|pk| agent.is_target(pk))
         .collect();
-    let held = held_site_events(&*agent.state.lock().await, &targets, require_nip05);
-    let candidates = resend_candidates(held, kind);
+    let held = held_site_events(&*agent.state.lock().await, &targets);
+    let mut candidates = resend_candidates(held, kind);
+    if require_nip05 {
+        candidates = verified_by_nip05(agent, candidates).await;
+    }
     let ids: HashSet<EventId> = candidates.iter().map(|h| h.event.id).collect();
     agent.resend.lock().unwrap().backoff.retain(&ids);
     if candidates.is_empty() {
@@ -296,6 +279,28 @@ pub(super) async fn resend_held_sites<C, N, R>(
     send_held(relay, agent, sends).await;
 }
 
+async fn verified_by_nip05<C, N, R>(agent: &Agent<C, N, R>, candidates: Vec<Held>) -> Vec<Held>
+where
+    C: KuboStore,
+    N: Nip05Verify,
+    R: ReportRelay,
+{
+    futures_util::stream::iter(candidates)
+        .map(|h| async move {
+            let verified = agent
+                .nip05_verified(&h.key, &h.d, &h.pubkey.to_hex())
+                .await;
+            if !verified {
+                debug!(site_key = %h.key, "the site is not verified by NIP-05; not sending its held site event");
+            }
+            verified.then_some(h)
+        })
+        .buffer_unordered(budget::FETCH_CONCURRENCY)
+        .filter_map(std::future::ready)
+        .collect()
+        .await
+}
+
 async fn apply_if_still_held<C, N, R, T>(
     agent: &Agent<C, N, R>,
     items: Vec<(Held, T)>,
@@ -324,6 +329,36 @@ async fn apply_if_still_held<C, N, R, T>(
     }
 }
 
+async fn still_sendable<C, N, R>(agent: &Agent<C, N, R>, h: &Held) -> bool
+where
+    C: KuboStore,
+    N: Nip05Verify,
+    R: ReportRelay,
+{
+    let state = agent.state.lock().await;
+    if !agent.is_target(&h.pubkey) {
+        debug!(site = %h.d, pubkey = %h.pubkey, "the author is no longer followed; not sending the held site event");
+        return false;
+    }
+    if agent.config.policy.nip05 == CheckMode::Require && !nip05_verified(&state, &h.key) {
+        debug!(site = %h.d, "the site is no longer verified by NIP-05; not sending the held site event");
+        return false;
+    }
+    if !still_held(&state, &h.key, &h.cid, h.event.id) {
+        debug!(site = %h.d, event_id = %h.event.id, "the stored version changed during the check; not sending the held site event");
+        return false;
+    }
+    if state
+        .withdrawn
+        .get(&h.key)
+        .is_some_and(|w| w.covers(&h.event.id.to_hex(), h.event.created_at.as_secs()))
+    {
+        debug!(site = %h.d, event_id = %h.event.id, "the author withdrew the held site event during the check; not sending it");
+        return false;
+    }
+    true
+}
+
 async fn send_held<C, N, R>(
     relay: &RelayClient,
     agent: &Agent<C, N, R>,
@@ -333,46 +368,21 @@ async fn send_held<C, N, R>(
     N: Nip05Verify,
     R: ReportRelay,
 {
-    let require_nip05 = agent.config.policy.nip05 == CheckMode::Require;
-    let sends: Vec<(Held, Vec<RelayUrl>)> = {
-        let state = agent.state.lock().await;
-        sends
-            .into_iter()
-            .filter(|(h, _)| {
-                if !agent.is_target(&h.pubkey) {
-                    debug!(site = %h.d, pubkey = %h.pubkey, "the author is no longer followed; not sending the held site event");
-                    return false;
-                }
-                if require_nip05 && !nip05_verified(&state, &h.key) {
-                    debug!(site = %h.d, "the site is no longer verified by NIP-05; not sending the held site event");
-                    return false;
-                }
-                if !still_held(&state, &h.key, &h.cid, h.event.id) {
-                    debug!(site = %h.d, event_id = %h.event.id, "the stored version changed during the check; not sending the held site event");
-                    return false;
-                }
-                if state
-                    .withdrawn
-                    .get(&h.key)
-                    .is_some_and(|w| w.covers(&h.event.id.to_hex(), h.event.created_at.as_secs())) {
-                    debug!(site = %h.d, event_id = %h.event.id, "the author withdrew the held site event during the check; not sending it");
-                    return false;
-                }
-                true
-            })
-            .collect()
-    };
     if sends.is_empty() {
         return;
     }
     let results = futures_util::stream::iter(sends)
         .map(|(h, relays)| async move {
+            if !still_sendable(agent, &h).await {
+                return None;
+            }
             let names: Vec<&str> = relays.iter().map(|u| u.as_str()).collect();
             info!(site = %h.d, pubkey = %h.pubkey, event_id = %h.event.id, relays = ?names, "relays lack the held site event; sending it again");
             let output = relay.publish_to(&h.event, &relays).await;
-            (h, relays, output)
+            Some((h, relays, output))
         })
-        .buffer_unordered(budget::FETCH_CONCURRENCY);
+        .buffer_unordered(budget::FETCH_CONCURRENCY)
+        .filter_map(std::future::ready);
     let record = async {
         let mut results = std::pin::pin!(results);
         while let Some((h, relays, output)) = results.next().await {

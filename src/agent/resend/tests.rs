@@ -5,6 +5,7 @@ use tokio::task::JoinSet;
 
 use super::super::test_support::*;
 use super::*;
+use crate::nip05::VerificationResult;
 use crate::signer::Signer;
 use crate::state::{Verification, VersionRecord};
 use crate::test_support::{
@@ -279,11 +280,7 @@ async fn a_withdrawal_is_not_recorded_once_a_newer_version_is_stored_during_the_
     let held = site_event(&fx.keys, "a.example", CID_A, now - 100);
     hold(&fx, &held).await;
     let candidates = resend_candidates(
-        held_site_events(
-            &*fx.agent.state.lock().await,
-            &HashSet::from([fx.pubkey]),
-            false,
-        ),
+        held_site_events(&*fx.agent.state.lock().await, &HashSet::from([fx.pubkey])),
         35980,
     );
     assert_eq!(candidates.len(), 1);
@@ -318,44 +315,81 @@ async fn a_withdrawal_is_not_recorded_once_a_newer_version_is_stored_during_the_
     );
 }
 
-#[test]
-fn when_nip05_is_required_only_verified_sites_are_held_for_resending() {
-    let fx = Fixture::new(default_policy(), FakeKubo::default());
-    let mut state = State::default();
-    let mut ids = Vec::new();
-    for (d, status) in [
-        ("verified.example", Some(nip05::STATE_VERIFIED)),
-        ("failed.example", Some(nip05::STATE_ERROR)),
-        ("unchecked.example", None),
-    ] {
-        let event = site_event(&fx.keys, d, CID_A, 100);
-        state.apply_store(&key_of(&event), record_of(&event));
-        if let Some(status) = status {
-            state.set_verification(
+#[tokio::test]
+async fn when_nip05_is_required_only_sites_verified_within_the_cache_ttl_are_sent() {
+    let fx = Fixture::new(nip05_policy(CheckMode::Require), FakeKubo::default());
+    let now = Timestamp::now().as_secs();
+    let pubkey_hex = fx.pubkey.to_hex();
+    let cases = [
+        (
+            "fresh.example",
+            Some((nip05::STATE_VERIFIED, now - 100)),
+            None,
+            true,
+        ),
+        (
+            "expired-mismatch.example",
+            Some((nip05::STATE_VERIFIED, 1)),
+            Some(VerificationResult::Mismatch),
+            false,
+        ),
+        (
+            "expired-verified.example",
+            Some((nip05::STATE_VERIFIED, 1)),
+            Some(VerificationResult::Verified),
+            true,
+        ),
+        (
+            "fresh-error.example",
+            Some((nip05::STATE_ERROR, now - 100)),
+            None,
+            false,
+        ),
+        (
+            "expired-error.example",
+            Some((nip05::STATE_ERROR, now - 1000)),
+            Some(VerificationResult::Verified),
+            true,
+        ),
+        (
+            "unchecked.example",
+            None,
+            Some(VerificationResult::Verified),
+            true,
+        ),
+    ];
+    let mut expected = Vec::new();
+    for (d, recorded, answer, sent) in &cases {
+        let event = site_event(&fx.keys, d, CID_A, now - 100);
+        hold(&fx, &event).await;
+        if let Some((status, checked_at)) = recorded {
+            fx.agent.state.lock().await.set_verification(
                 &key_of(&event),
                 Verification {
-                    status: status.into(),
+                    status: status.to_string(),
                     detail: None,
-                    checked_at: 1,
+                    checked_at: *checked_at,
                 },
             );
         }
-        ids.push(event.id);
+        if let Some(answer) = answer {
+            fx.agent.nip05.set(d, &pubkey_hex, answer.clone());
+        }
+        if *sent {
+            expected.push(event.id);
+        }
     }
-    let targets = HashSet::from([fx.pubkey]);
-    let held_ids = |require| {
-        let mut held: Vec<EventId> = held_site_events(&state, &targets, require)
-            .into_iter()
-            .map(|h| h.event.id)
-            .collect();
-        held.sort();
-        held
-    };
+    expected.sort();
 
-    assert_eq!(held_ids(true), vec![ids[0]]);
-    let mut all = ids.clone();
-    all.sort();
-    assert_eq!(held_ids(false), all);
+    let (_empty, empty) = relay_holding(&[]).await;
+    resend_through(&fx, std::slice::from_ref(&empty)).await;
+    assert_eq!(ids_on(&empty).await, expected);
+    assert_eq!(fx.agent.nip05.calls(), 4);
+    let state = fx.agent.state.lock().await;
+    let recorded = &state.verifications[&fx.key("expired-mismatch.example")];
+    assert_eq!(recorded.status, "mismatch");
+    assert!(recorded.checked_at >= now);
+    assert!(state.verifications[&fx.key("expired-verified.example")].checked_at >= now);
 }
 
 #[tokio::test]
@@ -562,10 +596,8 @@ fn held_events_that_do_not_match_their_record_or_are_withdrawn_are_not_candidate
         },
     );
 
-    let candidates = resend_candidates(
-        held_site_events(&state, &HashSet::from([fx.pubkey]), false),
-        35980,
-    );
+    let candidates =
+        resend_candidates(held_site_events(&state, &HashSet::from([fx.pubkey])), 35980);
     let ids: Vec<EventId> = candidates.iter().map(|h| h.event.id).collect();
     assert_eq!(ids, vec![good.id]);
 }

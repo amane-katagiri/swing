@@ -132,7 +132,12 @@ async fn fetch_failure_leaves_state_and_old_versions_untouched() {
 
     assert_eq!(fx.cids(D).await, vec!["bafy-old"]);
     assert_eq!(fx.kubo().paths(), vec![fx.path(D, 100)]);
-    assert!(!fx.state_path.exists());
+    let saved = State::load(&fx.state_path).await.unwrap();
+    let cids: Vec<&str> = saved.sites[&fx.key(D)]
+        .iter()
+        .map(|v| v.cid.as_str())
+        .collect();
+    assert_eq!(cids, vec!["bafy-old"]);
 }
 
 #[tokio::test]
@@ -789,4 +794,61 @@ async fn a_later_signing_of_the_stored_cid_moves_the_version_forward_for_the_pol
     assert_eq!(infos.len(), 1);
     assert_eq!(infos[0].created_at, 400);
     assert_eq!(state.sites[&fx.key(D)][0].created_at, 200);
+}
+
+#[tokio::test]
+async fn a_rejected_newer_version_is_recorded_as_superseding_the_held_one() {
+    let fx = Fixture::new(
+        default_policy(),
+        sized(&[("bafy-old", 10), ("bafy-new", 10)]),
+    );
+    let now = now_secs();
+    fx.apply(fx.event(D, "bafy-old", None, now - 300)).await;
+
+    fx.apply(fx.event(D, "bafy-big", Some(10_000_000), now - 200))
+        .await;
+    assert_eq!(fx.cids(D).await, vec!["bafy-old"]);
+    let expected = state::Withdrawn {
+        events: Default::default(),
+        through: Some(now - 201),
+    };
+    assert_eq!(fx.agent.state.lock().await.withdrawn[&fx.key(D)], expected);
+    let saved = State::load(&fx.state_path).await.unwrap();
+    assert_eq!(saved.withdrawn[&fx.key(D)], expected);
+
+    let newer = fx.event(D, "bafy-new", None, now - 100);
+    fx.apply(newer.clone()).await;
+    assert_eq!(fx.cids(D).await, vec!["bafy-old", "bafy-new"]);
+    let state = fx.agent.state.lock().await;
+    assert_eq!(
+        state.latest_version(&fx.key(D)).unwrap().event,
+        Some(newer.event)
+    );
+}
+
+#[tokio::test]
+async fn a_later_signing_of_the_stored_cid_is_kept_at_once() {
+    let fx = Fixture::new(default_policy(), sized(&[("bafy-old", 10)]));
+    fx.apply(fx.event(D, "bafy-old", None, 100)).await;
+
+    let resigned = fx.event(D, "bafy-old", None, 150);
+    fx.apply(resigned.clone()).await;
+    let state = fx.agent.state.lock().await;
+    let latest = state.latest_version(&fx.key(D)).unwrap();
+    assert_eq!(latest.event, Some(resigned.event));
+    assert_eq!(latest.created_at, 100);
+    assert!(state.withdrawn.is_empty());
+}
+
+#[tokio::test]
+async fn newer_versions_are_not_recorded_for_unfollowed_authors_or_unstored_sites() {
+    let fx = Fixture::new(default_policy(), sized(&[("bafy-old", 10)]));
+    fx.apply(fx.event(D, "bafy-old", None, 100)).await;
+    fx.agent.replace_targets(HashSet::new());
+    fx.apply(fx.event(D, "bafy-big", Some(10_000_000), 200))
+        .await;
+    fx.agent.replace_targets(HashSet::from([fx.pubkey]));
+    fx.apply(fx.event("other.example", "bafy-big", Some(10_000_000), 200))
+        .await;
+    assert!(fx.agent.state.lock().await.withdrawn.is_empty());
 }

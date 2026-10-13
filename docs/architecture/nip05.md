@@ -34,7 +34,7 @@ agent と dashboard（`POST /api/publish/upload` の `site`）は `HttpNip05Veri
 
 ## agent での適用
 
-[保存の順序](agent.md#保存の順序) の事前判定の後、取得の前に行う。
+[保存の順序](agent.md#保存の順序) の事前判定の後、取得の前に行う。`require` のときは、保存した版のサイトイベントを送り直す前にも同じ関数（`Agent::nip05_verified`）で確かめ、同じキャッシュの規則で期限の過ぎた記録は検証し直す（[`agent/resend.md`](agent/resend.md#手順) の 2）。
 
 | `[policy].nip05` | 動作 |
 |---|---|

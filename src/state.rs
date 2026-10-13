@@ -44,6 +44,22 @@ impl Withdrawn {
     pub fn covers(&self, event_id_hex: &str, created_at: u64) -> bool {
         self.events.contains(event_id_hex) || self.through.is_some_and(|at| created_at <= at)
     }
+
+    // A newer version in the same second only outranks the held one by id, so covering that second would also cover the newer version.
+    pub fn superseded(held: &Event, newer: &Event) -> Self {
+        let newer_at = newer.created_at.as_secs();
+        if newer_at > held.created_at.as_secs() {
+            Self {
+                events: BTreeSet::new(),
+                through: Some(newer_at - 1),
+            }
+        } else {
+            Self {
+                events: BTreeSet::from([held.id.to_hex()]),
+                through: None,
+            }
+        }
+    }
 }
 
 fn latest_index(versions: &[VersionRecord]) -> Option<usize> {
@@ -239,6 +255,30 @@ impl State {
         true
     }
 
+    pub fn note_newer_version(&mut self, key: &str, cid: &str, event: &Event) -> bool {
+        let Some(latest) = self.latest_version(key) else {
+            return false;
+        };
+        if latest.cid == cid {
+            return self.fill_latest_event(key, cid, event);
+        }
+        let newer_at = event.created_at.as_secs();
+        let withdrawn = match &latest.event {
+            Some(held) if crate::nostr::is_newer_replaceable(event, held) => {
+                Withdrawn::superseded(held, event)
+            }
+            None if newer_at > latest.created_at => Withdrawn {
+                events: BTreeSet::new(),
+                through: Some(newer_at - 1),
+            },
+            _ => return false,
+        };
+        if event.verify().is_err() {
+            return false;
+        }
+        self.record_withdrawal(key, withdrawn)
+    }
+
     pub fn latest_stored_at(&self) -> Option<u64> {
         self.sites.values().flatten().map(|v| v.stored_at).max()
     }
@@ -264,11 +304,11 @@ impl State {
         self.sites.remove(key).unwrap_or_default()
     }
 
-    pub fn record_withdrawal(&mut self, key: &SiteKey, withdrawn: Withdrawn) -> bool {
+    pub fn record_withdrawal(&mut self, key: &str, withdrawn: Withdrawn) -> bool {
         if !self.sites.contains_key(key) {
             return false;
         }
-        let entry = self.withdrawn.entry(key.clone()).or_default();
+        let entry = self.withdrawn.entry(key.to_string()).or_default();
         let before = entry.clone();
         entry.events.extend(withdrawn.events);
         if let Some(at) = withdrawn.through {
@@ -441,6 +481,31 @@ mod tests {
 
         assert!(!state.fill_latest_event(&key, "new", &with_bad_signature(&good)));
         assert_eq!(state.latest_version(&key).unwrap().event, None);
+    }
+
+    #[test]
+    fn a_newer_version_of_another_cid_is_recorded_as_superseding_the_latest() {
+        let key = site_key("aa", "x.example");
+        let mut state = State::default();
+        state.apply_store(&key, record("old", 10, None));
+        assert!(!state.note_newer_version(&key, "other", &signed(10)));
+        assert!(!state.note_newer_version(&key, "other", &with_bad_signature(&signed(20))));
+        assert!(state.note_newer_version(&key, "other", &signed(20)));
+        assert_eq!(state.withdrawn[&key], through(19));
+        assert!(!state.note_newer_version("aa:none.example", "other", &signed(20)));
+
+        let a = signed(30);
+        let b = signed(30);
+        let (newer, held) = if a.id < b.id { (a, b) } else { (b, a) };
+        let mut state = State::default();
+        state.apply_store(&key, record("held", 30, Some(held.clone())));
+        assert!(!state.note_newer_version(&key, "other", &signed(29)));
+        assert!(state.note_newer_version(&key, "other", &newer));
+        assert_eq!(state.withdrawn[&key], by_id(&held.id.to_hex()));
+
+        let later = signed(40);
+        assert!(state.note_newer_version(&key, "held", &later));
+        assert_eq!(state.latest_version(&key).unwrap().event, Some(later));
     }
 
     #[test]

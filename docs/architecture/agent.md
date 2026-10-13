@@ -23,7 +23,7 @@
    1. sweep
    2. Follow Set を決める。決まらなければ警告を出して 3 と 4 を飛ばす。
    3. unfollow
-   4. 対象 pubkey 群のサイトイベントを購読し直してから過去分を取得し、`nostr::select_latest`（未来ずれの許容は [`nostr.md`](nostr.md#未来ずれの許容nostrmax_future_skew)）でサイトごとの最新版を選び、pubkey ごとに、保存済みのサイトすべてと、それ以外のサイトを `created_at` の新しい順に合計 `max_sites_per_account` 件まで、タスクに投入する。一時的な取得・保存の失敗はここで再試行される（取得の試行は下記「保存の順序」の間引きにより、サイトごとに `min_update_interval` に 1 回まで）。投入の前に、選んだ最新版のうち、state のそのサイトの最新の版と `cid` が一致するものを、署名が正しければその版のサイトイベントとして入れて state を保存する（`State::fill_latest_event`。入れる条件は [`agent/state.md`](agent/state.md)）。作者が同じ `cid` を後の `created_at` で署名し直した版（`title`・`url` の変更や告知のし直し）は `policy::decide` で `duplicate_cid` になり版としては記録しないが、ここで保存している版のイベントを置き換える。続けて「[保存した版のサイトイベントの再送](agent/resend.md)」の確認の対象を、レプリカ報告の回のタスクに渡す。確認はそのタスクの報告のあと、前回から `RESEND_CHECK_INTERVAL`（1 時間）以上たっていれば行う（過去分の取得に失敗しても渡す。poll はその終わりを待たない）。
+   4. 対象 pubkey 群のサイトイベントを購読し直してから過去分を取得し、`nostr::select_latest`（未来ずれの許容は [`nostr.md`](nostr.md#未来ずれの許容nostrmax_future_skew)）でサイトごとの最新版を選び、pubkey ごとに、保存済みのサイトすべてと、それ以外のサイトを `created_at` の新しい順に合計 `max_sites_per_account` 件まで、タスクに投入する。一時的な取得・保存の失敗はここで再試行される（取得の試行は下記「保存の順序」の間引きにより、サイトごとに `min_update_interval` に 1 回まで）。投入の前に、選んだ最新版のうち、state のそのサイトの最新の版と `cid` が一致するものを、署名が正しければその版のサイトイベントとして入れて state を保存する（`State::fill_latest_event`。入れる条件は [`agent/state.md`](agent/state.md)）。作者が同じ `cid` を後の `created_at` で署名し直した版（`title`・`url` の変更や告知のし直し）は `policy::decide` で `duplicate_cid` になり版としては記録しないが、ここで保存している版のイベントを置き換える（購読で届いたものは「保存の順序」の 1 で置き換える）。続けて「[保存した版のサイトイベントの再送](agent/resend.md)」の確認の対象を、レプリカ報告の回のタスクに渡す。確認はそのタスクの報告のあと、前回から `RESEND_CHECK_INTERVAL`（1 時間）以上たっていれば行う（過去分の取得に失敗しても渡す。poll はその終わりを待たない）。
    5. レプリカ報告の同期（Follow Set が決まらなくても行う）と、他の報告者が自分のサイトについて出した報告の時刻の記録（[`agent/replicas.md`](agent/replicas.md)）を、この順に別タスクで始める。前の回のタスクがまだ動いていれば今回は始めない。
 5. 購読で届いたサイトイベントをタスクに投入する（投入前に捨てる条件は下記「並行処理」の `submit`）。購読 ID と kind が一致しない通知は debug、パースできないサイトイベントは warn を出して捨てる。
 6. タスクはサイト単位で「保存の順序」に従って処理する。新版を記録したら、同時実行の枠を返してからレプリカ報告の同期を行う。
@@ -72,7 +72,7 @@ Follow Set が決まった tick で行う。Follow Set の更新はこれより�
 
 ## 保存の順序
 
-1. 作者が今の Follow Set にいなければ info を出して終わる（キューに入れる前と 6・9 でも同じ確認をする）。同じサイトで同じ CID が以前 4・5・9 で拒否されていれば（下記）、debug を出して終わる。
+1. 作者が今の Follow Set にいなければ info を出して終わる（キューに入れる前と 6・9 でも同じ確認をする）。続けて、そのサイトが state の `sites` にあり、イベントの `created_at` が未来ずれの許容の内で、署名が正しく、state のそのサイトの最新の版より新しければ（`State::note_newer_version`。最新の版に `event` があればそれと NIP-01 の置き換え規則で、無ければ版の `created_at` と比べる）、この後で保存しなくても state に残す。`cid` が最新の版と同じなら、そのイベントを最新の版のイベントにする（`State::fill_latest_event`。条件は [`agent/state.md`](agent/state.md)）。違えば、最新の版が取り下げられたとして記録する（`State::record_withdrawal`。記録のしかたは「[保存した版のサイトイベントの再送](agent/resend.md#手順)」の 4 と同じ）。変わったときだけ state を保存する。これで、新しい版が後の判定で拒否されたり取得に失敗したりして relay からも消えても、置き換えられた版を送り直さない。記録する `through` は新しい版の `created_at` より小さいので、その新しい版を後で保存するのは妨げない。同じサイトで同じ CID が以前 4・5・9 で拒否されていれば（下記）、debug を出して終わる。
 2. 事前判定: `size` タグ（無い、または読めなければ不明。[`nostr.md#検証`](nostr.md#検証)）で `policy::decide` する。skip なら終わる。同じ state から、5 で使う取得の上限 `policy::fetch_budget`（[`agent/policy.md#取得の上限`](agent/policy.md#取得の上限)）も決める。
 3. 取得の試行の間引き（下記）に当たれば debug を出して終わる。当たらなければ、ここで試行を記録する。
    続けて NIP-05 検証（[`nip05.md#agent-での適用`](nip05.md#agent-での適用)）。`require` で `Verified` でなければ終わる。間引いたイベントでは NIP-05 の問い合わせも state の保存もしない。

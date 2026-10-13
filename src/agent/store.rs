@@ -267,7 +267,7 @@ where
 }
 
 impl<C: KuboStore, N: Nip05Verify, R: ReportRelay> Agent<C, N, R> {
-    async fn nip05_verified(&self, key: &SiteKey, ev: &SiteEvent, pubkey_hex: &str) -> bool {
+    pub(super) async fn nip05_verified(&self, key: &SiteKey, d: &str, pubkey_hex: &str) -> bool {
         let now = now_secs();
         let ttl = self.config.policy.nip05_cache_ttl;
         let cached = {
@@ -285,10 +285,10 @@ impl<C: KuboStore, N: Nip05Verify, R: ReportRelay> Agent<C, N, R> {
             return verified;
         }
 
-        let result = self.nip05.verify(&ev.d, pubkey_hex).await;
+        let result = self.nip05.verify(d, pubkey_hex).await;
         if !result.is_verified() {
             warn!(
-                site = %ev.d,
+                site = %d,
                 pubkey = %pubkey_hex,
                 status = result.as_state_str(),
                 "nip05 verification did not pass"
@@ -312,11 +312,24 @@ impl<C: KuboStore, N: Nip05Verify, R: ReportRelay> Agent<C, N, R> {
         let ev = &signed.site;
         let pubkey_hex = ev.pubkey.to_hex();
         let key = state::site_key(&pubkey_hex, &ev.d);
+        self.note_newer_version(&key, signed).await;
         let Some(max_bytes) = self.worth_fetching(&key, ev, &pubkey_hex).await else {
             return false;
         };
         self.fetch_directory(&key, ev, max_bytes).await
             && self.store_fetched(&key, signed, &pubkey_hex).await
+    }
+
+    async fn note_newer_version(&self, key: &SiteKey, signed: &SignedSite) {
+        let ev = &signed.site;
+        if !self.is_target(&ev.pubkey) || !crate::nostr::plausible_at(ev.created_at, now_secs()) {
+            return;
+        }
+        let mut state = self.state.lock().await;
+        if state.note_newer_version(key, &ev.cid, &signed.event) {
+            debug!(site = %ev.d, event_id = %signed.event.id, "a newer site event of a stored site arrived; recording it against the held one");
+            self.save(&state, "noting a newer site event").await;
+        }
     }
 
     async fn worth_fetching(&self, key: &SiteKey, ev: &SiteEvent, pubkey_hex: &str) -> Option<u64> {
@@ -353,7 +366,7 @@ impl<C: KuboStore, N: Nip05Verify, R: ReportRelay> Agent<C, N, R> {
             return None;
         }
         if policy.nip05 != CheckMode::Off {
-            let verified = self.nip05_verified(key, ev, pubkey_hex).await;
+            let verified = self.nip05_verified(key, &ev.d, pubkey_hex).await;
             if policy.nip05 == CheckMode::Require && !verified {
                 return None;
             }
