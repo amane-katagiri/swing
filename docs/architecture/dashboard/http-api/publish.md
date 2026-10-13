@@ -54,7 +54,7 @@
     "links": { "status": "found", "mode": "warn", "count": 1, "blocking": 0, "redirects": false, "skipped": 0,
       "kinds": [ { "kind": "external", "blocks": false, "count": 1,
         "items": [ { "file": "index.html", "reference": "https://cdn.example/a.css", "files": 3 } ] } ],
-      "guide": "https://github.com/amane-katagiri/swing/blob/main/docs/site-guide.md" },
+      "guide": "https://github.com/amane-katagiri/swing/blob/v…/docs/site-guide.md" },
     "unchanged": { "status": "changed", "mode": "require", "previous_cid": "bafy…", "previous_created_at": 1780000000, "detail": null } },
   "cid": "bafy…", "size": 12345, "created_at": 1790000000, "mfs_path": "/swing/publish/<hex>/example.com/1790000000",
   "relays": [ { "relay": "wss://…", "ok": true, "error": null } ], "pruned": ["1780000000"], "prune_error": null,

@@ -14,8 +14,11 @@ mod tests;
 
 pub const LINK_SCAN_MAX_FILE: u64 = 4 << 20;
 pub const LISTED_LINKS: usize = 5;
-pub const SITE_GUIDE_URL: &str =
-    "https://github.com/amane-katagiri/swing/blob/main/docs/site-guide.md";
+pub const SITE_GUIDE_URL: &str = concat!(
+    "https://github.com/amane-katagiri/swing/blob/v",
+    env!("CARGO_PKG_VERSION"),
+    "/docs/site-guide.md"
+);
 
 const MAX_SHOWN: usize = 160;
 
