@@ -10,7 +10,7 @@
 ## フォーム
 
 - 常にフォルダアップロード（`<input type="file" webkitdirectory multiple>`）。ファイル数・合計サイズを表示し、`max_upload` を超えれば送信ボタンを無効にする。各ファイルの送信名は `webkitRelativePath` から選んだフォルダ名を除いたもの。
-- NIP-05 の下に、同じ形のセレクトを「ドットファイルの確認」（`check_dotfiles`）・「サイズの確認」（`check_size`）・「動作性の確認」（`check_links`）・「前回のデプロイとの差分の確認」（`check_unchanged`）の順に並べる。どれも先頭の選択肢は値が空（パートを送らず設定の既定値に任せる）で、残りは `off`・`warn`・`require`（NIP-05 も同じ）。空でなければ同名のパートで送る（`publish.js::MODE_FIELDS`）。
+- NIP-05 の下に、同じ形のセレクトを「ドットファイルの確認」（`check_dotfiles`）・「サイズの確認」（`check_size`）・「動作性の確認」（`check_links`）・「前回公開したサイトとの差分の確認」（`check_unchanged`）の順に並べる。どれも先頭の選択肢は値が空（パートを送らず設定の既定値に任せる）で、残りは `off`・`warn`・`require`（NIP-05 も同じ）。空でなければ同名のパートで送る（`publish.js::MODE_FIELDS`）。
 - メッセージの下に「サイトイベントに加えて更新情報をノート（kind 1）として投稿する」チェックボックス（`note`。`.swing-field` の中の `.swing-checkbox` と、URL が要る旨の `.swing-hint`）を置く。URL 欄が空白だけの間は無効にし（`publish.js::refreshSubmitState`）、送信するのは URL があってチェックされているときだけ（パート `note=true`）。
 - 最後に使ったフォーム内容（チェックボックスの状態を含む）は `swing:publish:last` に保存し、次に開いたときに入れる。
 
