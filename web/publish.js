@@ -44,7 +44,6 @@ const publishEls = {
   uploadInfo: document.getElementById('publish-upload-info'),
   progress: document.getElementById('publish-progress'),
   confirm: document.getElementById('publish-confirm'),
-  confirmChecks: document.getElementById('publish-confirm-checks'),
   confirmCheckRows: document.getElementById('publish-confirm-check-rows'),
   confirmNew: document.getElementById('publish-confirm-new'),
   confirmBasis: document.getElementById('publish-confirm-basis'),
@@ -311,7 +310,7 @@ async function refreshSigner() {
 
 const NIP05_ERROR_KEYS = { unreachable: 'nip05ErrorUnreachable', timeout: 'nip05ErrorTimeout', invalid_response: 'nip05ErrorInvalidResponse' };
 
-function describeNip05(nip05) {
+function describeNip05(nip05, published) {
   switch (nip05.status) {
     case 'verified':
       return t('nip05StatusVerified');
@@ -322,7 +321,7 @@ function describeNip05(nip05) {
     case 'off':
       return t('nip05StatusOff');
     case 'error':
-      return t('nip05StatusError', { reason: NIP05_ERROR_KEYS[nip05.detail] ? t(NIP05_ERROR_KEYS[nip05.detail]) : nip05.detail || '' });
+      return t('nip05StatusError', { reason: NIP05_ERROR_KEYS[nip05.detail] ? t(NIP05_ERROR_KEYS[nip05.detail]) : nip05.detail || '' }) + (published ? t('nip05PublishedAnyway') : '');
     default:
       return `${nip05.status}${nip05.detail ? ` — ${nip05.detail}` : ''}`;
   }
@@ -432,7 +431,7 @@ function renderPublishResult(result, errBody) {
     addRow(t('resultSite'), result.site);
     if (result.url) addRow(t('resultUrl'), result.url);
     if (result.title) addRow(t('resultTitle'), result.title);
-    addRow(t('resultNip05'), describeNip05(result.nip05));
+    addRow(t('resultNip05'), describeNip05(result.nip05, published));
     addCheckRows(addRow, result.checks, published);
     if (published && usesSignerApp()) addRow(t('signerLabel'), t('signerRemote'));
     addRow(t('resultCid'), result.cid);
@@ -456,7 +455,7 @@ function renderPublishResult(result, errBody) {
     publishEls.result.append(dl);
     if (result.gateway_url) publishEls.result.append(el('p', {}, maybeLink(result.gateway_url, t('openGateway'))));
   } else if (errBody && errBody.nip05) {
-    addRow(t('resultNip05'), describeNip05(errBody.nip05));
+    addRow(t('resultNip05'), describeNip05(errBody.nip05, false));
     addCheckRows(addRow, errBody.checks, false);
     publishEls.result.append(dl);
   }
@@ -585,6 +584,15 @@ function buildFileList(paths) {
   return items;
 }
 
+function describeNoNewFiles(previous) {
+  switch (previous.status) {
+    case 'listed':
+      return t('newFilesNoneListed', { cid: previous.previous_cid, time: formatTime(previous.previous_created_at) });
+    default:
+      return t('newFilesNone');
+  }
+}
+
 function describeNewFilesBasis(previous, n) {
   switch (previous.status) {
     case 'listed':
@@ -596,7 +604,7 @@ function describeNewFilesBasis(previous, n) {
   }
 }
 
-const PRECHECK_MODES = ['check_dotfiles', 'check_size', 'check_links'];
+const PRECHECK_MODES = ['nip05', 'check_dotfiles', 'check_size', 'check_links'];
 const LINK_SCAN_EXTENSIONS = ['html', 'htm', 'css', 'js', 'mjs'];
 const LINK_SCAN_MAX_FILE = 4 * 1024 * 1024;
 
@@ -634,36 +642,55 @@ async function loadChecks(request) {
   const body = parseApiBody(await res.text());
   const err = apiResponseError(path, res.status, body);
   if (err) throw err;
-  return body.checks;
+  return body;
 }
 
-function checksFoundProblems(checks) {
-  return checks.dotfiles.status === 'found' || checks.size.status === 'over' || checks.links.status === 'found';
+function checksFoundProblems({ nip05, checks }) {
+  return (
+    nip05.status === 'mismatch' ||
+    nip05.status === 'error' ||
+    checks.dotfiles.status === 'found' ||
+    checks.size.status === 'over' ||
+    checks.links.status === 'found'
+  );
 }
 
-function showConfirm({ previous, newFiles, checks, request }) {
-  const problems = checks && checksFoundProblems(checks);
-  const blocked = problems ? describeCheckBlock(checks) : '';
-  pendingPublish = blocked ? null : request;
-  publishEls.confirmChecks.hidden = !problems;
-  publishEls.confirmCheckRows.replaceChildren();
-  if (problems) {
-    addCheckRows((k, v) => publishEls.confirmCheckRows.append(el('dt', {}, k), el('dd', {}, v)), checks, false);
+function describePrecheckBlock({ nip05, checks, abort }) {
+  if (!abort) return '';
+  const reasons = [];
+  if (nip05.status !== 'off' && nip05.status !== 'verified' && abort.startsWith('NIP-05 ')) {
+    reasons.push(t('precheckNip05Blocked', { detail: abort.split('; ')[0] }));
   }
+  const local = describeCheckBlock(checks);
+  if (local) reasons.push(local);
+  return reasons.join(' ') || abort;
+}
+
+function showConfirm({ previous, newFiles, precheck, request }) {
+  const problems = checksFoundProblems(precheck);
+  const blocked = describePrecheckBlock(precheck);
+  pendingPublish = blocked ? null : request;
+  const addRow = (k, v) => publishEls.confirmCheckRows.append(el('dt', {}, k), el('dd', {}, v));
+  publishEls.confirmCheckRows.replaceChildren();
+  addRow(t('resultNip05'), describeNip05(precheck.nip05, false));
+  addCheckRows(addRow, precheck.checks, false);
+  if (newFiles.length === 0) addRow(t('newFilesHeading'), describeNoNewFiles(previous));
   publishEls.confirmNew.hidden = newFiles.length === 0;
   if (newFiles.length > 0) {
     publishEls.confirmBasis.textContent = describeNewFilesBasis(previous, newFiles.length);
     publishEls.confirmFiles.replaceChildren(...buildFileList(newFiles));
   }
   publishEls.confirmOk.hidden = !!blocked;
-  publishEls.confirmOk.textContent = t(problems ? 'precheckPublishAnyway' : 'newFilesPublish');
+  publishEls.confirmOk.textContent = t(problems ? 'precheckPublishAnyway' : newFiles.length > 0 ? 'newFilesPublish' : 'precheckPublish');
   publishEls.confirm.hidden = false;
   setFormDisabled(publishEls.form, true);
   if (blocked) {
     setStatus(publishEls.status, 'error', t('precheckBlocked', { detail: blocked }));
     publishEls.confirmCancel.focus();
   } else {
-    setStatus(publishEls.status, 'warn', t(problems ? 'precheckConfirm' : 'newFilesConfirm'));
+    if (problems) setStatus(publishEls.status, 'warn', t('precheckConfirm'));
+    else if (newFiles.length > 0) setStatus(publishEls.status, 'warn', t('newFilesConfirm'));
+    else setStatus(publishEls.status, 'ok', t('precheckNoProblems'));
     publishEls.confirmOk.focus();
   }
 }
@@ -677,7 +704,7 @@ function closeConfirm() {
   refreshSubmitState();
 }
 
-async function reviewAndPublish(request) {
+async function checkBeforePublish(request) {
   const submitBtn = publishEls.form.querySelector('button[type="submit"]');
   publishing = true;
   setFormDisabled(publishEls.form, true);
@@ -685,9 +712,9 @@ async function reviewAndPublish(request) {
   publishEls.result.hidden = true;
   setStatus(publishEls.status, 'loading', t('precheckChecking'));
   let previous;
-  let checks;
+  let precheck;
   try {
-    [previous, checks] = await Promise.all([loadPreviousFiles(request.site), loadChecks(request)]);
+    [previous, precheck] = await Promise.all([loadPreviousFiles(request.site), loadChecks(request)]);
   } catch (err) {
     setStatus(publishEls.status, 'error', describeError(err));
     return;
@@ -697,12 +724,7 @@ async function reviewAndPublish(request) {
     setBusy(submitBtn, false);
     refreshSubmitState();
   }
-  const newFiles = findNewFiles(previous, request.files);
-  if (newFiles.length === 0 && !checksFoundProblems(checks)) {
-    submitUpload(request);
-    return;
-  }
-  showConfirm({ previous, newFiles, checks, request });
+  showConfirm({ previous, newFiles: findNewFiles(previous, request.files), precheck, request });
 }
 
 export const PublishView = {
@@ -754,7 +776,7 @@ export const PublishView = {
         setStatus(publishEls.status, 'error', t('chooseFolderToUpload'));
         return;
       }
-      reviewAndPublish({ site, url, title, message, note, modes, files });
+      checkBeforePublish({ site, url, title, message, note, modes, files });
     });
   },
   onShow() {

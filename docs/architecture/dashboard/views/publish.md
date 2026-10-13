@@ -16,13 +16,14 @@
 
 ## 公開前の確認
 
-- 送信する前に、[`GET /api/publish/previous-files`](../http-api/publish.md#get-apipublishprevious-filessited) と [`POST /api/publish/check`](../http-api/publish.md#post-apipublishcheck) を同時に呼ぶ（その間 `#publish-status` に `loading`）。どちらかがエラー（503 など）ならアップロードせずにエラー文を出す。
-- check には `site`・`url`・`check_dotfiles`・`check_size`・`check_links`（フォームで選んだものだけ）と、選んだ全ファイルの送信名と `File.size` の一覧（`files`）、そのうち拡張子が `.html`・`.htm`・`.css`・`.js`・`.mjs`（大小文字無視）で 4 MiB 以下のファイルの中身（`file`）を送る（`publish.js::buildCheckFormData`。拡張子と上限はサーバー側の[読むファイル](../../publish/links.md#読むファイル)と同じ）。画像などの中身は送らない。
+- フォームの送信ボタンは「内容をチェック」（`publishBtn`）で、押しても確認だけをし、何もアップロードしない。[`GET /api/publish/previous-files`](../http-api/publish.md#get-apipublishprevious-filessited) と [`POST /api/publish/check`](../http-api/publish.md#post-apipublishcheck) を同時に呼ぶ（その間 `#publish-status` に `loading`）。どちらかがエラー（503 など）ならエラー文を出す。
+- check には `site`・`url`・`nip05`・`check_dotfiles`・`check_size`・`check_links`（フォームで選んだものだけ）と、選んだ全ファイルの送信名と `File.size` の一覧（`files`）、そのうち拡張子が `.html`・`.htm`・`.css`・`.js`・`.mjs`（大小文字無視）で 4 MiB 以下のファイルの中身（`file`）を送る（`publish.js::buildCheckFormData`。拡張子と上限はサーバー側の[読むファイル](../../publish/links.md#読むファイル)と同じ）。画像などの中身は送らない。
 - 選んだファイルの送信名のうち previous-files の `files` に無いものを増えたファイルとする（`publish.js::findNewFiles`。`status` が `listed` 以外なら全ファイル）。
-- 確認で何か見つかった（`dotfiles` が `found`・`size` が `over`・`links` が `found` のどれか）か、増えたファイルがあれば、`#publish-confirm`（フォームの直後の `swing-panel`）を出してフォームを無効にする。どちらも無ければそのままアップロードする。
-- パネルの上側（`#publish-confirm-checks`）は確認で何か見つかったときだけ出し、見出し「公開前の確認」と、結果のパネルと同じ行（`publish.js::addCheckRows`。リンクの行には修正ガイドのリンクも出る）を `.swing-result-grid` で並べる。下側（`#publish-confirm-new`）は増えたファイルがあるときだけ出し、比べた相手（CID と作成日時／前の版が無い／読めなかった理由）、取り消せない旨、増えたファイルの全件（`.swing-file-list`。並べ方は CLI と同じで、フォルダは入れ子の `ul`。`publish.js::groupByFolder`）を置く。両方あれば 1 つのパネルに上下で並べる。最後にボタン（`.swing-css-actions`）を置く。
-- 確認の結果が `require` で止まるもの（`publish.js::describeCheckBlock` が理由を返す）なら、公開のボタンを隠し、`#publish-status` に `error` で公開できない旨と、結果の 422 と同じ直し方の案内を出す。「キャンセル」だけを選べる。
-- そうでなければ `#publish-status` に `warn` で確かめるよう案内し（確認で見つかったものがあればその旨、無ければ増えたファイルの旨）、公開のボタン（確認で見つかったものがあれば「このまま公開」、増えたファイルだけなら「このファイルを含めて公開」）と「キャンセル」を出す。
+- 結果は、何も見つからず増えたファイルも無いときも含めて毎回 `#publish-confirm`（フォームの直後の `swing-panel`）に出し、フォームを無効にする（`publish.js::showConfirm`）。
+- パネルの上側（`#publish-confirm-checks`）は常に出し、見出し「公開前の確認」の下に `.swing-result-grid` で、NIP-05 の行（結果のパネルと同じ `publish.js::describeNip05`。公開していないので、`error` に公開した旨は付けない）と、結果のパネルと同じ確認の行（`publish.js::addCheckRows`。リンクの行には修正ガイドのリンクも出る）を並べる。増えたファイルが無ければ、最後に「新しく増えるファイル」の行で無い旨（`listed` なら比べた CID と作成日時も）を出す。下側（`#publish-confirm-new`）は増えたファイルがあるときだけ出し、比べた相手（CID と作成日時／前の版が無い／読めなかった理由）、取り消せない旨、増えたファイルの全件（`.swing-file-list`。並べ方は CLI と同じで、フォルダは入れ子の `ul`。`publish.js::groupByFolder`）を置く。最後にボタン（`.swing-css-actions`）を置く。
+- 見つかったもの（`publish.js::checksFoundProblems`）は、NIP-05 の `mismatch`・`error`、`dotfiles` の `found`・`size` の `over`・`links` の `found`。NIP-05 の `not_applicable` は見つかったものにしない（CLI の表示で `!` ではなく `-` の行なのに合わせる）。`require` で止まるかどうかは別に判定する。
+- check の `abort` があれば（`publish.js::describePrecheckBlock`）、公開のボタンを隠し、`#publish-status` に `error` で公開できない旨と直し方の案内（NIP-05 は `abort` の最初の理由が NIP-05 のものならその文を添えて warn か off にする案内、ドットファイル・サイズ・リンクは結果の 422 と同じ `publish.js::describeCheckBlock`。どちらにも当たらなければ `abort` の文）を出す。「キャンセル」だけを選べる。
+- そうでなければ、公開のボタン（見つかったものがあれば「このまま公開」、増えたファイルだけなら「このファイルを含めて公開」、どちらも無ければ「公開」）と「キャンセル」を出す。`#publish-status` には、見つかったものがあれば `warn` で結果を確かめるよう、増えたファイルだけなら `warn` で一覧を確かめるよう、どちらも無ければ `ok` で問題が見つからずまだ何もアップロードしていない旨を出す。
 - 公開のボタンでアップロードし、「キャンセル」では何も送らずに `#publish-status` に公開を中止した旨を `ok` で出す。
 - 事前の確認は案内で、本番の判定はアップロードした後のサーバー側（[`POST /api/publish/upload`](../http-api/publish.md#post-apipublishupload)）で改めて行う。
 

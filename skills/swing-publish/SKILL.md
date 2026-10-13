@@ -140,7 +140,7 @@ When the dry run exits 0 and you have gone through Step 6:
 
 Other ways the user can publish:
 
-- The dashboard's Publish screen (open it with `swing dashboard open`) uploads a folder from the browser and runs the same checks.
+- The dashboard's Publish screen (open it with `swing dashboard open`) takes a folder from the browser. Its first button, Check contents, only runs the checks (NIP-05, dotfiles, size, links and new files) without uploading anything; the user then reviews the results and presses Publish to upload and sign.
 - In CI, the real publish needs `--yes` because there is no terminal to confirm new files. Exit code 0 means published or unchanged; anything else means it failed. Run the build, a secret scan and the dry run first, and stop the job if any of them fails.
 - With Docker Compose, drop `-T`, `--dry-run` and `--json` from the command in Step 1.
 
