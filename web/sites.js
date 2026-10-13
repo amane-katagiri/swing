@@ -19,7 +19,7 @@ import {
   wireSortSwitch,
   createLoadGuard,
 } from './util.js';
-import { copyButton, fingerprintBadge, storedBadge, storedState, appendLinksAndMessage, renderMirrorOpResult, renderOpError, buildRemoveControl, buildSiteNameRow, parseMirrorKeys, MAX_MIRROR_KEYS } from './ui.js';
+import { copyButton, fingerprintBadge, storedBadge, storedState, appendLinksAndMessage, renderMirrorOpResult, renderOpError, buildRemoveControl, buildSiteNameRow, parseMirrorKeys, MAX_MIRROR_KEYS, createKeyPreview } from './ui.js';
 
 const SITE_FIELD_DEFAULTS = { url: null, title: null, message: null, nip05: null, replicas: null, unverified_replicas: null, stored: null, stored_size: null, gateway_url: null, previous: null };
 
@@ -157,9 +157,21 @@ const sitesEls = {
   filterStored: document.getElementById('sites-filter-stored'),
   mirrorAddForm: document.getElementById('mirror-add-form'),
   mirrorAddResult: document.getElementById('mirror-add-result'),
+  mirrorAddPreview: document.getElementById('mirror-add-preview'),
   runStatusBtn: document.getElementById('run-status-check'),
   statusCheckResult: document.getElementById('status-check-result'),
 };
+
+function renderKeyPreview(keys) {
+  const list = sitesEls.mirrorAddPreview;
+  if (!keys || keys.length === 0) {
+    list.replaceChildren(el('li', { class: 'swing-key-preview-row swing-hint' }, t('keyPreviewEmpty')));
+    return;
+  }
+  list.replaceChildren(...keys.map((k) => (k.npub
+    ? el('li', { class: 'swing-key-preview-row', title: k.npub }, [fingerprintBadge(k.fingerprint), shortenMiddle(k.npub, 10, 6)])
+    : el('li', { class: 'swing-key-preview-row', 'data-invalid': 'true' }, t('keyPreviewInvalid', { key: shortenMiddle(k.input, 12, 6) })))));
+}
 
 function accountCell(fingerprint, npub) {
   if (!npub) return el('td', { class: 'swing-nowrap' }, '–');
@@ -275,10 +287,15 @@ export const SitesView = {
     wireSortSwitch('.swing-sort-switch', 'swing:sites:sort', 'updated', () => this.render());
     const mirrorAddBtn = sitesEls.mirrorAddForm.querySelector('button[type="submit"]');
     const mirrorKeysInput = sitesEls.mirrorAddForm.elements.keys;
+    const updatePreview = createKeyPreview(renderKeyPreview);
+    renderKeyPreview(null);
     function refreshAddState() {
       mirrorAddBtn.disabled = !mirrorKeysInput.value.trim();
     }
-    mirrorKeysInput.addEventListener('input', refreshAddState);
+    mirrorKeysInput.addEventListener('input', () => {
+      refreshAddState();
+      updatePreview(mirrorKeysInput.value);
+    });
     refreshAddState();
     sitesEls.mirrorAddForm.addEventListener('submit', async (ev) => {
       ev.preventDefault();
@@ -299,6 +316,7 @@ export const SitesView = {
         renderMirrorOpResult(sitesEls.mirrorAddResult, result, 'add');
         input.value = '';
         refreshAddState();
+        updatePreview('');
         cache.mirror = null;
         await this.load(true);
       } catch (err) {

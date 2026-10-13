@@ -16,6 +16,8 @@ NIP-05 の検証結果はバッジで `OK`（`verified`）/ `NG`（`mismatch`）
 
 サイズの表示（`util.js::formatSiteSize`）: `stored_size` があればそのまま（1024 基数の `KiB`・`MiB`… で小数 1 桁）、無ければ `size` を `(12.3 MiB)` のように括弧書きで、どちらも無ければ `–`（値の意味は [`http-api/status.md#get-apisites`](http-api/status.md#get-apisites)）。
 
+「ミラーに追加」の入力欄は、入力のたびに 250ms 待ってから鍵を [`POST /api/mirror/preview`](http-api/nostr.md#post-apimirrorpreview) に送り、入力欄の下の `#mirror-add-preview`（`.swing-key-preview`）に鍵ごとの行を出す（`ui.js::createKeyPreview`。古い要求の応答は捨てる）。読める鍵は絵文字のフィンガープリント（4 つ）と縮めた npub（`title` に全体）、読めない鍵は `keyPreviewInvalid` の文面を出す。入力が空・件数が上限を超える・API が失敗したとき（追加できて入力欄を空にしたときも）は、`keyPreviewEmpty` の 1 行（`.swing-hint`）に戻す。行の高さはフィンガープリントのバッジに合わせて揃え、どの行に替わっても高さが変わらない。
+
 アカウントの見出し（カード表示・テーブル表示とも、`Unfollowed but still stored` も含む）は、縮めた npub の前に絵文字のフィンガープリント（4 つ。[`fingerprint.md`](fingerprint.md)）を出す。
 
 Storage check は [`/api/status`](http-api/status.md#get-apistatus) をボタンを押したときだけ呼び、版ごとの判定の表と、サイトごとの実容量・合計の表を出す。どちらの表もアカウント列の縮めた npub の前にフィンガープリントの先頭 1 つを出す。フィンガープリントは `/api/status` の各行の `fingerprint` を使う。

@@ -15,7 +15,7 @@
 | `storage.js` | `localStorage` の薄いラッパー | なし |
 | `i18n.js` | 多言語辞書と `t()` | `storage.js` |
 | `util.js` | 画面間で共有するキャッシュ（`cache`）・DOM と fetch の部品・表示スタイルと並び順の切替・非同期ロードのガード（`createLoadGuard`）・`pollUntil`（1 秒間隔・最大 120 回）・cookie を付けない確認と失敗時の間隔（[下記](#止まっている間の呼び出し)）・表示前のサニタイズ（[下記](#表示前のサニタイズ)）・表示の整形 | `storage.js`・`i18n.js` |
-| `ui.js` | 複数画面で共有する UI 部品（コピーボタン、バッジ、relay 結果表示、サイト名の行 `buildSiteNameRow`、絵文字のフィンガープリント `fingerprintBadge` など） | `util.js`・`i18n.js` |
+| `ui.js` | 複数画面で共有する UI 部品（コピーボタン、バッジ、relay 結果表示、サイト名の行 `buildSiteNameRow`、絵文字のフィンガープリント `fingerprintBadge`、入力中の鍵の確認 `createKeyPreview` など） | `util.js`・`i18n.js` |
 | `graph.js` | webring 用の自前 force-directed layout（[`views.md#グラフwebgraphjs`](views.md#グラフwebgraphjs)） | `util.js`・`ui.js` |
 | `pairing.js` | 署名アプリ（NIP-46）とのペアリングの部品（`createPairing`）。Setup 画面と Publish 画面の「つなぎ直す」が使う | `util.js`・`i18n.js` |
 | `notify-settings.js` | おしらせの設定（[`notices.md#設定`](notices.md#設定)）と `swing:desktop:mascot` 全体の読み書き、ブラウザの通知の許可、種類を確認するかどうか（`kindWanted`）、イベント名 `SHOW_SELF_IN_WEBRING`。Settings 画面・Webring 画面・Desktop 画面が使う | `storage.js` |

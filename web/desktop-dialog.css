@@ -329,6 +329,42 @@
   margin-bottom: 4px;
 }
 
+.desk-key-preview {
+  max-height: 120px;
+  margin: 8px 0 0;
+  padding: 0;
+  overflow-y: auto;
+  list-style: none;
+}
+
+.desk-key-preview-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 16px;
+  padding: 2px 0;
+  line-height: 16px;
+  overflow-wrap: anywhere;
+}
+
+.desk-key-preview-row[data-invalid="true"] {
+  color: #800000;
+}
+
+.desk-fingerprint {
+  display: inline-flex;
+  flex: none;
+  gap: 2px;
+}
+
+.desk-fingerprint img,
+.desk-fingerprint svg {
+  display: block;
+  width: 16px;
+  height: 16px;
+  image-rendering: pixelated;
+}
+
 .desk-mirror-add-status {
   margin: 8px 0 0;
   line-height: 1.5;

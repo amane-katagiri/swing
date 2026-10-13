@@ -165,7 +165,7 @@ pub struct MirrorKeysRequest {
     keys: Vec<String>,
 }
 
-fn validate_keys(keys: &[String]) -> Result<(), ApiError> {
+fn validate_key_count(keys: &[String]) -> Result<(), ApiError> {
     if keys.is_empty() {
         return Err(ApiError::BadRequest(
             "keys must include at least one entry".to_string(),
@@ -176,6 +176,11 @@ fn validate_keys(keys: &[String]) -> Result<(), ApiError> {
             "keys must include at most {MAX_KEYS} entries"
         )));
     }
+    Ok(())
+}
+
+fn validate_keys(keys: &[String]) -> Result<(), ApiError> {
+    validate_key_count(keys)?;
     mirror::parse_pubkey_inputs(keys).map_err(|e| ApiError::BadRequest(format!("{e:#}")))?;
     Ok(())
 }
@@ -213,6 +218,13 @@ pub async fn mirror_add(
         .await
         .map_err(mirror_add_error)?;
     finish_mirror_change(&state, change)
+}
+
+pub async fn mirror_preview(
+    AppJson(req): AppJson<MirrorKeysRequest>,
+) -> Result<Json<dto::KeyPreviewsDto>, ApiError> {
+    validate_key_count(&req.keys)?;
+    Ok(Json(dto::key_previews_dto(&req.keys)))
 }
 
 pub async fn mirror_remove(
@@ -818,6 +830,51 @@ mod tests {
         let error = json["error"].as_str().unwrap();
         assert!(error.contains("swing log"), "{error}");
         assert!(!error.contains("swing.toml"), "{error}");
+    }
+
+    #[tokio::test]
+    async fn mirror_preview_works_in_setup_mode_and_marks_invalid_keys() {
+        let dir = tempfile::tempdir().unwrap();
+        let (config, _secret_hex) = test_config_in_dir(dir.path(), true, false);
+        let state = build_state(config, test_exit(), None, TEST_TOKEN);
+        let pk = Keys::generate().public_key();
+        let body = serde_json::json!({ "keys": [pk.to_hex(), "nope", crate::mirror::npub(&pk)] });
+        let (status, json) =
+            send_json(router(state), "POST", "/api/mirror/preview", Some(body)).await;
+        assert_eq!(status, StatusCode::OK);
+        let keys = json["keys"].as_array().unwrap();
+        assert_eq!(keys.len(), 2);
+        assert_eq!(keys[0]["npub"], crate::mirror::npub(&pk));
+        assert_eq!(
+            keys[0]["fingerprint"],
+            serde_json::json!(crate::fingerprint::fingerprint(&pk))
+        );
+        assert_eq!(keys[1]["input"], "nope");
+        assert!(keys[1]["npub"].is_null());
+        assert!(keys[1]["fingerprint"].is_null());
+    }
+
+    #[tokio::test]
+    async fn mirror_preview_rejects_an_empty_or_oversized_list() {
+        let empty = serde_json::json!({ "keys": [] });
+        let (status, _) = send_json(
+            router(test_state()),
+            "POST",
+            "/api/mirror/preview",
+            Some(empty),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        let keys: Vec<String> = (0..101).map(|i| format!("key-{i}")).collect();
+        let many = serde_json::json!({ "keys": keys });
+        let (status, _) = send_json(
+            router(test_state()),
+            "POST",
+            "/api/mirror/preview",
+            Some(many),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
     }
 
     #[tokio::test]

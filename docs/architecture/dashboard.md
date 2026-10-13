@@ -11,6 +11,7 @@
   - [`dashboard/fingerprint.md`](dashboard/fingerprint.md) — アカウントの絵文字のフィンガープリント（`src/fingerprint.rs`・`web/emoji/`・`web/emoji.svg`）
 - [`dashboard/desktop.md`](dashboard/desktop.md) — Desktop 画面（`web/desktop*`）
   - [`dashboard/desktop/control-panel.md`](dashboard/desktop/control-panel.md) — 「コントロール パネル」ダイアログ
+  - [`dashboard/desktop/mirror-add.md`](dashboard/desktop/mirror-add.md) — 「ミラーに追加」ダイアログとフィンガープリントのドット絵
   - [`dashboard/mascot.md`](dashboard/mascot.md) — Desktop 画面のマスコット（`web/desktop-mascot*`・`web/mascots/`）
 - [`dashboard/notices.md`](dashboard/notices.md) — どの画面でも動く更新の確認・おしらせの出し分け・ブラウザの通知
 

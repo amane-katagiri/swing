@@ -31,7 +31,7 @@ API は `swing up` の寿命で動き続ける（[`../up.md`](../up.md)）。
 | エンドポイント | 使えないとき |
 |---|---|
 | relay か Kubo を使うもの（`/api/sites`・`/api/status`・`/api/mirror`・`/api/mirror/add`・`/api/mirror/remove`・`/api/webring`・`/api/replicas`・`/api/publish/sites`・`/api/publish/previous-files`・`/api/publish/upload`） | agent が relay と Kubo を渡すまで（起動時の突き合わせの後。[`../agent.md#全体の流れ`](../agent.md#全体の流れ)）と、agent が落ちてから次に渡すまで（[`../dashboard.md`](../dashboard.md)）は 503 `{"error": "agent is not ready"}`。セットアップモード（[`../up.md#セットアップモード鍵未設定`](../up.md#セットアップモード鍵未設定)）の間は常に 503 `{"error": "agent is not configured"}` |
-| `/api/overview`・`/api/activity`・`/api/stats`・`/api/config`・`/api/shutdown`・`/api/restart`・`/api/login`・`/api/identity`・`/api/login-code`・`/api/token/rotate` | 無い（常に応答する） |
+| `/api/overview`・`/api/activity`・`/api/stats`・`/api/mirror/preview`・`/api/config`・`/api/shutdown`・`/api/restart`・`/api/login`・`/api/identity`・`/api/login-code`・`/api/token/rotate` | 無い（常に応答する） |
 | `/api/setup` | セットアップモードでなければ 409（ほかの 409 は [`http-api/config.md`](http-api/config.md#post-apisetup)） |
 | `/api/setup/signer` | セットアップモードでも署名アプリを使っている間でもなければ 409 |
 | `/api/signer/reconnect` | 署名アプリを使っていなければ 409 |
@@ -40,7 +40,7 @@ API は `swing up` の寿命で動き続ける（[`../up.md`](../up.md)）。
 
 ### 件数と負荷
 
-- `keys`（mirror add/remove）・`root`（webring）・`key`（replicas）は 1 リクエストあたり最大 100 件、超えると 400。
+- `keys`（mirror add/remove/preview）・`root`（webring）・`key`（replicas）は 1 リクエストあたり最大 100 件、超えると 400。
 - relay を引く GET の API（`/api/sites`・`/api/mirror`・`/api/webring`・`/api/replicas`・`/api/publish/sites`・`/api/publish/previous-files`）はサーバ側でキャッシュしない。同時に relay を引けるのはこれらを合わせて 4 本までで、空きを最大 20 秒待っても取れなければ 503 `{"error": "too many relay queries are running; try again later"}`。`/api/publish/previous-files` は relay から取る間だけ枠を使い、その後の Kubo での一覧では使わない。
 - `webring`・`replicas` の判定の順は、`depth` と件数の上限（400）→ 空きを取る（503）→ agent の準備（503）→ `root`・`key` の解析（400）。`mirror/add`・`mirror/remove` は件数（空も含む）と解析（400）→ 実行中の `mirror/add`・`mirror/remove` の終了を待つ → agent の準備（503）の順で、空きは取らない。レート制限は無い。
 
@@ -55,6 +55,7 @@ API は `swing up` の寿命で動き続ける（[`../up.md`](../up.md)）。
 | GET | `/api/status` | 保存済みの版の健全性と実容量（`swing status` と同じ集計） | [status.md](http-api/status.md#get-apistatus) |
 | GET | `/api/mirror` | Follow Set の一覧 | [nostr.md](http-api/nostr.md#get-apimirror) |
 | POST | `/api/mirror/add`・`/api/mirror/remove` | Follow Set への追加・削除 | [nostr.md](http-api/nostr.md#post-apimirroradd-post-apimirrorremove) |
+| POST | `/api/mirror/preview` | 入力した鍵の npub とフィンガープリント（追加する前の確認用。relay を引かない） | [nostr.md](http-api/nostr.md#post-apimirrorpreview) |
 | GET | `/api/webring` | フォローのグラフ（`swing webring` と同じ） | [nostr.md](http-api/nostr.md#get-apiwebringrootkeydepthn) |
 | GET | `/api/replicas` | レプリカ報告の集計（`swing replicas` と同じ） | [nostr.md](http-api/nostr.md#get-apireplicaskeykey) |
 | POST | `/api/publish/upload` | フォルダをアップロードして publish | [publish.md](http-api/publish.md#post-apipublishupload) |

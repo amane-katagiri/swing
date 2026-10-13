@@ -94,6 +94,31 @@ export function parseMirrorKeys(value) {
   return value.split(/[\s,]+/).map((s) => s.trim()).filter(Boolean);
 }
 
+const KEY_PREVIEW_DELAY_MS = 250;
+
+export function createKeyPreview(render) {
+  let timer = null;
+  let seq = 0;
+  return (value) => {
+    clearTimeout(timer);
+    const id = ++seq;
+    const keys = parseMirrorKeys(value);
+    if (keys.length === 0 || keys.length > MAX_MIRROR_KEYS) {
+      render(null);
+      return;
+    }
+    timer = setTimeout(async () => {
+      let result = null;
+      try {
+        result = await apiFetch('/api/mirror/preview', { method: 'POST', body: JSON.stringify({ keys }) });
+      } catch {
+        result = null;
+      }
+      if (id === seq) render(result ? result.keys : null);
+    }, KEY_PREVIEW_DELAY_MS);
+  };
+}
+
 export function renderMirrorOpResult(container, result, kind) {
   container.hidden = false;
   container.replaceChildren();

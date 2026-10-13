@@ -516,6 +516,7 @@
             </div>
             <label class="desk-mirror-add-label" for="desk-mirror-add-keys">公開鍵(K):</label>
             <input type="text" class="desk-text-input" id="desk-mirror-add-keys" placeholder="npub1…、hex、nprofile1…（空白・カンマ区切り）" autocomplete="off" spellcheck="false">
+            <ul class="desk-key-preview" id="desk-mirror-add-preview" aria-live="polite"></ul>
             <p class="desk-mirror-add-status" id="desk-mirror-add-status" aria-live="polite" hidden></p>
           </div>
           <div class="desk-dialog-buttons">
@@ -556,6 +557,7 @@
           <input type="text" name="keys" class="swing-input" data-i18n-placeholder="addToMirrorPlaceholder" placeholder="npub1…, hex, or nprofile1… (space or comma separated)" autocomplete="off">
           <button type="submit" class="swing-btn swing-btn-accent" data-i18n="add" disabled>Add</button>
         </form>
+        <ul class="swing-key-preview" id="mirror-add-preview" aria-live="polite"></ul>
         <div class="swing-op-result" id="mirror-add-result" hidden></div>
       </div>
 

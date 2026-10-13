@@ -22,7 +22,8 @@ Desktop 画面専用のモジュール（各モジュールは表で自分より
 | `desktop-mascot-pack.js`・`desktop-mascot-sprite.js`・`desktop-mascot-behavior.js`・`desktop-mascot-balloon.js`・`desktop-mascot.js`・`desktop-mascot-settings.js` | マスコット（分担は [`mascot.md#概要`](mascot.md#概要)）。`desktop.js` が `DesktopMascots` の `init`・`start`・`onShow`・`watchFrame`・`showing` を呼ぶ |
 | `desktop-notify-settings.js` | 「コントロール パネル」の「通知」タブ本体（`NotifySettingsPage`） |
 | `desktop-settings.js` | 「コントロール パネル」の殻（`PAGES` を `desktop-dialog.js` に結び付ける、`DesktopSettings`） |
-| `desktop-mirror-add.js` | 「ミラーに追加」ダイアログ（`DesktopMirrorAdd`）。下記「[ミラーに追加](#ミラーに追加)」 |
+| `desktop-mirror-add.js` | 「ミラーに追加」ダイアログ（`DesktopMirrorAdd`）。[`desktop/mirror-add.md`](desktop/mirror-add.md) |
+| `desktop-fingerprint.js` | ドット絵にした絵文字のフィンガープリント（`deskFingerprint`）。[`desktop/mirror-add.md`](desktop/mirror-add.md#フィンガープリントのドット絵) |
 | `desktop.js` | 画面のロジック本体（デスクトップアイコンの選択・起動、リンク集ページへの書き込み、共通のクリック/フォーカス処理） |
 
 そのほかのファイル:
@@ -86,12 +87,7 @@ SWING Explorer ウィンドウ・「コントロール パネル」ダイアロ�
 
 ### ミラーに追加
 
-ツールバーの「ミラー」（星のアイコン）で開くモーダルダイアログ（`#desk-dialog-mirror-add`、殻は `createDialog`）。Sites 画面の「ミラーに追加」と同じく、入力欄の鍵を空白・カンマで区切って（`ui.js::parseMirrorKeys`、上限 `MAX_MIRROR_KEYS` = 100 件）`POST /api/mirror/add` に送る。
-
-- 開くたびに、送信中でなければ入力欄と状態表示を空にし、入力欄へフォーカスする。入力が空のあいだと送信中は OK を押せず、送信中は入力欄を読み取り専用にする。Enter は OK と同じ。
-- 1 件以上追加できたら、ダイアログを閉じて `cache.mirror` を捨て、`/api/sites` を取り直してリンク集を描き直したあと、ステータスバーに件数（ミラー済みだった件数と、Follow Set を送ったリレーの成功数/総数を括弧で添える）を出す。
-- 何も追加されなかったとき（すべてミラー済み）・件数が上限を超えたとき・API が失敗したときは、ダイアログを開いたまま入力欄の下（`#desk-mirror-add-status`）に文面を出す。
-- 送信中にキャンセルで閉じても要求は止めず、追加できればリンク集とステータスバーは同じように更新する。
+ツールバーの「ミラー」で開く「ミラーに追加」ダイアログは [`desktop/mirror-add.md`](desktop/mirror-add.md)。
 
 ### レイアウト
 

@@ -193,6 +193,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/api/mirror", get(api::mirror_list))
         .route("/api/mirror/add", post(api::mirror_add))
         .route("/api/mirror/remove", post(api::mirror_remove))
+        .route("/api/mirror/preview", post(api::mirror_preview))
         .route("/api/webring", get(api::webring))
         .route("/api/replicas", get(api::replicas))
         .route("/api/publish/sites", get(api::publish_sites))

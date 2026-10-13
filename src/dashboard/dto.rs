@@ -447,6 +447,38 @@ pub fn mirror_list_dto(view: &mirror::MirrorListView) -> MirrorListDto {
     }
 }
 
+#[derive(Debug, Serialize)]
+pub struct KeyPreviewDto {
+    pub input: String,
+    pub npub: Option<String>,
+    pub fingerprint: Option<Vec<String>>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct KeyPreviewsDto {
+    pub keys: Vec<KeyPreviewDto>,
+}
+
+pub fn key_previews_dto(inputs: &[String]) -> KeyPreviewsDto {
+    let mut seen = std::collections::HashSet::new();
+    let keys = inputs
+        .iter()
+        .filter_map(|input| match mirror::parse_pubkey_input(input) {
+            Ok(pk) => seen.insert(pk).then(|| KeyPreviewDto {
+                input: input.clone(),
+                npub: Some(mirror::npub(&pk)),
+                fingerprint: Some(fingerprint(&pk)),
+            }),
+            Err(_) => Some(KeyPreviewDto {
+                input: input.clone(),
+                npub: None,
+                fingerprint: None,
+            }),
+        })
+        .collect();
+    KeyPreviewsDto { keys }
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct MirrorChangeDto {
     pub changed: Vec<PubkeyDto>,

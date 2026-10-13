@@ -31,6 +31,18 @@ Follow Set の書き換え（`mirror::apply_add` / `apply_remove`）は [`../../
 - `add` が Follow Set の上限（`MAX_FOLLOW_SET_ENTRIES`）を超える（[`../../mirror.md`](../../mirror.md#follow-set-の書き換えmirrorapply_add--apply_remove)）ときは publish せず 409（`{"error": "would grow the follow set to <N> entries, over the 500-entry limit; remove some first"}`）。それ以外の失敗は 502。
 - relay から Follow Set を取れなかったとき（答えた relay が 1 つも無い）も 502 で、「Follow Set が無い」とはみなさず publish もしない。
 
+## POST /api/mirror/preview
+
+リクエストは `mirror/add` と同じ `{ "keys": [...] }`。空と件数の上限超えは 400 だが、読めない鍵があっても 400 にはしない。relay も Kubo も使わず、agent の準備やセットアップモードに関わらず応答する。ダッシュボードの「ミラーに追加」の入力中の表示に使う（[`../views.md#sites-画面`](../views.md#sites-画面)、[`../desktop/mirror-add.md`](../desktop/mirror-add.md)）。
+
+```json
+{ "keys": [ { "input": "npub1…", "npub": "npub1…", "fingerprint": ["1f40b", "1f353", "1f680", "1f9e9"] }, { "input": "typo", "npub": null, "fingerprint": null } ] }
+```
+
+- 入力の順に 1 件ずつ。`input` は送られた文字列そのまま。読めない鍵は `npub`・`fingerprint` が `null`。
+- 読めた鍵は `mirror/add` と同じく同じ pubkey の 2 件目以降を落とす（hex と npub で同じ鍵を入れても 1 件）。
+- `fingerprint` は [`../fingerprint.md`](../fingerprint.md)。ミラー済みかどうかは返さない（Follow Set を引かない）。
+
 ## GET /api/webring?root=\<key\>&depth=\<N\>
 
 `root` は繰り返し指定可、省略時は自分の pubkey 1 つ、件数の上限を超えると 400。`depth` は省略時 2、4 超か非数値で 400。`webring::collect` の結果で、たどり方・グラフ・名前は [`../../webring.md`](../../webring.md)。

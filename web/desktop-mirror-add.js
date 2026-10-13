@@ -1,6 +1,7 @@
 import { createDialog } from './desktop-dialog.js';
-import { apiFetch, cache, describeError } from './util.js';
-import { parseMirrorKeys, MAX_MIRROR_KEYS } from './ui.js';
+import { apiFetch, cache, describeError, shortenMiddle } from './util.js';
+import { parseMirrorKeys, MAX_MIRROR_KEYS, createKeyPreview } from './ui.js';
+import { deskFingerprint } from './desktop-fingerprint.js';
 
 const TEXT = {
   adding: 'ミラーに追加しています…',
@@ -10,6 +11,9 @@ const TEXT = {
   added: (n) => `${n} 件をミラーに追加しました`,
   alreadyMirrored: (n) => `${n} 件はミラー済み`,
   relays: (ok, total) => `リレー ${ok}/${total} 件に送信`,
+  invalidKey: (key) => `鍵として読めません: ${key}`,
+  previewEmpty: 'ここにフィンガープリントとnpubが表示されます。',
+  fingerprint: (emoji) => `絵文字のフィンガープリント ${emoji}（見分けるための目印で、本人の証明ではありません）`,
 };
 
 const dialogRoot = document.getElementById('desk-dialog-mirror-add');
@@ -17,6 +21,7 @@ const dialogRoot = document.getElementById('desk-dialog-mirror-add');
 const els = {
   button: document.getElementById('desk-mirror-add'),
   input: document.getElementById('desk-mirror-add-keys'),
+  preview: document.getElementById('desk-mirror-add-preview'),
   status: document.getElementById('desk-mirror-add-status'),
   okBtn: dialogRoot.querySelector('[data-dialog-action="ok"]'),
 };
@@ -30,6 +35,33 @@ function showStatus(kind, text) {
   if (kind) els.status.dataset.kind = kind;
   else delete els.status.dataset.kind;
 }
+
+function renderPreview(keys) {
+  const row = () => {
+    const li = document.createElement('li');
+    li.className = 'desk-key-preview-row';
+    return li;
+  };
+  if (!keys || keys.length === 0) {
+    const li = row();
+    li.textContent = TEXT.previewEmpty;
+    els.preview.replaceChildren(li);
+    return;
+  }
+  els.preview.replaceChildren(...keys.map((k) => {
+    const li = row();
+    if (k.npub) {
+      li.title = k.npub;
+      li.append(deskFingerprint(k.fingerprint, TEXT.fingerprint) || '', shortenMiddle(k.npub, 10, 6));
+    } else {
+      li.dataset.invalid = 'true';
+      li.textContent = TEXT.invalidKey(shortenMiddle(k.input, 12, 6));
+    }
+    return li;
+  }));
+}
+
+const updatePreview = createKeyPreview(renderPreview);
 
 function refreshOk() {
   els.okBtn.disabled = busy || !els.input.value.trim();
@@ -82,6 +114,7 @@ const dialog = createDialog({
   onOpen() {
     if (busy) return;
     els.input.value = '';
+    updatePreview('');
     showStatus(null, '');
     refreshOk();
   },
@@ -94,7 +127,10 @@ const dialog = createDialog({
 export const DesktopMirrorAdd = {
   init({ added }) {
     onAdded = added;
-    els.input.addEventListener('input', refreshOk);
+    els.input.addEventListener('input', () => {
+      refreshOk();
+      updatePreview(els.input.value);
+    });
     els.button.addEventListener('click', () => {
       dialog.open();
       els.input.focus();

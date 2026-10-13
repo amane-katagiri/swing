@@ -1053,6 +1053,26 @@ body[data-view="sites"][data-style="table"] .swing-site-set {
   font-size: 0.85rem;
 }
 
+.swing-key-preview {
+  margin: var(--swing-space-3) 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.swing-key-preview-row {
+  display: flex;
+  gap: var(--swing-space-2);
+  align-items: center;
+  min-height: calc(1.15em + 6px + 2 * var(--swing-space-1));
+  padding: var(--swing-space-1) 0;
+  font-size: 0.9rem;
+  overflow-wrap: anywhere;
+}
+
+.swing-key-preview-row[data-invalid="true"] {
+  color: var(--swing-danger);
+}
+
 .swing-op-result {
   margin-top: var(--swing-space-3);
   border: 1px solid var(--swing-border);

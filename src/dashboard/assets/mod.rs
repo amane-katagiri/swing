@@ -89,6 +89,7 @@ const STATIC_ASSETS: &[StaticAsset] = &[
     asset!(JS, "desktop-notify.js"),
     asset!(JS, "desktop-notify-settings.js"),
     asset!(JS, "desktop-system-settings.js"),
+    asset!(JS, "desktop-fingerprint.js"),
     asset!(JS, "desktop-mirror-add.js"),
     asset!("image/svg+xml", "desktop-icons.svg"),
     asset!("image/svg+xml", "emoji.svg"),
