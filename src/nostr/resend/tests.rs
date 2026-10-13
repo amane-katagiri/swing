@@ -111,6 +111,32 @@ fn a_held_site_is_not_sent_anywhere_once_any_relay_holds_a_newer_version() {
 }
 
 #[test]
+fn a_newer_version_from_an_unfinished_answer_supersedes_but_is_not_an_answer() {
+    let k = keys();
+    let held = make_site_event(&k, KIND, "a.example", CID_A, 200);
+    let older = make_site_event(&k, KIND, "a.example", CID_B, 100);
+    let newer = make_site_event(&k, KIND, "a.example", CID_B, 300);
+
+    let superseding = vec![
+        relay("none", vec![SiteAnswer::Missing]),
+        relay("cut", vec![SiteAnswer::Unfinished(newer.clone())]),
+    ];
+    assert_eq!(
+        plan_site_resends(&[&held], &superseding),
+        vec![ResendPlan::Superseded(&newer)]
+    );
+
+    let stale = vec![
+        relay("none", vec![SiteAnswer::Missing]),
+        relay("cut", vec![SiteAnswer::Unfinished(older)]),
+    ];
+    assert_eq!(
+        names(&plan_site_resends(&[&held], &stale)[0]),
+        vec!["wss://none.example"]
+    );
+}
+
+#[test]
 fn a_rewrite_at_the_same_time_counts_as_newer_only_with_a_lower_id() {
     let k = keys();
     let x = make_site_event(&k, KIND, "a.example", CID_A, 200);

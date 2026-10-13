@@ -58,7 +58,7 @@ pub fn plan_site_resends<'a>(held: &[&Event], answers: &'a [RelayAnswers]) -> Ve
         .map(|(i, event)| {
             let found = || {
                 answers.iter().filter_map(move |a| match a.sites.get(i) {
-                    Some(SiteAnswer::Found(found)) => Some(found),
+                    Some(SiteAnswer::Found(found) | SiteAnswer::Unfinished(found)) => Some(found),
                     _ => None,
                 })
             };
@@ -74,7 +74,7 @@ pub fn plan_site_resends<'a>(held: &[&Event], answers: &'a [RelayAnswers]) -> Ve
                     .filter(|a| match a.sites.get(i) {
                         Some(SiteAnswer::Missing) => true,
                         Some(SiteAnswer::Found(found)) => found.id != event.id,
-                        Some(SiteAnswer::Unanswered) | None => false,
+                        Some(SiteAnswer::Unanswered | SiteAnswer::Unfinished(_)) | None => false,
                     })
                     .map(|a| a.relay.clone())
                     .collect(),

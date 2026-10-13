@@ -752,6 +752,51 @@ async fn sites_per_relay_tell_a_relay_without_the_site_from_one_that_did_not_ans
     assert_eq!(by_url(&refusing), vec![SiteAnswer::Unanswered]);
 }
 
+#[tokio::test]
+async fn a_newer_version_from_a_request_that_did_not_finish_still_supersedes_the_held_one() {
+    let k = keys();
+    let now = Timestamp::now().as_secs();
+    let held = make_site_event(&k, 35980, "a.example", CID_A, now - 100);
+    let newer = make_site_event(&k, 35980, "a.example", CID_B, now - 50);
+    let filler = "x".repeat(budget::MAX_EVENT_BYTES as usize - 1024);
+    let mut served: Vec<Event> = (0..FetchCap::PER_REQ.bytes / filler.len() + 100)
+        .map(|i| {
+            EventBuilder::new(Kind::Custom(35980), filler.as_str())
+                .tag(Tag::identifier("b.example"))
+                .custom_created_at(Timestamp::from_secs(now - 1000 - i as u64))
+                .finalize(&k)
+                .unwrap()
+        })
+        .collect();
+    served.push(newer.clone());
+    let cut_off = LocalRelayBuilder::default()
+        .database(ServesForgeries(served))
+        .build();
+    cut_off.run().await.unwrap();
+    let cut_off_url = cut_off.url().await;
+    let (_empty, empty) = relay_holding(&[]).await;
+    let client = RelayClient::connect(
+        Signer::Local(keys()),
+        &[cut_off_url.to_string(), empty.clone()],
+    )
+    .await
+    .unwrap();
+
+    let sites = vec![
+        (k.public_key(), "a.example".to_string()),
+        (k.public_key(), "b.example".to_string()),
+    ];
+    let answers = client.fetch_sites_per_relay(35980, &sites).await;
+    client.shutdown().await;
+
+    let cut = answers.iter().find(|a| a.relay == cut_off_url).unwrap();
+    assert_eq!(cut.sites[0], SiteAnswer::Unfinished(newer.clone()));
+    assert_eq!(
+        crate::nostr::plan_site_resends(&[&held], &answers),
+        vec![crate::nostr::ResendPlan::Superseded(&newer)]
+    );
+}
+
 fn coordinate_of(event: &Event) -> String {
     site_coordinate(35980, &event.pubkey, &event.tags.identifier().unwrap()).to_string()
 }

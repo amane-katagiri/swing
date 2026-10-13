@@ -140,6 +140,74 @@ async fn sites_of_authors_unfollowed_since_the_poll_are_not_sent() {
     assert!(ids_on(&empty).await.is_empty());
 }
 
+#[tokio::test]
+async fn sites_of_authors_unfollowed_during_the_fetches_are_not_sent() {
+    let fx = Fixture::new(default_policy(), FakeKubo::default());
+    let now = Timestamp::now().as_secs();
+    let followed = site_event(&fx.keys, "a.example", CID_A, now - 100);
+    let unfollowed = site_event(&Keys::generate(), "b.example", CID_A, now - 100);
+    fx.agent.replace_targets(HashSet::from([fx.pubkey]));
+
+    let (_empty, empty) = relay_holding(&[]).await;
+    let client = RelayClient::connect(
+        Signer::Local(Keys::generate()),
+        std::slice::from_ref(&empty),
+    )
+    .await
+    .unwrap();
+    let to = vec![RelayUrl::parse(&empty).unwrap()];
+    let sends = [(&followed, "a.example"), (&unfollowed, "b.example")]
+        .map(|(event, d)| Outgoing {
+            event: event.clone(),
+            d: d.into(),
+            relays: to.clone(),
+        })
+        .into();
+    send_held(&client, &fx.agent, sends).await;
+    client.shutdown().await;
+
+    assert_eq!(ids_on(&empty).await, vec![followed.id]);
+}
+
+#[tokio::test]
+async fn a_withdrawal_is_not_recorded_once_a_newer_version_is_stored_during_the_check() {
+    let fx = Fixture::new(default_policy(), FakeKubo::default());
+    let now = Timestamp::now().as_secs();
+    let held = site_event(&fx.keys, "a.example", CID_A, now - 100);
+    hold(&fx, &held).await;
+    let candidates = resend_candidates(
+        held_site_events(
+            &*fx.agent.state.lock().await,
+            &HashSet::from([fx.pubkey]),
+            false,
+        ),
+        35980,
+    );
+    assert_eq!(candidates.len(), 1);
+
+    hold(&fx, &site_event(&fx.keys, "a.example", CID_B, now - 50)).await;
+    let withdrawn = candidates
+        .into_iter()
+        .map(|h| {
+            let w = Withdrawn {
+                events: BTreeSet::from([h.event.id.to_hex()]),
+                through: None,
+            };
+            (h, w)
+        })
+        .collect();
+    record_withdrawals(&fx.agent, withdrawn).await;
+
+    assert!(
+        !fx.agent
+            .state
+            .lock()
+            .await
+            .withdrawn
+            .contains_key(&key_of(&held))
+    );
+}
+
 #[test]
 fn when_nip05_is_required_only_verified_sites_are_held_for_resending() {
     let fx = Fixture::new(default_policy(), FakeKubo::default());

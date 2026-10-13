@@ -102,7 +102,7 @@ fn held_site_events(state: &State, targets: &HashSet<PublicKey>, require_nip05: 
                 return None;
             }
             let record = state.latest_version(key)?;
-            record.event.as_ref()?;
+            let event = record.event.as_ref()?;
             if require_nip05
                 && state
                     .verifications
@@ -118,7 +118,7 @@ fn held_site_events(state: &State, targets: &HashSet<PublicKey>, require_nip05: 
                 d: d.to_string(),
                 cid: record.cid.clone(),
                 created_at: record.created_at,
-                event: record.event.clone()?,
+                event: event.clone(),
                 withdrawn: state.withdrawn.get(key).cloned(),
             })
         })
@@ -150,7 +150,7 @@ fn resend_candidates(held: Vec<Held>, site_event_kind: u16) -> Vec<Held> {
 }
 
 // A newer version in the same second only outranks the held one by id, so covering that second would also cover the newer version.
-fn superseded(held: Held, newer: &Event) -> (SiteKey, Withdrawn) {
+fn superseded(held: Held, newer: &Event) -> (Held, Withdrawn) {
     let newer_at = newer.created_at.as_secs();
     let withdrawn = if newer_at > held.created_at {
         Withdrawn {
@@ -163,7 +163,7 @@ fn superseded(held: Held, newer: &Event) -> (SiteKey, Withdrawn) {
             through: None,
         }
     };
-    (held.key, withdrawn)
+    (held, withdrawn)
 }
 
 struct Outgoing {
@@ -234,7 +234,7 @@ pub(super) async fn resend_held_sites<C, N, R>(
     for (i, (h, relays)) in wanted.into_iter().enumerate() {
         if let Some(w) = deletions.withdrawals.of(&h.event, kind) {
             info!(site = %h.d, pubkey = %h.pubkey, event_id = %h.event.id, "the author deleted the held site event; not sending it again");
-            withdrawn.push((h.key, w));
+            withdrawn.push((h, w));
             continue;
         }
         let relays: Vec<RelayUrl> = relays
@@ -255,7 +255,7 @@ pub(super) async fn resend_held_sites<C, N, R>(
     send_held(relay, agent, sends).await;
 }
 
-async fn record_withdrawals<C, N, R>(agent: &Agent<C, N, R>, withdrawn: Vec<(SiteKey, Withdrawn)>)
+async fn record_withdrawals<C, N, R>(agent: &Agent<C, N, R>, withdrawn: Vec<(Held, Withdrawn)>)
 where
     C: KuboStore,
     N: Nip05Verify,
@@ -266,15 +266,37 @@ where
     }
     let mut state = agent.state.lock().await;
     let mut changed = false;
-    for (key, w) in withdrawn {
-        changed |= state.record_withdrawal(&key, w);
+    for (h, w) in withdrawn {
+        if state
+            .latest_version(&h.key)
+            .is_none_or(|latest| latest.cid != h.cid || latest.created_at != h.created_at)
+        {
+            debug!(site_key = %h.key, event_id = %h.event.id, "the stored version changed during the check; not recording the withdrawal of the held site event");
+            continue;
+        }
+        changed |= state.record_withdrawal(&h.key, w);
     }
     if changed {
         agent.save(&state, "recording withdrawn site events").await;
     }
 }
 
-async fn send_held<C, N, R>(relay: &RelayClient, agent: &Agent<C, N, R>, sends: Vec<Outgoing>) {
+async fn send_held<C, N, R>(relay: &RelayClient, agent: &Agent<C, N, R>, sends: Vec<Outgoing>)
+where
+    C: KuboStore,
+    N: Nip05Verify,
+    R: ReportRelay,
+{
+    let sends: Vec<Outgoing> = sends
+        .into_iter()
+        .filter(|send| {
+            let target = agent.is_target(&send.event.pubkey);
+            if !target {
+                debug!(site = %send.d, pubkey = %send.event.pubkey, "the author is no longer followed; not sending the held site event");
+            }
+            target
+        })
+        .collect();
     if sends.is_empty() {
         return;
     }

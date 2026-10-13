@@ -304,6 +304,44 @@ impl Spent {
     }
 }
 
+async fn fold_request<T, F>(
+    stream: impl Stream<Item = (RelayUrl, Streamed)>,
+    mut value: T,
+    fold: &F,
+    spent: &Spent,
+    total: FetchCap,
+) -> Folded<T>
+where
+    F: Fn(&mut T, Event),
+{
+    let mut stream = std::pin::pin!(stream);
+    let (mut events, mut bytes) = (0usize, 0usize);
+    let complete = loop {
+        match stream.next().await {
+            None => break false,
+            Some((_, Streamed::Finished)) => break true,
+            Some((url, Streamed::Failed(e))) => {
+                tracing::debug!(relay = %url, error = %e, "relay did not answer the request");
+                break false;
+            }
+            Some((url, Streamed::Event(event))) => {
+                let size = event_bytes(&event);
+                events += 1;
+                bytes += size;
+                if events > FetchCap::PER_REQ.events
+                    || bytes > FetchCap::PER_REQ.bytes
+                    || !spent.take(size, total)
+                {
+                    tracing::warn!(relay = %url, "relay answers exceed the fetch budget; counting the request as unanswered");
+                    break false;
+                }
+                fold(&mut value, event);
+            }
+        }
+    };
+    Folded { value, complete }
+}
+
 // Each answer is folded as it arrives so memory stays at what the fold keeps, not at what the relay sends.
 pub(super) async fn fold_per_relay<T, S, F>(
     relays: Vec<(RelayUrl, Relay)>,
@@ -326,35 +364,7 @@ where
             futures_util::stream::iter(requests.iter().enumerate())
                 .map(|(i, filters)| {
                     let stream = bounded_relay_stream(relay.clone(), filters.clone(), deadline);
-                    async move {
-                        let mut stream = std::pin::pin!(stream);
-                        let mut value = seed(i);
-                        let (mut events, mut bytes) = (0usize, 0usize);
-                        let complete = loop {
-                            match stream.next().await {
-                                None => break false,
-                                Some((_, Streamed::Finished)) => break true,
-                                Some((url, Streamed::Failed(e))) => {
-                                    tracing::debug!(relay = %url, error = %e, "relay did not answer the request");
-                                    break false;
-                                }
-                                Some((url, Streamed::Event(event))) => {
-                                    let size = event_bytes(&event);
-                                    events += 1;
-                                    bytes += size;
-                                    if events > FetchCap::PER_REQ.events
-                                        || bytes > FetchCap::PER_REQ.bytes
-                                        || !spent.take(size, total)
-                                    {
-                                        tracing::warn!(relay = %url, "relay answers exceed the fetch budget; counting the request as unanswered");
-                                        break false;
-                                    }
-                                    fold(&mut value, event);
-                                }
-                            }
-                        };
-                        (i, Folded { value, complete })
-                    }
+                    async move { (i, fold_request(stream, seed(i), fold, spent, total).await) }
                 })
                 .buffer_unordered(budget::FETCH_CONCURRENCY)
                 // Unboxed, rustc cannot prove the future Send for every lifetime once it is spawned.

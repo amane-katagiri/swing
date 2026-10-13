@@ -11,6 +11,7 @@ use crate::nostr::{Withdrawals, budget, keep_newest_site, site_coordinate};
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SiteAnswer {
     Unanswered,
+    Unfinished(Event),
     Missing,
     Found(Event),
 }
@@ -45,6 +46,11 @@ pub(super) struct DeletionUnit {
 }
 
 pub(super) const UNITS_PER_REQ: usize = budget::AUTHORS_PER_SPLIT_REQ / 2;
+
+fn chunk(i: usize, per: usize, total: usize) -> std::ops::Range<usize> {
+    let first = i * per;
+    first..total.min(first + per)
+}
 
 fn deletion_unit(
     site_event_kind: u16,
@@ -219,11 +225,10 @@ impl RelayClient {
             self.read_relays().await,
             &requests,
             |i| {
-                let first = i * budget::AUTHORS_PER_SPLIT_REQ;
-                let len = sites[first..].len().min(budget::AUTHORS_PER_SPLIT_REQ);
+                let range = chunk(i, budget::AUTHORS_PER_SPLIT_REQ, sites.len());
                 SitesReq {
-                    first,
-                    newest: vec![None; len],
+                    first: range.start,
+                    newest: vec![None; range.len()],
                 }
             },
             |req: &mut SitesReq, event| {
@@ -242,11 +247,15 @@ impl RelayClient {
             .into_iter()
             .map(|(relay, requests)| {
                 let mut answers = vec![SiteAnswer::Unanswered; sites.len()];
-                for request in requests.into_iter().filter(|r| r.complete) {
+                for request in requests {
                     let req = request.value;
                     for (j, newest) in req.newest.into_iter().enumerate() {
-                        answers[req.first + j] =
-                            newest.map_or(SiteAnswer::Missing, SiteAnswer::Found);
+                        answers[req.first + j] = match (request.complete, newest) {
+                            (true, Some(event)) => SiteAnswer::Found(event),
+                            (true, None) => SiteAnswer::Missing,
+                            (false, Some(event)) => SiteAnswer::Unfinished(event),
+                            (false, None) => SiteAnswer::Unanswered,
+                        };
                     }
                 }
                 RelayAnswers {
@@ -273,11 +282,10 @@ impl RelayClient {
             self.read_relays().await,
             &requests,
             |i| {
-                let first = i * UNITS_PER_REQ;
-                let len = units[first..].len().min(UNITS_PER_REQ);
+                let range = chunk(i, UNITS_PER_REQ, units.len());
                 DeletionReq {
-                    first,
-                    returned: (0..len).map(|_| Default::default()).collect(),
+                    first: range.start,
+                    returned: range.map(|_| Default::default()).collect(),
                     seen: HashSet::new(),
                     withdrawals: Withdrawals::default(),
                 }
