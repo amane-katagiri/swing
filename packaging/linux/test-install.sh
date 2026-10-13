@@ -107,7 +107,7 @@ case "\$1" in
         case " \$* " in
           *" --only-from "*)
             if ! grep -qF "ExecStart=\"\$dir/" "\$unit"; then
-              echo "left it as is"
+              echo "leaving it as is"
               exit 0
             fi
             ;;
@@ -330,7 +330,7 @@ out=$(run sh "$INSTALL" --uninstall 2>&1) || fail "uninstall with a foreign serv
 check "uninstall asked only for our registration" contains "$FAKE_LOG" "swing service uninstall --only-from $H/.local/lib/swing"
 check "foreign unit kept" [ -f "$H/.config/systemd/user/swing.service" ]
 check "files still removed" absent "$H/.local/lib/swing"
-check "kept registration reported" sh -c "printf '%s' \"\$1\" | grep -q 'left it as is'" _ "$out"
+check "kept registration reported" sh -c "printf '%s' \"\$1\" | grep -q 'leaving it as is'" _ "$out"
 
 echo "--- uninstall through install.sh --uninstall --purge --yes"
 new_env purge

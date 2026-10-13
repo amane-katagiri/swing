@@ -186,7 +186,7 @@ try {
         WaitUninstalled
         Check (-not (Test-Path $UninstallKey)) 'the uninstall entry is removed'
         $text = Get-Content -Raw $log
-        Check ($text -match 'left it as is') 'the uninstaller reports the registrations it kept'
+        Check ($text -match 'leaving it as is') 'the uninstaller reports the registrations it kept'
         Check (TaskRegistered) 'the task of the other copy is kept'
         Check (Mentions (TaskXml) "$Other\swing.exe") 'the kept task still starts the other copy'
         Check (Mentions (RunValue) "$Other\swing-tray.exe") 'the tray Run value of the other copy is kept'
