@@ -1,5 +1,7 @@
 use std::fmt::{self, Write as _};
 
+use unicode_segmentation::UnicodeSegmentation;
+
 const BYTE_UNITS: [(u64, &str); 4] = [
     (1u64 << 40, "TiB"),
     (1u64 << 30, "GiB"),
@@ -99,7 +101,7 @@ pub fn error_report(error: &anyhow::Error) -> String {
     out
 }
 
-pub fn sanitize_display_text(text: &str, max_chars: usize) -> String {
+pub fn sanitize_display_text(text: &str, max_graphemes: usize) -> String {
     let mut cleaned = String::with_capacity(text.len());
     let mut in_control = false;
     for c in text.chars() {
@@ -115,10 +117,19 @@ pub fn sanitize_display_text(text: &str, max_chars: usize) -> String {
             cleaned.push(c);
         }
     }
-    let cleaned = cleaned.trim();
-    let mut shown: String = cleaned.chars().take(max_chars).collect();
-    if cleaned.chars().count() > max_chars {
-        shown.push('\u{2026}');
+    // A grapheme can carry any number of combining marks, so code points are capped too.
+    let max_chars = max_graphemes.saturating_mul(4);
+    let mut shown = String::new();
+    let (mut graphemes, mut chars) = (0, 0);
+    for g in cleaned.trim().graphemes(true) {
+        let len = g.chars().count();
+        if graphemes == max_graphemes || chars + len > max_chars {
+            shown.push('\u{2026}');
+            return shown;
+        }
+        shown.push_str(g);
+        graphemes += 1;
+        chars += len;
     }
     shown
 }

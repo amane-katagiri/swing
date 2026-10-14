@@ -2913,6 +2913,7 @@ dependencies = [
  "tower-http",
  "tracing",
  "tracing-subscriber",
+ "unicode-segmentation",
  "windows-sys 0.61.2",
  "winresource",
  "zeroize",

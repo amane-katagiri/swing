@@ -150,6 +150,7 @@ export function formatTime(sec) {
   }
 }
 
+const GRAPHEMES = new Intl.Segmenter();
 const CONTROL_RE = /[\u0000-\u001f\u007f-\u009f\u2028\u2029]+/g;
 
 // Other people's event text could use these to visually reorder or hide itself.
@@ -164,8 +165,19 @@ export function sanitizeDisplayText(str, max) {
   if (str == null) return '';
   const cleaned = stripUnsafeUnicode(String(str).replace(CONTROL_RE, ' ')).trim();
   if (!max) return cleaned;
-  const chars = Array.from(cleaned);
-  return chars.length > max ? `${chars.slice(0, max).join('')}…` : cleaned;
+  // A grapheme can carry any number of combining marks, so code points are capped too.
+  const maxChars = max * 4;
+  let shown = '';
+  let graphemes = 0;
+  let chars = 0;
+  for (const { segment } of GRAPHEMES.segment(cleaned)) {
+    const len = Array.from(segment).length;
+    if (graphemes === max || chars + len > maxChars) return `${shown}…`;
+    shown += segment;
+    graphemes += 1;
+    chars += len;
+  }
+  return shown;
 }
 
 export function sanitizeMessage(str, max) {

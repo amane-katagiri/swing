@@ -88,7 +88,7 @@ relay が持つ自分のサイトイベントが未来ずれの許容を超え�
   - `future` の語がある
   - `too late` か `too new` と 2 語が続く
   - `created_at` と `too` の語があり、`early`・`old`・`past` の語が無い
-- 案内を足すときは、全体が 500 文字（`MAX_REJECTION_DISPLAY_CHARS`。CLI が断った理由を表示で切る長さ）に収まるよう、理由を `format::sanitize_display_text` で 429 文字（切ったときは省略記号を足して 430 文字）までにしてから足す（`nostr::with_rejection_hint`）。案内を足さない理由はそのまま返す。
+- 案内を足すときは、全体が 500 書記素（`MAX_REJECTION_DISPLAY_CHARS`。CLI が断った理由を表示で切る長さ）に収まるよう、理由を `format::sanitize_display_text` で 429 書記素（切ったときは省略記号を足して 430 書記素）までにしてから足す（`nostr::with_rejection_hint`）。案内を足さない理由はそのまま返す。
 
 ## 通常の投稿
 

@@ -74,6 +74,12 @@
     {"name": "run of control characters", "input": "a\n\r\tb", "want": "a b"},
     {"name": "unsafe character before a leading space", "input": "\u202e a", "want": "a"},
     {"name": "trimming and truncation order", "input": " a\u202eb\nc d", "max": 4, "want": "ab c\u2026"},
-    {"name": "truncation of astral characters", "input": "\ud83c\udf80\ud83c\udf80\ud83c\udf80", "max": 2, "want": "\ud83c\udf80\ud83c\udf80\u2026"}
+    {"name": "truncation of astral characters", "input": "\ud83c\udf80\ud83c\udf80\ud83c\udf80", "max": 2, "want": "\ud83c\udf80\ud83c\udf80\u2026"},
+    {"name": "flags are not split", "input": "\ud83c\uddef\ud83c\uddf5\ud83c\uddfa\ud83c\uddf8\ud83c\uddeb\ud83c\uddf7", "max": 2, "want": "\ud83c\uddef\ud83c\uddf5\ud83c\uddfa\ud83c\uddf8\u2026"},
+    {"name": "combining marks stay with their base", "input": "\u304b\u3099\u304b\u3099\u304b\u3099", "max": 2, "want": "\u304b\u3099\u304b\u3099\u2026"},
+    {"name": "skin tone modifiers stay with their emoji", "input": "\ud83d\udc4d\ud83c\udffd\ud83d\udc4d\ud83c\udffd", "max": 1, "want": "\ud83d\udc4d\ud83c\udffd\u2026"},
+    {"name": "keycaps are not split", "input": "1\ufe0f\u20e32\ufe0f\u20e3", "max": 1, "want": "1\ufe0f\u20e3\u2026"},
+    {"name": "a grapheme of many combining marks is capped by code points", "input": "abc\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301", "max": 3, "want": "ab\u2026"},
+    {"name": "exactly at the limit is not truncated", "input": "\ud83c\uddef\ud83c\uddf5\u304b\u3099", "max": 2, "want": "\ud83c\uddef\ud83c\uddf5\u304b\u3099"}
   ]
 }

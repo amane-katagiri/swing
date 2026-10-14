@@ -1,4 +1,5 @@
 use nostr_sdk::prelude::*;
+use unicode_segmentation::UnicodeSegmentation;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RelaySendResult {
@@ -45,7 +46,8 @@ const MAX_REJECTION_DISPLAY_CHARS: usize = 500;
 pub fn with_rejection_hint(error: &str, hint: &str) -> String {
     let suffix = format!(" ({hint})");
     let ellipsis = 1;
-    let budget = MAX_REJECTION_DISPLAY_CHARS.saturating_sub(suffix.chars().count() + ellipsis);
+    let budget =
+        MAX_REJECTION_DISPLAY_CHARS.saturating_sub(suffix.graphemes(true).count() + ellipsis);
     format!(
         "{}{suffix}",
         crate::format::sanitize_display_text(error, budget)
