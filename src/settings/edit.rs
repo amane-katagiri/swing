@@ -51,7 +51,7 @@ fn set_item(table: &mut Table, desc: &Setting, value: &InputValue) -> Result<()>
         }
         Kind::Mode => {
             let s = value.as_str(desc.key)?;
-            config::parse_check_mode(s)?;
+            config::parse_check_mode(s).context(desc.key)?;
             table.insert(desc.field, Item::Value(Value::from(s.trim().to_string())));
         }
         Kind::String => {

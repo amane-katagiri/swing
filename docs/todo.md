@@ -21,8 +21,6 @@
 | 低 | NIP-46: 署名アプリが作った `bunker://` URI を貼って接続する方法（署名アプリ起点）。今は SWING が出す `nostrconnect://` の QR コードだけ | [NIP-46 対応](log/2026-09-24-nip46-remote-signer.md) |
 | 低 | Desktop 画面の表示倍率: WebKit では `zoom` の内側の文字サイズが整数 px に丸められ（175% で 12px が 12.25 デバイスピクセルになる）、150% では文字の位置が半ピクセルずれて、親のデスクトップもリンク集ページもぶれる。Linux の Playwright WebKit で確かめただけなので、Mac の Safari 実機（Retina で 110%〜175% にズームしたとき）でも起きるか確かめ、起きるなら対策を考える。GitHub の macOS ランナーの画面は等倍なので代わりにならない | [表示倍率を整数倍に揃える](log/2026-09-26-desktop-integer-scale.md) |
 | 低 | ダッシュボードの JS のテスト。同梱マスコットの manifest は検証がブラウザの `normalizeManifest` だけで、壊れても `console.warn` しか出ない。i18n は en と ja のキー集合・JS の `t('key')`・`{var}` の一致を確かめていない。純粋な関数（`desktop-updates.js` の `collectNotices`・`diffReporters`、`util.js` の `formatBytes`・`backoffDelay`・`sanitizeDisplayText`、`desktop-mascot-behavior.js`、`publish.js` の `computeRelativePath`）にもテストが無い。不正な Unicode の判定は `util.js` と `src/format.rs` の 2 か所にあるので、同じテストベクタで照らせるとよい | [テストの監査](log/2026-10-14-test-audit.md) |
-| 低 | 実物の Kubo を使う `#[ignore]` のテスト（`kubo_integration`・`mfs_kubo_integration`・`kubo::tests` の一部・agent の実 Kubo のテスト）を CI で回す。今は手で `--ignored` を付けたときだけ動く | [テストの監査](log/2026-10-14-test-audit.md) |
-| 低 | mode の設定（`policy.nip05` など）に不正な値を入れたときのエラー文にキー名が出ない（`invalid mode: sometimes (expected off, warn, or require)`）。ほかの型はキー名を出す | [テストの監査](log/2026-10-14-test-audit.md) |
 | 中 | NIP-05 の実 HTTP 経路の統合テスト（ローカル TLS エンドポイント相手、`#[ignore]`） | レビュー |
 | 低 | 取得に失敗した CID を指数バックオフで再試行する。今はサイトごとに `min_update_interval` に 1 回までに抑えているだけで、失敗が続いても間隔は伸びない | レビュー（DoS） |
 | 低 | レプリカ報告 1 件が持てる `cid` タグの数に上限が無い。誰でも 1 件の報告に大量の `cid` タグを詰め込める（サイトイベント・レプリカ報告・Follow Set の取得件数、1 作者が持つ `d` の数、Follow Set 1 件の `p` タグ数、`webring::crawl` のノード総数には [取得と表示の上限](log/2026-09-23-fetch-and-display-budgets.md) で上限を入れた） | レビュー（DoS） |

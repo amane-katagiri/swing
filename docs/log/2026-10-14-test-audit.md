@@ -75,7 +75,7 @@ relay から受け取ったイベントを手元でもう一度絞る処理（`b
 ## 決めたこと
 
 - JS のテストは今回入れない（todo）。
-- Kubo の CI ジョブは足さない（todo）。
+- Kubo の CI ジョブは足さない。
 
 ## 検証
 
@@ -83,3 +83,7 @@ relay から受け取ったイベントを手元でもう一度絞る処理（`b
 - `cargo clippy --workspace --all-targets -- -D warnings`
 - `cargo xwin clippy --workspace --target x86_64-pc-windows-msvc --all-targets -- -D warnings`
 - `cargo test --workspace`（871 passed、23 ignored）
+
+## 追記: mode の設定のエラー文
+
+設定の編集で mode の設定（`policy.nip05` など）に不正な値を入れると、エラー文にキー名が出なかった（ほかの型は `<key>: invalid ...` の形で出す）。`<key>: invalid mode: ...` の形に揃えた。

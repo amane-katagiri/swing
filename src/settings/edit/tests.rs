@@ -213,7 +213,7 @@ fn values_of_the_wrong_shape_are_refused_without_writing() {
         (
             "policy.nip05",
             InputValue::Str("sometimes".into()),
-            "invalid mode: sometimes",
+            "policy.nip05: invalid mode: sometimes",
         ),
     ];
     for (key, value, expected) in cases {
