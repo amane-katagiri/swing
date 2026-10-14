@@ -219,14 +219,11 @@ pub fn setup(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::{MINIMAL_TOML, config_at};
 
     fn base_config(dir: &Path) -> Config {
         let path = dir.join("swing.toml");
-        std::fs::write(
-            &path,
-            "[nostr]\nsecret_key = \"k\"\nrelays = [\"wss://r\"]\n",
-        )
-        .unwrap();
+        std::fs::write(&path, MINIMAL_TOML).unwrap();
         Config::load(Some(&path)).unwrap()
     }
 
@@ -243,16 +240,11 @@ mod tests {
         assert!(!shown.contains("verysecret"), "{shown}");
     }
 
-    fn config_at(
-        text: &str,
-        get_env: impl Fn(&str) -> Option<String>,
-        path: std::path::PathBuf,
-        exists: bool,
-    ) -> Config {
-        let mut cfg = config::build_config_from_str(text, get_env).unwrap();
-        cfg.config_path = path;
-        cfg.config_exists = exists;
-        cfg
+    fn items(pairs: &[(&str, &str)]) -> BTreeMap<String, InputValue> {
+        pairs
+            .iter()
+            .map(|(k, v)| (k.to_string(), InputValue::Str(v.to_string())))
+            .collect()
     }
 
     #[test]
@@ -275,11 +267,7 @@ mod tests {
     fn rejects_unknown_key() {
         let dir = tempfile::tempdir().unwrap();
         let cfg = base_config(dir.path());
-        let mut items = BTreeMap::new();
-        items.insert(
-            "kubo.binary".to_string(),
-            InputValue::Str("/bin/ipfs".to_string()),
-        );
+        let items = items(&[("kubo.binary", "/bin/ipfs")]);
         let err = update(&cfg, &items).unwrap_err();
         assert!(err.to_string().contains("kubo.binary"));
     }
@@ -288,25 +276,15 @@ mod tests {
     fn rejects_env_sourced_key() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("swing.toml");
-        std::fs::write(
-            &path,
-            "[nostr]\nsecret_key = \"k\"\nrelays = [\"wss://r\"]\n",
-        )
+        std::fs::write(&path, MINIMAL_TOML).unwrap();
+        let mut cfg = config::build_config_from_str(MINIMAL_TOML, |k| match k {
+            "SWING_MAX_TOTAL_STORAGE" => Some("10GB".to_string()),
+            _ => None,
+        })
         .unwrap();
-        let cfg = config_at(
-            "[nostr]\nsecret_key = \"k\"\nrelays = [\"wss://r\"]\n",
-            |k| match k {
-                "SWING_MAX_TOTAL_STORAGE" => Some("10GB".to_string()),
-                _ => None,
-            },
-            path,
-            true,
-        );
-        let mut items = BTreeMap::new();
-        items.insert(
-            "policy.max_total_storage".to_string(),
-            InputValue::Str("20GB".to_string()),
-        );
+        cfg.config_path = path;
+        cfg.config_exists = true;
+        let items = items(&[("policy.max_total_storage", "20GB")]);
         let err = update(&cfg, &items).unwrap_err();
         assert!(err.to_string().contains("environment variable"));
     }
@@ -321,11 +299,7 @@ mod tests {
         )
         .unwrap();
         let cfg = Config::load(Some(&path)).unwrap();
-        let mut items = BTreeMap::new();
-        items.insert(
-            "policy.max_total_storage".to_string(),
-            InputValue::Str("20GB".to_string()),
-        );
+        let items = items(&[("policy.max_total_storage", "20GB")]);
         let updated = update(&cfg, &items).unwrap();
         assert_eq!(updated.policy.max_total_storage, 20 * (1u64 << 30));
         let text = std::fs::read_to_string(&path).unwrap();
@@ -338,19 +312,11 @@ mod tests {
     fn symlinked_config_is_written_through_to_its_target() {
         let dir = tempfile::tempdir().unwrap();
         let real = dir.path().join("real.toml");
-        std::fs::write(
-            &real,
-            "[nostr]\nsecret_key = \"k\"\nrelays = [\"wss://r\"]\n",
-        )
-        .unwrap();
+        std::fs::write(&real, MINIMAL_TOML).unwrap();
         let link = dir.path().join("swing.toml");
         std::os::unix::fs::symlink(&real, &link).unwrap();
         let cfg = Config::load(Some(&link)).unwrap();
-        let mut items = BTreeMap::new();
-        items.insert(
-            "nostr.mirror_set".to_string(),
-            InputValue::Str("newset".to_string()),
-        );
+        let items = items(&[("nostr.mirror_set", "newset")]);
         update(&cfg, &items).unwrap();
         assert!(
             std::fs::symlink_metadata(&link)
@@ -369,17 +335,8 @@ mod tests {
     fn new_file_gets_owner_only_permissions() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("nested").join("swing.toml");
-        let cfg = config_at(
-            "[nostr]\nsecret_key = \"k\"\nrelays = [\"wss://r\"]\n",
-            |_| None,
-            path.clone(),
-            false,
-        );
-        let mut items = BTreeMap::new();
-        items.insert(
-            "nostr.mirror_set".to_string(),
-            InputValue::Str("newset".to_string()),
-        );
+        let cfg = config_at(MINIMAL_TOML, path.clone(), false);
+        let items = items(&[("nostr.mirror_set", "newset")]);
         update(&cfg, &items).unwrap();
         #[cfg(unix)]
         {
@@ -397,17 +354,8 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let parent = dir.path().join("nested");
         let path = parent.join("swing.toml");
-        let cfg = config_at(
-            "[nostr]\nsecret_key = \"k\"\nrelays = [\"wss://r\"]\n",
-            |_| None,
-            path.clone(),
-            false,
-        );
-        let mut items = BTreeMap::new();
-        items.insert(
-            "nostr.mirror_set".to_string(),
-            InputValue::Str("newset".to_string()),
-        );
+        let cfg = config_at(MINIMAL_TOML, path.clone(), false);
+        let items = items(&[("nostr.mirror_set", "newset")]);
         update(&cfg, &items).unwrap();
         let mode = std::fs::metadata(&parent).unwrap().permissions().mode() & 0o777;
         assert_eq!(mode, 0o700);
@@ -420,18 +368,10 @@ mod tests {
 
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("swing.toml");
-        std::fs::write(
-            &path,
-            "[nostr]\nsecret_key = \"k\"\nrelays = [\"wss://r\"]\n",
-        )
-        .unwrap();
+        std::fs::write(&path, MINIMAL_TOML).unwrap();
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
         let cfg = Config::load(Some(&path)).unwrap();
-        let mut items = BTreeMap::new();
-        items.insert(
-            "nostr.mirror_set".to_string(),
-            InputValue::Str("newset".to_string()),
-        );
+        let items = items(&[("nostr.mirror_set", "newset")]);
         update(&cfg, &items).unwrap();
         let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
         assert_eq!(mode, 0o600);
@@ -441,18 +381,10 @@ mod tests {
     fn validation_failure_leaves_file_untouched() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("swing.toml");
-        std::fs::write(
-            &path,
-            "[nostr]\nsecret_key = \"k\"\nrelays = [\"wss://r\"]\n",
-        )
-        .unwrap();
+        std::fs::write(&path, MINIMAL_TOML).unwrap();
         let before = std::fs::read_to_string(&path).unwrap();
         let cfg = Config::load(Some(&path)).unwrap();
-        let mut items = BTreeMap::new();
-        items.insert(
-            "policy.max_total_storage".to_string(),
-            InputValue::Str("not-a-size".to_string()),
-        );
+        let items = items(&[("policy.max_total_storage", "not-a-size")]);
         assert!(update(&cfg, &items).is_err());
         let after = std::fs::read_to_string(&path).unwrap();
         assert_eq!(before, after);
@@ -538,8 +470,7 @@ mod tests {
     fn empty_relay_list_is_rejected() {
         let dir = tempfile::tempdir().unwrap();
         let cfg = base_config(dir.path());
-        let mut items = BTreeMap::new();
-        items.insert("nostr.relays".to_string(), InputValue::List(vec![]));
+        let items = BTreeMap::from([("nostr.relays".to_string(), InputValue::List(vec![]))]);
         let err = update(&cfg, &items).unwrap_err();
         assert!(err.to_string().contains("at least one relay"));
     }
@@ -548,7 +479,7 @@ mod tests {
     fn setup_writes_generated_key_and_leaves_setup_mode() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("swing.toml");
-        let cfg = config_at("", |_| None, path.clone(), false);
+        let cfg = config_at("", path.clone(), false);
         assert!(cfg.nostr.secret_key.is_none());
         let items = BTreeMap::new();
         let keys = setup_keys(None).unwrap();
@@ -568,12 +499,11 @@ mod tests {
     fn setup_for_a_signer_app_writes_no_key() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("swing.toml");
-        let cfg = config_at("", |_| None, path.clone(), false);
-        let mut items = BTreeMap::new();
-        items.insert(
+        let cfg = config_at("", path.clone(), false);
+        let items = BTreeMap::from([(
             "nostr.relays".to_string(),
             InputValue::List(vec!["wss://relay.example".to_string()]),
-        );
+        )]);
         let reloaded = setup(&cfg, None, &items).unwrap();
         assert!(reloaded.nostr.secret_key.is_none());
         assert_eq!(reloaded.nostr.relays, vec!["wss://relay.example"]);

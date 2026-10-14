@@ -16,6 +16,19 @@ pub(crate) fn sorted_pubkeys(n: usize) -> Vec<PublicKey> {
     pks
 }
 
+pub(crate) const MINIMAL_TOML: &str = "[nostr]\nsecret_key = \"k\"\nrelays = [\"wss://r\"]\n";
+
+pub(crate) fn config_at(
+    text: &str,
+    path: std::path::PathBuf,
+    exists: bool,
+) -> crate::config::Config {
+    let mut config = crate::config::build_config_from_str(text, |_| None).unwrap();
+    config.config_path = path;
+    config.config_exists = exists;
+    config
+}
+
 pub(crate) fn unused_dir() -> std::path::PathBuf {
     static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
     let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);

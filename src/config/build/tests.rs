@@ -236,14 +236,7 @@ fn env_overrides_toml() {
 
 #[test]
 fn defaults_applied_when_nothing_set() {
-    let file = ConfigFile {
-        nostr: NostrFile {
-            secret_key: Some(String::from("k").into()),
-            relays: Some(vec!["wss://r".into()]),
-            ..Default::default()
-        },
-        ..Default::default()
-    };
+    let file = minimal_file();
     let cfg = build_config(file, None, |_| None).unwrap();
     assert_eq!(cfg.nostr.mirror_set, "swing");
     assert_eq!(cfg.nostr.site_event_kind, 35980);
@@ -286,13 +279,8 @@ fn defaults_applied_when_nothing_set() {
 
 #[test]
 fn default_relays_used_when_none_configured() {
-    let file = ConfigFile {
-        nostr: NostrFile {
-            secret_key: Some(String::from("k").into()),
-            ..Default::default()
-        },
-        ..Default::default()
-    };
+    let mut file = minimal_file();
+    file.nostr.relays = None;
     let cfg = build_config(file, None, |_| None).unwrap();
     assert_eq!(
         cfg.nostr.relays,
@@ -306,16 +294,11 @@ fn default_relays_used_when_none_configured() {
 #[test]
 fn nip05_mode_env_overrides_file() {
     let file = ConfigFile {
-        nostr: NostrFile {
-            secret_key: Some(String::from("k").into()),
-            relays: Some(vec!["wss://r".into()]),
-            ..Default::default()
-        },
         policy: PolicyFile {
             nip05: Some("require".into()),
             ..Default::default()
         },
-        ..Default::default()
+        ..minimal_file()
     };
     let cfg = build_config(file, None, |k| match k {
         "SWING_NIP05" => Some("off".into()),
@@ -332,14 +315,7 @@ fn nip05_mode_rejects_garbage() {
 
 #[test]
 fn publish_nip05_defaults_to_warn() {
-    let file = ConfigFile {
-        nostr: NostrFile {
-            secret_key: Some(String::from("k").into()),
-            relays: Some(vec!["wss://r".into()]),
-            ..Default::default()
-        },
-        ..Default::default()
-    };
+    let file = minimal_file();
     let cfg = build_config(file, None, |_| None).unwrap();
     assert_eq!(cfg.publish.nip05, CheckMode::Warn);
 }
@@ -347,16 +323,11 @@ fn publish_nip05_defaults_to_warn() {
 #[test]
 fn publish_nip05_env_overrides_file() {
     let file = ConfigFile {
-        nostr: NostrFile {
-            secret_key: Some(String::from("k").into()),
-            relays: Some(vec!["wss://r".into()]),
-            ..Default::default()
-        },
         publish: PublishFile {
             nip05: Some("require".into()),
             ..Default::default()
         },
-        ..Default::default()
+        ..minimal_file()
     };
     let cfg = build_config(file, None, |k| match k {
         "SWING_PUBLISH_NIP05" => Some("off".into()),
@@ -485,16 +456,11 @@ fn dashboard_defaults_to_localhost_8082_with_default_gateway() {
 #[test]
 fn dashboard_max_upload_env_overrides_file() {
     let file = ConfigFile {
-        nostr: NostrFile {
-            secret_key: Some(String::from("k").into()),
-            relays: Some(vec!["wss://r".into()]),
-            ..Default::default()
-        },
         dashboard: DashboardFile {
             max_upload: Some("4GB".into()),
             ..Default::default()
         },
-        ..Default::default()
+        ..minimal_file()
     };
     let cfg = build_config(file, None, |k| match k {
         "SWING_DASHBOARD_MAX_UPLOAD" => Some("512MB".into()),
@@ -556,11 +522,6 @@ fn dashboard_ui_file_value_is_used_when_env_unset() {
 #[test]
 fn dashboard_env_overrides_file() {
     let file = ConfigFile {
-        nostr: NostrFile {
-            secret_key: Some(String::from("k").into()),
-            relays: Some(vec!["wss://r".into()]),
-            ..Default::default()
-        },
         dashboard: DashboardFile {
             listen: Some("127.0.0.1:9000".into()),
             ui: Some(false),
@@ -574,7 +535,7 @@ fn dashboard_env_overrides_file() {
             mascots_dir: Some("/etc/swing/mascots".into()),
             max_upload: Some("4GB".into()),
         },
-        ..Default::default()
+        ..minimal_file()
     };
     let cfg = build_config(file, None, |k| match k {
         "SWING_DASHBOARD_LISTEN" => Some("0.0.0.0:8082".into()),
@@ -623,16 +584,11 @@ fn dashboard_env_overrides_file() {
 #[test]
 fn dashboard_gateway_empty_string_in_file_disables_links() {
     let file = ConfigFile {
-        nostr: NostrFile {
-            secret_key: Some(String::from("k").into()),
-            relays: Some(vec!["wss://r".into()]),
-            ..Default::default()
-        },
         dashboard: DashboardFile {
             gateway: Some(String::new()),
             ..Default::default()
         },
-        ..Default::default()
+        ..minimal_file()
     };
     let cfg = build_config(file, None, |_| None).unwrap();
     assert_eq!(cfg.dashboard.gateway, None);
@@ -640,14 +596,7 @@ fn dashboard_gateway_empty_string_in_file_disables_links() {
 
 #[test]
 fn max_total_storage_env_is_a_size_string() {
-    let file = ConfigFile {
-        nostr: NostrFile {
-            secret_key: Some(String::from("k").into()),
-            relays: Some(vec!["wss://r".into()]),
-            ..Default::default()
-        },
-        ..Default::default()
-    };
+    let file = minimal_file();
     let cfg = build_config(file, None, |k| match k {
         "SWING_MAX_TOTAL_STORAGE" => Some("20GB".into()),
         _ => None,

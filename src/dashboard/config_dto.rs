@@ -338,23 +338,16 @@ pub fn config_dto(config: &config::Config, restart_required: bool) -> ConfigDto 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::PathBuf;
-
-    fn test_config_at(path: PathBuf, exists: bool) -> config::Config {
-        let mut cfg = config::build_config_from_str(
-            "[nostr]\nsecret_key = \"k\"\nrelays = [\"wss://r\"]\n",
-            |_| None,
-        )
-        .unwrap();
-        cfg.config_path = path;
-        cfg.config_exists = exists;
-        cfg
-    }
+    use crate::test_support::{MINIMAL_TOML, config_at};
 
     #[test]
     fn missing_config_under_missing_directories_is_writable_when_the_nearest_one_is() {
         let dir = tempfile::tempdir().unwrap();
-        let cfg = test_config_at(dir.path().join("a").join("b").join("swing.toml"), false);
+        let cfg = config_at(
+            MINIMAL_TOML,
+            dir.path().join("a").join("b").join("swing.toml"),
+            false,
+        );
         assert!(is_config_writable(&cfg));
     }
 
@@ -363,14 +356,14 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let file = dir.path().join("file");
         std::fs::write(&file, "").unwrap();
-        let cfg = test_config_at(file.join("swing.toml"), false);
+        let cfg = config_at(MINIMAL_TOML, file.join("swing.toml"), false);
         assert!(!is_config_writable(&cfg));
     }
 
     #[test]
     fn missing_config_in_a_writable_directory_is_writable() {
         let dir = tempfile::tempdir().unwrap();
-        let cfg = test_config_at(dir.path().join("swing.toml"), false);
+        let cfg = config_at(MINIMAL_TOML, dir.path().join("swing.toml"), false);
         assert!(is_config_writable(&cfg));
     }
 
@@ -379,7 +372,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("swing.toml");
         std::fs::write(&path, "").unwrap();
-        let cfg = test_config_at(path, true);
+        let cfg = config_at(MINIMAL_TOML, path, true);
         assert!(is_config_writable(&cfg));
     }
 
@@ -392,7 +385,7 @@ mod tests {
         let path = dir.path().join("swing.toml");
         std::fs::write(&path, "").unwrap();
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o400)).unwrap();
-        let cfg = test_config_at(path.clone(), true);
+        let cfg = config_at(MINIMAL_TOML, path.clone(), true);
         if std::fs::OpenOptions::new().append(true).open(&path).is_ok() {
             // Root, or a filesystem that ignores 0o400, can still open this.
             return;

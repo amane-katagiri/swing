@@ -131,11 +131,7 @@ fn secret_key_debug_is_redacted() {
 fn config_load_remembers_the_config_file_path() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("swing.toml");
-    std::fs::write(
-        &path,
-        "[nostr]\nsecret_key = \"k\"\nrelays = [\"wss://r\"]\n",
-    )
-    .unwrap();
+    std::fs::write(&path, crate::test_support::MINIMAL_TOML).unwrap();
     let cfg = Config::load(Some(&path)).unwrap();
     assert_eq!(cfg.config_path, path);
     assert!(cfg.config_exists);
