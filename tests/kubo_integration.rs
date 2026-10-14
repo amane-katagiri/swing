@@ -344,10 +344,10 @@ async fn add_dir_matches_ipfs_cli_cid_for_known_fixture() {
         .expect("add_dir");
     client.mfs_remove(&root).await.unwrap();
 
-    let expected = std::env::var("SWING_TEST_EXPECTED_CID").unwrap_or_else(|_| String::new());
-    if !expected.is_empty() {
-        assert_eq!(cid, expected);
-    }
+    assert_eq!(
+        cid,
+        "bafybeib6b7iegbilvzhxtsgcxzrbwva4ahgvs7x7pickwzcucz435vbq3e"
+    );
 }
 
 #[tokio::test]

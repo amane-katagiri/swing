@@ -9,7 +9,7 @@
 ```bash
 # test プロファイルは bootstrap とローカル探索を無効にする
 docker run -d --rm -e IPFS_PROFILE=test -p 127.0.0.1:15001:5001 ipfs/kubo:v0.43.1
-# SWING_TEST_IPFS_API（既定 http://127.0.0.1:15001）、任意で SWING_TEST_EXPECTED_CID
+# SWING_TEST_IPFS_API（既定 http://127.0.0.1:15001）。add_dir_matches_ipfs_cli_cid_for_known_fixture は固定のフィクスチャの CID を `ipfs add -r --cid-version=1` の結果と照らす
 cargo test --test kubo_integration -- --ignored --test-threads=1
 # agent の保存・sweep・突き合わせ・unfollow を実物の Kubo で通す（health.rs の検査を含む）
 cargo test --lib agent_stores_and_removes_through_real_kubo -- --ignored
@@ -19,7 +19,7 @@ docker run -d --rm -p 127.0.0.1:18080:8080 scsibug/nostr-rs-relay
 cargo test --test nostr_relay_integration -- --ignored --test-threads=1
 ```
 
-`kubo::tests` の `#[ignore]` テスト（Kubo の一生・孤児の回収）と `mfs_kubo_integration`（空白・記号・`.`/`..`・日本語・長い名前を含む `d` が、agent と publish の MFS パスで往復し、`find_garbage` が誤検知せず、削除できること）は Kubo のバイナリを子プロセスとして起動する（repo は一時ディレクトリ）。`SWING_TEST_KUBO_BIN` が無ければ何もせずに通る:
+`kubo::tests` の `#[ignore]` テスト（Kubo の一生・孤児の回収）と `mfs_kubo_integration`（空白・記号・`.`/`..`・日本語・長い名前を含む `d` が、agent と publish の MFS パスで往復し、`find_garbage` が誤検知せず、削除できること）は Kubo のバイナリを子プロセスとして起動する（repo は一時ディレクトリ）。`SWING_TEST_KUBO_BIN` が無いと、黙って通らずに失敗する:
 
 ```bash
 SWING_TEST_KUBO_BIN=/path/to/ipfs cargo test --lib kubo::tests -- --ignored

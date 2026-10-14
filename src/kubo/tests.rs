@@ -20,14 +20,10 @@ use super::daemon::is_repo_lock_error;
 use super::orphan::{PidRecord, read_pid_file};
 use super::*;
 
-fn test_kubo_bin() -> Option<PathBuf> {
-    match std::env::var("SWING_TEST_KUBO_BIN") {
-        Ok(bin) => Some(PathBuf::from(bin)),
-        Err(_) => {
-            eprintln!("skipping: SWING_TEST_KUBO_BIN not set");
-            None
-        }
-    }
+fn test_kubo_bin() -> PathBuf {
+    let bin = std::env::var_os("SWING_TEST_KUBO_BIN")
+        .expect("SWING_TEST_KUBO_BIN must point at a Kubo binary to run this ignored test");
+    PathBuf::from(bin)
 }
 
 #[test]
@@ -840,9 +836,7 @@ async fn recover_orphan_skips_a_pid_file_without_a_boot_id() {
 #[tokio::test]
 #[ignore]
 async fn full_lifecycle_against_real_kubo() {
-    let Some(bin) = test_kubo_bin() else {
-        return;
-    };
+    let bin = test_kubo_bin();
     let dir = tempfile::tempdir().unwrap();
     let repo = dir.path().join("kubo-repo");
 
@@ -965,9 +959,7 @@ async fn spawn_orphan(bin: &Path, dir: &Path) -> (PathBuf, String, u32) {
 #[tokio::test]
 #[ignore]
 async fn recover_orphan_shuts_down_a_leftover_daemon_via_its_api() {
-    let Some(bin) = test_kubo_bin() else {
-        return;
-    };
+    let bin = test_kubo_bin();
     let dir = tempfile::tempdir().unwrap();
     let (state_dir, api_url, pid) = spawn_orphan(&bin, dir.path()).await;
 
@@ -994,9 +986,7 @@ async fn recover_orphan_shuts_down_a_leftover_daemon_via_its_api() {
 #[tokio::test]
 #[ignore]
 async fn recover_orphan_falls_back_to_signals_when_api_is_unreachable() {
-    let Some(bin) = test_kubo_bin() else {
-        return;
-    };
+    let bin = test_kubo_bin();
     let dir = tempfile::tempdir().unwrap();
     let (state_dir, _api_url, pid) = spawn_orphan(&bin, dir.path()).await;
 

@@ -54,14 +54,10 @@ fn site_fixture(label: &str) -> tempfile::TempDir {
     dir
 }
 
-fn kubo_bin() -> Option<PathBuf> {
-    match std::env::var("SWING_TEST_KUBO_BIN") {
-        Ok(bin) => Some(PathBuf::from(bin)),
-        Err(_) => {
-            eprintln!("skipping: SWING_TEST_KUBO_BIN not set");
-            None
-        }
-    }
+fn kubo_bin() -> PathBuf {
+    let bin = std::env::var_os("SWING_TEST_KUBO_BIN")
+        .expect("SWING_TEST_KUBO_BIN must point at a Kubo binary to run this ignored test");
+    PathBuf::from(bin)
 }
 
 async fn start_kubo(bin: &Path, repo: &Path) -> Daemon {
@@ -111,9 +107,7 @@ async fn only_version(ipfs: &IpfsClient, site_path: &str) -> (String, String) {
 #[tokio::test]
 #[ignore]
 async fn tricky_site_names_round_trip_through_real_mfs() {
-    let Some(bin) = kubo_bin() else {
-        return;
-    };
+    let bin = kubo_bin();
     let dir = tempfile::tempdir().unwrap();
     let repo = dir.path().join("kubo-repo");
     let daemon = start_kubo(&bin, &repo).await;
