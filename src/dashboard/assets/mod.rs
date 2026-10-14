@@ -92,6 +92,7 @@ const STATIC_ASSETS: &[StaticAsset] = &[
     asset!(JS, "desktop-system-settings.js"),
     asset!(JS, "desktop-fingerprint.js"),
     asset!(JS, "desktop-mirror-add.js"),
+    asset!(JS, "desktop-network.js"),
     asset!("image/svg+xml", "desktop-icons.svg"),
     asset!("image/svg+xml", "emoji.svg"),
     asset!("font/woff2", "fonts/pixelmplus12-regular.woff2"),
@@ -251,6 +252,34 @@ mod tests {
                 .unwrap();
             let resp = call(router(test_state()), req).await;
             assert_eq!(resp.status(), StatusCode::OK, "{module}");
+        }
+    }
+
+    #[test]
+    fn every_referenced_desktop_icon_is_in_the_sprite() {
+        let web = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("web");
+        let sprite = std::fs::read_to_string(web.join("desktop-icons.svg")).unwrap();
+        let mut ids = std::collections::BTreeSet::new();
+        for entry in std::fs::read_dir(&web).unwrap() {
+            let path = entry.unwrap().path();
+            let name = path.file_name().unwrap().to_string_lossy().into_owned();
+            if !(name == "index.html" || name.ends_with(".js")) {
+                continue;
+            }
+            let source = std::fs::read_to_string(&path).unwrap();
+            for part in source.split("icon-desk-").skip(1) {
+                let tail: String = part
+                    .chars()
+                    .take_while(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || *c == '-')
+                    .collect();
+                ids.insert(format!("icon-desk-{tail}"));
+            }
+        }
+        for state in ["", "-private", "-unknown", "-offline"] {
+            assert!(ids.contains(&format!("icon-desk-tray-network{state}")));
+        }
+        for id in ids {
+            assert!(sprite.contains(&format!("<symbol id=\"{id}\"")), "{id}");
         }
     }
 

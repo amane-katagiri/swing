@@ -610,6 +610,12 @@ button.desk-toolbtn:active {
   image-rendering: pixelated;
 }
 
+.desk-tray-network {
+  display: flex;
+  flex: none;
+  pointer-events: auto;
+}
+
 /* Win95 shows active/inactive via the titlebar, not a ring around the whole window. */
 #desk-window:focus-visible,
 .desk-dialog:focus-visible {

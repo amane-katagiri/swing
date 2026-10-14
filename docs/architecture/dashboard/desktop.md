@@ -24,6 +24,7 @@ Desktop 画面専用のモジュール（各モジュールは表で自分より
 | `desktop-settings.js` | 「コントロール パネル」の殻（`PAGES` を `desktop-dialog.js` に結び付ける、`DesktopSettings`） |
 | `desktop-fingerprint.js` | ドット絵にした絵文字のフィンガープリント（`deskFingerprint`）。[`desktop/mirror-add.md`](desktop/mirror-add.md#フィンガープリントのドット絵) |
 | `desktop-mirror-add.js` | 「ミラーに追加」ダイアログ（`DesktopMirrorAdd`）。[`desktop/mirror-add.md`](desktop/mirror-add.md) |
+| `desktop-network.js` | タスクバーのトレイのネットワークアイコン（`DesktopNetwork`）。[下記](#トレイのネットワークアイコン) |
 | `desktop.js` | 画面のロジック本体（デスクトップアイコンの選択・起動、リンク集ページへの書き込み、共通のクリック/フォーカス処理） |
 
 そのほかのファイル:
@@ -58,7 +59,7 @@ PixelMplus12（`web/fonts/`）を使う。フォントの読み込みが終わ�
 
 ### 装飾 vs 実機能
 
-装飾要素は `aria-hidden="true"` を持ち操作できない（ツールバー/メニューバーの「ボタン」「メニュー」扱いの項目だけホバー表示は効く）。例外として、`aria-hidden` の「マイ コンピュータ」「ごみ箱」アイコンもクリックで選択でき、ステータスバーの文言は読み込み状態に応じて `desktop.js` が書き換える。実際に押せる・操作できるのは次のみ:
+装飾要素は `aria-hidden="true"` を持ち操作できない（ツールバー/メニューバーの「ボタン」「メニュー」扱いの項目だけホバー表示は効く）。例外として、`aria-hidden` の「マイ コンピュータ」「ごみ箱」アイコンもクリックで選択でき、ステータスバーの文言は読み込み状態に応じて `desktop.js` が書き換える。トレイのネットワークアイコンは状態を表すので `aria-hidden` を持たないが、押せずフォーカスも受けない（[下記](#トレイのネットワークアイコン)）。実際に押せる・操作できるのは次のみ:
 
 | 要素 | 動作 |
 |---|---|
@@ -71,7 +72,22 @@ PixelMplus12（`web/fonts/`）を使う。フォントの読み込みが終わ�
 | デスクトップアイコン（4 個） | シングルクリックで選択（常に 1 つだけ）。「SWING Explorer」「コントロール パネル」はダブルクリック/Enter/Space で開ける。「マイ コンピュータ」「ごみ箱」は選択のみ |
 | マスコット・吹き出し | 絵の不透明な画素だけがドラッグで移動、クリックでせりふ（透明な画素のところは下の要素に届く）。吹き出しのリンク・「とじる」（[`mascot.md`](mascot.md)） |
 
-残りは全部装飾（Start ボタン、アドレスバー、ステータスバー、タスクバーの背景、トレイのアイコン+時計）。
+残りは全部装飾（Start ボタン、アドレスバー、ステータスバー、タスクバーの背景、トレイのネットワーク以外のアイコン+時計）。
+
+### トレイのネットワークアイコン
+
+タスクバーのトレイ（`.desk-tray`）には左からミラー・ネットワーク・音量のアイコンと時計が並ぶ。ミラーと音量は `aria-hidden` の飾りで、音量はミュートの見た目で固定。ネットワークのアイコン（`#desk-tray-network`）は、このノードに外から直接届くか（[`GET /api/network`](http-api/status.md#get-apinetwork) の `reachability`）を `desktop-network.js` が映す。
+
+| `reachability` | アイコン（`desktop-icons.svg`） | 見た目 | 文言（i18n のキー） |
+|---|---|---|---|
+| `public` | `icon-desk-tray-network` | 青緑とシアンの画面の 2 台のモニタ（x 0〜14・y 2〜13）。右端の 1 列は印が前のモニタから右へはみ出す分 | `networkPublic` |
+| `private` | `icon-desk-tray-network-private` | 同じモニタの右下に、前のモニタに重ねて黒い「!」入りの黄色い三角（9×9、x 7〜15、黒い縁取り付き） | `networkPrivate` |
+| `unknown`、ほかの値、取得の失敗 | `icon-desk-tray-network-unknown` | 画面が灰色（奥 `#808080`、手前 `#a0a0a0`）のモニタ | `networkUnknown` |
+| `offline` | `icon-desk-tray-network-offline` | 灰色のモニタの右下に、赤い ×（7×7、x 9〜15） | `networkOffline` |
+
+- **要素**: `<span role="img">` の中に `aria-hidden` の `<svg>` を置き、`span` の `aria-label` と `title`（ツールチップ）に、Settings 画面の「ネットワーク」パネルの状態の 1 行と同じ文言を入れる。押しても何も起きず、フォーカスも受けない。トレイ（`.desk-tray`）は `pointer-events: none` なので、ツールチップが出るよう `span` だけ `pointer-events: auto` に戻す。初めに取得するまでは `unknown` の見た目。
+- **取得の時機**: 更新の確認（[`notices.md#更新の確認`](notices.md#更新の確認)）の watcher の時機に相乗りする。watcher は確認を試みるたびに（呼び出しを始めなかった回を除く）`onChecked` に登録した関数を成否付きで呼ぶ。`/api/activity` の確認が通ったら `/api/network` を取り直し、通らなかったら取得せず `unknown` にする。このため、ログイン画面・セットアップ画面では呼ばず、止まっていそうな間は cookie を付けない確認が通るまで呼ばず、失敗が続く間は間隔が延びる。取り直すのは Desktop 画面を表示していてタブが前面にあるときだけ（裏のタブでの確認や他の画面では呼ばない）。Desktop 画面を表示したときは watcher が確認するのでそれに続いて取り直す。間隔が「確認しない」のときは watcher が確認しないので、Desktop 画面を表示するたびに 1 回だけ直接取得する。
+- **失敗**: 取得のどんな失敗（`swing up` が止まっている、`/api/network` の無い古い `swing up` の 404、502・503 など）でも `unknown` にする。遅れて返った古い応答は捨てる。
 
 ### ウィンドウ管理の状態
 
@@ -95,7 +111,7 @@ SWING Explorer ウィンドウの中身（`#desk-page-frame`）は、同一オ�
 
 ### Desktop 画面は丸ごと日本語固定
 
-`#view-desktop` の中で画面に見える文字列は、UI 表示言語の設定（`swing:lang`）に関わらず全部固定の日本語。ページ本文だけでなく、読み込み中/エラー/空状態の文面、ステータスバー、`title`・`aria-label` も含む（サイドナビのラベルだけは他画面と同じく i18n）。
+`#view-desktop` の中で画面に見える文字列は、UI 表示言語の設定（`swing:lang`）に関わらず全部固定の日本語。ページ本文だけでなく、読み込み中/エラー/空状態の文面、ステータスバー、`title`・`aria-label` も含む。ただしサイドナビのラベルと、トレイのネットワークアイコンの `title`・`aria-label` は、他画面と同じく UI 表示言語に従う（ツールチップは Desktop 画面の絵の外に出るので、訳しても見た目が崩れない）。トレイのアイコンは Settings 画面と同じ i18n のキーを引き、`span` の `lang` も UI 表示言語にして、言語を切り替えたら（`swing:langchange`）引き直す。
 
 ### 内部クラス（非安定）
 

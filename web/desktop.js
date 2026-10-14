@@ -8,6 +8,7 @@ import { tabAcrossEdge, focusableIn, isModalOpen, scheduleActiveSync } from './d
 import { createUpdateWatcher } from './desktop-updates.js';
 import { DesktopMascots } from './desktop-mascot.js';
 import { createBrowserNotifier } from './desktop-notify.js';
+import { DesktopNetwork } from './desktop-network.js';
 import { browserNotifyReady } from './notify-settings.js';
 
 const DESK_TEXT = {
@@ -426,6 +427,7 @@ export const DesktopView = {
     DesktopWindow.init();
     DesktopSettings.init({ updates: desktopUpdates });
     desktopUpdates.start();
+    DesktopNetwork.init({ updates: desktopUpdates });
     DesktopMascots.init({ updates: desktopUpdates });
     document.addEventListener('keydown', onDesktopKeydown, true);
     document.addEventListener('focusin', scheduleActiveSync);
@@ -443,6 +445,7 @@ export const DesktopView = {
     revealWindowWhenReady();
     DesktopMascots.onShow();
     DesktopSettings.boot();
+    DesktopNetwork.onShow();
     if (cache.sites) this.render();
     const loaded = cache.sites ? Promise.resolve() : this.load();
     loaded.then(() => desktopUpdates.checkNow());

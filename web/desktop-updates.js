@@ -131,6 +131,7 @@ function replicaNotice(add, published) {
 /* `announced` runs ahead of the persisted seen value so that notices nobody acknowledged come back after a reload. */
 export function createUpdateWatcher({ currentSites, reloadSites, isActive }) {
   const listeners = new Set();
+  const checkedListeners = new Set();
   const announced = { stored: readSeen('stored'), published: readSeen('published'), replica: readSeen('replica') };
   let settings = readNotifySettings();
   let timer = null;
@@ -141,14 +142,18 @@ export function createUpdateWatcher({ currentSites, reloadSites, isActive }) {
   let failures = 0;
   let unreachable = false;
 
-  function emit(event) {
-    for (const fn of listeners) {
+  function callEach(fns, arg) {
+    for (const fn of fns) {
       try {
-        fn(event);
+        fn(arg);
       } catch (err) {
         console.error(err);
       }
     }
+  }
+
+  function emit(event) {
+    callEach(listeners, event);
   }
 
   function persistSeen(kind, value) {
@@ -264,6 +269,7 @@ export function createUpdateWatcher({ currentSites, reloadSites, isActive }) {
   async function check() {
     if (intervalMs == null || inFlight || !isActive()) return;
     inFlight = true;
+    let ok = false;
     settings = readNotifySettings();
     try {
       if (unreachable && !(await dashboardAnswers())) {
@@ -276,6 +282,7 @@ export function createUpdateWatcher({ currentSites, reloadSites, isActive }) {
       await checkPublished(activity.latest_published_at);
       await checkReplicas(activity.latest_replica_report_at);
       failures = 0;
+      ok = true;
       if (failing) {
         failing = false;
         emit({ kind: 'recovered' });
@@ -289,6 +296,7 @@ export function createUpdateWatcher({ currentSites, reloadSites, isActive }) {
       }
     } finally {
       inFlight = false;
+      callEach(checkedListeners, ok);
     }
   }
 
@@ -337,6 +345,13 @@ export function createUpdateWatcher({ currentSites, reloadSites, isActive }) {
     },
     checkNow() {
       return check();
+    },
+    enabled() {
+      return intervalMs != null;
+    },
+    onChecked(fn) {
+      checkedListeners.add(fn);
+      return () => checkedListeners.delete(fn);
     },
     subscribe(fn) {
       listeners.add(fn);
