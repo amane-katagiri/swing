@@ -1,63 +1,158 @@
+use std::time::Instant;
+
 use super::*;
 
 #[test]
 fn srcset_candidates_are_each_checked() {
-    let report = html(
-        &["a.png", "b.png"],
-        "index.html",
-        r##"<img srcset="a.png 1x, b.png 2x,c.png 3x">
+    use LinkKind::*;
+    assert_html_cases(&[
+        (
+            "every candidate",
+            &["a.png", "b.png"],
+            r##"<img srcset="a.png 1x, b.png 2x,c.png 3x">
            <picture><source srcset="a.png, /d.png 100w"></picture>
            <img srcset="data:image/png;base64,AAA= 1x, b.png 2x">"##,
-        None,
-    );
-    assert_eq!(refs(&report, LinkKind::Broken), ["c.png", "/d.png"]);
-    assert_eq!(refs(&report, LinkKind::RootRelative), ["/d.png"]);
+            &[(Broken, &["c.png", "/d.png"]), (RootRelative, &["/d.png"])],
+        ),
+        (
+            "invalid candidates are dropped",
+            &["ok.png"],
+            r#"<img src="ok.png" srcset="/unused.png -1x, ok.png 1x, /twice.png 1x 2x, /mixed.png 100w 1x, /h.png 10h, /w.png 0w, /wh.png 10w 20h">"#,
+            &[(RootRelative, &["/wh.png"])],
+        ),
+        (
+            "units are lower case without a plus",
+            &["ok.png"],
+            r#"<img srcset="/plus.png +1x, /upper.png 2X, /wide.png 100W, /ok.png 3x, ok.png 1e1x">"#,
+            &[(RootRelative, &["/ok.png"])],
+        ),
+    ]);
 }
 
 #[test]
-fn style_attributes_and_elements_are_read_as_css() {
-    let report = html(
-        &["index.html"],
-        "index.html",
-        r##"<style>body { background: url("/bg.png") }</style>
+fn html_is_tokenized_like_a_browser() {
+    use LinkKind::*;
+    let short_comment =
+        |open: &str| format!("<script>{open}<script></script><img src=\"/after.png\">");
+    let (short, shorter) = (short_comment("<!-->"), short_comment("<!--->"));
+    assert_html_cases(&[
+        (
+            "style attributes and elements are read as css",
+            &["index.html"],
+            r##"<style>body { background: url("/bg.png") }</style>
            <div style="background: url(&quot;x.png&quot;)"></div>"##,
-        None,
-    );
-    assert_eq!(refs(&report, LinkKind::Broken), ["/bg.png", "x.png"]);
-}
-
-#[test]
-fn comments_and_raw_text_are_not_markup() {
-    let report = html(
-        &["index.html"],
-        "index.html",
-        r##"<!-- <a href="/commented">x</a> -->
+            &[(Broken, &["/bg.png", "x.png"])],
+        ),
+        (
+            "comments and raw text are not markup",
+            &["index.html"],
+            r##"<!-- <a href="/commented">x</a> -->
            <script>document.write('<a href="/in-script">x</a>');</script>
            <textarea><img src="/in-textarea.png"></textarea>
            <title><a href="/in-title"></title>
            <!--> <a href="kept.html">after an abrupt comment</a>"##,
-        None,
-    );
-    assert!(refs(&report, LinkKind::RootRelative).is_empty());
-    assert_eq!(refs(&report, LinkKind::Broken), ["kept.html"]);
-}
-
-#[test]
-fn attributes_quoted_unquoted_and_with_character_references() {
-    let report = html(
-        &["a&b.html", "q.html"],
-        "index.html",
-        "<a href=a&amp;b.html>1</a><a href='q.html?x=1&amp;y=2'>2</a>\
-         <a\nhref = \"/x&#47;y\">3</a><A HREF=missing.html>4</A>\
-         <a href=\"java&#x73;cript:alert(1)\">5</a><a href=\"mailto:a@example.com\">6</a>\
-         <a href=\"&#x2F;z\">7</a>",
-        None,
-    );
-    assert_eq!(refs(&report, LinkKind::RootRelative), ["/x/y", "/z"]);
-    assert_eq!(
-        refs(&report, LinkKind::Broken),
-        ["/x/y", "missing.html", "/z"]
-    );
+            &[(RootRelative, &[]), (Broken, &["kept.html"])],
+        ),
+        (
+            "attributes quoted, unquoted and with character references",
+            &["a&b.html", "q.html"],
+            "<a href=a&amp;b.html>1</a><a href='q.html?x=1&amp;y=2'>2</a>\
+             <a\nhref = \"/x&#47;y\">3</a><A HREF=missing.html>4</A>\
+             <a href=\"java&#x73;cript:alert(1)\">5</a><a href=\"mailto:a@example.com\">6</a>\
+             <a href=\"&#x2F;z\">7</a>",
+            &[
+                (RootRelative, &["/x/y", "/z"]),
+                (Broken, &["/x/y", "missing.html", "/z"]),
+            ],
+        ),
+        (
+            "an external base keeps root-relative references off the site",
+            &["index.html"],
+            r#"<base href="https://cdn.example/assets/"><img src="/logo.png"><a href="x.html">x</a>"#,
+            &[
+                (RootRelative, &[]),
+                (Broken, &[]),
+                (External, &["/logo.png"]),
+            ],
+        ),
+        (
+            "character references follow the attribute rules",
+            &["a&amp=b.html", "a&b.html", "\u{20ac}.html", "a&ampx.html"],
+            r#"<a href="a&amp=b.html">1</a><a href="a&AMP;b.html">2</a>
+           <a href="&#128;.html">3</a><a href="a&ampx.html">4</a>"#,
+            &[],
+        ),
+        (
+            "tabs and newlines inside a url are removed",
+            &["img.png"],
+            "<img src=\"im&#10;g.png\"><a href=\"java&#9;script:void(0)\">x</a><img src=\"im\ng.png\">",
+            &[],
+        ),
+        (
+            "a double-escaped script keeps inner tags as text",
+            &[],
+            "<script><!--\nconst s = \"<script></script><img src='/ghost.png'>\";\n//-->\n</script><img src=\"/after.png\">",
+            &[(RootRelative, &["/after.png"])],
+        ),
+        (
+            "quoted attributes on end tags are consumed",
+            &[],
+            r#"<div></div data-x="><img src='/ghost.png'>"><style></style data-y="><img src='/g2.png'>">"#,
+            &[],
+        ),
+        (
+            "comments closed with a bang end there",
+            &[],
+            r#"<!-- x --!><img src="/missing.png"><!----><img src="/b.png">"#,
+            &[(RootRelative, &["/missing.png", "/b.png"])],
+        ),
+        (
+            "markup inside templates never stops a publish",
+            &[],
+            r#"<template><img src="{{src}}"><template><a href="/x/${u}">x</a></template>
+           <div style="background:url(/t.png)"></div><style>a{background:url(/s.png)}</style>
+           <base href="https://cdn.example/"></template><img src="/after.png">"#,
+            &[(RootRelative, &["/after.png"]), (Broken, &["/after.png"])],
+        ),
+        (
+            "only css-typed style elements are read",
+            &[],
+            r#"<style type="text/x-template">a{background:url(/tpl.png)}</style>
+           <style type="TEXT/CSS">a{background:url(/css.png)}</style>
+           <style type="">a{background:url(/empty.png)}</style>"#,
+            &[(RootRelative, &["/css.png", "/empty.png"])],
+        ),
+        (
+            "an unfinished attribute value is dropped",
+            &[],
+            r#"<img src="/ok.png"><a href="/cut"#,
+            &[(RootRelative, &["/ok.png"])],
+        ),
+        (
+            "an unfinished tag is dropped",
+            &[],
+            r#"<a href="/x.png">x</a><img src="/y.png"#,
+            &[(RootRelative, &["/x.png"])],
+        ),
+        (
+            "cdata and plaintext are text",
+            &[],
+            r#"<svg><![CDATA[ a > b <img src="/in-cdata.png"> ]]></svg><plaintext><img src="/in-plaintext.png">"#,
+            &[],
+        ),
+        (
+            "<!--> inside a script leaves the escaped state",
+            &[],
+            &short,
+            &[(RootRelative, &["/after.png"])],
+        ),
+        (
+            "<!---> inside a script leaves the escaped state",
+            &[],
+            &shorter,
+            &[(RootRelative, &["/after.png"])],
+        ),
+    ]);
 }
 
 #[test]
@@ -149,31 +244,6 @@ fn own_site_links_are_reported_except_canonical_and_meta() {
 }
 
 #[test]
-fn an_external_base_keeps_root_relative_references_off_the_site() {
-    let report = html(
-        &["index.html"],
-        "index.html",
-        r#"<base href="https://cdn.example/assets/"><img src="/logo.png"><a href="x.html">x</a>"#,
-        None,
-    );
-    assert!(refs(&report, LinkKind::RootRelative).is_empty());
-    assert!(refs(&report, LinkKind::Broken).is_empty());
-    assert_eq!(refs(&report, LinkKind::External), ["/logo.png"]);
-}
-
-#[test]
-fn character_references_follow_the_attribute_rules() {
-    let report = html(
-        &["a&amp=b.html", "a&b.html", "\u{20ac}.html", "a&ampx.html"],
-        "index.html",
-        r#"<a href="a&amp=b.html">1</a><a href="a&AMP;b.html">2</a>
-           <a href="&#128;.html">3</a><a href="a&ampx.html">4</a>"#,
-        None,
-    );
-    assert_eq!(report.total(), 0, "{report:?}");
-}
-
-#[test]
 fn unknown_character_references_never_stop_a_publish() {
     let report = html(
         &[],
@@ -191,64 +261,6 @@ fn unknown_character_references_never_stop_a_publish() {
 }
 
 #[test]
-fn tabs_and_newlines_inside_a_url_are_removed() {
-    let report = html(
-        &["img.png"],
-        "index.html",
-        "<img src=\"im&#10;g.png\"><a href=\"java&#9;script:void(0)\">x</a><img src=\"im\ng.png\">",
-        None,
-    );
-    assert_eq!(report.total(), 0, "{report:?}");
-}
-
-#[test]
-fn a_double_escaped_script_keeps_inner_tags_as_text() {
-    let report = html(
-        &[],
-        "index.html",
-        "<script><!--\nconst s = \"<script></script><img src='/ghost.png'>\";\n//-->\n</script><img src=\"/after.png\">",
-        None,
-    );
-    assert_eq!(refs(&report, LinkKind::RootRelative), ["/after.png"]);
-}
-
-#[test]
-fn quoted_attributes_on_end_tags_are_consumed() {
-    let report = html(
-        &[],
-        "index.html",
-        r#"<div></div data-x="><img src='/ghost.png'>"><style></style data-y="><img src='/g2.png'>">"#,
-        None,
-    );
-    assert_eq!(report.total(), 0, "{report:?}");
-}
-
-#[test]
-fn comments_closed_with_a_bang_end_there() {
-    let report = html(
-        &[],
-        "index.html",
-        r#"<!-- x --!><img src="/missing.png"><!----><img src="/b.png">"#,
-        None,
-    );
-    assert_eq!(
-        refs(&report, LinkKind::RootRelative),
-        ["/missing.png", "/b.png"]
-    );
-}
-
-#[test]
-fn invalid_srcset_candidates_are_dropped() {
-    let report = html(
-        &["ok.png"],
-        "index.html",
-        r#"<img src="ok.png" srcset="/unused.png -1x, ok.png 1x, /twice.png 1x 2x, /mixed.png 100w 1x, /h.png 10h, /w.png 0w, /wh.png 10w 20h">"#,
-        None,
-    );
-    assert_eq!(refs(&report, LinkKind::RootRelative), ["/wh.png"]);
-}
-
-#[test]
 fn many_distinct_attributes_scan_in_linear_time() {
     let mut text = String::from("<div");
     let mut i = 0;
@@ -257,89 +269,12 @@ fn many_distinct_attributes_scan_in_linear_time() {
         i += 1;
     }
     text.push_str("><img src=\"/x.png\">");
+    let started = Instant::now();
     let report = html(&[], "index.html", &text, None);
-    assert_eq!(refs(&report, LinkKind::RootRelative), ["/x.png"]);
-}
-
-#[test]
-fn markup_inside_templates_never_stops_a_publish() {
-    let report = html(
-        &[],
-        "index.html",
-        r#"<template><img src="{{src}}"><template><a href="/x/${u}">x</a></template>
-           <div style="background:url(/t.png)"></div><style>a{background:url(/s.png)}</style>
-           <base href="https://cdn.example/"></template><img src="/after.png">"#,
-        None,
-    );
-    assert_eq!(refs(&report, LinkKind::RootRelative), ["/after.png"]);
-    assert_eq!(refs(&report, LinkKind::Broken), ["/after.png"]);
-}
-
-#[test]
-fn only_css_typed_style_elements_are_read() {
-    let report = html(
-        &[],
-        "index.html",
-        r#"<style type="text/x-template">a{background:url(/tpl.png)}</style>
-           <style type="TEXT/CSS">a{background:url(/css.png)}</style>
-           <style type="">a{background:url(/empty.png)}</style>"#,
-        None,
-    );
-    assert_eq!(
-        refs(&report, LinkKind::RootRelative),
-        ["/css.png", "/empty.png"]
-    );
-}
-
-#[test]
-fn unfinished_tags_cdata_and_plaintext_follow_the_browser() {
-    let report = html(
-        &[],
-        "index.html",
-        r#"<img src="/ok.png"><a href="/cut"#,
-        None,
-    );
-    assert_eq!(refs(&report, LinkKind::RootRelative), ["/ok.png"]);
-    let report = html(
-        &[],
-        "index.html",
-        r#"<a href="/x.png">x</a><img src="/y.png"#,
-        None,
+    assert!(
+        started.elapsed() < LINEAR_SCAN_BUDGET,
+        "{:?}",
+        started.elapsed()
     );
     assert_eq!(refs(&report, LinkKind::RootRelative), ["/x.png"]);
-    let report = html(
-        &[],
-        "index.html",
-        r#"<svg><![CDATA[ a > b <img src="/in-cdata.png"> ]]></svg><plaintext><img src="/in-plaintext.png">"#,
-        None,
-    );
-    assert_eq!(report.total(), 0, "{report:?}");
-}
-
-#[test]
-fn short_comments_inside_a_script_leave_the_escaped_state() {
-    for open in ["<!-->", "<!--->"] {
-        let report = html(
-            &[],
-            "index.html",
-            &format!("<script>{open}<script></script><img src=\"/after.png\">"),
-            None,
-        );
-        assert_eq!(
-            refs(&report, LinkKind::RootRelative),
-            ["/after.png"],
-            "{open}"
-        );
-    }
-}
-
-#[test]
-fn srcset_units_are_lower_case_without_a_plus() {
-    let report = html(
-        &["ok.png"],
-        "index.html",
-        r#"<img srcset="/plus.png +1x, /upper.png 2X, /wide.png 100W, /ok.png 3x, ok.png 1e1x">"#,
-        None,
-    );
-    assert_eq!(refs(&report, LinkKind::RootRelative), ["/ok.png"]);
 }

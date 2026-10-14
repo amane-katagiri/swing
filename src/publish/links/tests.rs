@@ -1,4 +1,8 @@
+use std::time::Duration;
+
 use super::*;
+
+const LINEAR_SCAN_BUDGET: Duration = Duration::from_secs(15);
 
 mod css;
 mod html;
@@ -37,17 +41,35 @@ fn refs(report: &LinkReport, kind: LinkKind) -> Vec<&str> {
         .collect()
 }
 
+type Expect<'a> = &'a [(LinkKind, &'a [&'a str])];
+
+fn assert_finds(case: &str, report: &LinkReport, expect: Expect) {
+    if expect.is_empty() {
+        assert_eq!(report.total(), 0, "{case}: {report:?}");
+    }
+    for (kind, want) in expect {
+        assert_eq!(refs(report, *kind), *want, "{case}: {kind:?}");
+    }
+}
+
+type HtmlCase<'a> = (&'a str, &'a [&'a str], &'a str, Expect<'a>);
+
+fn assert_html_cases(cases: &[HtmlCase]) {
+    for (case, paths, text, expect) in cases {
+        assert_finds(case, &html(paths, "index.html", text, None), expect);
+    }
+}
+
 #[test]
 fn relative_references_resolve_from_the_referring_file() {
-    let paths = [
-        "index.html",
-        "blog/post.html",
-        "blog/img/a.png",
-        "css/site.css",
-        "about/index.html",
-    ];
     let report = html(
-        &paths,
+        &[
+            "index.html",
+            "blog/post.html",
+            "blog/img/a.png",
+            "css/site.css",
+            "about/index.html",
+        ],
         "blog/post.html",
         r##"<a href="../index.html">home</a>
            <img src="img/a.png"><img src="./img/a.png?v=1#x">
@@ -58,11 +80,67 @@ fn relative_references_resolve_from_the_referring_file() {
            <a href="./">dir</a><a href="post.html/">not a dir</a>"##,
         None,
     );
-    assert_eq!(
-        refs(&report, LinkKind::Broken),
-        ["img/missing.png", "../../outside.html", "post.html/"]
+    assert_finds(
+        "relative",
+        &report,
+        &[
+            (
+                LinkKind::Broken,
+                &["img/missing.png", "../../outside.html", "post.html/"],
+            ),
+            (LinkKind::RootRelative, &[]),
+        ],
     );
-    assert!(refs(&report, LinkKind::RootRelative).is_empty());
+}
+
+#[test]
+fn references_resolve_to_site_paths() {
+    use LinkKind::*;
+    assert_html_cases(&[
+        (
+            "percent-encoding is decoded and case matters",
+            &["a b.html", "日本.html", "Image.PNG"],
+            r##"<a href="a%20b.html">1</a><a href="%E6%97%A5%E6%9C%AC.html">2</a>
+           <img src="image.png"><img src="Image.PNG"><a href="a%2Fb.html">3</a>
+           <a href="%2e%2e/x">4</a>"##,
+            &[(Broken, &["image.png", "a%2Fb.html", "%2e%2e/x"])],
+        ),
+        (
+            "schemes, fragments and empty references are skipped",
+            &[],
+            r##"<a href="mailto:x@example.com"></a><a href="tel:123"></a><a href="#x"></a>
+           <a href=""></a><img src="data:image/gif;base64,R0"><a href="javascript:void(0)"></a>
+           <img src="blob:abc">"##,
+            &[],
+        ),
+        (
+            "an encoded slash does not match a nested file",
+            &["a/b.html"],
+            r#"<a href="a%2Fb.html">x</a><a href="a/b.html">y</a>"#,
+            &[(Broken, &["a%2Fb.html"])],
+        ),
+        (
+            "backslashes are read as slashes",
+            &["images/a.png"],
+            r#"<img src="images\a.png"><img src="\\cdn.example\x.png"><a href="sub\missing.html">x</a>"#,
+            &[
+                (Broken, &["sub\\missing.html"]),
+                (External, &["\\\\cdn.example\\x.png"]),
+            ],
+        ),
+        (
+            "empty segments in the middle are skipped",
+            &["images/a.png"],
+            r#"<img src="images//a.png"><img src="images///b.png">"#,
+            &[(Broken, &["images///b.png"])],
+        ),
+        (
+            "control characters are shown escaped",
+            &[],
+            "<img src=\"/a&#27;b.png\"><img src=\"/c&#11;d.png\">",
+            &[(RootRelative, &["/a\\u{1b}b.png", "/c\\u{b}d.png"])],
+        ),
+    ]);
 }
 
 #[test]
@@ -80,35 +158,6 @@ fn root_relative_references_are_flagged_and_resolved_from_the_root() {
     );
     assert_eq!(refs(&report, LinkKind::Broken), ["/js/app.js"]);
     assert!(report.blocking() > 0);
-}
-
-#[test]
-fn percent_encoding_is_decoded_and_case_matters() {
-    let report = html(
-        &["a b.html", "日本.html", "Image.PNG"],
-        "index.html",
-        r##"<a href="a%20b.html">1</a><a href="%E6%97%A5%E6%9C%AC.html">2</a>
-           <img src="image.png"><img src="Image.PNG"><a href="a%2Fb.html">3</a>
-           <a href="%2e%2e/x">4</a>"##,
-        None,
-    );
-    assert_eq!(
-        refs(&report, LinkKind::Broken),
-        ["image.png", "a%2Fb.html", "%2e%2e/x"]
-    );
-}
-
-#[test]
-fn schemes_fragments_and_empty_references_are_skipped() {
-    let report = html(
-        &[],
-        "index.html",
-        r##"<a href="mailto:x@example.com"></a><a href="tel:123"></a><a href="#x"></a>
-           <a href=""></a><img src="data:image/gif;base64,R0"><a href="javascript:void(0)"></a>
-           <img src="blob:abc">"##,
-        None,
-    );
-    assert_eq!(report.total(), 0);
 }
 
 #[test]
@@ -255,17 +304,6 @@ fn absolute_host_strips_userinfo_ports_and_case() {
 }
 
 #[test]
-fn an_encoded_slash_does_not_match_a_nested_file() {
-    let report = html(
-        &["a/b.html"],
-        "index.html",
-        r#"<a href="a%2Fb.html">x</a><a href="a/b.html">y</a>"#,
-        None,
-    );
-    assert_eq!(refs(&report, LinkKind::Broken), ["a%2Fb.html"]);
-}
-
-#[test]
 fn long_references_are_compared_before_shortening() {
     let a = format!("{}1.png", "a".repeat(MAX_SHOWN));
     let b = format!("{}2.png", "a".repeat(MAX_SHOWN));
@@ -278,32 +316,6 @@ fn long_references_are_compared_before_shortening() {
     let broken = report.of(LinkKind::Broken);
     assert_eq!(broken.len(), 2);
     assert!(broken[0].reference.ends_with('\u{2026}'));
-}
-
-#[test]
-fn backslashes_are_read_as_slashes() {
-    let report = html(
-        &["images/a.png"],
-        "index.html",
-        r#"<img src="images\a.png"><img src="\\cdn.example\x.png"><a href="sub\missing.html">x</a>"#,
-        None,
-    );
-    assert_eq!(refs(&report, LinkKind::Broken), ["sub\\missing.html"]);
-    assert_eq!(
-        refs(&report, LinkKind::External),
-        ["\\\\cdn.example\\x.png"]
-    );
-}
-
-#[test]
-fn empty_segments_in_the_middle_are_skipped() {
-    let report = html(
-        &["images/a.png"],
-        "index.html",
-        r#"<img src="images//a.png"><img src="images///b.png">"#,
-        None,
-    );
-    assert_eq!(refs(&report, LinkKind::Broken), ["images///b.png"]);
 }
 
 #[test]
@@ -337,20 +349,6 @@ fn external_references_are_grouped_across_files() {
             &"    a.html and 2 other files: https://cdn.example/a.css (loads from another host)"
                 .to_string()
         )
-    );
-}
-
-#[test]
-fn control_characters_are_shown_escaped() {
-    let report = html(
-        &[],
-        "index.html",
-        "<img src=\"/a&#27;b.png\"><img src=\"/c&#11;d.png\">",
-        None,
-    );
-    assert_eq!(
-        refs(&report, LinkKind::RootRelative),
-        ["/a\\u{1b}b.png", "/c\\u{b}d.png"]
     );
 }
 
