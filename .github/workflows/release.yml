@@ -51,6 +51,16 @@ jobs:
           cargo clippy --workspace --all-targets -- -D warnings
           cargo test --workspace
 
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        if: matrix.check
+        with:
+          node-version: 24
+
+      - name: Dashboard JS tests
+        if: matrix.check
+        shell: bash
+        run: node --test 'web/tests/*.test.mjs'
+
       - name: Install cargo-zigbuild
         if: matrix.zig
         run: |

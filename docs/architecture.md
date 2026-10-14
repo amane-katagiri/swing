@@ -27,7 +27,7 @@
 | [`architecture/release.md`](architecture/release.md) | ビルドとリリース（手順のスクリプトを含む）、macOS・Homebrew・Windows の動作確認の CI |
 | [`architecture/install-sh.md`](architecture/install-sh.md) | Linux 向けのインストールスクリプト（`packaging/linux/install.sh`）: 入れる物と場所、更新、アンインストール、テスト |
 | [`architecture/homebrew.md`](architecture/homebrew.md) | macOS 向けの Homebrew の formula（`packaging/homebrew/`）: 入れる場所、`brew upgrade` とサービス、tap への公開 |
-| [`architecture/testing.md`](architecture/testing.md) | ユニットテストの置き方、ローカルの Kubo・relay を使う統合テストの動かし方 |
+| [`architecture/testing.md`](architecture/testing.md) | ユニットテストの置き方、ダッシュボードの JS のテスト、ローカルの Kubo・relay を使う統合テストの動かし方 |
 | [`architecture/installer-windows.md`](architecture/installer-windows.md) | Windows のインストーラー（Inno Setup、`packaging/windows/`）: 中身、インストール・上書き・アンインストールの動作、その確認の CI |
 
 ## 構成要素

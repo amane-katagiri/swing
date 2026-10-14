@@ -73,7 +73,7 @@ function saveLastPublish(data) {
   storage.set('swing:publish:last', JSON.stringify(data));
 }
 
-function computeRelativePath(file) {
+export function computeRelativePath(file) {
   const rel = file.webkitRelativePath;
   if (!rel) return file.name;
   const idx = rel.indexOf('/');
@@ -557,12 +557,12 @@ async function loadPreviousFiles(site) {
   return apiFetch(`/api/publish/previous-files?site=${encodeURIComponent(site)}`);
 }
 
-function findNewFiles(previous, files) {
+export function findNewFiles(previous, files) {
   const known = new Set(previous.files);
   return files.map(computeRelativePath).filter((path) => !known.has(path));
 }
 
-function groupByFolder(paths) {
+export function groupByFolder(paths) {
   const byFolder = new Map();
   for (const path of paths) {
     const cut = path.lastIndexOf('/');

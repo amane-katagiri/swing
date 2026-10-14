@@ -50,7 +50,7 @@ GitHub Actions のワークフロー（`macos-check`・`windows-check`・`window
 ## コーディング規則
 
 - コメントは原則書かない。書くなら「自然な実装を避けた理由」を 1 行だけ。
-- `cargo fmt --all` / `cargo clippy --workspace --all-targets -- -D warnings` / `cargo test --workspace` を通す。
+- `cargo fmt --all` / `cargo clippy --workspace --all-targets -- -D warnings` / `cargo test --workspace` / `node --test 'web/tests/*.test.mjs'`（ダッシュボードの JS のテスト。Node.js 22 以上、npm の依存なし）を通す。
 - Windows 向けのコード（`#[cfg(windows)]` など）に触れたら `cargo xwin clippy --workspace --target x86_64-pc-windows-msvc --all-targets -- -D warnings` も通す。Windows の実行ファイルは `cargo xwin build --release --workspace --target x86_64-pc-windows-msvc` で作る。素の `cargo check --target x86_64-pc-windows-msvc` は `ring` の C コンパイルで止まるので使わない。
 - テストで公開 relay や公開 IPFS に接続しない。統合テストはローカルの Kubo / relay に限定し `#[ignore]` にする。
 - 環境変数は `SWING_` 接頭辞で統一する。

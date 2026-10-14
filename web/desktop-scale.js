@@ -20,10 +20,13 @@ function zoomValue(z) {
 }
 
 /* The epsilon absorbs ratios such as 1.9999999 that some browsers report at 200%. */
+export function snapScale(ratio) {
+  const whole = Math.max(1, Math.floor(ratio + 1e-6));
+  return { snapped: whole, scale: whole / ratio };
+}
+
 function applyScale() {
-  const ratio = window.devicePixelRatio || 1;
-  snapped = Math.max(1, Math.floor(ratio + 1e-6));
-  scale = snapped / ratio;
+  ({ snapped, scale } = snapScale(window.devicePixelRatio || 1));
   view.style.zoom = zoomValue(scale);
   scaleFrame();
   alignOrigins();

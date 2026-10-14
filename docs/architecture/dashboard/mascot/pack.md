@@ -12,7 +12,7 @@
 
 - どれもログインが要る（[`security.md#ガード`](../security.md#ガード)）。ほかの `{id}`・`{file}` の組み合わせは `404`。
 - `ui = true` のときだけ、`AppState::new` が `mascots::MascotRegistry::load` で起動時に 1 回読み、マニフェスト・スプライトのバイト列と `index.json` の本文をメモリに持つ（反映の条件は [`../../dashboard.md#設定dashboard`](../../dashboard.md#設定dashboard)）。
-- 同梱パック（`web/mascots/<id>/`）はバイナリに埋め込んであり、常に読み込める。
+- 同梱パック（`web/mascots/<id>/`）はバイナリに埋め込んであり、常に読み込める。同梱パックがフロントエンドの検証を通り、コマ番号がシートに収まることは JS のテスト（[`../../testing.md`](../../testing.md)）で確かめる。
 - `mascots/mod.rs` が読み込みと配信、`mascots/nofollow.rs` がリンクを辿らない open と上限付きの読み込み（`read_limited`）、`mascots/image.rs` がスプライトのヘッダの検証（`check_sprite`）を持つ。
 
 ### `mascots_dir` の読み込み

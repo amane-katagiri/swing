@@ -51,7 +51,7 @@ function siteHref(site) {
   return site.gateway_url || site.url || null;
 }
 
-function collectNotices(data, since) {
+export function collectNotices(data, since) {
   const notices = [];
   for (const { acct, site } of storedSites(data)) {
     const href = siteHref(site);
@@ -91,7 +91,7 @@ function readReporterBook() {
 }
 
 /* Each reporter keeps the report cursor at which it first appeared, so that additions announced but never acknowledged come back after a reload. */
-function diffReporters(data, book, since, latest) {
+export function diffReporters(data, book, since, latest) {
   const author = (data.authors || [])[0];
   const next = {};
   const added = [];

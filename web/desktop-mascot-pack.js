@@ -98,7 +98,7 @@ function normalizeLines(spec) {
   return lines;
 }
 
-function normalizeManifest(m) {
+export function normalizeManifest(m) {
   if (!isObject(m)) fail('manifest must be an object');
   if (m.format !== 1) fail(`unsupported format ${JSON.stringify(m.format)}`);
   if (typeof m.sprite !== 'string' || m.sprite === '') fail('sprite must be a file name');

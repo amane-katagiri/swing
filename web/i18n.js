@@ -1,6 +1,6 @@
 import { storage } from './storage.js';
 
-const MESSAGES = {
+export const MESSAGES = {
   en: {
     unknownError: 'Unknown error.',
     unreachable: 'Could not reach the agent.',

@@ -87,3 +87,46 @@ relay から受け取ったイベントを手元でもう一度絞る処理（`b
 ## 追記: mode の設定のエラー文
 
 設定の編集で mode の設定（`policy.nip05` など）に不正な値を入れると、エラー文にキー名が出なかった（ほかの型は `<key>: invalid ...` の形で出す）。`<key>: invalid mode: ...` の形に揃えた。
+
+## 追記: ダッシュボードの JS のテスト
+
+todo に残していた JS のテストを入れた。
+
+### 作ったもの
+
+- Node.js の組み込みのテストランナー（`node --test 'web/tests/*.test.mjs'`）と `node:assert/strict` だけを使い、npm の依存・`package.json`・バンドラは入れない。ファイルを `.mjs` にしたので `"type": "module"` も要らない。ディレクトリを渡す書き方は Node.js 22 で動かないので、コマンドは glob を渡す形にした。
+- テストは `web/tests/` に置く。ダッシュボードの配信物は `src/dashboard/assets/mod.rs` の明示的な一覧なので、テストは配信も埋め込みもされない。
+- `web/` のモジュールは本番のまま読み込む。読み込み時に `localStorage`・`document`・`navigator` に触るものがあるので、各テストが最初に読む `web/tests/setup.mjs` に最小限の代わりを置いた（`TZ` も `UTC` に固定）。
+- 本番の JS の変更は、テストから呼ぶための `export` の追加（`normalizeManifest`・`MESSAGES`・`collectNotices`・`diffReporters`・`computeRelativePath`・`findNewFiles`・`groupByFolder`）と、`desktop-scale.js` の倍率の計算を `snapScale` に切り出したことだけ。挙動は変えていない。
+- 対象: 同梱マスコットのマニフェスト（`normalizeManifest` を通ること、コマ番号が PNG の `IHDR` から読んだシートに収まること、せりふの差し込み）と `normalizeManifest` の検証規則の境目、i18n（キー集合・`{var}`・`t()` のリテラルとキーの対応表）、`desktop-updates.js`・`util.js`・`desktop-mascot-behavior.js`（`random` と時刻を固定して状態の移り変わりを見る）・`publish.js` の相対パス・`snapScale`・`fingerprintIds`。
+- CI: `release` ワークフローの `Lint and test` の後に、`actions/setup-node`（Node.js 24）と JS のテストの手順を足した（`check` の付いた 3 つのターゲット）。
+
+### 不正な Unicode の判定を JS と Rust で照らす
+
+`web/tests/unsafe-unicode.json` を共有のテストベクタにし、JS のテストと `format.rs` のテストの両方が読む。境目のコードポイントごとに「消す・空白にする・残す」を書き、片方の集合だけを変えるとどちらかが落ちる。
+
+照らしてみると次が食い違っていた。どちらも表示を崩す・隠すものではないので本番の挙動は変えず、ベクタの該当項目に `js`・`rust`・`difference` を書いて、それぞれの今の挙動で照らす。揃えるかどうかは todo に回した。
+
+- U+2028・U+2029: JS は制御文字として空白にし、Rust は `is_unsafe_char` で消す（`char::is_control` に含まれないため）。
+- 制御文字の連なり: JS は空白 1 つにまとめ、Rust は 1 文字ずつ空白にする。
+- trim の順: JS は制御文字を空白にした直後に trim し、その後で不正な文字を消し、切り詰める。Rust は全部の後で trim する。`"‮ a"` は JS で先頭に空白が残る。
+- 切り詰めの長さ: JS は UTF-16 の単位で数え、Rust はコードポイントで数える。
+
+最後のものは JS で絵文字などのサロゲートペアを割り、孤立したサロゲートを出す不具合になる。`util.test.mjs` に `skip: 'bug: ...'` のテストとして残した（共有のベクタは serde_json が孤立したサロゲートを読めないので入れない）。
+
+### 確かめたこと
+
+テストが本当に落ちることを、壊してから戻して確かめた: 同梱パックのコマ番号をシートの外にする・`fps` を 0 にする・`normalizeManifest` の `fps` の上限の判定を消す・せりふに差し込めない `{title}` を入れる、`ja` のキーを 1 つ消す・`ja` の `{var}` を変える・`t()` のリテラル（三項演算子の枝を含む）とキーの対応表の値を存在しないキーにする、`util.js` の正規表現から U+061C を外す・範囲を 1 つ縮める・ベクタの期待値を変える、`is_unsafe_char` から U+00AD を外す。どれも該当するテストだけが落ちた。
+
+### 決めたこと
+
+- テストに要る関数は本番のモジュールから `export` する。テスト専用の別ファイルに写すと本番とずれるため。
+- DOM を組み立てるコード（`graph.js` の配置・ウィンドウ・ダイアログ）はテストしない。
+- `desktop-fingerprint.js` はフィンガープリントを計算しない（ID はサーバから来る）ので、`docs/fingerprint-spec.md` のテストベクタとは照らさない。
+
+### 検証
+
+- `node --test 'web/tests/*.test.mjs'`（Node.js 22 と 26 で 63 本、1 本は不具合の skip）
+- `cargo fmt --all`
+- `cargo clippy --workspace --all-targets -- -D warnings`
+- `cargo test --workspace`（872 passed、23 ignored）

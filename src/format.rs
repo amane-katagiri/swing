@@ -175,4 +175,43 @@ mod tests {
     fn sanitize_display_text_truncates_after_sanitizing() {
         assert_eq!(sanitize_display_text(" a\u{202e}b\nc d", 4), "ab \u{2026}");
     }
+
+    fn expected(entry: &serde_json::Value) -> &str {
+        entry
+            .get("rust")
+            .or_else(|| entry.get("want"))
+            .and_then(|v| v.as_str())
+            .unwrap()
+    }
+
+    #[test]
+    fn sanitizing_matches_the_vectors_shared_with_the_dashboard() {
+        let path =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("web/tests/unsafe-unicode.json");
+        let vectors: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+        for entry in vectors["chars"].as_array().unwrap() {
+            let cp = entry["cp"].as_str().unwrap();
+            let c = char::from_u32(u32::from_str_radix(cp, 16).unwrap()).unwrap();
+            let out = sanitize_display_text(&format!("a{c}b"), usize::MAX);
+            let got = if out == format!("a{c}b") {
+                "kept"
+            } else if out == "ab" {
+                "removed"
+            } else if out == "a b" {
+                "space"
+            } else {
+                panic!("U+{cp}: unexpected {out:?}");
+            };
+            assert_eq!(got, expected(entry), "U+{cp}");
+        }
+        for entry in vectors["texts"].as_array().unwrap() {
+            let name = entry["name"].as_str().unwrap();
+            let max = entry
+                .get("max")
+                .map_or(usize::MAX, |m| m.as_u64().unwrap() as usize);
+            let got = sanitize_display_text(entry["input"].as_str().unwrap(), max);
+            assert_eq!(got, expected(entry), "{name}");
+        }
+    }
 }

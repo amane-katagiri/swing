@@ -9,7 +9,7 @@ Desktop 画面専用のモジュール（各モジュールは表で自分より
 | ファイル | 役割 |
 |---|---|
 | `desktop-focus.js` | ウィンドウ/ダイアログの登録（`registerFrame`）とタイトルバーのアクティブ表示の同期（`scheduleActiveSync`）、開いているモーダルの判定（`isModalOpen`）、Tab の折り返し（`tabAcrossEdge`）、フォーカスを失ったときの戻し先の補助 |
-| `desktop-scale.js` | 表示倍率の整数倍への補正と左上のデバイスピクセルへの位置合わせ（`initDeskScale`）、ビューポート座標から `#view-desktop` 内の座標への換算（`toDeskPx`）、リンク集ページ（iframe）の中の座標からトップの文書のビューポート座標への換算（`frameToViewport`） |
+| `desktop-scale.js` | 表示倍率の整数倍への補正と左上のデバイスピクセルへの位置合わせ（`initDeskScale`。倍率の計算は `snapScale`）、ビューポート座標から `#view-desktop` 内の座標への換算（`toDeskPx`）、リンク集ページ（iframe）の中の座標からトップの文書のビューポート座標への換算（`frameToViewport`） |
 | `desktop-drag.js` | ウィンドウ/ダイアログのドラッグ・リサイズで共有するポインタ操作と座標のクランプ |
 | `desktop-combobox.js` | Win95 風コンボボックス（`createCombobox`）。囲むウィンドウのタイトルバーを押したときにも一覧を閉じる |
 | `desktop-wallpaper-image.js` | 壁紙の色・画像の量子化とダウンスケール（ファイルの読み込み・canvas への描画を含む） |
@@ -50,7 +50,7 @@ PixelMplus12（`web/fonts/`）を使う。フォントの読み込みが終わ�
 
 `#view-desktop` の 1 CSS px が常に整数個のデバイスピクセルになるよう、`desktop-scale.js` が `#view-desktop` の CSS `zoom` を決める。
 
-- 整数倍率 `n = max(1, floor(devicePixelRatio))` に対して `zoom = n / devicePixelRatio`。125%・150% は 1 倍、200%〜299% は 2 倍で描く（100% 未満も 1 倍）。ブラウザのズームと OS の表示スケールのどちらにも効く。
+- 整数倍率 `n = max(1, floor(devicePixelRatio + 1e-6))`（200% を 1.9999999 と報告するブラウザがあるため）に対して `zoom = n / devicePixelRatio`。125%・150% は 1 倍、200%〜299% は 2 倍で描く（100% 未満も 1 倍）。ブラウザのズームと OS の表示スケールのどちらにも効く。
 - リンク集ページ（iframe）: 中の `devicePixelRatio` が整数倍率で、中の文書の高さ（`documentElement.clientHeight`）が `innerHeight` から縮んでいなければ何もしない。どちらかが崩れていれば、iframe 要素に `zoom = 1 / 補正値` をかけて親の `zoom` を打ち消し、iframe の `<html>` に同じ補正値の `zoom` をかける。
 - `#view-desktop` と iframe の左上がデバイスピクセルの境目に来るよう、両方の `left`/`top` を 1 デバイスピクセル未満だけずらす（このずらしのため `.desk-page-frame` は `position: relative`）。
 - 倍率の変化・大きさの変化・iframe の読み込みのたびにやり直す。
