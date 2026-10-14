@@ -31,7 +31,7 @@ API は `swing up` の寿命で動き続ける（[`../up.md`](../up.md)）。
 
 | エンドポイント | 使えないとき |
 |---|---|
-| relay か Kubo を使うもの（`/api/sites`・`/api/status`・`/api/mirror`・`/api/mirror/add`・`/api/mirror/remove`・`/api/webring`・`/api/replicas`・`/api/publish/sites`・`/api/publish/previous-files`・`/api/publish/upload`） | agent が relay と Kubo を渡すまで（起動時の突き合わせの後。[`../agent.md#全体の流れ`](../agent.md#全体の流れ)）と、agent が落ちてから次に渡すまで（[`../dashboard.md`](../dashboard.md)）は 503 `{"error": "agent is not ready"}`。セットアップモード（[`../up.md#セットアップモード鍵未設定`](../up.md#セットアップモード鍵未設定)）の間は常に 503 `{"error": "agent is not configured"}` |
+| relay か Kubo を使うもの（`/api/sites`・`/api/status`・`/api/network`・`/api/mirror`・`/api/mirror/add`・`/api/mirror/remove`・`/api/webring`・`/api/replicas`・`/api/publish/sites`・`/api/publish/previous-files`・`/api/publish/upload`） | agent が relay と Kubo を渡すまで（起動時の突き合わせの後。[`../agent.md#全体の流れ`](../agent.md#全体の流れ)）と、agent が落ちてから次に渡すまで（[`../dashboard.md`](../dashboard.md)）は 503 `{"error": "agent is not ready"}`。セットアップモード（[`../up.md#セットアップモード鍵未設定`](../up.md#セットアップモード鍵未設定)）の間は常に 503 `{"error": "agent is not configured"}` |
 | `/api/overview`・`/api/activity`・`/api/stats`・`/api/mirror/preview`・`/api/config`・`/api/shutdown`・`/api/restart`・`/api/login`・`/api/identity`・`/api/login-code`・`/api/token/rotate` | 無い（常に応答する） |
 | `/api/publish/check` | `nip05` が `off` でなければ、セットアップモードの間は 503 `{"error": "agent is not configured"}`。それ以外は常に応答する |
 | `/api/setup` | セットアップモードでなければ 409（ほかの 409 は [`http-api/config.md`](http-api/config.md#post-apisetup)） |
@@ -55,6 +55,7 @@ API は `swing up` の寿命で動き続ける（[`../up.md`](../up.md)）。
 | GET | `/api/stats` | リソース使用量のサンプル | [status.md](http-api/status.md#get-apistats) |
 | GET | `/api/sites` | ミラー対象のサイト一覧（`swing sites` と同じ集計） | [status.md](http-api/status.md#get-apisites) |
 | GET | `/api/status` | 保存済みの版の健全性と実容量（`swing status` と同じ集計） | [status.md](http-api/status.md#get-apistatus) |
+| GET | `/api/network` | Kubo の AutoNAT による外からの到達性（`swing status` の先頭の行） | [status.md](http-api/status.md#get-apinetwork) |
 | GET | `/api/mirror` | Follow Set の一覧 | [nostr.md](http-api/nostr.md#get-apimirror) |
 | POST | `/api/mirror/add`・`/api/mirror/remove` | Follow Set への追加・削除 | [nostr.md](http-api/nostr.md#post-apimirroradd-post-apimirrorremove) |
 | POST | `/api/mirror/preview` | 入力した鍵の npub とフィンガープリント（追加する前の確認用。relay を引かない） | [nostr.md](http-api/nostr.md#post-apimirrorpreview) |

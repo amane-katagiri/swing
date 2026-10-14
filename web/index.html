@@ -837,6 +837,16 @@
       </div>
 
       <div class="swing-panel">
+        <h2 class="swing-heading-row">
+          <span data-i18n="networkHeading">Network</span>
+          <button type="button" id="network-reload" class="swing-icon-btn" aria-label="Reload" title="Reload" data-i18n-aria-label="reload" data-i18n-title="reload"><svg class="swing-icon" aria-hidden="true"><use href="#icon-reload"></use></svg></button>
+        </h2>
+        <p class="swing-hint" data-i18n="networkHint">Whether other IPFS nodes can connect to this node directly from the internet, as Kubo (AutoNAT) found out.</p>
+        <div id="network-status" class="swing-status" aria-live="polite"></div>
+        <div id="network-content"></div>
+      </div>
+
+      <div class="swing-panel">
         <h2 data-i18n="processHeading">Process</h2>
         <div class="swing-process-actions">
           <button type="button" id="process-stop" class="swing-btn swing-btn-danger" data-i18n="processStop">Stop</button>

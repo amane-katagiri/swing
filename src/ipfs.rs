@@ -34,6 +34,84 @@ pub struct Bandwidth {
     pub total_out: u64,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Reachability {
+    Public,
+    Private,
+    Unknown,
+    Offline,
+}
+
+impl Reachability {
+    pub fn token(self) -> &'static str {
+        match self {
+            Self::Public => "public",
+            Self::Private => "private",
+            Self::Unknown => "unknown",
+            Self::Offline => "offline",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NatKind {
+    CarrierGrade,
+    Double,
+}
+
+impl NatKind {
+    pub fn token(self) -> &'static str {
+        match self {
+            Self::CarrierGrade => "cgnat",
+            Self::Double => "double-nat",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AutoNat {
+    pub reachability: Reachability,
+    pub nat: Option<NatKind>,
+    pub reachable: Vec<String>,
+    pub unreachable: Vec<String>,
+    pub unknown: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct AutoNatResponse {
+    reachability: String,
+    nat: Option<String>,
+    reachable: Option<Vec<String>>,
+    unreachable: Option<Vec<String>>,
+    unknown: Option<Vec<String>>,
+}
+
+impl From<AutoNatResponse> for AutoNat {
+    fn from(r: AutoNatResponse) -> Self {
+        Self {
+            reachability: match r.reachability.as_str() {
+                "Public" => Reachability::Public,
+                "Private" => Reachability::Private,
+                _ => Reachability::Unknown,
+            },
+            nat: match r.nat.as_deref() {
+                Some("cgnat") => Some(NatKind::CarrierGrade),
+                Some("double-nat") => Some(NatKind::Double),
+                _ => None,
+            },
+            reachable: r.reachable.unwrap_or_default(),
+            unreachable: r.unreachable.unwrap_or_default(),
+            unknown: r.unknown.unwrap_or_default(),
+        }
+    }
+}
+
+pub fn parse_autonat(text: &str) -> Result<AutoNat> {
+    let parsed: AutoNatResponse =
+        serde_json::from_str(text).context("parsing swarm/addrs/autonat response")?;
+    Ok(parsed.into())
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MfsEntry {
     pub name: String,
@@ -177,6 +255,7 @@ const UNIXFS_DIRECTORY: u8 = 1;
 const MFS_MISSING: &str = "file does not exist";
 const MFS_ENTRY_EXISTS: &str = "directory already has entry by that name";
 const BLOCK_MISSING: &str = "ipld: could not find";
+const KUBO_NOT_ONLINE: &str = "this command must be run in online mode";
 
 pub fn is_block_missing(e: &anyhow::Error) -> bool {
     format!("{e:#}").contains(BLOCK_MISSING)
@@ -530,6 +609,23 @@ impl IpfsClient {
         Ok(parsed.id)
     }
 
+    pub async fn autonat(&self) -> Result<AutoNat> {
+        match self
+            .call("swarm/addrs/autonat", "", Duration::from_secs(10))
+            .await
+        {
+            Ok(text) => parse_autonat(&text),
+            Err(e) if format!("{e:#}").contains(KUBO_NOT_ONLINE) => Ok(AutoNat {
+                reachability: Reachability::Offline,
+                nat: None,
+                reachable: Vec::new(),
+                unreachable: Vec::new(),
+                unknown: Vec::new(),
+            }),
+            Err(e) => Err(e),
+        }
+    }
+
     pub async fn shutdown(&self, timeout: Duration) -> Result<()> {
         self.call("shutdown", "", timeout).await.map(drop)
     }
@@ -576,6 +672,89 @@ mod tests {
                 total_out: 456
             }
         );
+    }
+
+    #[test]
+    fn autonat_reads_the_bare_reachability() {
+        assert_eq!(
+            parse_autonat(r#"{"reachability":"Private"}"#).unwrap(),
+            AutoNat {
+                reachability: Reachability::Private,
+                nat: None,
+                reachable: vec![],
+                unreachable: vec![],
+                unknown: vec![],
+            }
+        );
+    }
+
+    #[test]
+    fn autonat_reads_the_address_lists_and_the_nat_kind() {
+        let parsed = parse_autonat(
+            r#"{"reachability":"Public","nat":"cgnat","reachable":["/ip4/203.0.113.42/tcp/4001","/ip4/203.0.113.42/udp/4001/quic-v1"],"unreachable":["/ip6/2001:db8::1/tcp/4001"],"unknown":["/ip4/203.0.113.42/udp/4001/webrtc-direct"]}"#,
+        )
+        .unwrap();
+        assert_eq!(parsed.reachability, Reachability::Public);
+        assert_eq!(parsed.nat, Some(NatKind::CarrierGrade));
+        assert_eq!(
+            parsed.reachable,
+            [
+                "/ip4/203.0.113.42/tcp/4001",
+                "/ip4/203.0.113.42/udp/4001/quic-v1"
+            ]
+        );
+        assert_eq!(parsed.unreachable, ["/ip6/2001:db8::1/tcp/4001"]);
+        assert_eq!(parsed.unknown, ["/ip4/203.0.113.42/udp/4001/webrtc-direct"]);
+    }
+
+    #[test]
+    fn autonat_treats_unexpected_values_as_unknown() {
+        let parsed =
+            parse_autonat(r#"{"reachability":"Sideways","nat":"","reachable":null}"#).unwrap();
+        assert_eq!(parsed.reachability, Reachability::Unknown);
+        assert_eq!(parsed.nat, None);
+        assert!(parsed.reachable.is_empty());
+        assert!(parse_autonat("{}").is_err());
+    }
+
+    fn fake_autonat(status: u16, body: &'static str) -> axum::Router {
+        axum::Router::new().route(
+            "/api/v0/swarm/addrs/autonat",
+            axum::routing::post(move || async move {
+                (axum::http::StatusCode::from_u16(status).unwrap(), body)
+            }),
+        )
+    }
+
+    #[tokio::test]
+    async fn autonat_reports_an_offline_kubo_as_offline() {
+        let addr = crate::test_support::serve_router(fake_autonat(
+            500,
+            r#"{"Message":"this command must be run in online mode. Try running 'ipfs daemon' first","Code":0,"Type":"error"}"#,
+        ))
+        .await;
+        let parsed = IpfsClient::new(format!("http://{addr}"))
+            .autonat()
+            .await
+            .unwrap();
+        assert_eq!(parsed.reachability, Reachability::Offline);
+        assert_eq!(parsed.nat, None);
+        assert!(parsed.reachable.is_empty() && parsed.unreachable.is_empty());
+        assert!(parsed.unknown.is_empty());
+    }
+
+    #[tokio::test]
+    async fn autonat_keeps_other_kubo_failures_as_errors() {
+        let addr = crate::test_support::serve_router(fake_autonat(
+            500,
+            r#"{"Message":"something else broke","Code":0,"Type":"error"}"#,
+        ))
+        .await;
+        let err = IpfsClient::new(format!("http://{addr}"))
+            .autonat()
+            .await
+            .unwrap_err();
+        assert!(format!("{err:#}").contains("something else"), "{err:#}");
     }
 
     fn fake_ls() -> axum::Router {

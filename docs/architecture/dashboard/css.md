@@ -8,7 +8,7 @@
 
 ## CSS 変数（`web/style.css` の `:root`）
 
-`--swing-bg` `--swing-surface` `--swing-surface-alt` `--swing-surface-raised` `--swing-border` `--swing-border-strong` `--swing-text` `--swing-text-muted` `--swing-text-faint` `--swing-accent` `--swing-accent-strong` `--swing-accent-soft` `--swing-warn` `--swing-warn-soft` `--swing-danger` `--swing-danger-soft` `--swing-ok` `--swing-ok-soft` `--swing-root` `--swing-focus` `--swing-font-display` `--swing-font-ui` `--swing-font-mono` `--swing-space-1`〜`--swing-space-6` `--swing-radius` `--swing-radius-lg` `--swing-nav-width` `--swing-nav-collapsed-width`（既定 64px） `--swing-graph-label-size`（既定 11px）。
+`--swing-bg` `--swing-surface` `--swing-surface-alt` `--swing-surface-raised` `--swing-border` `--swing-border-strong` `--swing-text` `--swing-text-muted` `--swing-text-faint` `--swing-accent` `--swing-accent-strong` `--swing-accent-soft` `--swing-warn` `--swing-warn-soft` `--swing-danger` `--swing-danger-soft` `--swing-ok` `--swing-ok-soft` `--swing-info` `--swing-info-soft` `--swing-root` `--swing-focus` `--swing-font-display` `--swing-font-ui` `--swing-font-mono` `--swing-space-1`〜`--swing-space-6` `--swing-radius` `--swing-radius-lg` `--swing-nav-width` `--swing-nav-collapsed-width`（既定 64px） `--swing-graph-label-size`（既定 11px）。
 
 - `--swing-root`（webring の root ノードの色）と `--swing-focus` は `var(--swing-accent)` を参照する。
 - `--swing-dark-*`（`--swing-root`・`--swing-focus` 以外の色変数と同名の組）は、ダークテーマのときに色変数へ代入される元の値。ダークテーマの色だけを変えるならこちらを上書きする。
@@ -41,8 +41,9 @@
 | `data-stored="true\|pending\|false"` | サイトのカード・テーブルの行、保存状態のバッジ |
 | `data-nip05="verified\|mismatch\|not_applicable\|error"` | NIP-05 のバッジ |
 | `data-health="ok\|missing\|cid_mismatch\|incomplete\|check_failed\|invalid_key"` | Storage check の行とバッジ |
+| `data-reach="reachable\|unreachable\|unknown"` | Settings の「ネットワーク」のアドレスの表のバッジ |
 | `data-ok="true\|false"` | relay 結果の行（`swing-relay-result`） |
-| `data-kind="loading\|error\|empty\|ok\|warn"` | `swing-status` |
+| `data-kind="loading\|error\|empty\|ok\|warn\|info"` | `swing-status` |
 | `data-root`・`data-has-follow-set`・`data-depth`・`data-selected` | グラフのノード |
 | `data-mutual` | グラフの辺 |
 | `data-style-value`・`data-sort-value` | 切替ボタン自身の値 |

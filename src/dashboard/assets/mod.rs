@@ -66,6 +66,7 @@ const STATIC_ASSETS: &[StaticAsset] = &[
     asset!(JS, "settings-notify.js"),
     asset!(JS, "notify-settings.js"),
     asset!(JS, "stats.js"),
+    asset!(JS, "network.js"),
     asset!(JS, "setup.js"),
     asset!(JS, "pairing.js"),
     asset!(JS, "login.js"),

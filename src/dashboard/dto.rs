@@ -365,6 +365,33 @@ pub struct SiteSizeDto {
     pub actual: Option<u64>,
 }
 
+pub const REACHABILITY_GUIDE_URL: &str = concat!(
+    "https://github.com/amane-katagiri/swing/blob/v",
+    env!("CARGO_PKG_VERSION"),
+    "/docs/guide/operation.md#外から届くか"
+);
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct NetworkDto {
+    pub reachability: String,
+    pub nat: Option<String>,
+    pub reachable: Vec<String>,
+    pub unreachable: Vec<String>,
+    pub unknown: Vec<String>,
+    pub guide: String,
+}
+
+pub fn network_dto(autonat: crate::ipfs::AutoNat) -> NetworkDto {
+    NetworkDto {
+        reachability: autonat.reachability.token().to_string(),
+        nat: autonat.nat.map(|n| n.token().to_string()),
+        reachable: autonat.reachable,
+        unreachable: autonat.unreachable,
+        unknown: autonat.unknown,
+        guide: REACHABILITY_GUIDE_URL.to_string(),
+    }
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct StatusDto {
     pub versions: Vec<VersionStatusDto>,

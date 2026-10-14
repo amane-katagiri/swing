@@ -21,8 +21,9 @@
 | `pairing.js` | 署名アプリ（NIP-46）とのペアリングの部品（`createPairing`）。Setup 画面と Publish 画面の「つなぎ直す」が使う | `util.js`・`i18n.js` |
 | `notify-settings.js` | おしらせの設定（[`notices.md#設定`](notices.md#設定)）と `swing:desktop:mascot` 全体の読み書き、ブラウザの通知の許可、種類を確認するかどうか（`kindWanted`）、イベント名 `SHOW_SELF_IN_WEBRING`。Settings 画面・Webring 画面・Desktop 画面が使う | `storage.js` |
 | `stats.js` | Settings 画面のリソース使用量のパネル（`loadStats`・`renderStats`） | `util.js`・`i18n.js` |
+| `network.js` | Settings 画面のネットワークのパネル（`initNetwork`・`loadNetwork`・`renderNetwork`） | `util.js`・`i18n.js` |
 | `settings-notify.js` | Settings 画面の「通知」パネル（`BrowserNotifySettings`） | `notify-settings.js`・`util.js`・`i18n.js` |
-| `sites.js` / `webring.js` / `publish.js` / `settings.js` / `setup.js` / `login.js` | 各画面（[`views.md`](views.md) と子ページ）。`webring.js` は `graph.js`・`notify-settings.js`、`publish.js` と `setup.js` は `pairing.js`、`settings.js` は `stats.js`・`settings-notify.js`、`setup.js` は `publish.js` の `loadOverview` も使う | 上記 |
+| `sites.js` / `webring.js` / `publish.js` / `settings.js` / `setup.js` / `login.js` | 各画面（[`views.md`](views.md) と子ページ）。`webring.js` は `graph.js`・`notify-settings.js`、`publish.js` と `setup.js` は `pairing.js`、`settings.js` は `stats.js`・`network.js`・`settings-notify.js`、`setup.js` は `publish.js` の `loadOverview` も使う | 上記 |
 | `boot.js` | 描画前に同期実行する小さな通常スクリプト（[`web/ui.md`](web/ui.md) の読み込み時） | なし |
 | `app.js` | ルーター兼エントリポイント（`<script type="module" src="/app.js">`） | 各画面と上記の共有モジュール、`desktop.js`・`desktop-system-settings.js`（`startupView`） |
 

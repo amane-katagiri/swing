@@ -76,3 +76,17 @@
 - 問題があっても HTTP は常に 200（`problems` の件数で分かる）。
 - CLI の `swing status` もこの応答を読むので、項目を足すと新しい CLI は古い `swing up` の応答を読めない（再起動すれば揃う）。
 - `garbage[].list_failed_reason`: 一覧に失敗したディレクトリ（`list_failed: true`）だけ理由の文字列が入る。
+
+## GET /api/network
+
+Kubo の `POST /api/v0/swarm/addrs/autonat`（`ipfs::IpfsClient::autonat`、タイムアウト 10 秒）の結果。外部の Kubo（`[kubo].managed = false`）でも同じ。relay には接続せず、Kubo に新しく確かめさせることもしない（Kubo が持っている判定を読むだけ）ので軽い。
+
+```json
+{ "reachability": "private", "nat": "cgnat", "reachable": [], "unreachable": ["/ip4/198.51.100.7/tcp/4001"], "unknown": ["/ip4/198.51.100.7/udp/4001/quic-v1"], "guide": "https://github.com/amane-katagiri/swing/blob/v…/docs/guide/operation.md#外から届くか" }
+```
+
+- `reachability`: ノード全体の判定。Kubo の `reachability`（`Public`・`Private`・`Unknown`）を小文字にしたもので、ほかの値は `unknown`。Kubo の起動直後は `unknown` で、AutoNAT V2 が確かめ終えるまで数分かかる。Kubo が `--offline` で動いていて、RPC が Kubo の `ErrNotOnline`（本文に `this command must be run in online mode` を含むエラー）を返したときは `offline` で、`nat` は `null`、リストはすべて空。
+- `nat`: Kubo の `nat`（`DetectNAT` の推定）。UPnP などで分かったルーターの外側のアドレスがプロバイダーの共有アドレス（`100.64.0.0/10`）なら `cgnat`、プライベートアドレスなら `double-nat`。分からないとき・`reachability` が `public` のとき・ほかの値は `null`。
+- `reachable`・`unreachable`・`unknown`: AutoNAT V2 がアドレスごとに確かめた結果（届いた・届かなかった・まだ確かめていない multiaddr）。Kubo は空のリストを省くので、そのときは空の配列。
+- `guide`: 届くようにする方法の手引き（[`../../../guide/operation.md#外から届くか`](../../../guide/operation.md#外から届くか)）の、このバージョンのタグの URL。
+- `offline` 以外で Kubo が失敗したとき（このコマンドの無い古い Kubo など）は 502。

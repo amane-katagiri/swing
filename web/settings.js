@@ -2,6 +2,7 @@ import { storage } from './storage.js';
 import { t, currentLang } from './i18n.js';
 import { cache, el, apiFetch, setStatus, clearStatus, describeError, createLoadGuard, setBusy } from './util.js';
 import { loadStats } from './stats.js';
+import { initNetwork, loadNetwork } from './network.js';
 import { BrowserNotifySettings } from './settings-notify.js';
 
 const settingsEls = {
@@ -229,6 +230,7 @@ export const SettingsView = {
     });
 
     BrowserNotifySettings.init({ updates });
+    initNetwork();
 
     async function runProcessAction(button, confirmKey, path, okKey) {
       if (!window.confirm(t(confirmKey))) return;
@@ -253,6 +255,7 @@ export const SettingsView = {
     else this.load();
     BrowserNotifySettings.onShow();
     loadStats();
+    loadNetwork();
   },
   async load(force) {
     const gen = settingsLoadGuard.start();

@@ -190,6 +190,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/api/stats", get(api::stats))
         .route("/api/sites", get(api::sites))
         .route("/api/status", get(api::status))
+        .route("/api/network", get(api::network))
         .route("/api/mirror", get(api::mirror_list))
         .route("/api/mirror/add", post(api::mirror_add))
         .route("/api/mirror/remove", post(api::mirror_remove))

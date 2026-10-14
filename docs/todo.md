@@ -4,6 +4,11 @@
 
 | 優先度 | タスク | 出所 |
 |---|---|---|
+| 中 | 届く（`public`）参加者を「アンカー」として、届かない参加者の Kubo がそこへ常に接続しておく（Kubo の `Peering.Peers`）。届かないノードどうしはホールパンチに失敗するとデータをやりとりできないので、アンカーを経由して広げる。誰をアンカーにするか（下の告知を使うか、設定で手で指定するか）と、アンカー側の接続数の負担も合わせて決める | [到達性の表示](log/2026-10-14-reachability-status.md) |
+| 中 | アンカーになれる参加者の PeerID とアドレスを Nostr で告知する。新しいイベントか d タグを使うので、先に [`docs/extensions.md`](extensions.md) の予約表と [`docs/protocol.md`](protocol.md) を更新する。偽の告知でほかのノードへ接続を集められないよう、誰の告知を使うか（Follow Set の相手だけなど）も決める | [到達性の表示](log/2026-10-14-reachability-status.md) |
+| 低 | ミラーする側が、サイトイベントの作者（公開した本人）の PeerID へ直接つなぎにいく。作者が届く場合や、ホールパンチが効く場合に DHT の検索を待たずに取得を始められる。作者の PeerID を知る手段（上の告知など）が前提 | [到達性の表示](log/2026-10-14-reachability-status.md) |
+| 低 | 専用の relay を置き、`Swarm.RelayService` の上限を上げて `Swarm.RelayClient.StaticRelays` で使う。go-libp2p がその接続を制限付き（limited）として扱い Bitswap に使わないままなら意味が無いので、上限を上げた relay 経由の接続でデータが流れるかを先に確かめる | [到達性の表示](log/2026-10-14-reachability-status.md) |
+| 低 | 届かない（`private`）環境で公開した人に、届く参加者がミラーし終えるまで起動しておくようダッシュボードで知らせる（レプリカ報告が届くまでなど、何を「ミラーし終えた」の目安にするかも決める） | [到達性の表示](log/2026-10-14-reachability-status.md) |
 | 低 | ミラーしているサイトをサイト単位で削除する操作（CLI とダッシュボード）。今はサイトが state から消えるのは、フォローを外して `remove_on_unfollow` が有効なときだけで、古い版の整理も最新版は残す。そのため作者が更新をやめたサイトも `max_sites_per_account` の枠を使い続け、枠が埋まるとその作者の新しいサイトはミラーされない。消したサイトが次の poll でまた取り込まれないよう、除外の記録（state.json に持つか）も合わせて決める | [セキュリティレビュー](log/2026-09-29-security-review-and-cleanup.md) |
 | 中 | `swing publish` が管理下の Kubo を使うとき、`<state_dir>/kubo-api.json` のポートに応答する相手を PeerID（公開情報）の一致だけで信じる。`swing up` が後片付けせずに死んだ後、そのポートを取ったローカルの別ユーザーが PeerID を返せば、`add` の結果の CID を選べる。`kubo.pid` の記録の pid が生きていて起動時刻とポートが一致することも確かめる | [セキュリティレビュー](log/2026-09-29-security-review-and-cleanup.md) |
 | 中 | `swing mirror add`（ダッシュボードの追加も）は、応答した relay に Follow Set が無く state.json にも無いと、空から作って追加した鍵だけの Follow Set を出す。relay が 1 つでも応答すればこうなるので、Follow Set が見つからないときは確認を求めるか、設定したすべての relay が EOSE を返したときだけ空から作る | [セキュリティレビュー](log/2026-09-29-security-review-and-cleanup.md) |

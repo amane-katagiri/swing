@@ -17,6 +17,8 @@
   --swing-danger-soft: rgb(147 64 60 / 12%);
   --swing-ok: #2f7a6e;
   --swing-ok-soft: rgb(47 122 110 / 12%);
+  --swing-info: #0645ad;
+  --swing-info-soft: rgb(6 69 173 / 12%);
   --swing-root: var(--swing-accent);
   --swing-focus: var(--swing-accent);
 
@@ -55,6 +57,8 @@
   --swing-dark-danger-soft: rgb(217 141 134 / 14%);
   --swing-dark-ok: #6fc9b8;
   --swing-dark-ok-soft: rgb(111 201 184 / 14%);
+  --swing-dark-info: #8ab4f8;
+  --swing-dark-info-soft: rgb(138 180 248 / 14%);
 }
 
 @media (prefers-color-scheme: dark) {
@@ -77,6 +81,8 @@
     --swing-danger-soft: var(--swing-dark-danger-soft);
     --swing-ok: var(--swing-dark-ok);
     --swing-ok-soft: var(--swing-dark-ok-soft);
+    --swing-info: var(--swing-dark-info);
+    --swing-info-soft: var(--swing-dark-info-soft);
     --swing-root: var(--swing-accent);
     --swing-focus: var(--swing-accent);
   }
@@ -101,6 +107,8 @@
   --swing-danger-soft: var(--swing-dark-danger-soft);
   --swing-ok: var(--swing-dark-ok);
   --swing-ok-soft: var(--swing-dark-ok-soft);
+  --swing-info: var(--swing-dark-info);
+  --swing-info-soft: var(--swing-dark-info-soft);
   --swing-root: var(--swing-accent);
   --swing-focus: var(--swing-accent);
 }
@@ -790,6 +798,14 @@ textarea.swing-input {
   padding: var(--swing-space-3);
 }
 
+.swing-status[data-kind="info"] {
+  color: var(--swing-info);
+  background: var(--swing-info-soft);
+  border: 1px solid var(--swing-info);
+  border-radius: var(--swing-radius);
+  padding: var(--swing-space-3);
+}
+
 .swing-badge {
   display: inline-block;
   font-size: 0.75rem;
@@ -857,6 +873,18 @@ textarea.swing-input {
   border-color: var(--swing-danger);
   color: var(--swing-danger);
   background: var(--swing-danger-soft);
+}
+
+.swing-badge[data-reach="reachable"] {
+  border-color: var(--swing-ok);
+  color: var(--swing-ok);
+  background: var(--swing-ok-soft);
+}
+
+.swing-badge[data-reach="unreachable"] {
+  border-color: var(--swing-warn);
+  color: var(--swing-warn);
+  background: var(--swing-warn-soft);
 }
 
 .swing-account {

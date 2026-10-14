@@ -24,7 +24,7 @@ docker compose run --rm mirror key generate
 docker compose up -d
 ```
 
-`ipfs`（Kubo）と `mirror`（このツール本体、`swing up` を実行します。Kubo は `ipfs` コンテナ側を使うため `SWING_KUBO_MANAGED=false` を固定で渡しています）の 2 つのコンテナが立ち上がります。外部に公開されるのは IPFS の swarm 用ポート（`4001/tcp`・`4001/udp`）だけです。Kubo の RPC（5001）はホストにも公開されず、ゲートウェイ（8080）はホストの `127.0.0.1:8080` だけに公開されます。
+`ipfs`（Kubo）と `mirror`（このツール本体、`swing up` を実行します。Kubo は `ipfs` コンテナ側を使うため `SWING_KUBO_MANAGED=false` を固定で渡しています）の 2 つのコンテナが立ち上がります。外部に公開されるのは IPFS の swarm 用ポート（`4001/tcp`・`4001/udp`）だけです。Kubo の RPC（5001）はホストにも公開されず、ゲートウェイ（8080）はホストの `127.0.0.1:8080` だけに公開されます。Kubo はブリッジネットワークの中で動くため UPnP でルーターのポートを開けられません。ほかの参加者があなたのノードから取得しやすいよう、ルーターで `4001/tcp`・`4001/udp` をこのマシンへ転送してください（「[外から届くか](operation.md#外から届くか)」）。
 
 `mirror` は既定で手元のソースからイメージをビルドします。リリースごとに公開しているイメージを使う場合は、`compose.yaml` の `mirror` の `build: .` をコメントアウトし、その下の `image: ghcr.io/amane-katagiri/swing` のコメントを外してください（最新のリリースが使われます。バージョンを固定するなら `ghcr.io/amane-katagiri/swing:0.1.0` のように書きます）。
 

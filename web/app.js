@@ -8,6 +8,7 @@ import { PublishView, renderIdentity, updateNavFooter, updateUploadInfo, renderM
 import { SettingsView, renderConfig } from './settings.js';
 import { BrowserNotifySettings } from './settings-notify.js';
 import { renderStats } from './stats.js';
+import { renderNetwork } from './network.js';
 import { SetupView } from './setup.js';
 import { LoginView } from './login.js';
 import { startupView } from './desktop-system-settings.js';
@@ -97,6 +98,7 @@ function applyLanguage() {
   if (cache.config) renderConfig(cache.config);
   BrowserNotifySettings.render();
   renderStats();
+  renderNetwork();
   if (cache.status) renderStatusCheck(cache.status);
   SetupView.render();
   LoginView.render();
