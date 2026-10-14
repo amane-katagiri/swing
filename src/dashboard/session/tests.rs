@@ -1,0 +1,341 @@
+use super::super::router;
+use super::super::test_support::*;
+use super::AppState;
+use axum::body::Body;
+use axum::http::{Request, StatusCode};
+use std::sync::Arc;
+
+fn dashboard_get(uri: &str) -> Request<Body> {
+    let mut req = get(uri);
+    req.headers_mut()
+        .insert("x-swing-dashboard", "1".parse().unwrap());
+    req
+}
+
+fn set_cookie(resp: &axum::http::Response<Body>) -> Option<String> {
+    resp.headers()
+        .get("set-cookie")
+        .map(|v| v.to_str().unwrap().to_string())
+}
+
+fn cookie_pair(set_cookie: &str) -> String {
+    set_cookie.split(';').next().unwrap().to_string()
+}
+
+async fn issue_code(state: &Arc<AppState>) -> String {
+    let resp = call(router(Arc::clone(state)), post_json("/api/login-code", "")).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let json = json_body(resp).await;
+    assert_eq!(json["expires_in"], 300);
+    json["code"].as_str().unwrap().to_string()
+}
+
+#[tokio::test]
+async fn api_requires_authentication_but_static_ui_does_not() {
+    let state = test_state();
+    let resp = call_anonymous(router(Arc::clone(&state)), dashboard_get("/api/overview")).await;
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    assert_eq!(resp.headers().get("cache-control").unwrap(), "no-store");
+    let resp = call_anonymous(router(Arc::clone(&state)), get("/")).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let mut req = get("/api/overview");
+    req.headers_mut()
+        .insert("authorization", "Bearer wrong".parse().unwrap());
+    let resp = call_anonymous(router(state), req).await;
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+}
+
+const DESKTOP_ONLY_ASSETS: &[&str] = &[
+    "/desktop-page.html",
+    "/desktop-page.css",
+    "/desktop-banner",
+    "/mascots/index.json",
+    "/mascots/yureko/manifest.json",
+    "/mascots/yureko/sprite.png",
+];
+
+#[tokio::test]
+async fn desktop_only_assets_require_authentication() {
+    let state = test_state();
+    for path in DESKTOP_ONLY_ASSETS {
+        for method in ["GET", "HEAD"] {
+            let mut req = get(path);
+            *req.method_mut() = method.parse().unwrap();
+            let resp = call_anonymous(router(Arc::clone(&state)), req).await;
+            assert_eq!(resp.status(), StatusCode::UNAUTHORIZED, "{method} {path}");
+            assert_eq!(
+                resp.headers().get("x-content-type-options").unwrap(),
+                "nosniff"
+            );
+            assert!(resp.headers().get("content-security-policy").is_some());
+        }
+
+        let mut req = get(path);
+        req.headers_mut()
+            .insert("authorization", "Bearer wrong".parse().unwrap());
+        let resp = call_anonymous(router(Arc::clone(&state)), req).await;
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED, "{path}");
+    }
+}
+
+#[tokio::test]
+async fn desktop_only_assets_accept_a_session_cookie_without_the_marker() {
+    let state = test_state();
+    let session = crate::auth::new_session(TEST_TOKEN, crate::auth::DASHBOARD_SESSION);
+    let cookie = format!("swing_session_8082={session}");
+    for path in DESKTOP_ONLY_ASSETS {
+        let mut req = get(path);
+        req.headers_mut().insert("cookie", cookie.parse().unwrap());
+        let resp = call_anonymous(router(Arc::clone(&state)), req).await;
+        assert_eq!(resp.status(), StatusCode::OK, "{path}");
+        assert_eq!(
+            resp.headers().get("cross-origin-resource-policy").unwrap(),
+            "same-origin",
+            "{path}"
+        );
+
+        let resp = call(router(Arc::clone(&state)), get(path)).await;
+        assert_eq!(resp.status(), StatusCode::OK, "{path}");
+    }
+}
+
+#[tokio::test]
+async fn the_login_screen_assets_stay_public() {
+    let state = test_state();
+    for path in [
+        "/",
+        "/custom.css",
+        "/style.css",
+        "/app.js",
+        "/login.js",
+        "/fonts/pixelmplus12-regular.woff2",
+        "/favicon.svg",
+    ] {
+        let resp = call_anonymous(router(Arc::clone(&state)), get(path)).await;
+        assert_eq!(resp.status(), StatusCode::OK, "{path}");
+    }
+}
+
+#[tokio::test]
+async fn cookie_authenticated_reads_need_the_dashboard_marker() {
+    let state = test_state();
+    let session = crate::auth::new_session(TEST_TOKEN, crate::auth::DASHBOARD_SESSION);
+    let cookie = format!("swing_session_8082={session}");
+
+    for method in ["GET", "HEAD"] {
+        let mut req = get("/api/overview");
+        *req.method_mut() = method.parse().unwrap();
+        req.headers_mut().insert("cookie", cookie.parse().unwrap());
+        let resp = call_anonymous(router(Arc::clone(&state)), req).await;
+        assert_eq!(resp.status(), StatusCode::FORBIDDEN, "{method}");
+    }
+
+    let mut req = dashboard_get("/api/overview");
+    req.headers_mut().insert("cookie", cookie.parse().unwrap());
+    req.headers_mut()
+        .insert("origin", "http://127.0.0.1:8080".parse().unwrap());
+    let resp = call_anonymous(router(Arc::clone(&state)), req).await;
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+
+    let mut req = dashboard_get("/api/overview");
+    req.headers_mut().insert("cookie", cookie.parse().unwrap());
+    let resp = call_anonymous(router(Arc::clone(&state)), req).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let resp = call(router(Arc::clone(&state)), get("/api/overview")).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let resp = call_anonymous(router(state), get("/")).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn login_code_exchanges_for_a_session_cookie_once() {
+    let state = test_state();
+    let code = issue_code(&state).await;
+    let body = format!("{{\"code\":\"{code}\"}}");
+
+    let resp = call_anonymous(router(Arc::clone(&state)), post_json("/api/login", &body)).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let cookie = set_cookie(&resp).unwrap();
+    assert!(cookie.starts_with("swing_session_8082="));
+    assert!(cookie.contains("HttpOnly"));
+    assert!(cookie.contains("SameSite=Strict"));
+    assert!(cookie.contains("Max-Age=2592000"));
+
+    let mut req = dashboard_get("/api/overview");
+    req.headers_mut()
+        .insert("cookie", cookie_pair(&cookie).parse().unwrap());
+    let resp = call_anonymous(router(Arc::clone(&state)), req).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let resp = call_anonymous(router(state), post_json("/api/login", &body)).await;
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    assert!(set_cookie(&resp).is_none());
+}
+
+#[tokio::test]
+async fn a_browser_session_can_neither_mint_login_codes_nor_rotate_the_token() {
+    let dir = tempfile::tempdir().unwrap();
+    let state = test_state_with(dir.path().to_path_buf(), 1 << 20);
+    let session = crate::auth::new_session(TEST_TOKEN, crate::auth::DASHBOARD_SESSION);
+    for path in ["/api/login-code", "/api/token/rotate"] {
+        let mut req = post_json(path, "");
+        req.headers_mut().insert(
+            "cookie",
+            format!("swing_session_8082={session}").parse().unwrap(),
+        );
+        let resp = call_anonymous(router(Arc::clone(&state)), req).await;
+        assert_eq!(resp.status(), StatusCode::FORBIDDEN, "{path}");
+    }
+    assert!(crate::auth::read_token(dir.path()).unwrap().is_none());
+    assert_eq!(state.token(), TEST_TOKEN);
+}
+
+#[tokio::test]
+async fn login_link_hands_the_code_to_the_page_without_redeeming_it() {
+    let state = test_state();
+    let code = issue_code(&state).await;
+    let resp = call_anonymous(
+        router(Arc::clone(&state)),
+        get(format!("/login?code={code}")),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::SEE_OTHER);
+    assert_eq!(
+        resp.headers().get("location").unwrap(),
+        &format!("/#/login/code/{code}")
+    );
+    assert!(set_cookie(&resp).is_none());
+
+    let resp = call_anonymous(
+        router(Arc::clone(&state)),
+        post_json("/api/login", format!("{{\"code\":\"{code}\"}}")),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let resp = call_anonymous(router(state), get("/login?code=%2F%2Fevil")).await;
+    assert_eq!(resp.headers().get("location").unwrap(), "/#/login/invalid");
+}
+
+#[tokio::test]
+async fn identity_proves_knowledge_of_the_token_without_authentication() {
+    let state = test_state();
+    let nonce = crate::auth::new_identity_nonce();
+    let resp = call_anonymous(
+        router(Arc::clone(&state)),
+        post_json("/api/identity", format!("{{\"nonce\":\"{nonce}\"}}")),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let json = json_body(resp).await;
+    assert!(crate::auth::verify_identity_proof(
+        TEST_TOKEN,
+        &nonce,
+        json["proof"].as_str().unwrap()
+    ));
+    assert_eq!(json["instance"], state.instance.as_str());
+
+    let resp = call_anonymous(
+        router(state),
+        post_json("/api/identity", "{\"nonce\":\"abc\"}"),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn concurrent_rotations_leave_the_file_and_memory_in_agreement() {
+    let dir = tempfile::tempdir().unwrap();
+    let state = test_state_with(dir.path().to_path_buf(), 1 << 20);
+    let handles: Vec<_> = (0..8)
+        .map(|_| {
+            let state = Arc::clone(&state);
+            tokio::spawn(async move {
+                assert!(
+                    super::rotate_token(axum::extract::State(state))
+                        .await
+                        .is_ok()
+                );
+            })
+        })
+        .collect();
+    for handle in handles {
+        handle.await.unwrap();
+    }
+    let on_disk = crate::auth::read_token(dir.path()).unwrap().unwrap();
+    assert_eq!(state.token(), on_disk);
+}
+
+#[tokio::test]
+async fn rotating_the_token_invalidates_the_old_token_and_sessions() {
+    let dir = tempfile::tempdir().unwrap();
+    let state = test_state_with(dir.path().to_path_buf(), 1 << 20);
+    let session = crate::auth::new_session(TEST_TOKEN, crate::auth::DASHBOARD_SESSION);
+
+    let resp = call(
+        router(Arc::clone(&state)),
+        post_json("/api/token/rotate", ""),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let rotated = crate::auth::read_token(dir.path()).unwrap().unwrap();
+    assert_ne!(rotated, TEST_TOKEN);
+
+    let resp = call(router(Arc::clone(&state)), get("/api/overview")).await;
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    let mut req = dashboard_get("/api/overview");
+    req.headers_mut().insert(
+        "cookie",
+        format!("swing_session_8082={session}").parse().unwrap(),
+    );
+    let resp = call_anonymous(router(Arc::clone(&state)), req).await;
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+
+    let mut req = get("/api/overview");
+    req.headers_mut().insert(
+        "authorization",
+        format!("Bearer {rotated}").parse().unwrap(),
+    );
+    let resp = call_anonymous(router(state), req).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+}
+
+async fn login_cookie(state: &Arc<AppState>, forwarded_proto: Option<&str>) -> String {
+    let code = issue_code(state).await;
+    let mut req = post_json("/api/login", format!("{{\"code\":\"{code}\"}}"));
+    if let Some(proto) = forwarded_proto {
+        req.headers_mut()
+            .insert("x-forwarded-proto", proto.parse().unwrap());
+    }
+    let resp = call_anonymous(router(Arc::clone(state)), req).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    set_cookie(&resp).unwrap()
+}
+
+#[tokio::test]
+async fn session_cookie_is_secure_behind_an_https_proxy() {
+    let state = test_state();
+    assert!(!login_cookie(&state, None).await.contains("Secure"));
+    assert!(!login_cookie(&state, Some("http")).await.contains("Secure"));
+    assert!(
+        login_cookie(&state, Some("HTTPS"))
+            .await
+            .ends_with("; Secure")
+    );
+    assert!(
+        login_cookie(&state, Some("https, http"))
+            .await
+            .ends_with("; Secure")
+    );
+}
+
+#[tokio::test]
+async fn session_cookie_is_secure_when_public_url_is_https() {
+    let (mut config, secret_hex) = test_config(true);
+    config.dashboard.public_url = Some("https://dash.example".to_string());
+    let state = build_state(config, test_exit(), test_keys(&secret_hex), TEST_TOKEN);
+    assert!(login_cookie(&state, None).await.ends_with("; Secure"));
+}

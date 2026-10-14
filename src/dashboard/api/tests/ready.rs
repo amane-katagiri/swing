@@ -3,9 +3,9 @@ use std::sync::Arc;
 use axum::http::StatusCode;
 use nostr_sdk::prelude::*;
 
-use super::super::router;
-use super::super::test_support::*;
-use super::AppState;
+use crate::dashboard::AppState;
+use crate::dashboard::router;
+use crate::dashboard::test_support::*;
 use crate::mfs::MfsLayout;
 use crate::signer::Signer;
 use crate::state::{State, VersionRecord, site_key};

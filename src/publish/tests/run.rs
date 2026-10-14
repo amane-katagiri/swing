@@ -2,7 +2,7 @@ use std::path::Path;
 
 use nostr_sdk::prelude::*;
 
-use super::*;
+use crate::publish::*;
 use crate::test_support::{
     KuboApi, events_on_relay, read_only_relay, relay_holding, unanswered_signer,
 };
