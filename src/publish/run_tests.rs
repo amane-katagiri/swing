@@ -1,12 +1,11 @@
 use std::path::Path;
-use std::sync::Arc;
-use std::time::Duration;
 
 use nostr_sdk::prelude::*;
 
 use super::*;
-use crate::signer::{RemoteSigner, RemoteSignerFile};
-use crate::test_support::{KuboApi, events_on_relay, read_only_relay, relay_holding};
+use crate::test_support::{
+    KuboApi, events_on_relay, read_only_relay, relay_holding, unanswered_signer,
+};
 
 const ADDED: &str = "bafybeicwrird3ditgfyu4snq6i3x6i564gfcywffrwcgumnjhyiva3p2ra";
 const SITE: &str = "example.com";
@@ -146,16 +145,12 @@ async fn an_unsigned_site_event_withdraws_the_staged_version() {
         .mfs
         .insert(staged.clone(), ADDED.into());
     let (_relay, url) = relay_holding(&[]).await;
-    let file = RemoteSignerFile {
-        app_secret_key: Keys::generate().secret_key().to_secret_hex().into(),
-        signer_pubkey: Keys::generate().public_key().to_hex(),
-        relays: vec![url.clone()],
-        user_pubkey: p.keys.public_key().to_hex(),
-    };
-    let remote = RemoteSigner::from_file(&file, Duration::from_millis(500)).unwrap();
-    let relay = RelayClient::connect(Signer::Remote(Arc::new(remote)), std::slice::from_ref(&url))
-        .await
-        .unwrap();
+    let relay = RelayClient::connect(
+        unanswered_signer(&url, p.keys.public_key()),
+        std::slice::from_ref(&url),
+    )
+    .await
+    .unwrap();
     let version = StagedVersion::new(&p.kubo.client(), staged.clone());
 
     let err = announce(

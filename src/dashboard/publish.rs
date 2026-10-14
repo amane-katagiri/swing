@@ -222,3 +222,6 @@ pub(super) async fn run_publish(
     result.note = note;
     Ok(PublishOutcome::Success(result))
 }
+
+#[cfg(test)]
+mod tests;

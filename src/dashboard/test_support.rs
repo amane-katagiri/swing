@@ -200,3 +200,16 @@ pub(crate) fn multipart_request(
         .body(axum::body::Body::from(body))
         .unwrap()
 }
+
+pub(crate) async fn ready_state(
+    config: Config,
+    signer: Signer,
+    kubo: &crate::test_support::KuboApi,
+) -> Arc<AppState> {
+    let relay = crate::nostr::RelayClient::connect(signer.clone(), &config.nostr.relays)
+        .await
+        .unwrap();
+    let state = build_state(config, test_exit(), Some(signer), TEST_TOKEN);
+    state.set_ready(Arc::new(relay), kubo.client()).await;
+    state
+}

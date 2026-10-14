@@ -652,3 +652,16 @@ impl KuboApi {
         self.s.lock().unwrap().paths()
     }
 }
+
+pub(crate) fn unanswered_signer(relay: &str, user: PublicKey) -> crate::signer::Signer {
+    let file = crate::signer::RemoteSignerFile {
+        app_secret_key: Keys::generate().secret_key().to_secret_hex().into(),
+        signer_pubkey: Keys::generate().public_key().to_hex(),
+        relays: vec![relay.to_string()],
+        user_pubkey: user.to_hex(),
+    };
+    let remote =
+        crate::signer::RemoteSigner::from_file(&file, std::time::Duration::from_millis(500))
+            .unwrap();
+    crate::signer::Signer::Remote(std::sync::Arc::new(remote))
+}
