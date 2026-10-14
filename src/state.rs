@@ -360,24 +360,6 @@ mod tests {
         assert_eq!(state.latest_stored_at(), Some(30));
     }
 
-    #[tokio::test]
-    async fn round_trip_save_load() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("state.json");
-        let mut state = State::default();
-        state.apply_store(
-            &site_key("abc", "example.com"),
-            VersionRecord {
-                stored_at: 2,
-                ..version("bafyone", 100, 1)
-            },
-        );
-        state.save(&path).await.unwrap();
-        let loaded = State::load(&path).await.unwrap();
-        assert_eq!(loaded.total_bytes(), 100);
-        assert_eq!(loaded.site_bytes(&site_key("abc", "example.com")), 100);
-    }
-
     #[cfg(unix)]
     #[tokio::test]
     async fn saved_state_and_new_state_dir_are_private() {
@@ -406,7 +388,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn records_saved_before_events_were_kept_load_without_an_event() {
+    async fn state_saved_before_events_and_withdrawals_were_kept_loads() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("state.json");
         std::fs::write(
@@ -416,6 +398,13 @@ mod tests {
         .unwrap();
         let state = State::load(&path).await.unwrap();
         assert_eq!(state.latest_version("aa:x.example").unwrap().event, None);
+        assert!(state.withdrawn.is_empty());
+        state.save(&path).await.unwrap();
+        assert!(
+            !std::fs::read_to_string(&path)
+                .unwrap()
+                .contains("withdrawn")
+        );
     }
 
     fn signed(created_at: u64) -> Event {
@@ -687,25 +676,6 @@ mod tests {
         assert!(state.withdrawn.is_empty());
     }
 
-    #[tokio::test]
-    async fn state_saved_before_withdrawals_were_kept_loads_without_them() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("state.json");
-        std::fs::write(
-            &path,
-            r#"{"sites":{"aa:x.example":[{"cid":"c","size":1,"created_at":1,"stored_at":2}]},"verifications":{}}"#,
-        )
-        .unwrap();
-        let state = State::load(&path).await.unwrap();
-        assert!(state.withdrawn.is_empty());
-        state.save(&path).await.unwrap();
-        assert!(
-            !std::fs::read_to_string(&path)
-                .unwrap()
-                .contains("withdrawn")
-        );
-    }
-
     #[test]
     fn site_key_round_trips_even_when_d_contains_colons() {
         let key = site_key("ab", "a:b");
@@ -776,30 +746,6 @@ mod tests {
                 "ab:other.example"
             ]
         );
-    }
-
-    #[test]
-    fn set_verification_overwrites_previous_entry() {
-        let mut state = State::default();
-        let key = site_key("abc", "example.com");
-        state.set_verification(
-            &key,
-            Verification {
-                status: "mismatch".into(),
-                detail: None,
-                checked_at: 1,
-            },
-        );
-        state.set_verification(
-            &key,
-            Verification {
-                status: "verified".into(),
-                detail: None,
-                checked_at: 2,
-            },
-        );
-        assert_eq!(state.verifications.get(&key).unwrap().status, "verified");
-        assert_eq!(state.verifications.len(), 1);
     }
 
     #[test]

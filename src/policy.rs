@@ -228,21 +228,39 @@ mod tests {
         assert!(d.evict.is_empty());
     }
 
-    #[test]
-    fn min_update_interval_skips_too_soon_update() {
-        let existing = vec![v("bafy1", 100, 1000)];
-        let cand = c("bafy2", Some(100), 1500);
-        let d = decide(&existing, Usage::default(), &cand, &cfg(), 1000 + 599);
-        assert_eq!(d.store, None);
-        assert_eq!(d.reason, "min_update_interval");
+    fn assert_decision(d: &Decision, want: Result<&str, &str>, case: &str) {
+        match want {
+            Ok(cid) => assert_eq!(d.store.as_deref(), Some(cid), "{case}: {}", d.reason),
+            Err(reason) => {
+                assert_eq!(d.store, None, "{case}");
+                assert_eq!(d.reason, reason, "{case}");
+            }
+        }
     }
 
     #[test]
-    fn min_update_interval_allows_update_at_exact_boundary() {
+    fn min_update_interval_waits_from_the_last_store() {
         let existing = vec![v("bafy1", 100, 1000)];
-        let cand = c("bafy2", Some(100), 1500);
-        let d = decide(&existing, Usage::default(), &cand, &cfg(), 1000 + 600);
-        assert_eq!(d.store, Some("bafy2".to_string()));
+        for (case, created_at, now, want) in [
+            (
+                "one second early",
+                1500,
+                1000 + 599,
+                Err("min_update_interval"),
+            ),
+            ("at the boundary", 1500, 1000 + 600, Ok("bafy2")),
+            (
+                "same event too soon",
+                1010,
+                1500,
+                Err("min_update_interval"),
+            ),
+            ("same event once waited", 1010, 1600, Ok("bafy2")),
+        ] {
+            let cand = c("bafy2", Some(100), created_at);
+            let d = decide(&existing, Usage::default(), &cand, &cfg(), now);
+            assert_decision(&d, want, case);
+        }
     }
 
     #[test]
@@ -255,60 +273,40 @@ mod tests {
     }
 
     #[test]
-    fn min_update_interval_accepts_the_same_event_once_the_wait_has_passed() {
-        let existing = vec![v("bafy1", 100, 1000)];
-        let cand = c("bafy2", Some(100), 1010);
-        let d = decide(&existing, Usage::default(), &cand, &cfg(), 1500);
-        assert_eq!(d.reason, "min_update_interval");
-
-        let d = decide(&existing, Usage::default(), &cand, &cfg(), 1600);
-        assert_eq!(d.store, Some("bafy2".to_string()));
+    fn created_at_beyond_the_skew_tolerance_is_rejected() {
+        let existing = [v("bafy0", 100, 1000)];
+        for (case, existing, created_at, now, want) in [
+            (
+                "forged to shorten the wait",
+                &existing[..],
+                1000 + 10 * 600,
+                1100,
+                Err("future_created_at"),
+            ),
+            ("fresh site", &[][..], 2000, 1000, Err("future_created_at")),
+            (
+                "within the tolerance",
+                &[][..],
+                1000 + nostr::MAX_FUTURE_SKEW,
+                1000,
+                Ok("bafy1"),
+            ),
+        ] {
+            let cand = c("bafy1", Some(10), created_at);
+            let d = decide(existing, Usage::default(), &cand, &cfg(), now);
+            assert_decision(&d, want, case);
+        }
     }
 
     #[test]
-    fn a_forged_created_at_does_not_shorten_the_wait() {
-        let existing = vec![v("bafy1", 100, 1000)];
-        let cand = c("bafy2", Some(100), 1000 + 10 * 600);
-        let d = decide(&existing, Usage::default(), &cand, &cfg(), 1100);
-        assert_eq!(d.store, None);
-        assert_eq!(d.reason, "future_created_at");
-    }
-
-    #[test]
-    fn far_future_created_at_is_rejected_on_a_fresh_site() {
-        let d = decide(
-            &[],
-            Usage::default(),
-            &c("bafy1", Some(10), 2000),
-            &cfg(),
-            1000,
-        );
-        assert_eq!(d.store, None);
-        assert_eq!(d.reason, "future_created_at");
-    }
-
-    #[test]
-    fn created_at_within_the_skew_tolerance_is_accepted() {
-        let cand = c("bafy1", Some(10), 1000 + nostr::MAX_FUTURE_SKEW);
-        let d = decide(&[], Usage::default(), &cand, &cfg(), 1000);
-        assert_eq!(d.store, Some("bafy1".to_string()));
-    }
-
-    #[test]
-    fn max_update_size_skips_oversized_event() {
-        let existing: Vec<VersionInfo> = vec![];
-        let cand = c("bafy1", Some(251), 1000);
-        let d = decide(&existing, Usage::default(), &cand, &cfg(), 2000);
-        assert_eq!(d.store, None);
-        assert_eq!(d.reason, "max_update_size");
-    }
-
-    #[test]
-    fn max_update_size_none_size_is_not_checked_here() {
-        let existing: Vec<VersionInfo> = vec![];
-        let cand = c("bafy1", None, 1000);
-        let d = decide(&existing, Usage::default(), &cand, &cfg(), 2000);
-        assert_eq!(d.store, Some("bafy1".to_string()));
+    fn max_update_size_checks_only_a_known_size() {
+        for (case, size, want) in [
+            ("oversized", Some(251), Err("max_update_size")),
+            ("size unknown", None, Ok("bafy1")),
+        ] {
+            let d = decide(&[], Usage::default(), &c("bafy1", size, 1000), &cfg(), 2000);
+            assert_decision(&d, want, case);
+        }
     }
 
     #[test]
