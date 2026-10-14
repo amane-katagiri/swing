@@ -717,4 +717,123 @@ mod tests {
             (None, None)
         );
     }
+
+    struct MirrorRig {
+        _relay: LocalRelay,
+        client: RelayClient,
+        config: Config,
+    }
+
+    async fn mirror_rig() -> MirrorRig {
+        let (relay, url) = crate::test_support::relay_holding(&[]).await;
+        let toml = format!("[nostr]\nrelays = [\"{url}\"]\n");
+        let mut config = crate::config::build_config_from_str(&toml, |_| None).unwrap();
+        config.agent.state_dir = crate::test_support::unused_dir();
+        let client = RelayClient::connect(Signer::Local(keys()), &[url])
+            .await
+            .unwrap();
+        MirrorRig {
+            _relay: relay,
+            client,
+            config,
+        }
+    }
+
+    impl MirrorRig {
+        async fn on_relay(&self) -> Option<Event> {
+            self.client
+                .fetch_follow_set(&self.config.nostr.mirror_set)
+                .await
+                .unwrap()
+        }
+    }
+
+    fn hexes(keys: &[PublicKey]) -> Vec<String> {
+        keys.iter().map(PublicKey::to_hex).collect()
+    }
+
+    fn sorted(mut keys: Vec<PublicKey>) -> Vec<PublicKey> {
+        keys.sort();
+        keys
+    }
+
+    #[tokio::test]
+    async fn mirror_changes_publish_only_when_the_set_changes() {
+        let rig = mirror_rig().await;
+        let (a, b, c) = (
+            keys().public_key(),
+            keys().public_key(),
+            keys().public_key(),
+        );
+
+        let added = apply_add(&rig.client, &rig.config, &hexes(&[a, b]))
+            .await
+            .unwrap();
+        assert!(!added.follow_set_found);
+        assert!(added.published);
+        assert_eq!(added.changed, vec![a, b]);
+        assert!(
+            added.relay_results.iter().all(|r| r.ok),
+            "{:?}",
+            added.relay_results
+        );
+        let first = rig
+            .on_relay()
+            .await
+            .expect("the follow set reached the relay");
+        assert_eq!(
+            sorted(MirrorSet::from_event(&first).pubkeys()),
+            sorted(vec![a, b])
+        );
+
+        let again = apply_add(&rig.client, &rig.config, &hexes(&[a]))
+            .await
+            .unwrap();
+        assert!(again.follow_set_found);
+        assert!(!again.published);
+        assert!(again.relay_results.is_empty());
+        assert_eq!(again.unchanged, vec![a]);
+        assert_eq!(rig.on_relay().await.unwrap().id, first.id);
+
+        let removed = apply_remove(&rig.client, &rig.config, &hexes(&[b, c]))
+            .await
+            .unwrap();
+        assert!(removed.published);
+        assert_eq!(removed.changed, vec![b]);
+        assert_eq!(removed.unchanged, vec![c]);
+        let second = rig.on_relay().await.unwrap();
+        assert_eq!(MirrorSet::from_event(&second).pubkeys(), vec![a]);
+        assert!(
+            second.created_at > first.created_at,
+            "a change within the same second must still outdate the previous set"
+        );
+
+        let none = apply_remove(&rig.client, &rig.config, &hexes(&[c]))
+            .await
+            .unwrap();
+        assert!(!none.published);
+        assert_eq!(rig.on_relay().await.unwrap().id, second.id);
+    }
+
+    #[tokio::test]
+    async fn growing_the_set_past_the_cap_is_refused_before_publishing() {
+        let rig = mirror_rig().await;
+        let first = keys().public_key();
+        apply_add(&rig.client, &rig.config, &hexes(&[first]))
+            .await
+            .unwrap();
+        let before = rig.on_relay().await.unwrap();
+
+        let many: Vec<PublicKey> = (0..nostr::budget::MAX_FOLLOW_SET_ENTRIES)
+            .map(|_| keys().public_key())
+            .collect();
+        let err = apply_add(&rig.client, &rig.config, &hexes(&many))
+            .await
+            .unwrap_err();
+        let cap = err
+            .downcast_ref::<FollowSetCapExceeded>()
+            .unwrap_or_else(|| panic!("{err:#}"));
+        assert_eq!(cap.total, nostr::budget::MAX_FOLLOW_SET_ENTRIES + 1);
+        assert_eq!(rig.on_relay().await.unwrap().id, before.id);
+    }
 }
