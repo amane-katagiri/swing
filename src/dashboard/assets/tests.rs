@@ -54,7 +54,9 @@ fn every_referenced_desktop_icon_is_in_the_sprite() {
 #[test]
 fn every_static_i18n_key_exists_in_both_languages() {
     let web = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("web");
-    let messages = std::fs::read_to_string(web.join("i18n.js")).unwrap();
+    let messages = std::fs::read_to_string(web.join("i18n.js"))
+        .unwrap()
+        .replace("\r\n", "\n");
     let (en, ja) = messages.split_once("\n  ja: {\n").unwrap();
     let keys = |block: &str| -> std::collections::BTreeSet<String> {
         block
