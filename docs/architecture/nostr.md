@@ -12,7 +12,7 @@
   - 正規化: 通った値を `nostr::canonical_cid` で CIDv1・base32 に変換する。レプリカ報告の `cid` タグ（下記）と、`swing publish` が Kubo から受け取った CID（`publish::add_and_measure`）も同じ関数を通す。
   - 以後: `SiteEvent::cid`・`ReplicaReport::cids`・`policy::decide`・`replicas_of`・`state.json` は正規形の文字列だけを扱う。
 - `url`: 2048 バイト超、制御文字を含む、または http(s) としてパースできなければ `url` だけを無視する。`swing publish --url` も同じ判定で拒否する。
-- `title`: 空、256 バイト超、制御文字か見えない書式文字（`d` と同じ）を含む場合は `title` だけを無視する。保存の判断には使わない。
+- `title`: 空、256 バイト超、制御文字か見えない書式文字（`d` と同じ）を含む場合は `title` だけを無視する（見えない書式文字を含む `title` を無視するのは、プロトコル上は任意）。保存の判断には使わない。
 - `size`: ASCII の数字だけからなり `u64` に収まる値だけを読む（`nostr::parse_decimal`。`+` や空白、符号付きの値は `size` だけを無視する）。
 - `content`: 空でなく `MAX_CONTENT_BYTES`（4096 バイト）以下なら `SiteEvent::message` に入れる。超えたら更新メモだけを捨て、イベントは受け入れる。保存の判断には使わない。
 - Follow Set: relay のフィルタに加え、受信後にも kind・作者・`d` を確かめる（`nostr::is_follow_set_of`）。relay から受け取ったものの署名は下の「署名」のとおり確かめ済みなので繰り返さない。`state.json` から読んだ自分の Follow Set だけは `nostr::is_saved_follow_set_of` で署名も確かめ直す（`agent::follow`・`agent::replicas`・`mirror`）。`content`（暗号化 private 部分）は読まない。
