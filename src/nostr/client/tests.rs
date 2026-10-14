@@ -426,12 +426,13 @@ async fn relay_that_ignores_filters(events: &[Event]) -> (LocalRelay, RelayClien
 #[tokio::test]
 async fn fetches_never_return_events_the_relay_sends_for_unrequested_authors() {
     let now = Timestamp::now().as_secs();
+    let older = now - 10;
     let wanted = keys();
     let stranger = keys();
     let wanted_site = make_site_event(&wanted, 35980, "wanted.example", CID_A, now);
-    let stranger_site = make_site_event(&stranger, 35980, "stranger.example", CID_B, now);
+    let stranger_site = make_site_event(&stranger, 35980, "stranger.example", CID_B, older);
     let wanted_set = follow_set(&wanted, "swing", now, "wanted");
-    let stranger_set = follow_set(&stranger, "swing", now, "stranger");
+    let stranger_set = follow_set(&stranger, "swing", older, "stranger");
     let wanted_report = report(
         &stranger,
         &wanted.public_key(),
@@ -444,8 +445,13 @@ async fn fetches_never_return_events_the_relay_sends_for_unrequested_authors() {
         &stranger.public_key(),
         "stranger.example",
         &[CID_B],
-        now,
+        older,
     );
+    let wanted_coordinate = [site_coordinate(
+        35980,
+        &wanted.public_key(),
+        "wanted.example",
+    )];
     let all = [
         wanted_site.clone(),
         stranger_site.clone(),
@@ -455,7 +461,6 @@ async fn fetches_never_return_events_the_relay_sends_for_unrequested_authors() {
         stranger_report.clone(),
     ];
     let (_local, client) = relay_that_ignores_filters(&all).await;
-
     let unfiltered = client
         .fetch_one(
             Filter::new()
@@ -466,54 +471,118 @@ async fn fetches_never_return_events_the_relay_sends_for_unrequested_authors() {
         .await
         .unwrap();
     assert!(!unfiltered.iter().any(|e| e.id == stranger_site.id));
-
-    let sites = client
-        .fetch_site_events(35980, &[wanted.public_key()])
-        .await
-        .unwrap();
-    assert!(sites.iter().all(|e| e.id == wanted_site.id));
-
-    let sets = client
-        .fetch_follow_sets("swing", &[wanted.public_key()])
-        .await
-        .unwrap();
-    assert!(sets.values().all(|e| e.id == wanted_set.id));
-
-    let reports = client
-        .fetch_replica_reports(
-            35981,
-            &[site_coordinate(
-                35980,
-                &wanted.public_key(),
-                "wanted.example",
-            )],
-        )
-        .await
-        .unwrap();
-    assert!(reports.iter().all(|e| e.id == wanted_report.id));
-
-    let wanted_coordinate = [site_coordinate(
-        35980,
-        &wanted.public_key(),
-        "wanted.example",
-    )];
-    let by_stranger = client
-        .fetch_replica_reports_by(35981, &wanted_coordinate, &[stranger.public_key()])
-        .await
-        .unwrap();
-    assert!(by_stranger.iter().all(|e| e.id == wanted_report.id));
     let by_wanted = client
         .fetch_replica_reports_by(35981, &wanted_coordinate, &[wanted.public_key()])
         .await
         .unwrap();
     assert!(by_wanted.is_empty());
-
     let referencing = client
         .fetch_follow_set_authors_referencing("swing", &[wanted.public_key()])
         .await
         .unwrap();
     assert!(referencing.is_empty());
+    client.shutdown().await;
 
+    // A relay may stop at the limit, so each fetch gets a relay holding only the wanted event and one decoy.
+    let ids = |events: Vec<Event>| events.into_iter().map(|e| e.id).collect::<Vec<_>>();
+    let (_local, client) = relay_that_ignores_filters(&[wanted_site.clone(), stranger_site]).await;
+    let sites = client
+        .fetch_site_events(35980, &[wanted.public_key()])
+        .await
+        .unwrap();
+    assert_eq!(ids(sites), vec![wanted_site.id]);
+    client.shutdown().await;
+
+    let (_local, client) = relay_that_ignores_filters(&[wanted_set.clone(), stranger_set]).await;
+    let sets = client
+        .fetch_follow_sets("swing", &[wanted.public_key()])
+        .await
+        .unwrap();
+    assert_eq!(
+        sets.into_iter()
+            .map(|(pk, e)| (pk, e.id))
+            .collect::<Vec<_>>(),
+        vec![(wanted.public_key(), wanted_set.id)]
+    );
+    client.shutdown().await;
+
+    let (_local, client) =
+        relay_that_ignores_filters(&[wanted_report.clone(), stranger_report.clone()]).await;
+    let reports = client
+        .fetch_replica_reports(35981, &wanted_coordinate)
+        .await
+        .unwrap();
+    assert_eq!(ids(reports), vec![wanted_report.id]);
+    let by_stranger = client
+        .fetch_replica_reports_by(35981, &wanted_coordinate, &[stranger.public_key()])
+        .await
+        .unwrap();
+    assert_eq!(ids(by_stranger), vec![wanted_report.id]);
+    client.shutdown().await;
+}
+
+#[tokio::test]
+async fn reports_about_an_author_come_only_from_the_given_reporters_since_the_cutoff() {
+    let now = Timestamp::now().as_secs();
+    let me = keys();
+    let other = keys();
+    let reporter = keys();
+    let stranger = keys();
+    let about = |by: &Keys, author: &Keys, d: &str, at: u64| {
+        crate::test_support::replica_report_event(
+            by,
+            &author.public_key(),
+            d,
+            &[CID_A],
+            at,
+            now + 1000,
+        )
+    };
+    let recent = about(&reporter, &me, "recent.example", now - 10);
+    let old = about(&reporter, &me, "old.example", now - 1000);
+    let about_other = about(&reporter, &other, "other.example", now - 10);
+    let by_stranger = about(&stranger, &me, "stranger.example", now - 10);
+    let wrong_kind = EventBuilder::new(Kind::TextNote, "")
+        .tag(Tag::public_key(me.public_key()))
+        .custom_created_at(Timestamp::from_secs(now - 10))
+        .finalize(&reporter)
+        .unwrap();
+    let all = [
+        recent.clone(),
+        old.clone(),
+        about_other,
+        by_stranger,
+        wrong_kind,
+    ];
+    let ids = |events: Vec<Event>| events.into_iter().map(|e| e.id).collect::<BTreeSet<_>>();
+
+    let (_relay, url) = relay_holding(&all).await;
+    let client = RelayClient::connect(Signer::Local(keys()), &[url])
+        .await
+        .unwrap();
+    let since = client
+        .fetch_reports_about(
+            35981,
+            me.public_key(),
+            &[reporter.public_key()],
+            Some(now - 100),
+        )
+        .await
+        .unwrap();
+    assert_eq!(ids(since), BTreeSet::from([recent.id]));
+    let everything = client
+        .fetch_reports_about(35981, me.public_key(), &[reporter.public_key()], None)
+        .await
+        .unwrap();
+    assert_eq!(ids(everything), BTreeSet::from([recent.id, old.id]));
+    client.shutdown().await;
+
+    let (_local, client) = relay_that_ignores_filters(&all).await;
+    let unfiltered = client
+        .fetch_reports_about(35981, me.public_key(), &[reporter.public_key()], None)
+        .await
+        .unwrap();
+    assert_eq!(ids(unfiltered), BTreeSet::from([recent.id, old.id]));
     client.shutdown().await;
 }
 
