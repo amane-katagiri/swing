@@ -880,6 +880,197 @@ mod tests {
         assert!(err.to_string().contains("no progress"), "{err}");
     }
 
+    async fn fake_kubo_replying(replies: &[(&'static str, u16, &'static str)]) -> IpfsClient {
+        let mut router = axum::Router::new();
+        for &(endpoint, status, body) in replies {
+            router = router.route(
+                &format!("/api/v0/{endpoint}"),
+                axum::routing::post(move || async move {
+                    (axum::http::StatusCode::from_u16(status).unwrap(), body)
+                }),
+            );
+        }
+        let addr = crate::test_support::serve_router(router).await;
+        IpfsClient::new(format!("http://{addr}"))
+    }
+
+    const KUBO_MISSING: &str =
+        r#"{"Message":"files/ls: file does not exist","Code":0,"Type":"error"}"#;
+    const KUBO_BROKEN: &str = r#"{"Message":"repo is locked","Code":0,"Type":"error"}"#;
+
+    #[tokio::test]
+    async fn mfs_remove_treats_a_200_with_a_message_as_a_failure() {
+        let failing = fake_kubo_replying(&[("files/rm", 200, "Error: cannot remove\n")]).await;
+        let err = failing.mfs_remove("/swing/x").await.unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("files/rm failed: Error: cannot remove"),
+            "{err}"
+        );
+
+        let clean = fake_kubo_replying(&[("files/rm", 200, "\n")]).await;
+        clean.mfs_remove("/swing/x").await.unwrap();
+
+        let broken = fake_kubo_replying(&[("files/rm", 500, KUBO_BROKEN)]).await;
+        assert!(broken.mfs_remove("/swing/x").await.is_err());
+    }
+
+    #[tokio::test]
+    async fn a_missing_mfs_path_reads_as_empty_and_other_failures_stay_errors() {
+        let missing = fake_kubo_replying(&[
+            ("files/ls", 500, KUBO_MISSING),
+            ("files/stat", 500, KUBO_MISSING),
+        ])
+        .await;
+        assert_eq!(missing.mfs_list("/swing/a").await.unwrap(), vec![]);
+        assert_eq!(missing.mfs_stat_cid("/swing/a").await.unwrap(), None);
+
+        let present = fake_kubo_replying(&[
+            (
+                "files/ls",
+                200,
+                r#"{"Entries":[{"Name":"d","Type":1,"Size":0,"Hash":"bafyd"},{"Name":"f","Type":0,"Size":3,"Hash":"bafyf"}]}"#,
+            ),
+            (
+                "files/stat",
+                200,
+                r#"{"Hash":"bafyf","Size":3,"CumulativeSize":11,"Blocks":0,"Type":"file"}"#,
+            ),
+        ])
+        .await;
+        assert_eq!(
+            present.mfs_list("/swing/a").await.unwrap(),
+            vec![
+                MfsEntry {
+                    name: "d".into(),
+                    is_dir: true,
+                    cid: "bafyd".into()
+                },
+                MfsEntry {
+                    name: "f".into(),
+                    is_dir: false,
+                    cid: "bafyf".into()
+                },
+            ]
+        );
+        assert_eq!(
+            present.mfs_stat_cid("/swing/a/f").await.unwrap().as_deref(),
+            Some("bafyf")
+        );
+
+        let broken = fake_kubo_replying(&[
+            ("files/ls", 500, KUBO_BROKEN),
+            ("files/stat", 500, KUBO_BROKEN),
+        ])
+        .await;
+        assert!(broken.mfs_list("/swing/a").await.is_err());
+        assert!(broken.mfs_stat_cid("/swing/a").await.is_err());
+    }
+
+    #[tokio::test]
+    async fn mfs_place_tells_an_existing_entry_from_a_failure() {
+        let placed = fake_kubo_replying(&[("files/mkdir", 200, ""), ("files/cp", 200, "")]).await;
+        assert!(placed.mfs_place(CID, "/swing/a/b").await.unwrap());
+
+        let exists = fake_kubo_replying(&[
+            ("files/mkdir", 200, ""),
+            (
+                "files/cp",
+                500,
+                r#"{"Message":"cp: cannot put node in path /swing/a/b: directory already has entry by that name","Code":0,"Type":"error"}"#,
+            ),
+        ])
+        .await;
+        assert!(!exists.mfs_place(CID, "/swing/a/b").await.unwrap());
+
+        let broken =
+            fake_kubo_replying(&[("files/mkdir", 200, ""), ("files/cp", 500, KUBO_BROKEN)]).await;
+        assert!(broken.mfs_place(CID, "/swing/a/b").await.is_err());
+
+        let no_parent = fake_kubo_replying(&[("files/mkdir", 500, KUBO_BROKEN)]).await;
+        assert!(no_parent.mfs_place(CID, "/swing/a/b").await.is_err());
+    }
+
+    const CID: &str = crate::test_support::CID_A;
+
+    fn dag_export_router(chunks: usize, chunk_len: usize, gap: Duration) -> axum::Router {
+        axum::Router::new().route(
+            "/api/v0/dag/export",
+            axum::routing::post(move || async move {
+                let stream = futures_util::stream::iter(0..chunks).then(move |_| async move {
+                    tokio::time::sleep(gap).await;
+                    Ok::<_, std::convert::Infallible>(vec![0u8; chunk_len])
+                });
+                axum::body::Body::from_stream(stream)
+            }),
+        )
+    }
+
+    async fn fetch_from(router: axum::Router, limits: FetchLimits) -> Result<Fetched> {
+        let addr = crate::test_support::serve_router(router).await;
+        IpfsClient::new(format!("http://{addr}"))
+            .fetch_dag(CID, limits)
+            .await
+    }
+
+    const ROOMY: FetchLimits = FetchLimits {
+        max_bytes: 1 << 20,
+        total: Duration::from_secs(30),
+        idle: Duration::from_secs(10),
+    };
+
+    #[tokio::test]
+    async fn fetch_dag_reads_to_the_end_within_the_size_cap() {
+        let router = dag_export_router(4, 1000, Duration::ZERO);
+        let limits = FetchLimits {
+            max_bytes: 4000,
+            ..ROOMY
+        };
+        assert_eq!(fetch_from(router, limits).await.unwrap(), Fetched::Complete);
+    }
+
+    #[tokio::test]
+    async fn fetch_dag_stops_once_the_dag_grows_past_the_cap() {
+        let router = dag_export_router(1000, 1000, Duration::ZERO);
+        let limits = FetchLimits {
+            max_bytes: 3999,
+            ..ROOMY
+        };
+        assert_eq!(fetch_from(router, limits).await.unwrap(), Fetched::TooLarge);
+    }
+
+    #[tokio::test]
+    async fn fetch_dag_gives_up_on_a_stalled_export() {
+        let router = dag_export_router(2, 10, Duration::from_secs(60));
+        let limits = FetchLimits {
+            idle: Duration::from_millis(200),
+            ..ROOMY
+        };
+        let err = fetch_from(router, limits).await.unwrap_err();
+        assert!(format!("{err:#}").contains("stalled"), "{err:#}");
+    }
+
+    #[tokio::test]
+    async fn fetch_dag_gives_up_on_an_export_that_trickles_past_the_total() {
+        let router = dag_export_router(1000, 10, Duration::from_millis(50));
+        let limits = FetchLimits {
+            total: Duration::from_millis(500),
+            idle: Duration::from_secs(5),
+            ..ROOMY
+        };
+        let err = fetch_from(router, limits).await.unwrap_err();
+        assert!(format!("{err:#}").contains("timed out"), "{err:#}");
+    }
+
+    #[tokio::test]
+    async fn fetch_dag_reports_a_refused_export_with_its_message() {
+        let client = fake_kubo_replying(&[("dag/export", 500, KUBO_BROKEN)]).await;
+        let err = client.fetch_dag(CID, ROOMY).await.unwrap_err();
+        let shown = format!("{err:#}");
+        assert!(shown.contains("dag/export failed: 500"), "{shown}");
+        assert!(shown.contains("repo is locked"), "{shown}");
+    }
+
     #[tokio::test]
     #[ignore]
     async fn kubo_client_probe() {
