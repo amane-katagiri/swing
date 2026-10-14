@@ -206,6 +206,31 @@ async fn a_failed_put_or_incomplete_content_records_and_keeps_nothing() {
 }
 
 #[tokio::test]
+async fn a_failed_put_or_incomplete_content_is_retried_without_waiting_for_the_interval() {
+    for case in ["put fails", "content incomplete"] {
+        let mut policy = default_policy();
+        policy.min_update_interval = 3600;
+        let kubo = FakeKubo::with(|s| {
+            let failing = if case == "put fails" {
+                &mut s.fail_put
+            } else {
+                &mut s.fail_stat
+            };
+            failing.insert("bafy-new".into());
+        });
+        let fx = Fixture::new(policy, kubo);
+
+        fx.apply(fx.event(D, "bafy-new", None, 200)).await;
+        fx.kubo().fail_put.clear();
+        fx.kubo().fail_stat.clear();
+        fx.apply(fx.event(D, "bafy-new", None, 200)).await;
+
+        assert_eq!(fx.kubo().fetched, vec!["bafy-new", "bafy-new"], "{case}");
+        assert!(fx.kubo().stores("bafy-new"), "{case}");
+    }
+}
+
+#[tokio::test]
 async fn oversized_content_is_aborted_during_fetch_even_with_a_small_size_tag() {
     let mut policy = default_policy();
     policy.max_per_site = 50;
@@ -719,6 +744,50 @@ async fn nip05_errors_are_cached_for_a_shorter_time() {
     fx.apply(fx.event(D, "bafy-1", None, 200)).await;
     assert_eq!(fx.agent.nip05.calls(), 2);
     assert!(fx.kubo().fetched.is_empty());
+}
+
+#[tokio::test]
+async fn a_nip05_error_does_not_hold_the_site_for_the_interval() {
+    let mut policy = nip05_policy(CheckMode::Require);
+    policy.min_update_interval = 3600;
+    let fx = Fixture::new(policy, FakeKubo::default());
+    let pubkey = fx.pubkey.to_hex();
+    fx.agent.nip05.set(
+        D,
+        &pubkey,
+        VerificationResult::Error("timeout".into(), nip05::ErrorCategory::Timeout),
+    );
+
+    fx.apply(fx.event(D, "bafy-1", None, 200)).await;
+    fx.agent.nip05.set(D, &pubkey, VerificationResult::Verified);
+    fx.agent
+        .state
+        .lock()
+        .await
+        .verifications
+        .get_mut(&fx.key(D))
+        .unwrap()
+        .checked_at -= NIP05_ERROR_CACHE_TTL;
+    fx.apply(fx.event(D, "bafy-1", None, 200)).await;
+
+    assert_eq!(fx.agent.nip05.calls(), 2);
+    assert!(fx.kubo().stores("bafy-1"));
+}
+
+#[tokio::test]
+async fn a_nip05_mismatch_holds_the_site_for_the_interval() {
+    let mut policy = nip05_policy(CheckMode::Require);
+    policy.min_update_interval = 3600;
+    policy.nip05_cache_ttl = 0;
+    let fx = Fixture::new(policy, FakeKubo::default());
+    fx.agent
+        .nip05
+        .set(D, &fx.pubkey.to_hex(), VerificationResult::Mismatch);
+
+    fx.apply(fx.event(D, "bafy-1", None, 200)).await;
+    fx.apply(fx.event(D, "bafy-1", None, 200)).await;
+
+    assert_eq!(fx.agent.nip05.calls(), 1);
 }
 
 #[tokio::test]

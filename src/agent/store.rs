@@ -377,6 +377,16 @@ impl<C: KuboStore, N: Nip05Verify, R: ReportRelay> Agent<C, N, R> {
         if policy.nip05 != CheckMode::Off {
             let verified = self.nip05_verified(key, &ev.d, pubkey_hex).await;
             if policy.nip05 == CheckMode::Require && !verified {
+                let errored = self
+                    .state
+                    .lock()
+                    .await
+                    .verifications
+                    .get(key)
+                    .is_some_and(|v| v.status == nip05::STATE_ERROR);
+                if errored {
+                    self.attempts.lock().unwrap().forget_attempt(key);
+                }
                 return None;
             }
         }
@@ -433,7 +443,8 @@ impl<C: KuboStore, N: Nip05Verify, R: ReportRelay> Agent<C, N, R> {
             Storing::new(&self.storing, path.clone())
         };
         if let Err(e) = self.ipfs.mfs_put(&ev.cid, &path).await {
-            error!(cid = %ev.cid, path = %path, error = %e, "storing into MFS failed");
+            error!(cid = %ev.cid, path = %path, error = %e, "storing into MFS failed; will retry on the next poll");
+            self.attempts.lock().unwrap().forget_attempt(key);
             return false;
         }
         let size = self.ipfs.dag_size_local(&[ev.cid.as_str()]).await;
@@ -442,7 +453,8 @@ impl<C: KuboStore, N: Nip05Verify, R: ReportRelay> Agent<C, N, R> {
             Ok(size) => size,
             Err(e) => {
                 drop(state);
-                warn!(cid = %ev.cid, error = %e, "content is incomplete after fetch; will retry after min_update_interval");
+                warn!(cid = %ev.cid, error = %e, "content is incomplete after fetch; will retry on the next poll");
+                self.attempts.lock().unwrap().forget_attempt(key);
                 self.remove_path(&path).await;
                 return false;
             }

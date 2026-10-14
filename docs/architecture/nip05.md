@@ -40,6 +40,6 @@ agent と dashboard（`POST /api/publish/upload`・`POST /api/publish/check` の
 |---|---|
 | `off` | 検証も記録もしない |
 | `warn` | 検証して記録し、結果に関わらず取得に進む |
-| `require` | 検証して記録し、`Verified` のときだけ取得に進む |
+| `require` | 検証して記録し、`Verified` のときだけ取得に進む。`error` なら取得の試行を取り消し、次の poll で（記録のキャッシュが切れていれば）検証し直す |
 
 `state.verifications` をキャッシュに使う。`checked_at` から `nip05_cache_ttl`（`error` はそれと 15 分の短い方）が経つまでは再検証せず、記録済みの `status` で判断する。`nip05_cache_ttl = 0` なら毎回検証する。`warn`・`require` のどちらでも、実際に検証して `Verified` 以外なら warn ログを出す（キャッシュで判断したときは出さない）。記録するたびに、その pubkey の保存されていないサイトの記録を `checked_at` の新しい順に `max_sites_per_account` 件まで残して消す。
