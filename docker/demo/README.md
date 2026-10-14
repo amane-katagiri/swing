@@ -13,7 +13,7 @@ docker/demo/demo.sh ps      # それ以外の引数はそのまま docker compos
 docker/demo/demo.sh logs -f mirror
 ```
 
-- ダッシュボード: <http://127.0.0.1:18082/>。ログインは `docker/demo/demo.sh exec mirror swing dashboard open --no-browser` で出た URL を開く（`docker/demo/compose.yaml` が `SWING_DASHBOARD_PUBLIC_URL=http://127.0.0.1:18082` を渡しているので、ホストのブラウザでそのまま開ける）
+- ダッシュボード: <http://127.0.0.1:18082/>。ログインは `docker/demo/demo.sh exec mirror swing dashboard open --no-browser` で出た URL を開く（`docker/demo/compose.yaml` が `SWING_DASHBOARD_PUBLIC_URL=http://127.0.0.1:18082` を渡しているので、ホストのブラウザでそのまま開ける）。開くとコードが入ったログイン画面になるので、「Log in」（日本語表示では「ログイン」）を押す。リンクを開いただけではログインしない。自動で操作するときは `document.getElementById('login-form').requestSubmit()` で送る（[`docs/assets/capture-desktop.sh`](../../docs/assets/capture-desktop.sh)）
 - Kubo Gateway: <http://localhost:18080/>（ダッシュボードの Gateway リンクもここを指す。`localhost` ではサイトごとに `<cid>.ipfs.localhost` へ移る）
 - コードを変えたら `demo.sh up` をもう一度実行すれば mirror を作り直す。鍵とデータはそのまま残る。
 
