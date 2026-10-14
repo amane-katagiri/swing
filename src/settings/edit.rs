@@ -331,28 +331,16 @@ mod tests {
         );
     }
 
-    #[test]
-    fn new_file_gets_owner_only_permissions() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("nested").join("swing.toml");
-        let cfg = config_at(MINIMAL_TOML, path.clone(), false);
-        let items = items(&[("nostr.mirror_set", "newset")]);
-        update(&cfg, &items).unwrap();
-        #[cfg(unix)]
-        {
-            assert_eq!(crate::test_support::mode(&path), 0o600);
-        }
-    }
-
     #[cfg(unix)]
     #[test]
-    fn missing_parent_directory_is_created_as_0700() {
+    fn a_new_file_and_its_missing_parent_are_owner_only() {
         let dir = tempfile::tempdir().unwrap();
         let parent = dir.path().join("nested");
         let path = parent.join("swing.toml");
         let cfg = config_at(MINIMAL_TOML, path.clone(), false);
         let items = items(&[("nostr.mirror_set", "newset")]);
         update(&cfg, &items).unwrap();
+        assert_eq!(crate::test_support::mode(&path), 0o600);
         assert_eq!(crate::test_support::mode(&parent), 0o700);
     }
 

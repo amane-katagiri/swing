@@ -31,45 +31,44 @@ fn nostr_file_debug_redacts_the_secret_key() {
 
 #[test]
 fn parse_size_units() {
-    assert_eq!(parse_size("100GB").unwrap(), 100 * (1u64 << 30));
-    assert_eq!(parse_size("512MB").unwrap(), 512 * (1u64 << 20));
-    assert_eq!(parse_size("1TB").unwrap(), 1u64 << 40);
-    assert_eq!(parse_size("2KB").unwrap(), 2 * (1u64 << 10));
-    assert_eq!(parse_size("12345").unwrap(), 12345);
-    assert_eq!(parse_size("100gb").unwrap(), 100 * (1u64 << 30));
-    assert_eq!(parse_size("100Gb").unwrap(), 100 * (1u64 << 30));
-    assert_eq!(parse_size(" 100GB ").unwrap(), 100 * (1u64 << 30));
-}
-
-#[test]
-fn parse_size_binary_units_match_the_legacy_units() {
-    assert_eq!(parse_size("100GiB").unwrap(), 100 * (1u64 << 30));
-    assert_eq!(parse_size("100GiB").unwrap(), parse_size("100GB").unwrap());
-    assert_eq!(parse_size("512MiB").unwrap(), 512 * (1u64 << 20));
-    assert_eq!(parse_size("1TiB").unwrap(), 1u64 << 40);
-    assert_eq!(parse_size("2KiB").unwrap(), 2 * (1u64 << 10));
-    assert_eq!(parse_size("1.5KiB").unwrap(), 1536);
-    assert_eq!(parse_size("100gib").unwrap(), 100 * (1u64 << 30));
-    assert_eq!(parse_size("100 GIB").unwrap(), 100 * (1u64 << 30));
-    assert!(parse_size("GiB").is_err());
-    assert!(parse_size("5iB").is_err());
+    for (input, want) in [
+        ("100GB", 100 * (1u64 << 30)),
+        ("512MB", 512 * (1u64 << 20)),
+        ("1TB", 1u64 << 40),
+        ("2KB", 2 * (1u64 << 10)),
+        ("12345", 12345),
+        ("100gb", 100 * (1u64 << 30)),
+        ("100Gb", 100 * (1u64 << 30)),
+        (" 100GB ", 100 * (1u64 << 30)),
+        ("1.5KB", 1536),
+        ("100GiB", 100 * (1u64 << 30)),
+        ("512MiB", 512 * (1u64 << 20)),
+        ("1TiB", 1u64 << 40),
+        ("2KiB", 2 * (1u64 << 10)),
+        ("1.5KiB", 1536),
+        ("100gib", 100 * (1u64 << 30)),
+        ("100 GIB", 100 * (1u64 << 30)),
+    ] {
+        assert_eq!(parse_size(input).unwrap(), want, "{input:?}");
+    }
 }
 
 #[test]
 fn parse_size_rejects_garbage() {
-    assert!(parse_size("").is_err());
-    assert!(parse_size("GB").is_err());
-    assert!(parse_size("-5GB").is_err());
-    assert!(parse_size("inf").is_err());
-    assert!(parse_size("NaN").is_err());
-    assert!(parse_size("1e3").is_err());
-    assert!(parse_size("+5GB").is_err());
-    assert!(parse_size("99999999999TB").is_err());
-}
-
-#[test]
-fn parse_size_accepts_fraction() {
-    assert_eq!(parse_size("1.5KB").unwrap(), 1536);
+    for input in [
+        "",
+        "GB",
+        "GiB",
+        "5iB",
+        "-5GB",
+        "inf",
+        "NaN",
+        "1e3",
+        "+5GB",
+        "99999999999TB",
+    ] {
+        assert!(parse_size(input).is_err(), "{input:?}");
+    }
 }
 
 #[test]
@@ -186,12 +185,6 @@ fn parse_listen_off_and_addr() {
     assert!(parse_listen("not-an-address").is_err());
 }
 
-#[test]
-fn resolve_config_path_prefers_cli_over_env_and_default() {
-    let cli = PathBuf::from("/tmp/from-cli.toml");
-    assert_eq!(resolve_config_path(Some(&cli)), cli);
-}
-
 fn env_of<'a>(vars: &'a [(&'a str, &'a str)]) -> impl Fn(&str) -> Option<String> + 'a {
     move |name| {
         vars.iter()
@@ -246,7 +239,8 @@ fn locate_config_prefers_cli_and_env_over_the_default() {
     vars.push(("SWING_CONFIG", "/etc/from-env.toml"));
     let cli = PathBuf::from("/tmp/from-cli.toml");
     let found = locate_config_with(Some(&cli), &cwd, env_of(&vars), |_| true);
-    assert_eq!(found, (cli, ConfigOrigin::Explicit));
+    assert_eq!(found, (cli.clone(), ConfigOrigin::Explicit));
+    assert_eq!(resolve_config_path(Some(&cli)), cli);
     let found = locate_config_with(None, &cwd, env_of(&vars), |_| true);
     assert_eq!(
         found,

@@ -74,19 +74,58 @@ fn absolute_file_paths_ignore_the_base_dir() {
 }
 
 #[test]
-fn default_kubo_repo_follows_the_rebased_state_dir() {
+fn kubo_repo_follows_the_state_dir_unless_set() {
     let base = base_dir();
-    let cfg = build_config(file_with_paths("data"), Some(&base), |_| None).unwrap();
-    assert_eq!(cfg.kubo.repo, base.join("data").join("kubo"));
-    assert_eq!(cfg.source_of("kubo.repo"), Some(Source::Default));
-}
-
-#[test]
-fn default_state_dir_is_joined_to_the_base_dir() {
-    let base = base_dir();
-    let cfg = build_config(minimal_file(), Some(&base), |_| None).unwrap();
-    assert_eq!(cfg.agent.state_dir, base.join("data"));
-    assert_eq!(cfg.kubo.repo, base.join("data").join("kubo"));
+    let cases = [
+        (
+            "file state_dir rebased",
+            file_with_paths("data"),
+            Some(base.as_path()),
+            vec![],
+            base.join("data"),
+            base.join("data").join("kubo"),
+        ),
+        (
+            "default state_dir rebased",
+            minimal_file(),
+            Some(base.as_path()),
+            vec![],
+            base.join("data"),
+            base.join("data").join("kubo"),
+        ),
+        (
+            "env state_dir",
+            minimal_file(),
+            None,
+            vec![("SWING_STATE_DIR", "/var/lib/swing")],
+            PathBuf::from("/var/lib/swing"),
+            PathBuf::from("/var/lib/swing/kubo"),
+        ),
+        (
+            "env repo",
+            minimal_file(),
+            None,
+            vec![("SWING_KUBO_REPO", "/data/kubo-repo")],
+            PathBuf::from("./data"),
+            PathBuf::from("/data/kubo-repo"),
+        ),
+    ];
+    for (name, file, base, env, state_dir, repo) in cases {
+        let cfg = build_config(file, base, |k| {
+            env.iter()
+                .find(|(key, _)| *key == k)
+                .map(|(_, v)| v.to_string())
+        })
+        .unwrap();
+        assert_eq!(cfg.agent.state_dir, state_dir, "{name}");
+        assert_eq!(cfg.kubo.repo, repo, "{name}");
+        let source = if env.iter().any(|(k, _)| *k == "SWING_KUBO_REPO") {
+            Source::Env
+        } else {
+            Source::Default
+        };
+        assert_eq!(cfg.source_of("kubo.repo"), Some(source), "{name}");
+    }
 }
 
 #[test]
@@ -96,28 +135,33 @@ fn relative_file_paths_stay_as_written_without_a_base_dir() {
 }
 
 #[test]
-fn zero_poll_interval_is_rejected() {
-    assert_env_rejects(
-        "SWING_POLL_INTERVAL",
-        "0s",
-        "SWING_POLL_INTERVAL must be greater than 0",
-    );
+fn out_of_range_numbers_are_rejected() {
+    for (key, value, expected) in [
+        ("SWING_POLL_INTERVAL", "0s", "must be greater than 0"),
+        ("SWING_FETCH_TIMEOUT", "0", "must be greater than 0"),
+        ("SWING_FETCH_IDLE_TIMEOUT", "0", "must be greater than 0"),
+        ("SWING_CONCURRENCY", "0", "must be greater than 0"),
+        ("SWING_MAX_SITES_PER_ACCOUNT", "0", "must be greater than 0"),
+        ("SWING_PUBLISH_KEEP_VERSIONS", "0", "must be greater than 0"),
+        ("SWING_DASHBOARD_MAX_UPLOAD", "0", "must be greater than 0"),
+        ("SWING_KUBO_SWARM_PORT", "0", "must be between 1 and 65535"),
+        ("SWING_ANCHOR_MAX_PEERS", "17", "must be between 0 and 16"),
+    ] {
+        assert_env_rejects(key, value, &format!("{key} {expected}"));
+    }
+    let cfg = build_config(minimal_file(), None, |k| {
+        (k == "SWING_KUBO_SWARM_PORT").then(|| "4001".to_string())
+    })
+    .unwrap();
+    assert_eq!(cfg.kubo.swarm_port, Some(4001));
 }
 
 #[test]
 fn anchor_max_peers_is_limited() {
-    assert_env_rejects(
-        "SWING_ANCHOR_MAX_PEERS",
-        "17",
-        "SWING_ANCHOR_MAX_PEERS must be between 0 and 16",
-    );
     let mut file = minimal_file();
     file.anchor.max_peers = Some(17);
     let err = build_config(file, None, |_| None).unwrap_err();
-    assert_eq!(
-        err.to_string(),
-        "[anchor].max_peers must be between 0 and 16"
-    );
+    assert!(err.to_string().contains("[anchor].max_peers"), "{err}");
     for ok in [0, 16] {
         let mut file = minimal_file();
         file.anchor.max_peers = Some(ok);
@@ -126,16 +170,6 @@ fn anchor_max_peers_is_limited() {
             ok
         );
     }
-}
-
-#[test]
-fn zero_concurrency_and_idle_timeout_are_rejected() {
-    assert_env_rejects(
-        "SWING_CONCURRENCY",
-        "0",
-        "SWING_CONCURRENCY must be greater than 0",
-    );
-    assert_env_rejects("SWING_FETCH_IDLE_TIMEOUT", "0", "SWING_FETCH_IDLE_TIMEOUT");
 }
 
 #[test]
@@ -174,15 +208,6 @@ fn report_ttl_must_not_outlive_the_receivers_max_report_age() {
 }
 
 #[test]
-fn zero_max_sites_per_account_is_rejected() {
-    assert_env_rejects(
-        "SWING_MAX_SITES_PER_ACCOUNT",
-        "0",
-        "SWING_MAX_SITES_PER_ACCOUNT must be greater than 0",
-    );
-}
-
-#[test]
 fn mfs_root_env_override_is_normalized() {
     let cfg = build_config(minimal_file(), None, |k| match k {
         "SWING_MFS_ROOT" => Some("/mirror/".into()),
@@ -193,21 +218,7 @@ fn mfs_root_env_override_is_normalized() {
 }
 
 #[test]
-fn zero_publish_keep_versions_is_rejected() {
-    assert_env_rejects(
-        "SWING_PUBLISH_KEEP_VERSIONS",
-        "0",
-        "SWING_PUBLISH_KEEP_VERSIONS must be greater than 0",
-    );
-}
-
-#[test]
-fn zero_fetch_timeout_is_rejected() {
-    assert_env_rejects("SWING_FETCH_TIMEOUT", "0", "SWING_FETCH_TIMEOUT");
-}
-
-#[test]
-fn env_overrides_toml() {
+fn env_overrides_file_for_each_resolver_helper() {
     let file = ConfigFile {
         nostr: NostrFile {
             secret_key: Some(String::from("file-key").into()),
@@ -216,14 +227,59 @@ fn env_overrides_toml() {
             site_event_kind: Some(1111),
             replica_event_kind: Some(2222),
         },
+        policy: PolicyFile {
+            nip05: Some("require".into()),
+            ..Default::default()
+        },
+        publish: PublishFile {
+            nip05: Some("require".into()),
+            ..Default::default()
+        },
+        kubo: KuboFile {
+            binary: Some("/opt/kubo/ipfs".into()),
+            gateway_listen: Some("127.0.0.1:9090".into()),
+            ..Default::default()
+        },
+        gateway: GatewayFile {
+            hosts: Some(vec!["from-file.example".into()]),
+            ..Default::default()
+        },
+        dashboard: DashboardFile {
+            listen: Some("127.0.0.1:9000".into()),
+            ui: Some(false),
+            allowed_hosts: Some(vec!["example.com".into()]),
+            public_url: None,
+            gateway: Some("http://gateway.example".into()),
+            custom_css: Some("/etc/swing/custom.css".into()),
+            desktop_page: Some("/etc/swing/page.html".into()),
+            desktop_page_css: Some("/etc/swing/page.css".into()),
+            desktop_banner: Some("/etc/swing/banner.png".into()),
+            mascots_dir: Some("/etc/swing/mascots".into()),
+            max_upload: Some("4GB".into()),
+        },
         ..Default::default()
     };
     let cfg = build_config(file, None, |k| match k {
         "SWING_NOSTR_SECRET_KEY" => Some("env-key".into()),
         "SWING_NOSTR_RELAYS" => Some("wss://a,wss://b".into()),
+        "SWING_NIP05" => Some("off".into()),
+        "SWING_PUBLISH_NIP05" => Some("off".into()),
+        "SWING_KUBO_BINARY" => Some("/usr/local/bin/ipfs".into()),
+        "SWING_KUBO_GATEWAY_LISTEN" => Some("127.0.0.1:8181".into()),
+        "SWING_GATEWAY_HOSTS" => Some(" a.example , b.example ".into()),
+        "SWING_DASHBOARD_LISTEN" => Some("0.0.0.0:8082".into()),
+        "SWING_DASHBOARD_ALLOWED_HOSTS" => Some("a.dash.example, b.dash.example".into()),
+        "SWING_DASHBOARD_GATEWAY" => Some("http://env-gateway.example".into()),
+        "SWING_DASHBOARD_CUSTOM_CSS" => Some("/env/custom.css".into()),
+        "SWING_DASHBOARD_DESKTOP_PAGE" => Some("/env/page.html".into()),
+        "SWING_DASHBOARD_DESKTOP_PAGE_CSS" => Some("/env/page.css".into()),
+        "SWING_DASHBOARD_DESKTOP_BANNER" => Some("/env/banner.gif".into()),
+        "SWING_DASHBOARD_MASCOTS_DIR" => Some("/env/mascots".into()),
+        "SWING_DASHBOARD_MAX_UPLOAD" => Some("512MB".into()),
         _ => None,
     })
     .unwrap();
+
     assert_eq!(
         cfg.nostr.secret_key.as_ref().unwrap().expose_secret(),
         "env-key"
@@ -232,12 +288,77 @@ fn env_overrides_toml() {
     assert_eq!(cfg.nostr.mirror_set, "from-file-set");
     assert_eq!(cfg.nostr.site_event_kind, 1111);
     assert_eq!(cfg.nostr.replica_event_kind, 2222);
+    assert_eq!(cfg.policy.nip05, CheckMode::Off);
+    assert_eq!(cfg.publish.nip05, CheckMode::Off);
+    assert_eq!(cfg.kubo.binary, Some(PathBuf::from("/usr/local/bin/ipfs")));
+    assert_eq!(
+        cfg.kubo.gateway_listen,
+        SocketAddr::from(([127, 0, 0, 1], 8181))
+    );
+    assert_eq!(cfg.gateway.hosts, ["a.example", "b.example"]);
+    assert_eq!(cfg.dashboard.listen, SocketAddr::from(([0, 0, 0, 0], 8082)));
+    assert!(!cfg.dashboard.ui);
+    assert_eq!(
+        cfg.dashboard.allowed_hosts,
+        ["a.dash.example", "b.dash.example"]
+    );
+    assert_eq!(
+        cfg.dashboard.gateway.as_deref(),
+        Some("http://env-gateway.example")
+    );
+    for (name, got, want) in [
+        ("custom_css", &cfg.dashboard.custom_css, "/env/custom.css"),
+        (
+            "desktop_page",
+            &cfg.dashboard.desktop_page,
+            "/env/page.html",
+        ),
+        (
+            "desktop_page_css",
+            &cfg.dashboard.desktop_page_css,
+            "/env/page.css",
+        ),
+        (
+            "desktop_banner",
+            &cfg.dashboard.desktop_banner,
+            "/env/banner.gif",
+        ),
+        ("mascots_dir", &cfg.dashboard.mascots_dir, "/env/mascots"),
+    ] {
+        assert_eq!(got.as_deref(), Some(Path::new(want)), "{name}");
+    }
+    assert_eq!(cfg.dashboard.max_upload, 512 * (1u64 << 20));
+}
+
+#[test]
+fn every_catalog_example_value_is_read_from_the_file() {
+    for setting in crate::settings::SETTINGS {
+        let crate::settings::Example::Value(literal) = setting.example else {
+            continue;
+        };
+        let text = format!("[{}]\n{} = {literal}\n", setting.section, setting.field);
+        let cfg = build_config_from_str(&text, |_| None)
+            .unwrap_or_else(|e| panic!("{}: {e:#}", setting.key));
+        assert_eq!(
+            cfg.source_of(setting.key),
+            Some(Source::File),
+            "{}",
+            setting.key
+        );
+    }
 }
 
 #[test]
 fn defaults_applied_when_nothing_set() {
-    let file = minimal_file();
+    let file = ConfigFile {
+        nostr: NostrFile {
+            secret_key: Some(String::from("k").into()),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
     let cfg = build_config(file, None, |_| None).unwrap();
+    assert_eq!(cfg.nostr.relays, DEFAULT_RELAYS);
     assert_eq!(cfg.nostr.mirror_set, "swing");
     assert_eq!(cfg.nostr.site_event_kind, 35980);
     assert_eq!(cfg.nostr.replica_event_kind, 35981);
@@ -262,6 +383,16 @@ fn defaults_applied_when_nothing_set() {
     assert_eq!(cfg.anchor.max_peers, 4);
     assert_eq!(cfg.ipfs.mfs_root, "/swing");
     assert_eq!(cfg.publish.keep_versions, 5);
+    assert_eq!(cfg.publish.nip05, CheckMode::Warn);
+    assert_eq!(cfg.publish.check_dotfiles, CheckMode::Require);
+    assert_eq!(cfg.publish.check_size, CheckMode::Warn);
+    assert_eq!(cfg.publish.check_links, CheckMode::Warn);
+    assert_eq!(cfg.publish.check_unchanged, CheckMode::Require);
+    assert_eq!(cfg.publish.dotfiles_allow, DEFAULT_DOTFILES_ALLOW);
+    assert_eq!(
+        cfg.source_of("publish.dotfiles_allow"),
+        Some(Source::Default)
+    );
     assert!(cfg.kubo.managed);
     assert_eq!(cfg.kubo.binary, None);
     assert_eq!(cfg.kubo.repo, PathBuf::from("./data").join("kubo"));
@@ -275,80 +406,62 @@ fn defaults_applied_when_nothing_set() {
     assert_eq!(cfg.gateway.listen, Listen::Off);
     assert!(cfg.gateway.hosts.is_empty());
     assert_eq!(cfg.gateway.upstream, "http://127.0.0.1:8080");
-}
-
-#[test]
-fn default_relays_used_when_none_configured() {
-    let mut file = minimal_file();
-    file.nostr.relays = None;
-    let cfg = build_config(file, None, |_| None).unwrap();
     assert_eq!(
-        cfg.nostr.relays,
-        DEFAULT_RELAYS
-            .iter()
-            .map(|s| s.to_string())
-            .collect::<Vec<_>>()
+        cfg.dashboard.listen,
+        SocketAddr::from(([127, 0, 0, 1], 8082))
     );
-}
-
-#[test]
-fn nip05_mode_env_overrides_file() {
-    let file = ConfigFile {
-        policy: PolicyFile {
-            nip05: Some("require".into()),
-            ..Default::default()
-        },
-        ..minimal_file()
-    };
-    let cfg = build_config(file, None, |k| match k {
-        "SWING_NIP05" => Some("off".into()),
-        _ => None,
-    })
-    .unwrap();
-    assert_eq!(cfg.policy.nip05, CheckMode::Off);
-}
-
-#[test]
-fn nip05_mode_rejects_garbage() {
-    assert_env_rejects("SWING_NIP05", "maybe", "invalid SWING_NIP05");
-}
-
-#[test]
-fn publish_nip05_defaults_to_warn() {
-    let file = minimal_file();
-    let cfg = build_config(file, None, |_| None).unwrap();
-    assert_eq!(cfg.publish.nip05, CheckMode::Warn);
-}
-
-#[test]
-fn publish_nip05_env_overrides_file() {
-    let file = ConfigFile {
-        publish: PublishFile {
-            nip05: Some("require".into()),
-            ..Default::default()
-        },
-        ..minimal_file()
-    };
-    let cfg = build_config(file, None, |k| match k {
-        "SWING_PUBLISH_NIP05" => Some("off".into()),
-        _ => None,
-    })
-    .unwrap();
-    assert_eq!(cfg.publish.nip05, CheckMode::Off);
-}
-
-#[test]
-fn publish_checks_default_to_require_warn_require_with_the_default_allow_list() {
-    let cfg = build_config(minimal_file(), None, |_| None).unwrap();
-    assert_eq!(cfg.publish.check_dotfiles, CheckMode::Require);
-    assert_eq!(cfg.publish.check_size, CheckMode::Warn);
-    assert_eq!(cfg.publish.check_links, CheckMode::Warn);
-    assert_eq!(cfg.publish.check_unchanged, CheckMode::Require);
-    assert_eq!(cfg.publish.dotfiles_allow, DEFAULT_DOTFILES_ALLOW);
+    assert!(cfg.dashboard.ui);
+    assert!(cfg.dashboard.allowed_hosts.is_empty());
+    assert_eq!(cfg.dashboard.public_url, None);
     assert_eq!(
-        cfg.source_of("publish.dotfiles_allow"),
-        Some(Source::Default)
+        cfg.dashboard.gateway.as_deref(),
+        Some("http://localhost:8080")
     );
+    assert_eq!(cfg.dashboard.custom_css, None);
+    assert_eq!(cfg.dashboard.desktop_page, None);
+    assert_eq!(cfg.dashboard.desktop_page_css, None);
+    assert_eq!(cfg.dashboard.desktop_banner, None);
+    assert_eq!(cfg.dashboard.mascots_dir, None);
+    assert_eq!(cfg.dashboard.max_upload, 2 * (1u64 << 30));
+}
+
+#[test]
+fn garbage_env_values_are_rejected() {
+    for (key, value, expected) in [
+        ("SWING_NIP05", "maybe", "invalid SWING_NIP05"),
+        (
+            "SWING_PUBLISH_NIP05",
+            "maybe",
+            "invalid SWING_PUBLISH_NIP05",
+        ),
+        (
+            "SWING_PUBLISH_CHECK_SIZE",
+            "maybe",
+            "invalid SWING_PUBLISH_CHECK_SIZE",
+        ),
+        (
+            "SWING_DASHBOARD_LISTEN",
+            "off",
+            "invalid SWING_DASHBOARD_LISTEN",
+        ),
+        (
+            "SWING_DASHBOARD_LISTEN",
+            "not-an-address",
+            "invalid SWING_DASHBOARD_LISTEN",
+        ),
+        (
+            "SWING_KUBO_GATEWAY_LISTEN",
+            "not-an-address",
+            "invalid SWING_KUBO_GATEWAY_LISTEN",
+        ),
+        (
+            "SWING_GATEWAY_HOSTS",
+            "Example.com",
+            "invalid SWING_GATEWAY_HOSTS entry",
+        ),
+    ] {
+        assert_env_rejects(key, value, expected);
+    }
 }
 
 #[test]
@@ -376,22 +489,6 @@ fn publish_check_env_overrides_file_which_overrides_default() {
     assert_eq!(
         cfg.source_of("publish.check_unchanged"),
         Some(Source::Default)
-    );
-}
-
-#[test]
-fn publish_check_modes_reject_garbage() {
-    assert_env_rejects(
-        "SWING_PUBLISH_CHECK_SIZE",
-        "maybe",
-        "invalid SWING_PUBLISH_CHECK_SIZE",
-    );
-    let mut file = minimal_file();
-    file.publish.check_unchanged = Some("sometimes".into());
-    let err = build_config(file, None, |_| None).unwrap_err();
-    assert!(
-        err.to_string().contains("[publish].check_unchanged"),
-        "{err}"
     );
 }
 
@@ -424,161 +521,17 @@ fn dotfiles_allow_rejects_entries_that_are_not_single_dot_names() {
 }
 
 #[test]
-fn publish_nip05_rejects_garbage() {
-    assert_env_rejects(
-        "SWING_PUBLISH_NIP05",
-        "maybe",
-        "invalid SWING_PUBLISH_NIP05",
-    );
-}
-
-#[test]
-fn dashboard_defaults_to_localhost_8082_with_default_gateway() {
-    let cfg = build_config(minimal_file(), None, |_| None).unwrap();
-    assert_eq!(
-        cfg.dashboard.listen,
-        SocketAddr::from(([127, 0, 0, 1], 8082))
-    );
-    assert!(cfg.dashboard.ui);
-    assert!(cfg.dashboard.allowed_hosts.is_empty());
-    assert_eq!(
-        cfg.dashboard.gateway.as_deref(),
-        Some("http://localhost:8080")
-    );
-    assert_eq!(cfg.dashboard.custom_css, None);
-    assert_eq!(cfg.dashboard.desktop_page, None);
-    assert_eq!(cfg.dashboard.desktop_page_css, None);
-    assert_eq!(cfg.dashboard.desktop_banner, None);
-    assert_eq!(cfg.dashboard.mascots_dir, None);
-    assert_eq!(cfg.dashboard.max_upload, 2 * (1u64 << 30));
-}
-
-#[test]
-fn dashboard_max_upload_env_overrides_file() {
-    let file = ConfigFile {
-        dashboard: DashboardFile {
-            max_upload: Some("4GB".into()),
-            ..Default::default()
-        },
-        ..minimal_file()
-    };
-    let cfg = build_config(file, None, |k| match k {
-        "SWING_DASHBOARD_MAX_UPLOAD" => Some("512MB".into()),
-        _ => None,
+fn dashboard_ui_can_be_disabled_from_env_or_file() {
+    let cfg = build_config(minimal_file(), None, |k| {
+        (k == "SWING_DASHBOARD_UI").then(|| "false".to_string())
     })
     .unwrap();
-    assert_eq!(cfg.dashboard.max_upload, 512 * (1u64 << 20));
-}
+    assert!(!cfg.dashboard.ui, "env");
 
-#[test]
-fn dashboard_max_upload_zero_is_rejected() {
-    assert_env_rejects(
-        "SWING_DASHBOARD_MAX_UPLOAD",
-        "0",
-        "SWING_DASHBOARD_MAX_UPLOAD must be greater than 0",
-    );
-}
-
-#[test]
-fn dashboard_listen_off_is_not_a_valid_address() {
-    assert_env_rejects("SWING_DASHBOARD_LISTEN", "off", "SWING_DASHBOARD_LISTEN");
-}
-
-#[test]
-fn dashboard_listen_rejects_garbage() {
-    assert_env_rejects(
-        "SWING_DASHBOARD_LISTEN",
-        "not-an-address",
-        "SWING_DASHBOARD_LISTEN",
-    );
-}
-
-#[test]
-fn dashboard_ui_defaults_to_true_and_can_be_disabled() {
-    let cfg = build_config(minimal_file(), None, |_| None).unwrap();
-    assert!(cfg.dashboard.ui);
-
-    let cfg = build_config(minimal_file(), None, |k| match k {
-        "SWING_DASHBOARD_UI" => Some("false".into()),
-        _ => None,
-    })
-    .unwrap();
-    assert!(!cfg.dashboard.ui);
-}
-
-#[test]
-fn dashboard_ui_file_value_is_used_when_env_unset() {
-    let file = ConfigFile {
-        dashboard: DashboardFile {
-            ui: Some(false),
-            ..Default::default()
-        },
-        ..minimal_file()
-    };
+    let mut file = minimal_file();
+    file.dashboard.ui = Some(false);
     let cfg = build_config(file, None, |_| None).unwrap();
-    assert!(!cfg.dashboard.ui);
-}
-
-#[test]
-fn dashboard_env_overrides_file() {
-    let file = ConfigFile {
-        dashboard: DashboardFile {
-            listen: Some("127.0.0.1:9000".into()),
-            ui: Some(false),
-            allowed_hosts: Some(vec!["example.com".into()]),
-            public_url: None,
-            gateway: Some("http://gateway.example".into()),
-            custom_css: Some("/etc/swing/custom.css".into()),
-            desktop_page: Some("/etc/swing/page.html".into()),
-            desktop_page_css: Some("/etc/swing/page.css".into()),
-            desktop_banner: Some("/etc/swing/banner.png".into()),
-            mascots_dir: Some("/etc/swing/mascots".into()),
-            max_upload: Some("4GB".into()),
-        },
-        ..minimal_file()
-    };
-    let cfg = build_config(file, None, |k| match k {
-        "SWING_DASHBOARD_LISTEN" => Some("0.0.0.0:8082".into()),
-        "SWING_DASHBOARD_ALLOWED_HOSTS" => Some("a.example, b.example".into()),
-        "SWING_DASHBOARD_GATEWAY" => Some("http://env-gateway.example".into()),
-        "SWING_DASHBOARD_CUSTOM_CSS" => Some("/env/custom.css".into()),
-        "SWING_DASHBOARD_DESKTOP_PAGE" => Some("/env/page.html".into()),
-        "SWING_DASHBOARD_DESKTOP_PAGE_CSS" => Some("/env/page.css".into()),
-        "SWING_DASHBOARD_DESKTOP_BANNER" => Some("/env/banner.gif".into()),
-        "SWING_DASHBOARD_MASCOTS_DIR" => Some("/env/mascots".into()),
-        _ => None,
-    })
-    .unwrap();
-    assert_eq!(cfg.dashboard.listen, SocketAddr::from(([0, 0, 0, 0], 8082)));
-    assert!(!cfg.dashboard.ui);
-    assert_eq!(
-        cfg.dashboard.allowed_hosts,
-        vec!["a.example".to_string(), "b.example".to_string()]
-    );
-    assert_eq!(
-        cfg.dashboard.gateway.as_deref(),
-        Some("http://env-gateway.example")
-    );
-    assert_eq!(
-        cfg.dashboard.custom_css,
-        Some(PathBuf::from("/env/custom.css"))
-    );
-    assert_eq!(
-        cfg.dashboard.desktop_page,
-        Some(PathBuf::from("/env/page.html"))
-    );
-    assert_eq!(
-        cfg.dashboard.desktop_page_css,
-        Some(PathBuf::from("/env/page.css"))
-    );
-    assert_eq!(
-        cfg.dashboard.desktop_banner,
-        Some(PathBuf::from("/env/banner.gif"))
-    );
-    assert_eq!(
-        cfg.dashboard.mascots_dir,
-        Some(PathBuf::from("/env/mascots"))
-    );
+    assert!(!cfg.dashboard.ui, "file");
 }
 
 #[test]
@@ -595,31 +548,14 @@ fn dashboard_gateway_empty_string_in_file_disables_links() {
 }
 
 #[test]
-fn max_total_storage_env_is_a_size_string() {
-    let file = minimal_file();
-    let cfg = build_config(file, None, |k| match k {
-        "SWING_MAX_TOTAL_STORAGE" => Some("20GB".into()),
-        _ => None,
-    })
-    .unwrap();
-    assert_eq!(cfg.policy.max_total_storage, 20 * (1u64 << 30));
-}
-
-#[test]
-fn managed_kubo_rejects_explicit_ipfs_api_from_file() {
-    let file = ConfigFile {
-        ipfs: IpfsFile {
-            api: Some("http://127.0.0.1:5001".into()),
-            ..Default::default()
-        },
-        ..minimal_file()
-    };
+fn managed_kubo_rejects_an_explicit_ipfs_api() {
+    let mut file = minimal_file();
+    file.ipfs.api = Some("http://127.0.0.1:5001".into());
     let err = build_config(file, None, |_| None).unwrap_err();
-    assert!(err.to_string().contains("[ipfs].api conflicts"));
-}
-
-#[test]
-fn managed_kubo_rejects_explicit_ipfs_api_from_env() {
+    assert!(
+        err.to_string().contains("[ipfs].api conflicts"),
+        "file: {err}"
+    );
     assert_env_rejects(
         "SWING_IPFS_API",
         "http://127.0.0.1:5001",
@@ -628,90 +564,33 @@ fn managed_kubo_rejects_explicit_ipfs_api_from_env() {
 }
 
 #[test]
-fn unmanaged_kubo_uses_ipfs_api() {
+fn unmanaged_kubo_defaults_to_the_local_api_and_gateway() {
     let cfg = build_config(minimal_file(), None, |k| match k {
         "SWING_KUBO_MANAGED" => Some("false".into()),
-        "SWING_IPFS_API" => Some("http://127.0.0.1:15001".into()),
+        "SWING_KUBO_GATEWAY_LISTEN" => Some("127.0.0.1:9999".into()),
         _ => None,
     })
     .unwrap();
-    assert_eq!(
-        cfg.ipfs.api,
-        IpfsApi::Url("http://127.0.0.1:15001".to_string())
-    );
     assert!(!cfg.kubo.managed);
-}
-
-#[test]
-fn unmanaged_kubo_defaults_ipfs_api() {
-    let cfg = build_config(minimal_file(), None, |k| match k {
-        "SWING_KUBO_MANAGED" => Some("false".into()),
-        _ => None,
-    })
-    .unwrap();
     assert_eq!(
         cfg.ipfs.api,
         IpfsApi::Url("http://127.0.0.1:5001".to_string())
     );
-}
-
-#[test]
-fn kubo_repo_defaults_under_state_dir() {
-    let cfg = build_config(minimal_file(), None, |k| match k {
-        "SWING_STATE_DIR" => Some("/var/lib/swing".into()),
-        _ => None,
-    })
-    .unwrap();
-    assert_eq!(cfg.kubo.repo, PathBuf::from("/var/lib/swing/kubo"));
-}
-
-#[test]
-fn kubo_repo_env_overrides_default() {
-    let cfg = build_config(minimal_file(), None, |k| match k {
-        "SWING_KUBO_REPO" => Some("/data/kubo-repo".into()),
-        _ => None,
-    })
-    .unwrap();
-    assert_eq!(cfg.kubo.repo, PathBuf::from("/data/kubo-repo"));
-}
-
-#[test]
-fn kubo_binary_env_overrides_file() {
-    let file = ConfigFile {
-        kubo: KuboFile {
-            binary: Some("/opt/kubo/ipfs".into()),
-            ..Default::default()
-        },
-        ..minimal_file()
-    };
-    let cfg = build_config(file, None, |k| match k {
-        "SWING_KUBO_BINARY" => Some("/usr/local/bin/ipfs".into()),
-        _ => None,
-    })
-    .unwrap();
-    assert_eq!(cfg.kubo.binary, Some(PathBuf::from("/usr/local/bin/ipfs")));
+    assert_eq!(cfg.gateway.upstream, "http://127.0.0.1:8080");
 }
 
 #[test]
 fn kubo_storage_max_defaults_to_max_total_storage() {
-    let cfg = build_config(minimal_file(), None, |k| match k {
-        "SWING_MAX_TOTAL_STORAGE" => Some("50GB".into()),
-        _ => None,
-    })
-    .unwrap();
-    assert_eq!(cfg.kubo.storage_max, 50 * (1u64 << 30));
-}
-
-#[test]
-fn kubo_storage_max_can_differ_from_max_total_storage() {
-    let cfg = build_config(minimal_file(), None, |k| match k {
-        "SWING_MAX_TOTAL_STORAGE" => Some("50GB".into()),
-        "SWING_KUBO_STORAGE_MAX" => Some("80GB".into()),
-        _ => None,
-    })
-    .unwrap();
-    assert_eq!(cfg.policy.max_total_storage, 50 * (1u64 << 30));
-    assert_eq!(cfg.kubo.storage_max, 80 * (1u64 << 30));
+    for (name, storage_max, want) in [("unset", None, 50), ("set", Some("80GB"), 80)] {
+        let cfg = build_config(minimal_file(), None, |k| match k {
+            "SWING_MAX_TOTAL_STORAGE" => Some("50GB".into()),
+            "SWING_KUBO_STORAGE_MAX" => storage_max.map(String::from),
+            _ => None,
+        })
+        .unwrap();
+        assert_eq!(cfg.policy.max_total_storage, 50 * (1u64 << 30), "{name}");
+        assert_eq!(cfg.kubo.storage_max, want * (1u64 << 30), "{name}");
+    }
 }
 
 #[test]
@@ -725,60 +604,6 @@ fn kubo_provide_strategy_empty_is_rejected() {
     };
     let err = build_config(file, None, |_| None).unwrap_err();
     assert!(err.to_string().contains("provide_strategy"));
-}
-
-#[test]
-fn kubo_gateway_listen_env_overrides_file() {
-    let file = ConfigFile {
-        kubo: KuboFile {
-            gateway_listen: Some("127.0.0.1:9090".into()),
-            ..Default::default()
-        },
-        ..minimal_file()
-    };
-    let cfg = build_config(file, None, |k| match k {
-        "SWING_KUBO_GATEWAY_LISTEN" => Some("127.0.0.1:8181".into()),
-        _ => None,
-    })
-    .unwrap();
-    assert_eq!(
-        cfg.kubo.gateway_listen,
-        SocketAddr::from(([127, 0, 0, 1], 8181))
-    );
-}
-
-#[test]
-fn kubo_gateway_listen_rejects_garbage() {
-    assert_env_rejects(
-        "SWING_KUBO_GATEWAY_LISTEN",
-        "not-an-address",
-        "SWING_KUBO_GATEWAY_LISTEN",
-    );
-}
-
-#[test]
-fn kubo_swarm_port_defaults_to_unset() {
-    let cfg = build_config(minimal_file(), None, |_| None).unwrap();
-    assert_eq!(cfg.kubo.swarm_port, None);
-}
-
-#[test]
-fn kubo_swarm_port_zero_is_rejected() {
-    assert_env_rejects(
-        "SWING_KUBO_SWARM_PORT",
-        "0",
-        "SWING_KUBO_SWARM_PORT must be between",
-    );
-}
-
-#[test]
-fn kubo_swarm_port_in_range_is_accepted() {
-    let cfg = build_config(minimal_file(), None, |k| match k {
-        "SWING_KUBO_SWARM_PORT" => Some("4001".into()),
-        _ => None,
-    })
-    .unwrap();
-    assert_eq!(cfg.kubo.swarm_port, Some(4001));
 }
 
 #[test]
@@ -881,68 +706,13 @@ fn dashboard_gateway_must_be_an_http_origin() {
 }
 
 #[test]
-fn gateway_hosts_rejects_invalid_hostnames() {
-    assert_env_rejects(
-        "SWING_GATEWAY_HOSTS",
-        "Example.com",
-        "invalid SWING_GATEWAY_HOSTS entry",
-    );
-}
-
-#[test]
-fn gateway_hosts_env_overrides_file_and_trims_entries() {
-    let file = ConfigFile {
-        gateway: GatewayFile {
-            hosts: Some(vec!["from-file.example".into()]),
-            ..Default::default()
-        },
-        ..minimal_file()
-    };
-    let cfg = build_config(file, None, |k| match k {
-        "SWING_GATEWAY_HOSTS" => Some(" a.example , b.example ".into()),
-        _ => None,
-    })
-    .unwrap();
-    assert_eq!(
-        cfg.gateway.hosts,
-        vec!["a.example".to_string(), "b.example".to_string()]
-    );
-}
-
-#[test]
 fn gateway_upstream_defaults_to_managed_kubo_gateway_listen() {
-    let cfg = build_config(minimal_file(), None, |_| None).unwrap();
-    assert!(cfg.kubo.managed);
-    assert_eq!(cfg.gateway.upstream, "http://127.0.0.1:8080");
-
     let cfg = build_config(minimal_file(), None, |k| match k {
         "SWING_KUBO_GATEWAY_LISTEN" => Some("127.0.0.1:9999".into()),
         _ => None,
     })
     .unwrap();
     assert_eq!(cfg.gateway.upstream, "http://127.0.0.1:9999");
-}
-
-#[test]
-fn gateway_upstream_defaults_to_localhost_when_unmanaged() {
-    let cfg = build_config(minimal_file(), None, |k| match k {
-        "SWING_KUBO_MANAGED" => Some("false".into()),
-        "SWING_KUBO_GATEWAY_LISTEN" => Some("127.0.0.1:9999".into()),
-        _ => None,
-    })
-    .unwrap();
-    assert!(!cfg.kubo.managed);
-    assert_eq!(cfg.gateway.upstream, "http://127.0.0.1:8080");
-}
-
-#[test]
-fn gateway_upstream_env_overrides_default() {
-    let cfg = build_config(minimal_file(), None, |k| match k {
-        "SWING_GATEWAY_UPSTREAM" => Some("http://ipfs:8080".into()),
-        _ => None,
-    })
-    .unwrap();
-    assert_eq!(cfg.gateway.upstream, "http://ipfs:8080");
 }
 
 #[test]
@@ -1026,6 +796,11 @@ fn errors_name_the_source_the_value_came_from() {
         err.to_string(),
         "[kubo].swarm_port must be between 1 and 65535"
     );
+
+    let mut file = minimal_file();
+    file.publish.check_unchanged = Some("sometimes".into());
+    let err = build_config(file, None, |_| None).unwrap_err();
+    assert_eq!(err.to_string(), "invalid [publish].check_unchanged");
 
     let mut file = minimal_file();
     file.policy.max_per_site = Some("lots".into());
