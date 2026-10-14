@@ -297,60 +297,42 @@ mod tests {
     use super::*;
 
     #[test]
-    fn normalize_hostname_accepts_lowercase_and_normalizes_case() {
-        assert_eq!(
-            normalize_hostname("Ama.NE.jp").as_deref(),
-            Some("ama.ne.jp")
-        );
-        assert_eq!(
-            normalize_hostname("example.com").as_deref(),
-            Some("example.com")
-        );
-        assert_eq!(
-            normalize_hostname("sub.example.com").as_deref(),
-            Some("sub.example.com")
-        );
-    }
-
-    #[test]
-    fn normalize_hostname_rejects_missing_dot() {
-        assert_eq!(normalize_hostname("localhost"), None);
-    }
-
-    #[test]
-    fn normalize_hostname_rejects_scheme_path_port() {
-        assert_eq!(normalize_hostname("https://example.com"), None);
-        assert_eq!(normalize_hostname("example.com/path"), None);
-        assert_eq!(normalize_hostname("example.com:8080"), None);
-    }
-
-    #[test]
-    fn normalize_hostname_rejects_invalid_characters_and_empty() {
-        assert_eq!(normalize_hostname(""), None);
-        assert_eq!(normalize_hostname("exa mple.com"), None);
-        assert_eq!(normalize_hostname("exa_mple.com"), None);
-        assert_eq!(normalize_hostname("example..com"), None);
-    }
-
-    #[test]
-    fn normalize_hostname_rejects_ip_addresses() {
-        assert_eq!(normalize_hostname("127.0.0.1"), None);
-        assert_eq!(normalize_hostname("10.0.0.5"), None);
-        assert_eq!(normalize_hostname("169.254.169.254"), None);
-        assert_eq!(normalize_hostname("0x7f.1"), None);
-        assert_eq!(normalize_hostname("0177.0.0.1"), None);
-        assert_eq!(normalize_hostname("example.123"), None);
-    }
-
-    #[test]
-    fn normalize_hostname_rejects_bad_labels() {
-        assert_eq!(normalize_hostname("-example.com"), None);
-        assert_eq!(normalize_hostname("example-.com"), None);
-        let label = "a".repeat(64);
-        assert_eq!(normalize_hostname(&format!("{label}.com")), None);
-        let label = "a".repeat(63);
-        assert!(normalize_hostname(&format!("{label}.com")).is_some());
-        assert!(normalize_hostname("xn--eckwd4c7c.xn--zckzah").is_some());
+    fn normalize_hostname_accepts_dns_names_only() {
+        let long_label = "a".repeat(63);
+        let accepted = format!("{long_label}.com");
+        for (input, want) in [
+            ("Ama.NE.jp", "ama.ne.jp"),
+            ("example.com", "example.com"),
+            ("sub.example.com", "sub.example.com"),
+            (accepted.as_str(), accepted.as_str()),
+            ("xn--eckwd4c7c.xn--zckzah", "xn--eckwd4c7c.xn--zckzah"),
+        ] {
+            assert_eq!(normalize_hostname(input).as_deref(), Some(want), "{input}");
+        }
+        let too_long_label = format!("{}.com", "a".repeat(64));
+        let too_long_name = format!("{}.com", "a".repeat(250));
+        for (case, input) in [
+            ("no dot", "localhost"),
+            ("scheme", "https://example.com"),
+            ("path", "example.com/path"),
+            ("port", "example.com:8080"),
+            ("empty", ""),
+            ("space", "exa mple.com"),
+            ("underscore", "exa_mple.com"),
+            ("empty label", "example..com"),
+            ("ipv4 loopback", "127.0.0.1"),
+            ("ipv4 private", "10.0.0.5"),
+            ("ipv4 link-local", "169.254.169.254"),
+            ("hex ipv4", "0x7f.1"),
+            ("octal ipv4", "0177.0.0.1"),
+            ("numeric tld", "example.123"),
+            ("leading hyphen", "-example.com"),
+            ("trailing hyphen", "example-.com"),
+            ("label over 63", too_long_label.as_str()),
+            ("name over 253", too_long_name.as_str()),
+        ] {
+            assert_eq!(normalize_hostname(input), None, "{case}: {input}");
+        }
     }
 
     #[test]
@@ -412,71 +394,50 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn public_only_resolver_refuses_private_ip_literals() {
-        for literal in [
-            "10.0.0.5",
-            "192.168.1.1",
-            "169.254.169.254",
-            "::1",
-            "fc00::1",
+    async fn public_only_resolver_resolves_only_public_ip_literals() {
+        for (literal, public) in [
+            ("10.0.0.5", false),
+            ("192.168.1.1", false),
+            ("169.254.169.254", false),
+            ("::1", false),
+            ("fc00::1", false),
+            ("1.1.1.1", true),
+            ("8.8.8.8", true),
         ] {
             let name: Name = literal.parse().unwrap();
-            assert!(
-                PublicOnlyResolver.resolve(name).await.is_err(),
-                "{literal} should be refused"
-            );
-        }
-    }
-
-    #[tokio::test]
-    async fn public_only_resolver_accepts_public_ip_literals() {
-        for literal in ["1.1.1.1", "8.8.8.8"] {
-            let name: Name = literal.parse().unwrap();
-            assert!(
+            assert_eq!(
                 PublicOnlyResolver.resolve(name).await.is_ok(),
-                "{literal} should be accepted"
+                public,
+                "{literal}"
             );
         }
     }
 
     #[test]
-    fn normalize_hostname_rejects_too_long() {
-        let long_label = "a".repeat(250);
-        let d = format!("{long_label}.com");
-        assert_eq!(normalize_hostname(&d), None);
-    }
-
-    #[test]
-    fn evaluate_body_verified_on_matching_hex_case_insensitive() {
-        let body = r#"{"names":{"_":"ABCDEF0123"}}"#;
-        assert_eq!(
-            evaluate_body(body, "abcdef0123"),
-            VerificationResult::Verified
-        );
-    }
-
-    #[test]
-    fn evaluate_body_mismatch_on_different_hex() {
-        let body = r#"{"names":{"_":"abcdef0123"}}"#;
-        assert_eq!(
-            evaluate_body(body, "0000000000"),
-            VerificationResult::Mismatch
-        );
-    }
-
-    #[test]
-    fn evaluate_body_mismatch_when_underscore_name_missing() {
-        let body = r#"{"names":{"someone_else":"abcdef0123"}}"#;
-        assert_eq!(
-            evaluate_body(body, "abcdef0123"),
-            VerificationResult::Mismatch
-        );
-    }
-
-    #[test]
-    fn evaluate_body_error_on_invalid_json() {
-        let result = evaluate_body("not json", "abcdef0123");
-        assert!(matches!(result, VerificationResult::Error(..)));
+    fn evaluate_body_matches_the_underscore_name() {
+        for (case, body, pubkey, want) in [
+            (
+                "hex case ignored",
+                r#"{"names":{"_":"ABCDEF0123"}}"#,
+                "abcdef0123",
+                "verified",
+            ),
+            (
+                "different hex",
+                r#"{"names":{"_":"abcdef0123"}}"#,
+                "0000000000",
+                "mismatch",
+            ),
+            (
+                "no underscore name",
+                r#"{"names":{"someone_else":"abcdef0123"}}"#,
+                "abcdef0123",
+                "mismatch",
+            ),
+            ("invalid json", "not json", "abcdef0123", "error"),
+        ] {
+            assert_eq!(evaluate_body(body, pubkey).as_state_str(), want, "{case}");
+        }
     }
 
     #[test]

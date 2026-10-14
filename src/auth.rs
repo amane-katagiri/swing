@@ -294,80 +294,99 @@ mod tests {
     const DAY: u64 = 24 * 60 * 60;
 
     #[test]
-    fn session_round_trips_within_ttl() {
-        let v = sign_session("tok", DASHBOARD_SESSION, 1_000_000);
-        assert!(verify_session_at("tok", DASHBOARD_SESSION, &v, 1_000_000));
-        assert!(verify_session_at(
-            "tok",
-            DASHBOARD_SESSION,
-            &v,
-            1_000_000 + 30 * DAY - 1
-        ));
-    }
-
-    #[test]
-    fn session_expires_after_ttl() {
-        let v = sign_session("tok", DASHBOARD_SESSION, 1_000_000);
-        assert!(!verify_session_at(
-            "tok",
-            DASHBOARD_SESSION,
-            &v,
-            1_000_000 + 30 * DAY
-        ));
-    }
-
-    #[test]
-    fn session_from_the_future_is_rejected() {
-        let v = sign_session("tok", DASHBOARD_SESSION, 1_000_000 + 3600);
-        assert!(!verify_session_at("tok", DASHBOARD_SESSION, &v, 1_000_000));
-    }
-
-    #[test]
-    fn session_is_bound_to_token_and_purpose() {
-        let v = sign_session("tok", DASHBOARD_SESSION, 1_000_000);
-        assert!(!verify_session_at(
-            "other",
-            DASHBOARD_SESSION,
-            &v,
-            1_000_000
-        ));
-        assert!(!verify_session_at("tok", "gateway-session", &v, 1_000_000));
-    }
-
-    #[test]
-    fn tampered_session_is_rejected() {
-        let v = sign_session("tok", DASHBOARD_SESSION, 1_000_000);
-        let moved = v.replacen("1000000", "1000001", 1);
-        assert!(!verify_session_at(
-            "tok",
-            DASHBOARD_SESSION,
-            &moved,
-            1_000_001
-        ));
-        assert!(!verify_session_at(
-            "tok",
-            DASHBOARD_SESSION,
-            "garbage",
-            1_000_000
-        ));
-        assert!(!verify_session_at(
-            "tok",
-            DASHBOARD_SESSION,
-            "1000000.zz",
-            1_000_000
-        ));
-    }
-
-    #[test]
-    fn session_issued_at_must_be_plain_digits() {
-        let v = sign_session("tok", DASHBOARD_SESSION, 1_000_000);
-        let plus = format!("+{v}");
-        assert!(!verify_session_at(
-            "tok",
-            DASHBOARD_SESSION,
-            &plus,
-            1_000_000
-        ));
+    fn sessions_verify_only_within_ttl_for_their_token_and_purpose() {
+        let t0 = 1_000_000;
+        let signed = sign_session("tok", DASHBOARD_SESSION, t0);
+        let future = sign_session("tok", DASHBOARD_SESSION, t0 + 3600);
+        let cases = [
+            (
+                "at issue",
+                "tok",
+                DASHBOARD_SESSION,
+                signed.clone(),
+                t0,
+                true,
+            ),
+            (
+                "just before expiry",
+                "tok",
+                DASHBOARD_SESSION,
+                signed.clone(),
+                t0 + 30 * DAY - 1,
+                true,
+            ),
+            (
+                "expired",
+                "tok",
+                DASHBOARD_SESSION,
+                signed.clone(),
+                t0 + 30 * DAY,
+                false,
+            ),
+            (
+                "from the future",
+                "tok",
+                DASHBOARD_SESSION,
+                future,
+                t0,
+                false,
+            ),
+            (
+                "other token",
+                "other",
+                DASHBOARD_SESSION,
+                signed.clone(),
+                t0,
+                false,
+            ),
+            (
+                "other purpose",
+                "tok",
+                "gateway-session",
+                signed.clone(),
+                t0,
+                false,
+            ),
+            (
+                "issued_at moved",
+                "tok",
+                DASHBOARD_SESSION,
+                signed.replacen("1000000", "1000001", 1),
+                t0 + 1,
+                false,
+            ),
+            (
+                "garbage",
+                "tok",
+                DASHBOARD_SESSION,
+                "garbage".to_string(),
+                t0,
+                false,
+            ),
+            (
+                "bad mac",
+                "tok",
+                DASHBOARD_SESSION,
+                "1000000.zz".to_string(),
+                t0,
+                false,
+            ),
+            (
+                "plus-prefixed issued_at",
+                "tok",
+                DASHBOARD_SESSION,
+                format!("+{signed}"),
+                t0,
+                false,
+            ),
+        ];
+        for (case, token, purpose, value, now, want) in cases {
+            assert_eq!(
+                verify_session_at(token, purpose, &value, now),
+                want,
+                "{case}"
+            );
+        }
     }
 
     #[test]
@@ -411,9 +430,14 @@ mod tests {
     }
 
     #[test]
-    fn login_code_is_single_use() {
+    fn issued_login_codes_are_recognized_and_single_use() {
         let codes = LoginCodes::default();
         let code = codes.issue();
+        assert!(is_login_code(&code));
+        assert!(!is_login_code(&code.to_ascii_uppercase()));
+        assert!(!is_login_code(&code[1..]));
+        assert!(!is_login_code(&format!("{}\x1b", &code[1..])));
+        assert!(!is_login_code(""));
         assert!(codes.redeem(&code.to_ascii_uppercase()));
         assert!(!codes.redeem(&code));
         assert!(!codes.redeem("unknown"));
@@ -447,16 +471,6 @@ mod tests {
         }
         std::fs::write(token_path(dir.path()), "  \n").unwrap();
         assert_eq!(read_token(dir.path()).unwrap(), None);
-    }
-
-    #[test]
-    fn issued_login_codes_are_recognized() {
-        let code = LoginCodes::default().issue();
-        assert!(is_login_code(&code));
-        assert!(!is_login_code(&code.to_ascii_uppercase()));
-        assert!(!is_login_code(&code[1..]));
-        assert!(!is_login_code(&format!("{}\x1b", &code[1..])));
-        assert!(!is_login_code(""));
     }
 
     #[cfg(unix)]
