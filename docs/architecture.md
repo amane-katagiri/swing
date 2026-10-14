@@ -59,7 +59,7 @@
 | `signer/`・`pair.rs` | 署名（秘密鍵か NIP-46 の署名アプリ）と `remote-signer.json`、ペアリング / `swing signer pair`。[signer.md](architecture/signer.md) |
 | `nip05.rs` | NIP-05 検証。[nip05.md](architecture/nip05.md) |
 | `ipfs.rs`・`ipfs/site.rs`・`mfs.rs` | Kubo RPC クライアント・サイトのディレクトリの一覧と add の multipart・MFS 上のパスの組み立て。[mfs.md](architecture/mfs.md) |
-| `kubo/` | Kubo の RPC の秘密と `kubo-api.json`（`access.rs`）・検出と init（`binary.rs`）・設定（`config.rs`）・起動と終了（`daemon.rs`）・`kubo.pid` と孤児回収（`orphan.rs`）、テストは `tests.rs`。[kubo.md](architecture/kubo.md) |
+| `kubo/` | Kubo の RPC の秘密と `kubo-api.json`（`access.rs`）・検出と init（`binary.rs`）・設定（`config.rs`）・起動と終了（`daemon.rs`）・`kubo.pid` と孤児回収（`orphan.rs`）、テストは共有の偽物を置く `tests.rs` とサブモジュールごとの `tests/`。[kubo.md](architecture/kubo.md) |
 | `agent/` | mirror-agent のループ。[agent.md](architecture/agent.md)、保存の順序は [agent/store.md](architecture/agent/store.md) |
 | `anchor/` | アンカーの到達性のヒステリシス・広告の判断・選び方・peering の差分（純粋関数）と、ダッシュボードと共有する状態。[agent/anchors.md](architecture/agent/anchors.md) |
 | `policy.rs`・`state.rs` | 保存ポリシーの判定（純粋関数）・`state.json` の永続化。[agent.md](architecture/agent.md)・[agent/state.md](architecture/agent/state.md) |

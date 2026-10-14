@@ -115,7 +115,7 @@ agent・`swing publish`・unmanaged のヘルス待ち（[`up.md#unmanaged`](up.
 - `packaging/windows/kubo.sha512`（`kubo_v<版>_windows-amd64.zip.sha512` をそのまま置く。[`installer-windows.md`](installer-windows.md#kubo-の取得と検証)）
 - README と docs の版表記（`v0.43.1` で検索できる）
 
-2 つのインストーラーの更新漏れは `kubo::tests` の `install_sh_pins_the_same_kubo_version`（版の一致と固定値が 128 桁の 16 進であること）と `windows_installer_pins_the_same_kubo_version`（ファイル名の版の一致）が検出する。
+2 つのインストーラーの更新漏れは `kubo::tests::binary` の `install_sh_pins_the_same_kubo_version`（版の一致と固定値が 128 桁の 16 進であること）と `windows_installer_pins_the_same_kubo_version`（ファイル名の版の一致）が検出する。
 
 次の Kubo の挙動に依存しているので、上げると壊れうる。
 
