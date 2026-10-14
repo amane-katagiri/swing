@@ -495,7 +495,7 @@ pub async fn sites(config: &Config) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_support::{follow_set, keys};
+    use crate::test_support::{follow_set, keys, version};
 
     #[test]
     fn ensure_within_follow_set_cap_allows_exactly_the_budget() {
@@ -541,13 +541,7 @@ mod tests {
     #[test]
     fn unfollowed_sites_lists_the_latest_version_of_accounts_outside_the_follow_set() {
         let mut state = State::default();
-        let record = |cid: &str, created_at| VersionRecord {
-            cid: cid.into(),
-            size: 1,
-            created_at,
-            stored_at: created_at,
-            event: None,
-        };
+        let record = |cid: &str, created_at| version(cid, 1, created_at);
         state.apply_store(&state::site_key("aa", "x.example"), record("old", 1));
         state.apply_store(&state::site_key("aa", "x.example"), record("new", 2));
         state.apply_store(&state::site_key("aa", "y:z"), record("yz", 1));
@@ -570,11 +564,8 @@ mod tests {
         let author = keys();
         let hex = author.public_key().to_hex();
         let record = |cid: &str, event: Option<Event>| VersionRecord {
-            cid: cid.into(),
-            size: 1,
-            created_at: 10,
-            stored_at: 10,
             event,
+            ..version(cid, 1, 10)
         };
         let mut state = State::default();
         state.apply_store(
@@ -620,13 +611,7 @@ mod tests {
     fn followed_accounts_reports_the_latest_stored_version_while_the_event_is_not_stored() {
         let pk = keys().public_key();
         let hex = pk.to_hex();
-        let record = |cid: &str, created_at| VersionRecord {
-            cid: cid.into(),
-            size: created_at,
-            created_at,
-            stored_at: created_at,
-            event: None,
-        };
+        let record = |cid: &str, created_at| version(cid, created_at, created_at);
         let mut state = State::default();
         state.apply_store(&state::site_key(&hex, "pending.example"), record("old", 1));
         state.apply_store(

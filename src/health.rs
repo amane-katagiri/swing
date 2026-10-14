@@ -428,7 +428,6 @@ pub async fn status(config: &Config) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use crate::state::VersionRecord;
     use crate::test_support::FakeKubo;
 
     use super::*;
@@ -444,13 +443,7 @@ mod tests {
         for (d, created_at) in entries {
             state.apply_store(
                 &state::site_key(PK, d),
-                VersionRecord {
-                    cid: format!("bafy-{d}-{created_at}"),
-                    size: 1,
-                    created_at: *created_at,
-                    stored_at: *created_at,
-                    event: None,
-                },
+                crate::test_support::version(&format!("bafy-{d}-{created_at}"), 1, *created_at),
             );
         }
         state

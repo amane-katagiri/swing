@@ -1,6 +1,5 @@
 use super::super::test_support::*;
 use super::*;
-use crate::state::VersionRecord;
 use crate::test_support::{CID_A, CID_B, replica_report_event};
 use std::collections::HashSet;
 use tokio::task::JoinSet;
@@ -320,13 +319,7 @@ async fn published_versions_are_reported_together_with_mirrored_ones() {
     let fx = Fixture::new(default_policy(), FakeKubo::default());
     fx.agent.state.lock().await.apply_store(
         &fx.own_key(D),
-        VersionRecord {
-            cid: CID_MIRRORED.into(),
-            size: 1,
-            created_at: 100,
-            stored_at: 100,
-            event: None,
-        },
+        crate::test_support::version(CID_MIRRORED, 1, 100),
     );
     {
         let mut kubo = fx.kubo();

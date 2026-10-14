@@ -456,13 +456,7 @@ async fn the_fetch_stops_at_the_space_left_for_the_account_and_the_node() {
     let other = Keys::generate().public_key().to_hex();
     fx.agent.state.lock().await.apply_store(
         &state::site_key(&other, "a.example"),
-        VersionRecord {
-            cid: "bafy-a".into(),
-            size: 60,
-            created_at: 100,
-            stored_at: 100,
-            event: None,
-        },
+        crate::test_support::version("bafy-a", 60, 100),
     );
 
     fx.apply(fx.event("b.example", "bafy-b", None, 200)).await;

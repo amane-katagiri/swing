@@ -7,7 +7,7 @@ use nostr_sdk::prelude::*;
 use crate::config::{CheckMode, Config, IpfsApi, PolicyConfig};
 use crate::nip05::{Nip05Verify, VerificationResult};
 use crate::nostr::{AnchorRelay, Paged, ReportRelay};
-use crate::state::{self, SiteKey, State, VersionRecord};
+use crate::state::{self, SiteKey, State};
 
 use super::Agent;
 
@@ -339,13 +339,7 @@ impl Fixture {
     pub(super) async fn seed(&self, d: &str, cid: &str, size: u64, created_at: u64) {
         self.agent.state.lock().await.apply_store(
             &self.key(d),
-            VersionRecord {
-                cid: cid.to_string(),
-                size,
-                created_at,
-                stored_at: created_at,
-                event: None,
-            },
+            crate::test_support::version(cid, size, created_at),
         );
         let path = self.path(d, created_at);
         let mut kubo = self.kubo();

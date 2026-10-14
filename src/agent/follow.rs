@@ -197,16 +197,7 @@ mod tests {
     fn stored_state(fx: &Fixture, ds: &[&str]) -> State {
         let mut state = State::default();
         for d in ds {
-            state.apply_store(
-                &fx.key(d),
-                VersionRecord {
-                    cid: "c".into(),
-                    size: 1,
-                    created_at: 1,
-                    stored_at: 1,
-                    event: None,
-                },
-            );
+            state.apply_store(&fx.key(d), crate::test_support::version("c", 1, 1));
         }
         state
     }
@@ -262,11 +253,8 @@ mod tests {
         state.apply_store(
             &fx.key("a.example"),
             VersionRecord {
-                cid: "bafy-a".into(),
-                size: 1,
-                created_at: 100,
                 stored_at: 1,
-                event: None,
+                ..crate::test_support::version("bafy-a", 1, 100)
             },
         );
         let other = fx.event("b.example", "bafy-b", None, 100);
@@ -288,11 +276,9 @@ mod tests {
         state.apply_store(
             &fx.key("a.example"),
             VersionRecord {
-                cid: "bafy-a".into(),
-                size: 1,
-                created_at: 100,
                 stored_at: 1,
                 event: Some(stored.event),
+                ..crate::test_support::version("bafy-a", 1, 100)
             },
         );
 

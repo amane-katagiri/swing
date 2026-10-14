@@ -350,7 +350,7 @@ mod tests {
     use crate::ipfs::IpfsClient;
     use crate::nip05::VerificationResult;
     use crate::nostr::{SignedSite, SiteEvent};
-    use crate::state::{self, VersionRecord};
+    use crate::state;
 
     #[tokio::test]
     async fn unfollow_removes_the_account_directory_and_its_verifications() {
@@ -384,16 +384,11 @@ mod tests {
         fx.seed(D, "bafy-gone", 1, 100).await;
         let kept_key = state::site_key(&kept.to_hex(), D);
         let kept_path = fx.agent.layout.agent_version(&kept.to_hex(), D, 100);
-        fx.agent.state.lock().await.apply_store(
-            &kept_key,
-            VersionRecord {
-                cid: "bafy-kept".into(),
-                size: 1,
-                created_at: 100,
-                stored_at: 100,
-                event: None,
-            },
-        );
+        fx.agent
+            .state
+            .lock()
+            .await
+            .apply_store(&kept_key, crate::test_support::version("bafy-kept", 1, 100));
         fx.kubo().mfs.insert(kept_path.clone(), "bafy-kept".into());
 
         fx.agent.replace_targets(HashSet::from([kept]));

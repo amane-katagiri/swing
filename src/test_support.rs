@@ -44,6 +44,16 @@ pub(crate) fn replica_report_event(
     .unwrap()
 }
 
+pub(crate) fn version(cid: &str, size: u64, at: u64) -> crate::state::VersionRecord {
+    crate::state::VersionRecord {
+        cid: cid.to_string(),
+        size,
+        created_at: at,
+        stored_at: at,
+        event: None,
+    }
+}
+
 pub(crate) fn replica_report(
     reporter: &Keys,
     author: &PublicKey,
@@ -169,16 +179,20 @@ pub(crate) fn numbered_deletion_event(
         .unwrap()
 }
 
-pub(crate) async fn serve_relay(local: LocalRelay, events: &[Event]) -> (LocalRelay, String) {
-    local.run().await.unwrap();
-    let url = local.url().await.to_string();
+pub(crate) async fn seed_relay(url: &str, events: &[Event]) {
     let seeder = Client::default();
-    seeder.add_relay(url.as_str()).await.unwrap();
+    seeder.add_relay(url).await.unwrap();
     seeder.connect().await;
     for event in events {
         seeder.send_event(event).await.unwrap();
     }
     seeder.shutdown().await;
+}
+
+pub(crate) async fn serve_relay(local: LocalRelay, events: &[Event]) -> (LocalRelay, String) {
+    local.run().await.unwrap();
+    let url = local.url().await.to_string();
+    seed_relay(&url, events).await;
     (local, url)
 }
 

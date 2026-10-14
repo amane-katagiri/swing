@@ -344,17 +344,15 @@ impl State {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::version;
 
     #[test]
     fn latest_stored_at_is_the_newest_across_all_sites() {
         let mut state = State::default();
         assert_eq!(state.latest_stored_at(), None);
         let record = |cid: &str, stored_at| VersionRecord {
-            cid: cid.into(),
-            size: 1,
-            created_at: 1,
             stored_at,
-            event: None,
+            ..version(cid, 1, 1)
         };
         state.apply_store(&site_key("aa", "x.example"), record("one", 30));
         state.apply_store(&site_key("aa", "x.example"), record("two", 10));
@@ -370,11 +368,8 @@ mod tests {
         state.apply_store(
             &site_key("abc", "example.com"),
             VersionRecord {
-                cid: "bafyone".into(),
-                size: 100,
-                created_at: 1,
                 stored_at: 2,
-                event: None,
+                ..version("bafyone", 100, 1)
             },
         );
         state.save(&path).await.unwrap();
@@ -435,11 +430,8 @@ mod tests {
 
     fn record(cid: &str, created_at: u64, event: Option<Event>) -> VersionRecord {
         VersionRecord {
-            cid: cid.into(),
-            size: 1,
-            created_at,
-            stored_at: created_at,
             event,
+            ..version(cid, 1, created_at)
         }
     }
 
@@ -725,16 +717,7 @@ mod tests {
     #[test]
     fn accounts_and_remove_account_cover_sites_and_verifications() {
         let mut state = State::default();
-        state.apply_store(
-            &site_key("aa", "one.example"),
-            VersionRecord {
-                cid: "c".into(),
-                size: 1,
-                created_at: 1,
-                stored_at: 1,
-                event: None,
-            },
-        );
+        state.apply_store(&site_key("aa", "one.example"), version("c", 1, 1));
         let verification = Verification {
             status: "mismatch".into(),
             detail: None,
@@ -756,13 +739,7 @@ mod tests {
     #[test]
     fn account_bytes_sums_only_that_accounts_sites() {
         let mut state = State::default();
-        let record = |cid: &str, size| VersionRecord {
-            cid: cid.into(),
-            size,
-            created_at: 1,
-            stored_at: 1,
-            event: None,
-        };
+        let record = |cid: &str, size| version(cid, size, 1);
         state.apply_store(&site_key("aa", "one.example"), record("c1", 10));
         state.apply_store(&site_key("aa", "two.example"), record("c2", 20));
         state.apply_store(&site_key("aab", "x.example"), record("c3", 40));
@@ -782,16 +759,7 @@ mod tests {
             detail: None,
             checked_at,
         };
-        state.apply_store(
-            &site_key("aa", "stored.example"),
-            VersionRecord {
-                cid: "c".into(),
-                size: 1,
-                created_at: 1,
-                stored_at: 1,
-                event: None,
-            },
-        );
+        state.apply_store(&site_key("aa", "stored.example"), version("c", 1, 1));
         state.set_verification(&site_key("aa", "stored.example"), verification(1));
         for (d, t) in [("old.example", 2), ("mid.example", 3), ("new.example", 4)] {
             state.set_verification(&site_key("aa", d), verification(t));
@@ -840,16 +808,7 @@ mod tests {
     fn remove_site_also_removes_verification() {
         let mut state = State::default();
         let key = site_key("abc", "example.com");
-        state.apply_store(
-            &key,
-            VersionRecord {
-                cid: "cid1".into(),
-                size: 10,
-                created_at: 1,
-                stored_at: 1,
-                event: None,
-            },
-        );
+        state.apply_store(&key, version("cid1", 10, 1));
         state.set_verification(
             &key,
             Verification {
@@ -866,26 +825,8 @@ mod tests {
     fn remove_versions_removes_matching_versions_and_empty_site() {
         let mut state = State::default();
         let key = site_key("abc", "example.com");
-        state.apply_store(
-            &key,
-            VersionRecord {
-                cid: "cid1".into(),
-                size: 10,
-                created_at: 1,
-                stored_at: 1,
-                event: None,
-            },
-        );
-        state.apply_store(
-            &key,
-            VersionRecord {
-                cid: "cid2".into(),
-                size: 20,
-                created_at: 2,
-                stored_at: 2,
-                event: None,
-            },
-        );
+        state.apply_store(&key, version("cid1", 10, 1));
+        state.apply_store(&key, version("cid2", 20, 2));
         let cids = |removed: Vec<VersionRecord>| -> Vec<String> {
             removed.into_iter().map(|v| v.cid).collect()
         };

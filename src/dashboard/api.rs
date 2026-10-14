@@ -397,7 +397,7 @@ mod tests {
     use super::AppState;
     use axum::body::Body;
     use axum::http::{Request, StatusCode};
-    use nostr_sdk::prelude::{Client, Keys};
+    use nostr_sdk::prelude::Keys;
     use std::sync::Arc;
 
     use crate::shutdown::ExitRequest;
@@ -576,17 +576,12 @@ mod tests {
 
     #[tokio::test]
     async fn mirror_add_past_the_follow_set_cap_is_conflict_not_bad_gateway() {
-        let local = nostr_sdk::prelude::LocalRelay::new();
-        local.run().await.unwrap();
-        let url = local.url().await.to_string();
+        let (_local, url) = crate::test_support::relay_holding(&[]).await;
         let dir = tempfile::tempdir().unwrap();
         let (state, keys) = ready_state_with_relays(dir.path(), std::slice::from_ref(&url)).await;
 
         let full = crate::test_support::full_follow_set(&keys, &state.config.nostr.mirror_set);
-        let client = Client::default();
-        client.add_relay(url.as_str()).await.unwrap();
-        client.connect().await;
-        client.send_event(&full).await.unwrap();
+        crate::test_support::seed_relay(&url, &[full]).await;
 
         let extra = Keys::generate().public_key().to_hex();
         let (status, body) = send_json(
@@ -617,35 +612,9 @@ mod tests {
         assert!(body["error"].is_string());
     }
 
-    #[derive(Debug)]
-    struct RefusesQueries;
-
-    impl nostr_sdk::prelude::QueryPolicy for RefusesQueries {
-        fn admit_query<'a>(
-            &'a self,
-            _query: &'a mut nostr_sdk::prelude::Filter,
-            _addr: &'a std::net::SocketAddr,
-        ) -> std::pin::Pin<
-            Box<
-                dyn std::future::Future<Output = nostr_sdk::prelude::QueryPolicyResult> + Send + 'a,
-            >,
-        > {
-            Box::pin(async {
-                nostr_sdk::prelude::QueryPolicyResult::Reject {
-                    prefix: nostr_sdk::prelude::MachineReadablePrefix::Error,
-                    message: "down for maintenance".into(),
-                }
-            })
-        }
-    }
-
     #[tokio::test]
     async fn mirror_add_when_no_relay_answers_is_bad_gateway() {
-        let refusing = nostr_sdk::prelude::LocalRelayBuilder::default()
-            .query_policy(RefusesQueries)
-            .build();
-        refusing.run().await.unwrap();
-        let url = refusing.url().await.to_string();
+        let (_refusing, url) = crate::test_support::refusing_relay(None).await;
         let dir = tempfile::tempdir().unwrap();
         let (state, _) = ready_state_with_relays(dir.path(), std::slice::from_ref(&url)).await;
         let extra = Keys::generate().public_key().to_hex();
@@ -952,11 +921,8 @@ mod tests {
             saved.apply_store(
                 &crate::state::site_key("aa", d),
                 crate::state::VersionRecord {
-                    cid: format!("bafy{d}"),
-                    size: 1,
-                    created_at: 1,
                     stored_at,
-                    event: None,
+                    ..crate::test_support::version(&format!("bafy{d}"), 1, 1)
                 },
             );
         }

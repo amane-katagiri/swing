@@ -17,12 +17,11 @@ fn site_event(keys: &Keys, d: &str, cid: &str, created_at: u64) -> Event {
 }
 
 fn record_of(event: &Event) -> VersionRecord {
+    let cid = nostr::parse_site_event(event, 35980).unwrap().cid;
     VersionRecord {
-        cid: nostr::parse_site_event(event, 35980).unwrap().cid,
-        size: 1,
-        created_at: event.created_at.as_secs(),
         stored_at: 1,
         event: Some(event.clone()),
+        ..crate::test_support::version(&cid, 1, event.created_at.as_secs())
     }
 }
 

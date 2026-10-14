@@ -11,7 +11,7 @@ use crate::signer::Signer;
 use crate::state::{State, VersionRecord, site_key};
 use crate::test_support::{
     CID_A, KuboApi, follow_set, make_site_event, read_only_relay, relay_holding,
-    replica_report_event,
+    replica_report_event, version,
 };
 
 const GATEWAY: &str = "http://gw.example/";
@@ -79,11 +79,8 @@ async fn world() -> World {
     saved.apply_store(
         &site_key(&friend_hex, "friend.example"),
         VersionRecord {
-            cid: CID_A.into(),
-            size: 42,
-            created_at,
             stored_at,
-            event: None,
+            ..version(CID_A, 42, created_at)
         },
     );
     saved
