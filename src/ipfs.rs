@@ -678,67 +678,74 @@ mod tests {
     }
 
     #[test]
-    fn autonat_reads_the_bare_reachability() {
+    fn autonat_reads_reachability_nat_kind_and_address_lists() {
+        let strings = |list: &[&str]| list.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        let cases = [
+            (
+                "bare reachability",
+                r#"{"reachability":"Private"}"#,
+                AutoNat {
+                    reachability: Reachability::Private,
+                    nat: None,
+                    reachable: vec![],
+                    unreachable: vec![],
+                    unknown: vec![],
+                },
+            ),
+            (
+                "address lists and nat kind",
+                r#"{"reachability":"Public","nat":"cgnat","reachable":["/ip4/203.0.113.42/tcp/4001","/ip4/203.0.113.42/udp/4001/quic-v1"],"unreachable":["/ip6/2001:db8::1/tcp/4001"],"unknown":["/ip4/203.0.113.42/udp/4001/webrtc-direct"]}"#,
+                AutoNat {
+                    reachability: Reachability::Public,
+                    nat: Some(NatKind::CarrierGrade),
+                    reachable: strings(&[
+                        "/ip4/203.0.113.42/tcp/4001",
+                        "/ip4/203.0.113.42/udp/4001/quic-v1",
+                    ]),
+                    unreachable: strings(&["/ip6/2001:db8::1/tcp/4001"]),
+                    unknown: strings(&["/ip4/203.0.113.42/udp/4001/webrtc-direct"]),
+                },
+            ),
+            (
+                "unexpected values are unknown",
+                r#"{"reachability":"Sideways","nat":"","reachable":null}"#,
+                AutoNat {
+                    reachability: Reachability::Unknown,
+                    nat: None,
+                    reachable: vec![],
+                    unreachable: vec![],
+                    unknown: vec![],
+                },
+            ),
+        ];
+        for (case, json, want) in cases {
+            assert_eq!(parse_autonat(json).unwrap(), want, "{case}");
+        }
+        assert!(parse_autonat("{}").is_err());
+    }
+
+    #[tokio::test]
+    async fn autonat_reports_an_offline_kubo_as_offline_and_keeps_other_failures() {
+        let parsed = kubo_replying(&[(
+            "swarm/addrs/autonat",
+            500,
+            r#"{"Message":"this command must be run in online mode. Try running 'ipfs daemon' first","Code":0,"Type":"error"}"#,
+        )])
+            .await
+            .autonat()
+            .await
+            .unwrap();
         assert_eq!(
-            parse_autonat(r#"{"reachability":"Private"}"#).unwrap(),
+            parsed,
             AutoNat {
-                reachability: Reachability::Private,
+                reachability: Reachability::Offline,
                 nat: None,
                 reachable: vec![],
                 unreachable: vec![],
                 unknown: vec![],
             }
         );
-    }
 
-    #[test]
-    fn autonat_reads_the_address_lists_and_the_nat_kind() {
-        let parsed = parse_autonat(
-            r#"{"reachability":"Public","nat":"cgnat","reachable":["/ip4/203.0.113.42/tcp/4001","/ip4/203.0.113.42/udp/4001/quic-v1"],"unreachable":["/ip6/2001:db8::1/tcp/4001"],"unknown":["/ip4/203.0.113.42/udp/4001/webrtc-direct"]}"#,
-        )
-        .unwrap();
-        assert_eq!(parsed.reachability, Reachability::Public);
-        assert_eq!(parsed.nat, Some(NatKind::CarrierGrade));
-        assert_eq!(
-            parsed.reachable,
-            [
-                "/ip4/203.0.113.42/tcp/4001",
-                "/ip4/203.0.113.42/udp/4001/quic-v1"
-            ]
-        );
-        assert_eq!(parsed.unreachable, ["/ip6/2001:db8::1/tcp/4001"]);
-        assert_eq!(parsed.unknown, ["/ip4/203.0.113.42/udp/4001/webrtc-direct"]);
-    }
-
-    #[test]
-    fn autonat_treats_unexpected_values_as_unknown() {
-        let parsed =
-            parse_autonat(r#"{"reachability":"Sideways","nat":"","reachable":null}"#).unwrap();
-        assert_eq!(parsed.reachability, Reachability::Unknown);
-        assert_eq!(parsed.nat, None);
-        assert!(parsed.reachable.is_empty());
-        assert!(parse_autonat("{}").is_err());
-    }
-
-    #[tokio::test]
-    async fn autonat_reports_an_offline_kubo_as_offline() {
-        let parsed = kubo_replying(&[(
-            "swarm/addrs/autonat",
-            500,
-            r#"{"Message":"this command must be run in online mode. Try running 'ipfs daemon' first","Code":0,"Type":"error"}"#,
-        )])
-        .await
-        .autonat()
-        .await
-        .unwrap();
-        assert_eq!(parsed.reachability, Reachability::Offline);
-        assert_eq!(parsed.nat, None);
-        assert!(parsed.reachable.is_empty() && parsed.unreachable.is_empty());
-        assert!(parsed.unknown.is_empty());
-    }
-
-    #[tokio::test]
-    async fn autonat_keeps_other_kubo_failures_as_errors() {
         let err = kubo_replying(&[(
             "swarm/addrs/autonat",
             500,

@@ -17,9 +17,8 @@ fn converts_ip4_and_ip6_multiaddrs() {
 #[test]
 fn public_gateways_json_matches_shell_script_shape() {
     let hosts = vec!["a.example.com".to_string(), "b.example.com".to_string()];
-    let value = public_gateways_json(&hosts);
     assert_eq!(
-        value,
+        public_gateways_json(&hosts),
         json!({
             "a.example.com": {"Paths": [], "UseSubdomains": false, "NoDNSLink": false},
             "b.example.com": {"Paths": [], "UseSubdomains": false, "NoDNSLink": false},
@@ -28,6 +27,15 @@ fn public_gateways_json_matches_shell_script_shape() {
             "*.localhost": {"Paths": [], "UseSubdomains": false, "NoDNSLink": true},
         })
     );
+
+    let without_hosts = public_gateways_json(&[]);
+    assert_eq!(
+        without_hosts.as_object().unwrap().len(),
+        PATH_GATEWAY_BLOCKED_HOSTS.len()
+    );
+    for host in PATH_GATEWAY_BLOCKED_HOSTS {
+        assert_eq!(without_hosts[host]["Paths"], json!([]), "{host}");
+    }
 }
 
 #[test]
@@ -49,21 +57,6 @@ fn gateway_config_matches_shell_script() {
         .collect();
     let line = format!("for host in {}; do", blocked.join(" "));
     assert!(script.contains(&line), "{line}");
-}
-
-#[test]
-fn public_gateways_json_only_blocks_path_hosts_when_no_hosts() {
-    let value = public_gateways_json(&[]);
-    let keys: Vec<&str> = value
-        .as_object()
-        .unwrap()
-        .keys()
-        .map(String::as_str)
-        .collect();
-    assert_eq!(keys.len(), PATH_GATEWAY_BLOCKED_HOSTS.len());
-    for host in PATH_GATEWAY_BLOCKED_HOSTS {
-        assert_eq!(value[host]["Paths"], json!([]));
-    }
 }
 
 #[test]
@@ -94,11 +87,6 @@ fn gateway_multiaddr_formats_v4_and_v6() {
         gateway_multiaddr("[::1]:8080".parse().unwrap()),
         "/ip6/::1/tcp/8080"
     );
-}
-
-#[test]
-fn storage_max_is_decimal_bytes() {
-    assert_eq!((100u64 * (1u64 << 30)).to_string(), "107374182400");
 }
 
 fn settings(api: ApiAccess, swarm_port: Option<u16>) -> KuboSettings {

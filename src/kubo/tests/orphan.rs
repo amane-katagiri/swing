@@ -17,13 +17,6 @@ fn pid_file_round_trips() {
     remove_pid_file(dir.path()).unwrap();
 }
 
-#[test]
-fn read_pid_file_rejects_unparseable_content() {
-    let dir = tempfile::tempdir().unwrap();
-    std::fs::write(dir.path().join("kubo.pid"), "not a pid file").unwrap();
-    assert!(read_pid_file(dir.path()).is_err());
-}
-
 #[tokio::test]
 async fn recover_orphan_with_no_pid_file_is_ok() {
     let dir = tempfile::tempdir().unwrap();
@@ -35,6 +28,7 @@ async fn recover_orphan_skips_an_unparseable_pid_file() {
     for content in ["not a pid file", ""] {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("kubo.pid"), content).unwrap();
+        assert!(read_pid_file(dir.path()).is_err(), "{content:?}");
         recover_orphan(dir.path(), dir.path()).await.unwrap();
         assert_eq!(
             std::fs::read_to_string(dir.path().join("kubo.pid")).unwrap(),

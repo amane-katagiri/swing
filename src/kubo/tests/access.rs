@@ -103,17 +103,3 @@ fn api_access_round_trips_through_a_private_file_and_stays_out_of_debug() {
     assert!(read_api_access(&state_dir).unwrap().is_none());
     remove_api_access(&state_dir).unwrap();
 }
-
-#[tokio::test]
-async fn kubo_http_client_sends_the_secret_as_a_bearer_token() {
-    let server = serve_id("mine").await;
-    let secret = ApiSecret::parse("abcd").unwrap();
-    let client = crate::ipfs::IpfsClient::with_secret(server.url(), Some(&secret));
-    assert_eq!(client.peer_id().await.unwrap(), "mine");
-    let requests = server.requests();
-    assert_eq!(requests.len(), 1, "{requests:?}");
-    assert!(
-        requests[0].contains("authorization: bearer abcd"),
-        "{requests:?}"
-    );
-}

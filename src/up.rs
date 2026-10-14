@@ -614,31 +614,29 @@ mod tests {
     }
 
     #[test]
-    fn backoff_doubles_and_caps() {
+    fn backoff_doubles_caps_and_resets_after_a_long_run() {
         let mut b = Backoff::new();
         let seq: Vec<u64> = (0..8)
             .map(|_| b.next_delay(Duration::ZERO).as_secs())
             .collect();
-        assert_eq!(seq, vec![1, 2, 4, 8, 16, 32, 60, 60]);
-    }
+        assert_eq!(seq, vec![1, 2, 4, 8, 16, 32, 60, 60], "doubles and caps");
 
-    #[test]
-    fn backoff_resets_after_a_long_run() {
         let mut b = Backoff::new();
         for _ in 0..5 {
             b.next_delay(Duration::ZERO);
         }
         assert_eq!(b.delay, Duration::from_secs(32));
         let delay = b.next_delay(Duration::from_secs(120));
-        assert_eq!(delay, Duration::from_secs(1));
+        assert_eq!(delay, Duration::from_secs(1), "a long run resets");
         assert_eq!(b.delay, Duration::from_secs(2));
-    }
 
-    #[test]
-    fn backoff_boundary_run_of_exactly_max_resets() {
         let mut b = Backoff::new();
         b.next_delay(Duration::ZERO);
         let delay = b.next_delay(Duration::from_secs(60));
-        assert_eq!(delay, Duration::from_secs(1));
+        assert_eq!(
+            delay,
+            Duration::from_secs(1),
+            "a run of exactly the max resets"
+        );
     }
 }

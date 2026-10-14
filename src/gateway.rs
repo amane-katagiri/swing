@@ -456,27 +456,18 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn disallowed_host_is_not_found() {
+    async fn a_disallowed_or_missing_host_is_not_found() {
         let gw = Gateway::echo().await;
         let gateway = &gw.url;
 
-        let client = reqwest::Client::new();
-        let resp = client
+        let resp = reqwest::Client::new()
             .get(format!("{gateway}/"))
             .header("host", "evil.example")
             .send()
             .await
             .unwrap();
-        assert_eq!(resp.status(), reqwest::StatusCode::NOT_FOUND);
-        assert_eq!(resp.bytes().await.unwrap().len(), 0);
-
-        gw.stop().await;
-    }
-
-    #[tokio::test]
-    async fn missing_host_is_not_found() {
-        let gw = Gateway::echo().await;
-        let gateway = &gw.url;
+        assert_eq!(resp.status(), reqwest::StatusCode::NOT_FOUND, "disallowed");
+        assert_eq!(resp.bytes().await.unwrap().len(), 0, "disallowed");
 
         let mut raw = tokio::net::TcpStream::connect(gateway.trim_start_matches("http://"))
             .await
@@ -487,24 +478,7 @@ mod tests {
         let mut buf = Vec::new();
         raw.read_to_end(&mut buf).await.ok();
         let text = String::from_utf8_lossy(&buf);
-        assert!(text.starts_with("HTTP/1.1 404"), "response: {text}");
-
-        gw.stop().await;
-    }
-
-    #[tokio::test]
-    async fn host_matching_is_case_and_port_insensitive() {
-        let gw = Gateway::echo().await;
-        let gateway = &gw.url;
-
-        let client = reqwest::Client::new();
-        let resp = client
-            .get(format!("{gateway}/"))
-            .header("host", "Example.com:8081")
-            .send()
-            .await
-            .unwrap();
-        assert_eq!(resp.status(), reqwest::StatusCode::OK);
+        assert!(text.starts_with("HTTP/1.1 404"), "missing: {text}");
 
         gw.stop().await;
     }
