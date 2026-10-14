@@ -421,3 +421,234 @@ pub(crate) async fn serve_router(router: axum::Router) -> std::net::SocketAddr {
     tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
     addr
 }
+
+#[derive(Debug)]
+pub(crate) struct RefusesWrites;
+
+impl WritePolicy for RefusesWrites {
+    fn admit_event<'a>(
+        &'a self,
+        _event: &'a Event,
+        _addr: &'a std::net::SocketAddr,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = WritePolicyResult> + Send + 'a>> {
+        Box::pin(async {
+            WritePolicyResult::Reject {
+                prefix: MachineReadablePrefix::Blocked,
+                message: "read-only relay".into(),
+                status: false,
+            }
+        })
+    }
+}
+
+pub(crate) async fn read_only_relay() -> (LocalRelay, String) {
+    serve_relay(
+        LocalRelayBuilder::default()
+            .write_policy(RefusesWrites)
+            .build(),
+        &[],
+    )
+    .await
+}
+
+pub(crate) async fn events_on_relay(url: &str, filter: Filter) -> Vec<Event> {
+    let client = Client::default();
+    client.add_relay(url).await.unwrap();
+    client.connect().await;
+    let events = client
+        .fetch_events(filter)
+        .timeout(std::time::Duration::from_secs(5))
+        .await
+        .unwrap();
+    client.shutdown().await;
+    events.into_iter().collect()
+}
+
+#[derive(Default)]
+pub(crate) struct KuboApiState {
+    pub(crate) mfs: BTreeMap<String, String>,
+    pub(crate) add_cid: String,
+    pub(crate) adds: Vec<String>,
+    pub(crate) removed: Vec<String>,
+    pub(crate) fail_list: bool,
+    pub(crate) fail_remove: HashSet<String>,
+    pub(crate) links: HashMap<String, Vec<(String, String, u8)>>,
+    pub(crate) dag_size: u64,
+    pub(crate) unexpected: Vec<String>,
+}
+
+impl KuboApiState {
+    pub(crate) fn paths(&self) -> Vec<String> {
+        self.mfs.keys().cloned().collect()
+    }
+}
+
+#[derive(Clone)]
+pub(crate) struct KuboApi {
+    pub(crate) url: String,
+    pub(crate) s: std::sync::Arc<Mutex<KuboApiState>>,
+}
+
+fn kubo_args(query: Option<String>) -> Vec<String> {
+    fn decode(raw: &str) -> String {
+        let bytes = raw.as_bytes();
+        let mut out = Vec::with_capacity(bytes.len());
+        let mut i = 0;
+        while i < bytes.len() {
+            if bytes[i] == b'%' && i + 2 < bytes.len() {
+                let hex = std::str::from_utf8(&bytes[i + 1..i + 3]).unwrap();
+                out.push(u8::from_str_radix(hex, 16).unwrap());
+                i += 3;
+            } else {
+                out.push(bytes[i]);
+                i += 1;
+            }
+        }
+        String::from_utf8(out).unwrap()
+    }
+    query
+        .unwrap_or_default()
+        .split('&')
+        .filter_map(|pair| pair.strip_prefix("arg="))
+        .map(decode)
+        .collect()
+}
+
+fn kubo_error(message: &str) -> (axum::http::StatusCode, String) {
+    (
+        axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+        serde_json::json!({ "Message": message, "Code": 0, "Type": "error" }).to_string(),
+    )
+}
+
+fn kubo_ok(body: impl Into<String>) -> (axum::http::StatusCode, String) {
+    (axum::http::StatusCode::OK, body.into())
+}
+
+impl KuboApi {
+    pub(crate) async fn serve(add_cid: &str) -> Self {
+        use axum::extract::{RawQuery, State};
+        use axum::routing::post;
+        type Shared = State<std::sync::Arc<Mutex<KuboApiState>>>;
+
+        let s = std::sync::Arc::new(Mutex::new(KuboApiState {
+            add_cid: add_cid.to_string(),
+            dag_size: 42,
+            ..Default::default()
+        }));
+        let router = axum::Router::new()
+            .route(
+                "/api/v0/add",
+                post(
+                    |State(s): Shared, RawQuery(q): RawQuery, _body: axum::body::Bytes| async move {
+                        let mut s = s.lock().unwrap();
+                        s.adds.push(q.unwrap_or_default());
+                        format!(r#"{{"Name":"x","Hash":"{}","Size":"3"}}"#, s.add_cid)
+                    },
+                ),
+            )
+            .route("/api/v0/files/mkdir", post(|| async { "" }))
+            .route(
+                "/api/v0/files/cp",
+                post(|State(s): Shared, RawQuery(q): RawQuery| async move {
+                    let args = kubo_args(q);
+                    let cid = args[0].strip_prefix("/ipfs/").unwrap().to_string();
+                    let mut s = s.lock().unwrap();
+                    if s.mfs.contains_key(&args[1]) {
+                        return kubo_error(
+                            "cp: cannot put node: directory already has entry by that name",
+                        );
+                    }
+                    s.mfs.insert(args[1].clone(), cid);
+                    kubo_ok("")
+                }),
+            )
+            .route(
+                "/api/v0/files/rm",
+                post(|State(s): Shared, RawQuery(q): RawQuery| async move {
+                    let path = kubo_args(q).remove(0);
+                    let mut s = s.lock().unwrap();
+                    if s.fail_remove.contains(&path) {
+                        return kubo_ok("Error: simulated files/rm failure\n");
+                    }
+                    let prefix = format!("{path}/");
+                    s.mfs.retain(|p, _| p != &path && !p.starts_with(&prefix));
+                    s.removed.push(path);
+                    kubo_ok("")
+                }),
+            )
+            .route(
+                "/api/v0/files/ls",
+                post(|State(s): Shared, RawQuery(q): RawQuery| async move {
+                    let path = kubo_args(q).remove(0);
+                    let s = s.lock().unwrap();
+                    if s.fail_list {
+                        return kubo_error("simulated files/ls failure");
+                    }
+                    let prefix = format!("{path}/");
+                    let mut entries = BTreeMap::new();
+                    for (p, cid) in &s.mfs {
+                        if let Some(rest) = p.strip_prefix(&prefix) {
+                            let (name, kind, hash) = match rest.split_once('/') {
+                                Some((name, _)) => (name, 1, String::new()),
+                                None => (rest, 0, cid.clone()),
+                            };
+                            entries.insert(
+                                name.to_string(),
+                                serde_json::json!({ "Name": name, "Type": kind, "Size": 0, "Hash": hash }),
+                            );
+                        }
+                    }
+                    if entries.is_empty() {
+                        return kubo_error("files/ls: file does not exist");
+                    }
+                    let entries: Vec<_> = entries.into_values().collect();
+                    kubo_ok(serde_json::json!({ "Entries": entries }).to_string())
+                }),
+            )
+            .route(
+                "/api/v0/dag/stat",
+                post(|State(s): Shared| async move {
+                    let size = s.lock().unwrap().dag_size;
+                    format!(r#"{{"TotalSize":{size}}}"#)
+                }),
+            )
+            .route(
+                "/api/v0/ls",
+                post(|State(s): Shared, RawQuery(q): RawQuery| async move {
+                    let cid = kubo_args(q).remove(0);
+                    let s = s.lock().unwrap();
+                    let links: Vec<_> = s
+                        .links
+                        .get(&cid)
+                        .into_iter()
+                        .flatten()
+                        .map(|(name, hash, kind)| {
+                            serde_json::json!({ "Name": name, "Hash": hash, "Type": kind })
+                        })
+                        .collect();
+                    axum::Json(
+                        serde_json::json!({ "Objects": [{ "Hash": cid, "Links": links }] }),
+                    )
+                }),
+            )
+            .fallback(|State(s): Shared, uri: axum::http::Uri| async move {
+                s.lock().unwrap().unexpected.push(uri.path().to_string());
+                axum::http::StatusCode::INTERNAL_SERVER_ERROR
+            })
+            .with_state(std::sync::Arc::clone(&s));
+        let addr = serve_router(router).await;
+        Self {
+            url: format!("http://{addr}"),
+            s,
+        }
+    }
+
+    pub(crate) fn client(&self) -> crate::ipfs::IpfsClient {
+        crate::ipfs::IpfsClient::new(self.url.clone())
+    }
+
+    pub(crate) fn paths(&self) -> Vec<String> {
+        self.s.lock().unwrap().paths()
+    }
+}

@@ -28,6 +28,9 @@ pub use new_files::PreviousFiles;
 use new_files::count_new_files;
 pub use staged::StagedVersion;
 
+#[cfg(test)]
+mod run_tests;
+
 fn version_name(name: &str) -> Option<u64> {
     name.parse::<u64>()
         .ok()
