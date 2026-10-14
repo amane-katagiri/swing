@@ -10,6 +10,12 @@ pub(crate) fn keys() -> Keys {
     Keys::generate()
 }
 
+pub(crate) fn unused_dir() -> std::path::PathBuf {
+    static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+    let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    std::env::temp_dir().join(format!("swing-test-unused-{}-{n}", std::process::id()))
+}
+
 pub(crate) const CID_A: &str = "bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi";
 pub(crate) const CID_B: &str = "QmYwAPJzv5CZsnA9LqYKXfRSZryVXxNn7ZP1FyEBgvJvHR";
 

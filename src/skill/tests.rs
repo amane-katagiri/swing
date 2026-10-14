@@ -92,14 +92,16 @@ fn install_creates_the_skill_directory() {
 fn install_leaves_an_identical_file_alone() {
     let tmp = tempfile::tempdir().unwrap();
     let (path, _) = install_into(tmp.path(), false).unwrap();
-    let before = std::fs::metadata(&path).unwrap().modified().unwrap();
-    std::thread::sleep(std::time::Duration::from_millis(20));
+    let old = std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_000_000_000);
+    std::fs::File::options()
+        .write(true)
+        .open(&path)
+        .unwrap()
+        .set_modified(old)
+        .unwrap();
     let (_, installed) = install_into(tmp.path(), false).unwrap();
     assert_eq!(installed, Installed::UpToDate);
-    assert_eq!(
-        std::fs::metadata(&path).unwrap().modified().unwrap(),
-        before
-    );
+    assert_eq!(std::fs::metadata(&path).unwrap().modified().unwrap(), old);
 }
 
 #[test]

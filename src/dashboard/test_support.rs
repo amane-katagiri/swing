@@ -47,7 +47,10 @@ pub(crate) fn test_config(ui: bool) -> (Config, String) {
     config.publish.nip05 = CheckMode::Off;
     config.publish.keep_versions = 1;
     config.kubo.storage_max = 1;
-    config.config_path = PathBuf::from("./swing.toml");
+    let root = crate::test_support::unused_dir();
+    config.agent.state_dir = root.join("data");
+    config.kubo.repo = root.join("data").join("kubo");
+    config.config_path = root.join("swing.toml");
     config.config_exists = true;
     (config, secret_hex)
 }

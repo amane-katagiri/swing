@@ -507,6 +507,13 @@ pub(crate) fn toml_error(
     anyhow::anyhow!("line {line}, column {column}: {message}")
 }
 
+// Unit tests must not pick up SWING_* variables from the shell that runs them.
+#[cfg(test)]
+pub(crate) fn env_var(_name: &str) -> Option<String> {
+    None
+}
+
+#[cfg(not(test))]
 pub(crate) fn env_var(name: &str) -> Option<String> {
     env::var(name).ok().filter(|v| !v.is_empty())
 }

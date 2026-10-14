@@ -271,7 +271,7 @@ async fn daemon_wait_healthy_requires_the_repo_peer_id() {
         .await
         .unwrap();
     let err = daemon
-        .wait_healthy(dir.path(), Duration::from_secs(1))
+        .wait_healthy(dir.path(), Duration::from_secs(5))
         .await
         .unwrap_err()
         .to_string();

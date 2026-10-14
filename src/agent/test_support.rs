@@ -228,7 +228,10 @@ pub(super) fn test_config(policy: PolicyConfig) -> Config {
     config.publish.nip05 = CheckMode::Off;
     config.dashboard.gateway = None;
     config.kubo.storage_max = 1_000_000;
-    config.config_path = std::path::PathBuf::from("./swing.toml");
+    let root = crate::test_support::unused_dir();
+    config.agent.state_dir = root.join("data");
+    config.kubo.repo = root.join("data").join("kubo");
+    config.config_path = root.join("swing.toml");
     config.config_exists = true;
     config.sources = std::collections::BTreeMap::new();
     config

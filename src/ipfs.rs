@@ -857,7 +857,7 @@ mod tests {
         server.abort();
     }
 
-    #[tokio::test]
+    #[tokio::test(start_paused = true)]
     async fn the_idle_timeout_only_fires_without_progress() {
         let idle = Duration::from_millis(200);
         let last = std::sync::Mutex::new(tokio::time::Instant::now());
@@ -897,8 +897,23 @@ mod tests {
         use std::io::{Read, Write};
         let kubo = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let kubo_addr = kubo.local_addr().unwrap();
+        kubo.set_nonblocking(true).unwrap();
         let server = std::thread::spawn(move || {
-            let (mut sock, _) = kubo.accept().unwrap();
+            let deadline = std::time::Instant::now() + Duration::from_secs(30);
+            let mut sock = loop {
+                match kubo.accept() {
+                    Ok((sock, _)) => break sock,
+                    Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                        assert!(
+                            std::time::Instant::now() < deadline,
+                            "the probe never reached Kubo"
+                        );
+                        std::thread::sleep(Duration::from_millis(10));
+                    }
+                    Err(e) => panic!("{e}"),
+                }
+            };
+            sock.set_nonblocking(false).unwrap();
             let mut buf = [0u8; 4096];
             let _ = sock.read(&mut buf);
             sock.write_all(b"HTTP/1.1 200 OK\r\ncontent-length: 2\r\nconnection: close\r\n\r\n{}")
@@ -908,7 +923,7 @@ mod tests {
         proxy.set_nonblocking(true).unwrap();
         let proxy_url = format!("http://{}", proxy.local_addr().unwrap());
 
-        let status = std::process::Command::new(std::env::current_exe().unwrap())
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
             .args([
                 "--exact",
                 "ipfs::tests::kubo_client_probe",
@@ -921,9 +936,11 @@ mod tests {
             .env("ALL_PROXY", &proxy_url)
             .env_remove("NO_PROXY")
             .env_remove("no_proxy")
-            .status()
+            .output()
             .unwrap();
-        assert!(status.success());
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(output.status.success(), "{stdout}");
+        assert!(stdout.contains("1 passed"), "{stdout}");
         server.join().unwrap();
         assert_eq!(
             proxy.accept().unwrap_err().kind(),
