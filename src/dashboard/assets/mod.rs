@@ -283,6 +283,39 @@ mod tests {
         }
     }
 
+    #[test]
+    fn every_static_i18n_key_exists_in_both_languages() {
+        let web = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("web");
+        let messages = std::fs::read_to_string(web.join("i18n.js")).unwrap();
+        let (en, ja) = messages.split_once("\n  ja: {\n").unwrap();
+        let keys = |block: &str| -> std::collections::BTreeSet<String> {
+            block
+                .lines()
+                .filter_map(|line| line.strip_prefix("    ")?.split_once(": ").map(|(k, _)| k))
+                .filter(|k| k.chars().all(|c| c.is_ascii_alphanumeric()))
+                .map(str::to_string)
+                .collect()
+        };
+        let (en, ja) = (keys(en), keys(ja.split("\n};\n").next().unwrap()));
+        let index = std::fs::read_to_string(web.join("index.html")).unwrap();
+        let mut used = std::collections::BTreeSet::new();
+        for attr in [
+            "data-i18n",
+            "data-i18n-title",
+            "data-i18n-aria-label",
+            "data-i18n-placeholder",
+        ] {
+            for part in index.split(&format!(" {attr}=\"")).skip(1) {
+                used.insert(part.split('"').next().unwrap().to_string());
+            }
+        }
+        assert!(used.contains("deskClose"));
+        for key in used {
+            assert!(en.contains(&key), "en: {key}");
+            assert!(ja.contains(&key), "ja: {key}");
+        }
+    }
+
     #[tokio::test]
     async fn every_linked_stylesheet_is_served() {
         let index = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("web/index.html");

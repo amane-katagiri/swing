@@ -1,17 +1,13 @@
 import { FOCUSABLE, keepFocusOnDisable, registerFrame, scheduleActiveSync } from './desktop-focus.js';
 import { TITLEBAR_H, MIN_VISIBLE_TITLEBAR, clampNum, screenSize, trackPointer } from './desktop-drag.js';
 import { toDeskPx } from './desktop-scale.js';
+import { t, setUiLabels } from './i18n.js';
 
 const MIN_W = 320;
 const MIN_H = 240;
 const SCREEN_PAD = 18;
 const ICON_COLUMN = 108;
 const UNMAXIMIZE_DRAG_THRESHOLD = 4;
-
-const WIN_TEXT = {
-  maximize: '最大化',
-  restore: '元に戻す (縮小)',
-};
 
 const winEls = {
   screen: document.getElementById('desk-screen'),
@@ -76,9 +72,8 @@ function updateMaxGlyph() {
   const restore = winState.maximized;
   winEls.glyphMax.classList.toggle('desk-glyph-max', !restore);
   winEls.glyphMax.classList.toggle('desk-glyph-restore', restore);
-  const label = restore ? WIN_TEXT.restore : WIN_TEXT.maximize;
-  winEls.btnMax.setAttribute('aria-label', label);
-  winEls.btnMax.title = label;
+  const label = t(restore ? 'deskRestore' : 'deskMaximize');
+  setUiLabels(winEls.btnMax, { title: label, label });
 }
 
 function renderWindow() {
@@ -253,6 +248,8 @@ function wireWindowChrome() {
 export const DesktopWindow = {
   init() {
     wireWindowChrome();
+    updateMaxGlyph();
+    document.addEventListener('swing:langchange', updateMaxGlyph);
     registerFrame({ root: winEls.win, titlebar: winEls.titlebar, modal: false });
   },
   reflow() {

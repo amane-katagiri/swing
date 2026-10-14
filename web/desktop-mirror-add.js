@@ -2,6 +2,7 @@ import { createDialog } from './desktop-dialog.js';
 import { apiFetch, cache, describeError, shortenMiddle } from './util.js';
 import { parseMirrorKeys, MAX_MIRROR_KEYS, createKeyPreview } from './ui.js';
 import { deskFingerprint } from './desktop-fingerprint.js';
+import { t } from './i18n.js';
 
 const TEXT = {
   adding: 'ミラーに追加しています…',
@@ -13,7 +14,6 @@ const TEXT = {
   relays: (ok, total) => `リレー ${ok}/${total} 件に送信`,
   invalidKey: (key) => `鍵として読めません: ${key}`,
   previewEmpty: 'ここにフィンガープリントとnpubが表示されます。',
-  fingerprint: (emoji) => `絵文字のフィンガープリント ${emoji}（見分けるための目印で、本人の証明ではありません）`,
 };
 
 const dialogRoot = document.getElementById('desk-dialog-mirror-add');
@@ -28,6 +28,7 @@ const els = {
 
 let busy = false;
 let onAdded = async () => {};
+let previewKeys = null;
 
 function showStatus(kind, text) {
   els.status.hidden = !text;
@@ -37,6 +38,7 @@ function showStatus(kind, text) {
 }
 
 function renderPreview(keys) {
+  previewKeys = keys;
   const row = () => {
     const li = document.createElement('li');
     li.className = 'desk-key-preview-row';
@@ -52,7 +54,7 @@ function renderPreview(keys) {
     const li = row();
     if (k.npub) {
       li.title = k.npub;
-      li.append(deskFingerprint(k.fingerprint, TEXT.fingerprint) || '', shortenMiddle(k.npub, 10, 6));
+      li.append(deskFingerprint(k.fingerprint, (emoji) => t('deskFingerprintTitle', { emoji })) || '', shortenMiddle(k.npub, 10, 6));
     } else {
       li.dataset.invalid = 'true';
       li.textContent = TEXT.invalidKey(shortenMiddle(k.input, 12, 6));
@@ -134,6 +136,9 @@ export const DesktopMirrorAdd = {
     els.button.addEventListener('click', () => {
       dialog.open();
       els.input.focus();
+    });
+    document.addEventListener('swing:langchange', () => {
+      if (previewKeys) renderPreview(previewKeys);
     });
   },
 };

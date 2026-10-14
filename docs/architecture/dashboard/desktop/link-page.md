@@ -31,3 +31,17 @@ iframe には `sandbox="allow-same-origin allow-popups allow-popups-to-escape-sa
 データは `cache.sites`（Sites 画面と共有）の `accounts` から保存済み（`stored` が true）と更新待ち（`stored` が false で `previous` がある）のサイトを、`unfollowed.accounts` から保存済みのサイトだけを集め、`created_at` 降順で並べる。各行のステータスアイコン（`.desk-status-icon`、`data-status`）は次の優先順で 1 個だけ選ぶ: (1) `nip05 === "mismatch"` → `ng`。(2) `nip05 === "error"`・未知の文字列 → `err`。(3) それ以外は更新の新しさで `new`（7 日以内）/`up`（30 日以内）/`default`（`not_applicable` は NIP-05 の問題扱いにせず新しさ判定に乗る）。
 
 タイトルは自己申告の `title`（サニタイズ済み、最大 120 文字）があればそれを、無ければ `d` を表示し、`title` を出すときは必ず `d` も括弧付きで併記する。リンク先は `gateway_url` を一次リンク（無ければ `url`）にし、両方あれば `url` を `[本家]` の第二リンクにする。更新待ちのサイトは、日付・アイコン・タイトル・更新メモを新しい版（イベント）のもので出し、まだ取り込んでいない新しい版にはリンクしないのでタイトルをリンクにせず、`title` 属性で最新版がまだ保存されていないことを示す。`url` があれば `[本家]` を、`previous.gateway_url` があればそれを `[キャッシュ]` のリンクにして並べる。npub・cid・size・replicas は表示しない。来訪者カウンタは、ページ読み込みのたびに 1 増やす `localStorage["swing:desktop:visits"]` に、リンク集に出すサイトの数から求めた基準値を足して表示する。
+
+## ツールチップ
+
+各行の `title` と、それと対になる `aria-label` は UI 表示言語で出し、その要素の `lang` も UI 表示言語にする（[`../desktop.md#desktop-画面の表示言語`](../desktop.md#desktop-画面の表示言語)）。言語を切り替えたら `cache.sites` から行を作り直す（API は呼ばない）。
+
+| 要素 | `title` | `aria-label` | キー |
+|---|---|---|---|
+| ステータスアイコン | アイコンの意味 | `title` と同じ | `deskIconMismatch`（`ng`）・`deskIconError`（`err`）・`deskIconNew`・`deskIconUp`・`deskIconDefault` |
+| タイトル（リンク） | 開き方 | なし（リンクの文字が名前） | `openGateway`（`gateway_url` があるとき）・`openSite` |
+| タイトル（更新待ちの `span`） | 最新版がまだ保存されていないこと | なし | `deskPending` |
+| `[本家]` | なし | `<サイトのタイトル> — <開き方>` | `openSite` |
+| `[キャッシュ]` | 前の版をゲートウェイで開くこと | `<サイトのタイトル> — <title と同じ文言>` | `deskOpenCache` |
+
+リンクにしたタイトル・更新待ちのタイトル・`[本家]`・`[キャッシュ]` の見える文字は `<span lang="ja">` で包み、ページ（`lang="ja"`）の中のほかの文字と同じ扱いのままにする。更新待ちでもリンクでもないタイトルはツールチップが無いので包まない。

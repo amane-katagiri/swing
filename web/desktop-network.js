@@ -1,4 +1,4 @@
-import { t, currentLang } from './i18n.js';
+import { t, setUiLabels } from './i18n.js';
 import { apiFetch, createLoadGuard } from './util.js';
 
 const STATES = {
@@ -18,10 +18,8 @@ function show(reachability) {
   current = Object.hasOwn(STATES, reachability) ? reachability : 'unknown';
   const state = STATES[current];
   const label = t(state.label);
-  trayEl.lang = currentLang();
   useEl.setAttribute('href', `/desktop-icons.svg#${state.icon}`);
-  trayEl.setAttribute('aria-label', label);
-  trayEl.setAttribute('title', label);
+  setUiLabels(trayEl, { title: label, label });
 }
 
 function desktopShowing() {

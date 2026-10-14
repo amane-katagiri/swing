@@ -85,7 +85,7 @@ PixelMplus12（`web/fonts/`）を使う。フォントの読み込みが終わ�
 | `unknown`、ほかの値、取得の失敗 | `icon-desk-tray-network-unknown` | 画面が灰色（奥 `#808080`、手前 `#a0a0a0`）のモニタ | `networkUnknown` |
 | `offline` | `icon-desk-tray-network-offline` | 灰色のモニタの右下に、赤い ×（7×7、x 9〜15） | `networkOffline` |
 
-- **要素**: `<span role="img">` の中に `aria-hidden` の `<svg>` を置き、`span` の `aria-label` と `title`（ツールチップ）に、Settings 画面の「ネットワーク」パネルの状態の 1 行と同じ文言を入れる。押しても何も起きず、フォーカスも受けない。トレイ（`.desk-tray`）は `pointer-events: none` なので、ツールチップが出るよう `span` だけ `pointer-events: auto` に戻す。初めに取得するまでは `unknown` の見た目。
+- **要素**: `<span role="img">` の中に `aria-hidden` の `<svg>` を置き、`span` の `aria-label` と `title`（ツールチップ）に、Settings 画面の「ネットワーク」パネルの状態の 1 行と同じ文言を UI 表示言語で入れる（[`#desktop-画面の表示言語`](#desktop-画面の表示言語)）。押しても何も起きず、フォーカスも受けない。トレイ（`.desk-tray`）は `pointer-events: none` なので、ツールチップが出るよう `span` だけ `pointer-events: auto` に戻す。初めに取得するまでは `unknown` の見た目。
 - **取得の時機**: 更新の確認（[`notices.md#更新の確認`](notices.md#更新の確認)）の watcher の時機に相乗りする。watcher は確認を試みるたびに（呼び出しを始めなかった回を除く）`onChecked` に登録した関数を成否付きで呼ぶ。`/api/activity` の確認が通ったら `/api/network` を取り直し、通らなかったら取得せず `unknown` にする。このため、ログイン画面・セットアップ画面では呼ばず、止まっていそうな間は cookie を付けない確認が通るまで呼ばず、失敗が続く間は間隔が延びる。取り直すのは Desktop 画面を表示していてタブが前面にあるときだけ（裏のタブでの確認や他の画面では呼ばない）。Desktop 画面を表示したときは watcher が確認するのでそれに続いて取り直す。間隔が「確認しない」のときは watcher が確認しないので、Desktop 画面を表示するたびに 1 回だけ直接取得する。
 - **失敗**: 取得のどんな失敗（`swing up` が止まっている、`/api/network` の無い古い `swing up` の 404、502・503 など）でも `unknown` にする。遅れて返った古い応答は捨てる。
 
@@ -109,9 +109,21 @@ Desktop 画面では `.swing-main` の幅制限と余白を外して画面いっ
 
 SWING Explorer ウィンドウの中身（`#desk-page-frame`）は、同一オリジンの iframe で開く `/desktop-page.html`。読み込みの時機・sandbox・差し替えるページが使える `id` とクラス・行の作り方は [`desktop/link-page.md`](desktop/link-page.md)。
 
-### Desktop 画面は丸ごと日本語固定
+### Desktop 画面の表示言語
 
-`#view-desktop` の中で画面に見える文字列は、UI 表示言語の設定（`swing:lang`）に関わらず全部固定の日本語。ページ本文だけでなく、読み込み中/エラー/空状態の文面、ステータスバー、`title`・`aria-label` も含む。ただしサイドナビのラベルと、トレイのネットワークアイコンの `title`・`aria-label` は、他画面と同じく UI 表示言語に従う（ツールチップは Desktop 画面の絵の外に出るので、訳しても見た目が崩れない）。トレイのアイコンは Settings 画面と同じ i18n のキーを引き、`span` の `lang` も UI 表示言語にして、言語を切り替えたら（`swing:langchange`）引き直す。
+`#view-desktop` の中で画面に見える文字列は、UI 表示言語の設定（`swing:lang`）に関わらず固定の日本語。ページ本文だけでなく、読み込み中/エラー/空状態の文面とステータスバーも含む。
+
+ツールチップ（`title`）と、それと対になる `aria-label` は、UI 表示言語に従う。ツールチップは Desktop 画面の絵の外に出るので、訳しても見た目が崩れない。対象は次のとおりで、文言は `i18n.js` のキー（`desk` 接頭辞のものと、Sites 画面と共有する `openSite`・`openGateway`）から引く。
+
+- ウィンドウとダイアログのタイトルバーの最小化・最大化（最大化中は「元に戻す」）・閉じる
+- ツールバーの「更新」「ミラーに追加」と、リンク集ページの iframe の `title`
+- リンク集ページの各行（[`desktop/link-page.md`](desktop/link-page.md#ツールチップ)）
+- 「ミラーに追加」ダイアログのフィンガープリントの `title`（[`desktop/mirror-add.md`](desktop/mirror-add.md#フィンガープリントのドット絵)）
+- トレイのネットワークアイコン（[上記](#トレイのネットワークアイコン)）
+
+これらの要素は `lang` も UI 表示言語にする。要素の中に見える日本語（「更新」「ミラー」「[本家]」「[キャッシュ]」、リンクにしたサイトのタイトル）は `<span lang="ja">` で包んで日本語のままにする。`index.html` に書いた要素は `data-i18n-title`・`data-i18n-aria-label` と `data-i18n-lang`（`applyStaticI18n` が `lang` を当てる）で、JS で作る要素は `i18n.js::setUiLabels`（`title`・`aria-label` と `lang` をまとめて当てる）で付け、言語を切り替えたら（`swing:langchange`）当て直す。最大化ボタンは状態で文言が変わるので `data-i18n-*` を使わず `desktop-window.js` が当て直し、リンク集ページの行は `cache.sites` から作り直し、ダイアログのプレビューの行は最後に受け取った鍵から作り直す（どれも API は呼ばない）。
+
+ツールチップの無い `aria-label` だけの名前（デスクトップアイコン・タブ・色見本・コンボボックス・マスコットの一覧など、画面に見える日本語の部品に付けたもの）は日本語のまま。ウィンドウの中身から来る `title`（壁紙のファイル名や色・マスコットのパック名・npub・吹き出しのリンク）は訳さない。サイドナビのラベルは他画面と同じく UI 表示言語に従う。
 
 ### 内部クラス（非安定）
 

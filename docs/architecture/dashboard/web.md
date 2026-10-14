@@ -14,7 +14,7 @@
 | ファイル | 役割 | 依存 |
 |---|---|---|
 | `storage.js` | `localStorage` の薄いラッパー | なし |
-| `i18n.js` | 多言語辞書と `t()` | `storage.js` |
+| `i18n.js` | 多言語辞書と `t()`、`index.html` の静的な訳を当てる `applyStaticI18n`、JS で作る要素に表示言語の `title`・`aria-label`・`lang` を当てる `setUiLabels` | `storage.js` |
 | `util.js` | 画面間で共有するキャッシュ（`cache`）・DOM と fetch の部品・表示スタイルと並び順の切替・非同期ロードのガード（`createLoadGuard`）・`pollUntil`（1 秒間隔・最大 120 回）・cookie を付けない確認と失敗時の間隔（[下記](#止まっている間の呼び出し)）・表示前のサニタイズ（[下記](#表示前のサニタイズ)）・表示の整形 | `storage.js`・`i18n.js` |
 | `ui.js` | 複数画面で共有する UI 部品（コピーボタン、バッジ、relay 結果表示、サイト名の行 `buildSiteNameRow`、絵文字のフィンガープリント `fingerprintBadge`、入力中の鍵の確認 `createKeyPreview` など） | `util.js`・`i18n.js` |
 | `graph.js` | webring 用の自前 force-directed layout（[`views/webring.md#グラフwebgraphjs`](views/webring.md#グラフwebgraphjs)） | `util.js`・`ui.js` |
@@ -114,4 +114,4 @@ CSS の読み込み順と上書きの仕方は [`css.md#読み込み順`](css.md
 
 訳さないもの: ナビゲーションの「Webring」、webring の ASCII/DOT/Mermaid 出力、API のエラー文字列、npub・hex・CID・パス、環境変数名・設定キー名、`nip05`/`health` のステータス値、NIP-05 とサイトの確認のモードの `off`/`warn`/`require`。日時表示は `Intl.DateTimeFormat`（`ja-JP`/`en-US`）を使う。
 
-Desktop 画面は表示言語の設定に関わらず全部固定の日本語（[`desktop.md#desktop-画面は丸ごと日本語固定`](desktop.md#desktop-画面は丸ごと日本語固定)）。
+Desktop 画面は、画面に見える文字列は表示言語の設定に関わらず固定の日本語で、ツールチップ（`title`）と対になる `aria-label` だけが表示言語に従う（[`desktop.md#desktop-画面の表示言語`](desktop.md#desktop-画面の表示言語)）。`index.html` の要素に `data-i18n`・`data-i18n-title`・`data-i18n-aria-label`・`data-i18n-placeholder` を付けると `applyStaticI18n` が訳を当て、`data-i18n-lang` を付けるとその要素の `lang` を表示言語にする。

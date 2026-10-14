@@ -1,4 +1,5 @@
 import { EMOJI_SPRITE, fingerprintIds, emojiChar } from './ui.js';
+import { setUiLabels } from './i18n.js';
 
 const SIZE = 16;
 const SVG_NS = 'http://www.w3.org/2000/svg';
@@ -72,7 +73,7 @@ export function deskFingerprint(ids, title) {
   wrap.className = 'desk-fingerprint';
   wrap.setAttribute('role', 'img');
   wrap.setAttribute('aria-label', chars);
-  if (title) wrap.title = title(chars);
+  if (title) setUiLabels(wrap, { title: title(chars) });
   for (const id of shown) {
     const img = document.createElement('img');
     img.alt = '';

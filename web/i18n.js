@@ -19,6 +19,22 @@ const MESSAGES = {
     navFooterMirror: 'mirror set: {name}',
     navFooterVersion: 'v{version}',
 
+    deskMinimize: 'Minimize',
+    deskMaximize: 'Maximize',
+    deskRestore: 'Restore Down',
+    deskClose: 'Close',
+    deskRefresh: 'Refresh',
+    deskMirrorAdd: 'Add to mirror',
+    deskLinkPage: 'Links',
+    deskIconMismatch: 'NIP-05 mismatch: this domain\'s nostr.json has no "_" entry, or it points to a different key',
+    deskIconError: 'NIP-05 check failed: could not fetch or read nostr.json',
+    deskIconNew: 'Updated within the last 7 days',
+    deskIconUp: 'Updated within the last 30 days',
+    deskIconDefault: 'No recent updates',
+    deskOpenCache: 'Open the previously stored version via the gateway (the new version is still waiting to be fetched)',
+    deskPending: 'The latest version is not stored yet',
+    deskFingerprintTitle: 'Emoji fingerprint {emoji} (a visual aid, not proof of identity)',
+
     notifyTitle: 'SWING',
     notifySiteStored: '{title} was updated',
     notifySitesStored: '{count} sites were updated',
@@ -447,6 +463,22 @@ const MESSAGES = {
     navFooterMirror: 'ミラーセット: {name}',
     navFooterVersion: 'v{version}',
 
+    deskMinimize: '最小化',
+    deskMaximize: '最大化',
+    deskRestore: '元に戻す (縮小)',
+    deskClose: '閉じる',
+    deskRefresh: '更新',
+    deskMirrorAdd: 'ミラーに追加',
+    deskLinkPage: 'リンク集',
+    deskIconMismatch: 'NIP-05 不一致: このドメインの nostr.json に "_" が無いか、別の鍵を指しています',
+    deskIconError: 'NIP-05 確認失敗: nostr.json を取得・解釈できませんでした',
+    deskIconNew: '7日以内に更新されました',
+    deskIconUp: '30日以内に更新されました',
+    deskIconDefault: '最近の更新はありません',
+    deskOpenCache: '保存済みの前の版をゲートウェイで開く（新しい版は取り込み待ち）',
+    deskPending: '最新版がまだ保存されていません',
+    deskFingerprintTitle: '絵文字のフィンガープリント {emoji}（見分けるための目印で、本人の証明ではありません）',
+
     notifyTitle: 'SWING',
     notifySiteStored: '{title} が更新されました',
     notifySitesStored: '{count} 件のサイトが更新されました',
@@ -874,8 +906,17 @@ export function t(key, vars) {
   return str.replace(/\{(\w+)\}/g, (match, k) => (Object.hasOwn(vars, k) ? String(vars[k]) : match));
 }
 
+export function setUiLabels(elm, { title, label } = {}) {
+  if (title != null) elm.setAttribute('title', title);
+  if (label != null) elm.setAttribute('aria-label', label);
+  elm.lang = currentLang();
+}
+
 export function applyStaticI18n() {
   document.documentElement.lang = currentLang() === 'ja' ? 'ja' : 'en';
+  document.querySelectorAll('[data-i18n-lang]').forEach((elm) => {
+    elm.lang = currentLang();
+  });
   document.querySelectorAll('[data-i18n]').forEach((elm) => {
     elm.textContent = t(elm.dataset.i18n);
   });

@@ -1,4 +1,5 @@
 import { storage } from './storage.js';
+import { t, setUiLabels } from './i18n.js';
 import { cache, el, apiFetch, describeError, createLoadGuard, setBusy, sanitizeMessage, sanitizeDisplayText, maybeLink } from './util.js';
 import { DesktopWindow } from './desktop-window.js';
 import { DesktopSettings } from './desktop-settings.js';
@@ -19,15 +20,6 @@ const DESK_TEXT = {
   empty: 'まだリンクがありません。ミラーしているサイトはまだ無いようです。',
   marqueeEmpty: 'まだ何もミラーしていません…また今度見てね！',
   marqueeLatest: (date, title) => `最新更新情報: ${date} ${title}`,
-  iconMismatchDesc: 'NIP-05 不一致: このドメインの nostr.json に "_" が無いか、別の鍵を指しています',
-  iconErrorDesc: 'NIP-05 確認失敗: nostr.json を取得・解釈できませんでした',
-  iconNewDesc: '7日以内に更新されました',
-  iconUpDesc: '30日以内に更新されました',
-  iconDefaultDesc: '最近の更新はありません',
-  openSite: 'サイトを開く',
-  openGateway: 'ゲートウェイで開く',
-  openCache: '保存済みの前の版をゲートウェイで開く（新しい版は取り込み待ち）',
-  pendingTitle: '最新版がまだ保存されていません',
 };
 
 const deskEls = {
@@ -135,25 +127,26 @@ function formatRetroDate(sec) {
   return `${yyyy}.${mm}.${dd}`;
 }
 
-function statusIcon(site) {
-  if (site.nip05 === 'mismatch') {
-    return el('span', { class: 'desk-status-icon', 'data-status': 'ng', title: DESK_TEXT.iconMismatchDesc, 'aria-label': DESK_TEXT.iconMismatchDesc }, '✕');
-  }
-  if (site.nip05 === 'error') {
-    return el('span', { class: 'desk-status-icon', 'data-status': 'err', title: DESK_TEXT.iconErrorDesc, 'aria-label': DESK_TEXT.iconErrorDesc }, '?');
-  }
+function statusIconKind(site) {
+  if (site.nip05 === 'mismatch') return { status: 'ng', key: 'deskIconMismatch', glyph: '✕' };
   const recognized = site.nip05 == null || site.nip05 === 'verified' || site.nip05 === 'not_applicable';
-  if (!recognized) {
-    return el('span', { class: 'desk-status-icon', 'data-status': 'err', title: DESK_TEXT.iconErrorDesc, 'aria-label': DESK_TEXT.iconErrorDesc }, '?');
-  }
+  if (!recognized) return { status: 'err', key: 'deskIconError', glyph: '?' };
   const ageDays = site.created_at == null ? Infinity : (Date.now() / 1000 - site.created_at) / SECONDS_PER_DAY;
-  if (ageDays <= NEW_DAYS) {
-    return el('span', { class: 'desk-status-icon', 'data-status': 'new', title: DESK_TEXT.iconNewDesc, 'aria-label': DESK_TEXT.iconNewDesc }, 'NEW');
-  }
-  if (ageDays <= UP_DAYS) {
-    return el('span', { class: 'desk-status-icon', 'data-status': 'up', title: DESK_TEXT.iconUpDesc, 'aria-label': DESK_TEXT.iconUpDesc }, 'UP');
-  }
-  return el('span', { class: 'desk-status-icon', 'data-status': 'default', title: DESK_TEXT.iconDefaultDesc, 'aria-label': DESK_TEXT.iconDefaultDesc }, '★');
+  if (ageDays <= NEW_DAYS) return { status: 'new', key: 'deskIconNew', glyph: 'NEW' };
+  if (ageDays <= UP_DAYS) return { status: 'up', key: 'deskIconUp', glyph: 'UP' };
+  return { status: 'default', key: 'deskIconDefault', glyph: '★' };
+}
+
+function statusIcon(site) {
+  const { status, key, glyph } = statusIconKind(site);
+  const icon = el('span', { class: 'desk-status-icon', 'data-status': status }, glyph);
+  const desc = t(key);
+  setUiLabels(icon, { title: desc, label: desc });
+  return icon;
+}
+
+function jaText(text) {
+  return el('span', { lang: 'ja' }, text);
 }
 
 function buildLinkRow(site) {
@@ -168,11 +161,13 @@ function buildLinkRow(site) {
   const primaryHref = pending ? null : site.gateway_url || site.url || null;
   let titleNode;
   if (primaryHref) {
-    titleNode = maybeLink(primaryHref, titleText);
-    titleNode.title = site.gateway_url ? DESK_TEXT.openGateway : DESK_TEXT.openSite;
+    titleNode = maybeLink(primaryHref, jaText(titleText));
+    setUiLabels(titleNode, { title: t(site.gateway_url ? 'openGateway' : 'openSite') });
+  } else if (pending) {
+    titleNode = el('span', {}, jaText(titleText));
+    setUiLabels(titleNode, { title: t('deskPending') });
   } else {
     titleNode = el('span', {}, titleText);
-    if (pending) titleNode.title = DESK_TEXT.pendingTitle;
   }
   titleNode.classList.add('desk-link-title');
   titleNode.setAttribute('dir', 'auto');
@@ -183,17 +178,17 @@ function buildLinkRow(site) {
   }
 
   if (site.url && (pending || site.gateway_url)) {
-    const honke = maybeLink(site.url, '[本家]');
+    const honke = maybeLink(site.url, jaText('[本家]'));
     honke.classList.add('desk-link-honke');
-    honke.setAttribute('aria-label', `${titleText} — ${DESK_TEXT.openSite}`);
+    setUiLabels(honke, { label: `${titleText} — ${t('openSite')}` });
     li.append(honke);
   }
 
   if (pending && site.previous.gateway_url) {
-    const cacheLink = maybeLink(site.previous.gateway_url, '[キャッシュ]');
+    const cacheLink = maybeLink(site.previous.gateway_url, jaText('[キャッシュ]'));
     cacheLink.classList.add('desk-link-cache');
-    cacheLink.title = DESK_TEXT.openCache;
-    cacheLink.setAttribute('aria-label', `${titleText} — ${DESK_TEXT.openCache}`);
+    const openCache = t('deskOpenCache');
+    setUiLabels(cacheLink, { title: openCache, label: `${titleText} — ${openCache}` });
     li.append(cacheLink);
   }
 
@@ -203,6 +198,10 @@ function buildLinkRow(site) {
   }
 
   return li;
+}
+
+function renderLinks(sites) {
+  if (pageEls.list) pageEls.list.replaceChildren(...sites.map(buildLinkRow));
 }
 
 function renderPageStatus(kind, message) {
@@ -429,6 +428,9 @@ export const DesktopView = {
     desktopUpdates.start();
     DesktopNetwork.init({ updates: desktopUpdates });
     DesktopMascots.init({ updates: desktopUpdates });
+    document.addEventListener('swing:langchange', () => {
+      if (cache.sites) renderLinks(collectStoredSites(cache.sites));
+    });
     document.addEventListener('keydown', onDesktopKeydown, true);
     document.addEventListener('focusin', scheduleActiveSync);
     document.addEventListener('focusout', scheduleActiveSync);
@@ -487,9 +489,7 @@ export const DesktopView = {
     } else {
       renderPageStatus(null, null);
     }
-    if (pageEls.list) {
-      pageEls.list.replaceChildren(...sites.map(buildLinkRow));
-    }
+    renderLinks(sites);
     renderMarquee(sites);
     renderCounter(sites);
     if (deskEls.statusText) deskEls.statusText.textContent = DESK_TEXT.doneStatus;
