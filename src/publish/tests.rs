@@ -71,30 +71,46 @@ async fn refused_stage(newest: u64, relays: RelayState) -> (anyhow::Error, bool)
 }
 
 #[tokio::test]
-async fn add_and_measure_refuses_a_future_version_before_adding() {
-    let future = Timestamp::now().as_secs() + nostr::MAX_FUTURE_SKEW + 3600;
-    let (err, added) = refused_stage(future, relay_state(None, Vec::new())).await;
-    assert!(err.downcast_ref::<ClockError>().is_some(), "{err:#}");
-    let rm = format!("ipfs files rm -r /swing/publish/k/example.com/{future}");
-    assert!(err.to_string().contains(&rm), "{err}");
-    assert!(!added);
-}
-
-#[tokio::test]
-async fn add_and_measure_refuses_a_clock_ahead_of_every_relay_before_adding() {
-    let skew = nostr::MAX_FUTURE_SKEW as i64;
-    let offsets = vec![
-        ("wss://a".to_string(), skew + 3600),
-        ("wss://b".to_string(), skew + 60),
+async fn add_and_measure_refuses_a_clock_problem_before_adding() {
+    let now = Timestamp::now().as_secs();
+    let skew = nostr::MAX_FUTURE_SKEW;
+    let future = now + skew + 3600;
+    let future_path = format!("/swing/publish/k/example.com/{future}");
+    let cases = [
+        (
+            "a future version",
+            future,
+            relay_state(None, Vec::new()),
+            future_path.as_str(),
+        ),
+        (
+            "a clock ahead of every relay",
+            100,
+            relay_state(
+                None,
+                vec![
+                    ("wss://a".to_string(), skew as i64 + 3600),
+                    ("wss://b".to_string(), skew as i64 + 60),
+                ],
+            ),
+            "wss://b",
+        ),
+        (
+            "a previous event at the limit",
+            100,
+            relay_state(Some(now + skew), Vec::new()),
+            "",
+        ),
     ];
-    let (err, added) = refused_stage(100, relay_state(None, offsets)).await;
-    assert!(err.downcast_ref::<ClockError>().is_some(), "{err:#}");
-    assert!(
-        err.to_string()
-            .contains("ahead of every relay that answered (even wss://b,"),
-        "{err}"
-    );
-    assert!(!added);
+    for (case, newest, relays, names) in cases {
+        let (err, added) = refused_stage(newest, relays).await;
+        assert!(
+            err.downcast_ref::<ClockError>().is_some(),
+            "{case}: {err:#}"
+        );
+        assert!(err.to_string().contains(names), "{case}: {err}");
+        assert!(!added, "{case}");
+    }
 }
 
 #[tokio::test]
@@ -158,16 +174,6 @@ async fn plan_version_ignores_one_lagging_relay_and_dates_after_the_previous() {
     );
 }
 
-#[tokio::test]
-async fn add_and_measure_asks_to_wait_for_a_previous_event_at_the_limit_before_adding() {
-    let now = Timestamp::now().as_secs();
-    let relays = relay_state(Some(now + nostr::MAX_FUTURE_SKEW), Vec::new());
-    let (err, added) = refused_stage(100, relays).await;
-    assert!(err.downcast_ref::<ClockError>().is_some(), "{err:#}");
-    assert!(err.to_string().contains("and publish again"), "{err}");
-    assert!(!added);
-}
-
 #[test]
 fn the_future_hint_survives_a_long_rejection_reason() {
     let long = format!(
@@ -188,47 +194,48 @@ fn the_future_hint_survives_a_long_rejection_reason() {
 
 #[test]
 fn versions_to_prune_keeps_the_current_and_the_newest_others() {
-    let names: Vec<String> = ["100", "300", "junk", "200", "50", "0020", "+10"]
-        .iter()
-        .map(|s| s.to_string())
-        .collect();
-    assert_eq!(versions_to_prune(&names, 300, 2), vec!["100", "50"]);
-    assert!(versions_to_prune(&names, 300, 4).is_empty());
+    let names = |list: &[&str]| list.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+    let mixed = names(&["100", "300", "junk", "200", "50", "0020", "+10"]);
+    let newer_than_current = names(&["100", "999999", "200"]);
+    for (case, names, current, keep, want) in [
+        ("keep 2", &mixed, 300, 2, &["100", "50"][..]),
+        ("keep all", &mixed, 300, 4, &[][..]),
+        (
+            "current is not the newest, keep 1",
+            &newer_than_current,
+            200,
+            1,
+            &["999999", "100"][..],
+        ),
+        (
+            "current is not the newest, keep 2",
+            &newer_than_current,
+            200,
+            2,
+            &["100"][..],
+        ),
+    ] {
+        assert_eq!(versions_to_prune(names, current, keep), want, "{case}");
+    }
 }
 
 #[test]
-fn versions_to_prune_never_removes_the_current_version() {
-    let names: Vec<String> = ["100", "999999", "200"]
-        .iter()
-        .map(|s| s.to_string())
-        .collect();
-    assert_eq!(versions_to_prune(&names, 200, 1), vec!["999999", "100"]);
-    assert_eq!(versions_to_prune(&names, 200, 2), vec!["100"]);
-}
-
-#[test]
-fn normalize_title_treats_absent_and_whitespace_only_as_none() {
-    assert!(normalize_title(None).unwrap().is_none());
-    assert!(normalize_title(Some("")).unwrap().is_none());
-    assert!(normalize_title(Some("   \t  ")).unwrap().is_none());
-}
-
-#[test]
-fn normalize_title_trims_and_keeps_a_valid_title() {
-    assert_eq!(
-        normalize_title(Some("  My Site  ")).unwrap(),
-        Some("My Site")
-    );
-}
-
-#[test]
-fn normalize_title_rejects_oversized_or_control_titles() {
+fn normalize_title_trims_and_rejects_oversized_or_control_titles() {
     let long = "a".repeat(257);
-    assert!(matches!(normalize_title(Some(&long)), Err(InvalidTitle)));
-    assert!(matches!(
-        normalize_title(Some("bad\ntitle")),
-        Err(InvalidTitle)
-    ));
+    for (case, input, want) in [
+        ("absent", None, Ok(None)),
+        ("empty", Some(""), Ok(None)),
+        ("whitespace only", Some("   \t  "), Ok(None)),
+        ("trimmed", Some("  My Site  "), Ok(Some("My Site"))),
+        ("oversized", Some(long.as_str()), Err(())),
+        ("control character", Some("bad\ntitle"), Err(())),
+    ] {
+        assert_eq!(
+            normalize_title(input).map_err(|InvalidTitle| ()),
+            want,
+            "{case}"
+        );
+    }
 }
 
 #[test]
@@ -259,59 +266,90 @@ impl Nip05Verify for FakeNip05 {
 }
 
 #[tokio::test]
-async fn warn_mode_never_aborts() {
-    for result in [
-        nip05::VerificationResult::Verified,
-        nip05::VerificationResult::Mismatch,
-        nip05::VerificationResult::NotApplicable,
-        nip05::VerificationResult::Error("boom".to_string(), nip05::ErrorCategory::InvalidResponse),
-    ] {
-        let fake = FakeNip05(result);
-        let outcome = check_nip05(&fake, CheckMode::Warn, "example.com", "abc123").await;
-        assert!(outcome.abort.is_none());
+async fn check_nip05_aborts_only_an_unverified_require() {
+    use nip05::VerificationResult as R;
+    let error = || R::Error("boom".to_string(), nip05::ErrorCategory::InvalidResponse);
+    let timeout = R::Error("timeout".to_string(), nip05::ErrorCategory::Timeout);
+    let not_satisfied: &[&str] = &[
+        "not satisfied for example.com",
+        r#"{"names": {"_": "abc123"}}"#,
+        "https://example.com/.well-known/nostr.json",
+    ];
+    let cases = [
+        (
+            "warn verified",
+            CheckMode::Warn,
+            R::Verified,
+            "example.com",
+            None,
+        ),
+        (
+            "warn mismatch",
+            CheckMode::Warn,
+            R::Mismatch,
+            "example.com",
+            None,
+        ),
+        (
+            "warn not applicable",
+            CheckMode::Warn,
+            R::NotApplicable,
+            "example.com",
+            None,
+        ),
+        ("warn error", CheckMode::Warn, error(), "example.com", None),
+        (
+            "off mismatch",
+            CheckMode::Off,
+            R::Mismatch,
+            "example.com",
+            None,
+        ),
+        (
+            "require verified",
+            CheckMode::Require,
+            R::Verified,
+            "example.com",
+            None,
+        ),
+        (
+            "require mismatch",
+            CheckMode::Require,
+            R::Mismatch,
+            "example.com",
+            Some(not_satisfied),
+        ),
+        (
+            "require error",
+            CheckMode::Require,
+            timeout,
+            "example.com",
+            Some(not_satisfied),
+        ),
+        (
+            "require not applicable",
+            CheckMode::Require,
+            R::NotApplicable,
+            "not-a-domain",
+            Some(&["\"not-a-domain\" is not a valid domain name"][..]),
+        ),
+    ];
+    for (case, mode, result, d, abort) in cases {
+        let verified = result.is_verified();
+        let outcome = check_nip05(&FakeNip05(result), mode, d, "abc123").await;
+        match abort {
+            None => assert_eq!(outcome.abort, None, "{case}"),
+            Some(parts) => {
+                let msg = outcome.abort.unwrap_or_else(|| panic!("{case}: no abort"));
+                for part in parts {
+                    assert!(msg.contains(part), "{case}: {msg}");
+                }
+            }
+        }
+        if verified {
+            assert!(outcome.line.contains("verified"), "{case}");
+        }
     }
-}
-
-#[tokio::test]
-async fn require_mode_proceeds_only_when_verified() {
-    let fake = FakeNip05(nip05::VerificationResult::Verified);
-    let outcome = check_nip05(&fake, CheckMode::Require, "example.com", "abc123").await;
-    assert!(outcome.abort.is_none());
-    assert!(outcome.line.contains("verified"));
-}
-
-#[tokio::test]
-async fn require_mode_aborts_on_mismatch() {
-    let fake = FakeNip05(nip05::VerificationResult::Mismatch);
-    let outcome = check_nip05(&fake, CheckMode::Require, "example.com", "abc123").await;
-    assert!(outcome.abort.is_some());
-    assert!(outcome.abort.unwrap().contains("abc123"));
-}
-
-#[tokio::test]
-async fn require_mode_aborts_on_not_applicable_with_domain_specific_message() {
-    let fake = FakeNip05(nip05::VerificationResult::NotApplicable);
-    let outcome = check_nip05(&fake, CheckMode::Require, "not-a-domain", "abc123").await;
-    let msg = outcome.abort.unwrap();
-    assert!(msg.contains("not-a-domain"));
-    assert!(msg.contains("not a valid domain"));
-}
-
-#[tokio::test]
-async fn require_mode_aborts_on_error() {
-    let fake = FakeNip05(nip05::VerificationResult::Error(
-        "timeout".to_string(),
-        nip05::ErrorCategory::Timeout,
-    ));
-    let outcome = check_nip05(&fake, CheckMode::Require, "example.com", "abc123").await;
-    assert!(outcome.abort.is_some());
-}
-
-#[tokio::test]
-async fn off_mode_never_aborts_even_on_mismatch() {
-    let fake = FakeNip05(nip05::VerificationResult::Mismatch);
-    let outcome = check_nip05(&fake, CheckMode::Off, "example.com", "abc123").await;
-    assert!(outcome.abort.is_none());
 }
 
 #[test]

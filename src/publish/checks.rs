@@ -391,21 +391,47 @@ mod tests {
     }
 
     #[test]
-    fn find_dotfiles_skips_allowed_names_but_not_dotfiles_beneath_them() {
-        let paths = [
-            "index.html",
-            ".well-known",
-            ".well-known/nostr.json",
-            ".well-known/.secret",
-            ".well-known/.git/HEAD",
-            ".nojekyll",
-            "blog/.gitkeep",
-            ".env",
+    fn find_dotfiles_reports_the_topmost_unallowed_dotfile() {
+        let cases = [
+            (
+                "allowed names but not dotfiles beneath them",
+                vec![
+                    "index.html",
+                    ".well-known",
+                    ".well-known/nostr.json",
+                    ".well-known/.secret",
+                    ".well-known/.git/HEAD",
+                    ".nojekyll",
+                    "blog/.gitkeep",
+                    ".env",
+                ],
+                allow(),
+                vec![".well-known/.secret", ".well-known/.git", ".env"],
+            ),
+            (
+                "a hit directory once and not its children",
+                vec![
+                    ".git",
+                    ".git/HEAD",
+                    ".git/objects",
+                    ".git/objects/ab",
+                    "assets",
+                    "assets/.DS_Store",
+                    "assets/img/.cache/x.png",
+                ],
+                allow(),
+                vec![".git", "assets/.DS_Store", "assets/img/.cache"],
+            ),
+            (
+                "an empty allow list flags .well-known",
+                vec![".well-known", ".well-known/nostr.json"],
+                Vec::new(),
+                vec![".well-known"],
+            ),
         ];
-        assert_eq!(
-            find_dotfiles(paths, &allow()),
-            vec![".well-known/.secret", ".well-known/.git", ".env"]
-        );
+        for (case, paths, allow, want) in cases {
+            assert_eq!(find_dotfiles(paths, &allow), want, "{case}");
+        }
     }
 
     #[test]
@@ -457,31 +483,6 @@ mod tests {
         symlink(repo.path().join("keystore"), &link).unwrap();
         let err = refuse_site_inside(&link, &[("[kubo].repo", repo.path(), None)]).unwrap_err();
         assert!(err.to_string().contains("[kubo].repo"), "{err}");
-    }
-
-    #[test]
-    fn find_dotfiles_reports_a_hit_directory_once_and_not_its_children() {
-        let paths = [
-            ".git",
-            ".git/HEAD",
-            ".git/objects",
-            ".git/objects/ab",
-            "assets",
-            "assets/.DS_Store",
-            "assets/img/.cache/x.png",
-        ];
-        assert_eq!(
-            find_dotfiles(paths, &allow()),
-            vec![".git", "assets/.DS_Store", "assets/img/.cache"]
-        );
-    }
-
-    #[test]
-    fn find_dotfiles_with_an_empty_allow_list_flags_well_known() {
-        assert_eq!(
-            find_dotfiles([".well-known", ".well-known/nostr.json"], &[]),
-            vec![".well-known"]
-        );
     }
 
     #[test]
@@ -672,40 +673,59 @@ mod tests {
 
     #[test]
     fn unchanged_stops_only_under_require_with_an_equal_cid() {
-        let same = UnchangedOutcome::decide(CheckMode::Require, Ok(Some(site("bafy1"))), "bafy1");
-        assert_eq!(same.status, UnchangedStatus::Unchanged);
-        assert!(same.stops_publish());
-        assert_eq!(same.previous_created_at, Some(100));
-
-        let warn = UnchangedOutcome::decide(CheckMode::Warn, Ok(Some(site("bafy1"))), "bafy1");
-        assert_eq!(warn.status, UnchangedStatus::Unchanged);
-        assert!(!warn.stops_publish());
-
-        let changed =
-            UnchangedOutcome::decide(CheckMode::Require, Ok(Some(site("bafy0"))), "bafy1");
-        assert_eq!(changed.status, UnchangedStatus::Changed);
-        assert_eq!(changed.previous_cid.as_deref(), Some("bafy0"));
-        assert!(!changed.stops_publish());
-    }
-
-    #[test]
-    fn unchanged_never_stops_when_the_relays_cannot_tell() {
-        let none = UnchangedOutcome::decide(CheckMode::Require, Ok(None), "bafy1");
-        assert_eq!(none.status, UnchangedStatus::NoPrevious);
-        assert!(!none.stops_publish());
-
-        let failed =
-            UnchangedOutcome::decide(CheckMode::Require, Err(anyhow::anyhow!("timeout")), "bafy1");
-        assert_eq!(failed.status, UnchangedStatus::Unknown);
-        assert_eq!(failed.detail.as_deref(), Some("timeout"));
-        assert!(!failed.stops_publish());
-        assert!(failed.line().contains("could not check"));
-    }
-
-    #[test]
-    fn unchanged_off_ignores_the_lookup() {
-        let off = UnchangedOutcome::decide(CheckMode::Off, Ok(Some(site("bafy1"))), "bafy1");
-        assert_eq!(off, UnchangedOutcome::off());
-        assert!(!off.stops_publish());
+        use UnchangedStatus::*;
+        let cases = [
+            (
+                "require, same cid",
+                CheckMode::Require,
+                Ok(Some(site("bafy1"))),
+                Unchanged,
+                true,
+            ),
+            (
+                "warn, same cid",
+                CheckMode::Warn,
+                Ok(Some(site("bafy1"))),
+                Unchanged,
+                false,
+            ),
+            (
+                "require, changed",
+                CheckMode::Require,
+                Ok(Some(site("bafy0"))),
+                Changed,
+                false,
+            ),
+            (
+                "require, no previous",
+                CheckMode::Require,
+                Ok(None),
+                NoPrevious,
+                false,
+            ),
+            (
+                "require, lookup failed",
+                CheckMode::Require,
+                Err(anyhow::anyhow!("timeout")),
+                Unknown,
+                false,
+            ),
+            ("off", CheckMode::Off, Ok(Some(site("bafy1"))), Off, false),
+        ];
+        for (case, mode, previous, status, stops) in cases {
+            let outcome = UnchangedOutcome::decide(mode, previous, "bafy1");
+            assert_eq!(outcome.status, status, "{case}");
+            assert_eq!(outcome.stops_publish(), stops, "{case}");
+            match case {
+                "require, same cid" => assert_eq!(outcome.previous_created_at, Some(100)),
+                "require, changed" => assert_eq!(outcome.previous_cid.as_deref(), Some("bafy0")),
+                "require, lookup failed" => {
+                    assert_eq!(outcome.detail.as_deref(), Some("timeout"));
+                    assert!(outcome.line().contains("could not check"));
+                }
+                "off" => assert_eq!(outcome, UnchangedOutcome::off()),
+                _ => {}
+            }
+        }
     }
 }
