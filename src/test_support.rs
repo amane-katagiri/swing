@@ -340,6 +340,7 @@ pub(crate) struct FakeKuboState {
     pub(crate) files: HashSet<String>,
     pub(crate) dag_stats: Vec<String>,
     pub(crate) dir_checks: Vec<String>,
+    pub(crate) fail_dir_check: HashSet<String>,
     pub(crate) peering: std::collections::BTreeSet<String>,
     pub(crate) fail_peering: std::collections::BTreeSet<String>,
     pub(crate) fail_peering_list: bool,
@@ -529,6 +530,9 @@ impl KuboStore for FakeKubo {
     async fn is_directory(&self, cid: &str) -> anyhow::Result<bool> {
         let mut s = self.s.lock().unwrap();
         s.dir_checks.push(cid.to_string());
+        if s.fail_dir_check.contains(cid) {
+            anyhow::bail!("simulated files/stat failure");
+        }
         Ok(!s.files.contains(cid))
     }
 }

@@ -75,6 +75,15 @@ impl Attempts {
         self.sites.remove(key);
     }
 
+    fn forget_attempt(&mut self, key: &str) {
+        if let Some(entry) = self.sites.get_mut(key) {
+            entry.tried_at = None;
+            if entry.rejected.is_empty() {
+                self.sites.remove(key);
+            }
+        }
+    }
+
     pub(super) fn retain_accounts(&mut self, keep: impl Fn(&str) -> bool) {
         self.sites
             .retain(|key, _| state::split_site_key(key).is_none_or(|(account, _)| keep(account)));
@@ -388,7 +397,8 @@ impl<C: KuboStore, N: Nip05Verify, R: ReportRelay> Agent<C, N, R> {
                 return false;
             }
             Err(e) => {
-                warn!(cid = %ev.cid, site = %ev.d, error = %e, "checking whether the CID is a directory failed; will retry after min_update_interval");
+                warn!(cid = %ev.cid, site = %ev.d, error = %e, "checking whether the CID is a directory failed; will retry on the next poll");
+                self.attempts.lock().unwrap().forget_attempt(key);
                 return false;
             }
         }

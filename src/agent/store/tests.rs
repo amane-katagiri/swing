@@ -306,6 +306,26 @@ async fn a_failed_fetch_is_retried() {
 }
 
 #[tokio::test]
+async fn a_failed_directory_check_is_retried_without_waiting_for_the_interval() {
+    let mut policy = default_policy();
+    policy.min_update_interval = 3600;
+    let kubo = FakeKubo::with(|s| {
+        s.fail_dir_check.insert("bafy-new".into());
+    });
+    let fx = Fixture::new(policy, kubo);
+    fx.seed(D, "bafy-old", 10, 100).await;
+
+    fx.apply(fx.event(D, "bafy-new", None, 200)).await;
+    assert!(fx.kubo().fetched.is_empty());
+    fx.kubo().fail_dir_check.clear();
+    fx.apply(fx.event(D, "bafy-new", None, 200)).await;
+
+    assert_eq!(fx.kubo().dir_checks, vec!["bafy-new", "bafy-new"]);
+    assert_eq!(fx.kubo().fetched, vec!["bafy-new"]);
+    assert!(fx.kubo().stores("bafy-new"));
+}
+
+#[tokio::test]
 async fn the_sweep_leaves_a_version_that_is_being_stored() {
     let fx = Fixture::new(default_policy(), FakeKubo::default());
     let path = fx.path(D, 200);
