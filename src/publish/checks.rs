@@ -327,7 +327,7 @@ impl UnchangedOutcome {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use nostr_sdk::prelude::Keys;
+    use crate::test_support::{random_pubkey, site_event_fixture};
 
     fn allow() -> Vec<String> {
         crate::config::DEFAULT_DOTFILES_ALLOW
@@ -667,17 +667,7 @@ mod tests {
     }
 
     fn site(cid: &str) -> SiteEvent {
-        SiteEvent {
-            pubkey: Keys::generate().public_key(),
-            d: "example.com".into(),
-            cid: cid.into(),
-            url: None,
-            size: None,
-            title: None,
-            message: None,
-            created_at: 100,
-            id: nostr_sdk::prelude::EventId::from_byte_array([0; 32]),
-        }
+        site_event_fixture(random_pubkey(), "example.com", cid, 100)
     }
 
     #[test]

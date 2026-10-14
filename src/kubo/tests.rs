@@ -1,5 +1,4 @@
 use std::net::SocketAddr;
-#[cfg(unix)]
 use std::path::Path;
 use std::path::PathBuf;
 use std::time::Duration;
@@ -788,23 +787,10 @@ async fn full_lifecycle_against_real_kubo() {
 
     let created = ensure_repo(&bin, &repo).await.unwrap();
     assert!(created);
-
-    run(&bin, Some(&repo), &["config", "profile", "apply", "test"])
-        .await
-        .unwrap();
-
-    let api = ApiAccess::generate(pick_free_port().unwrap());
+    let settings = configure_test_repo(&bin, &repo, vec!["example.com".to_string()]).await;
+    let api = settings.api;
     let api_port = api.port;
-    let gateway_port = pick_free_port().unwrap();
-    let settings = KuboSettings {
-        storage_max: 123_456_789,
-        provide_strategy: "pinned+mfs".to_string(),
-        api: api.clone(),
-        gateway: SocketAddr::from(([127, 0, 0, 1], gateway_port)),
-        swarm_port: None,
-        public_gateway_hosts: vec!["example.com".to_string()],
-    };
-    apply_config(&repo, &settings).unwrap();
+    let gateway_port = settings.gateway.port();
 
     std::fs::write(repo.join("api"), "/ip4/127.0.0.1/tcp/1\n").unwrap();
     let mut daemon = Daemon::spawn(&bin, &repo, &api).await.unwrap();
@@ -857,6 +843,26 @@ async fn full_lifecycle_against_real_kubo() {
     daemon.stop(Duration::from_secs(10)).await.unwrap();
 }
 
+async fn configure_test_repo(
+    bin: &Path,
+    repo: &Path,
+    public_gateway_hosts: Vec<String>,
+) -> KuboSettings {
+    run(bin, Some(repo), &["config", "profile", "apply", "test"])
+        .await
+        .unwrap();
+    let settings = KuboSettings {
+        storage_max: 123_456_789,
+        provide_strategy: "pinned+mfs".to_string(),
+        api: ApiAccess::generate(pick_free_port().unwrap()),
+        gateway: SocketAddr::from(([127, 0, 0, 1], pick_free_port().unwrap())),
+        swarm_port: None,
+        public_gateway_hosts,
+    };
+    apply_config(repo, &settings).unwrap();
+    settings
+}
+
 #[cfg(unix)]
 async fn spawn_orphan(bin: &Path, dir: &Path) -> (PathBuf, String, u32) {
     let repo = dir.join("kubo-repo");
@@ -864,20 +870,7 @@ async fn spawn_orphan(bin: &Path, dir: &Path) -> (PathBuf, String, u32) {
     std::fs::create_dir_all(&state_dir).unwrap();
 
     ensure_repo(bin, &repo).await.unwrap();
-    run(bin, Some(&repo), &["config", "profile", "apply", "test"])
-        .await
-        .unwrap();
-
-    let api = ApiAccess::generate(pick_free_port().unwrap());
-    let settings = KuboSettings {
-        storage_max: 123_456_789,
-        provide_strategy: "pinned+mfs".to_string(),
-        api: api.clone(),
-        gateway: SocketAddr::from(([127, 0, 0, 1], pick_free_port().unwrap())),
-        swarm_port: None,
-        public_gateway_hosts: vec![],
-    };
-    apply_config(&repo, &settings).unwrap();
+    let api = configure_test_repo(bin, &repo, vec![]).await.api;
 
     let api_url = api.url();
     let mut daemon = Daemon::spawn(bin, &repo, &api).await.unwrap();
