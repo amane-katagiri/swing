@@ -447,8 +447,11 @@ mod tests {
             merge_report_fetches(Err(anyhow::anyhow!("x")), Err(anyhow::anyhow!("y"))).is_err()
         );
     }
+
     #[test]
     fn collect_reports_keeps_the_newest_live_report_per_reporter() {
+        let base = 2 * nostr::MAX_REPORT_AGE;
+        let now = base + 500;
         let author = Keys::generate().public_key();
         let (r1, r2, r3, r4) = (
             Keys::generate(),
@@ -456,17 +459,75 @@ mod tests {
             Keys::generate(),
             Keys::generate(),
         );
+        let garbage_expiration = Keys::generate();
+        let too_old = Keys::generate();
+        let d = format!("{}:example.com", author.to_hex());
+        let a = nostr::site_coordinate(35980, &author, "example.com").to_string();
         let events = vec![
-            report(&r1, &author, "example.com", &[CID_A], 100, 1000),
-            report(&r1, &author, "example.com", &[CID_B], 200, 1000),
-            report(&r2, &author, "example.com", &[CID_A], 100, 1000),
-            report(&r2, &author, "example.com", &[], 200, 1000),
-            report(&r3, &author, "example.com", &[CID_A], 100, 500),
-            report(&r4, &author, "other.example", &[CID_A], 100, 1000),
-            report(&r4, &author, "example.com", &["not-a-cid"], 100, 1000),
+            report(
+                &r1,
+                &author,
+                "example.com",
+                &[CID_A],
+                base + 100,
+                base + 1000,
+            ),
+            report(
+                &r1,
+                &author,
+                "example.com",
+                &[CID_B],
+                base + 200,
+                base + 1000,
+            ),
+            report(
+                &r2,
+                &author,
+                "example.com",
+                &[CID_A],
+                base + 100,
+                base + 1000,
+            ),
+            report(&r2, &author, "example.com", &[], base + 200, base + 1000),
+            report(&r3, &author, "example.com", &[CID_A], base + 100, now),
+            report(
+                &r4,
+                &author,
+                "other.example",
+                &[CID_A],
+                base + 100,
+                base + 1000,
+            ),
+            report(
+                &r4,
+                &author,
+                "example.com",
+                &["not-a-cid"],
+                base + 100,
+                base + 1000,
+            ),
+            raw_event(
+                &garbage_expiration,
+                35981,
+                &[
+                    &["d", &d],
+                    &["a", &a],
+                    &["cid", CID_A],
+                    &["expiration", "not-a-number"],
+                ],
+                base + 100,
+            ),
+            report(
+                &too_old,
+                &author,
+                "example.com",
+                &[CID_A],
+                now - nostr::MAX_REPORT_AGE - 1,
+                now + nostr::MAX_REPORT_AGE * 10,
+            ),
         ];
 
-        let collected = collect_reports(events, 35981, 35980, 500, &Chosen::default());
+        let collected = collect_reports(events, 35981, 35980, now, &Chosen::default());
 
         assert_eq!(collected.len(), 2);
         let site = &collected[&(author, "example.com".to_string())];
@@ -627,47 +688,5 @@ mod tests {
             }),
             "3 (+12 unverified)"
         );
-    }
-
-    #[test]
-    fn collect_reports_drops_a_report_with_a_garbage_expiration() {
-        let author = Keys::generate().public_key();
-        let reporter = Keys::generate();
-        let d = format!("{}:example.com", author.to_hex());
-        let a = nostr::site_coordinate(35980, &author, "example.com").to_string();
-        let tags: &[&[&str]] = &[
-            &["d", &d],
-            &["a", &a],
-            &["cid", CID_A],
-            &["expiration", "not-a-number"],
-        ];
-        let events = vec![raw_event(
-            &reporter,
-            35981,
-            tags,
-            Timestamp::now().as_secs(),
-        )];
-
-        let collected = collect_reports(events, 35981, 35980, 500, &Chosen::default());
-        assert!(collected.is_empty());
-    }
-
-    #[test]
-    fn collect_reports_drops_a_report_older_than_the_max_report_age() {
-        let author = Keys::generate().public_key();
-        let reporter = Keys::generate();
-        let created_at = 1_000_000;
-        let events = vec![report(
-            &reporter,
-            &author,
-            "example.com",
-            &[CID_A],
-            created_at,
-            created_at + nostr::MAX_REPORT_AGE * 10,
-        )];
-
-        let now = created_at + nostr::MAX_REPORT_AGE + 1;
-        let collected = collect_reports(events, 35981, 35980, now, &Chosen::default());
-        assert!(collected.is_empty());
     }
 }

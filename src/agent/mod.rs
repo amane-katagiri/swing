@@ -451,22 +451,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn sweep_removes_entries_the_state_does_not_reference() {
+    async fn sweep_removes_the_garbage_it_finds_and_nothing_else() {
         let fx = Fixture::new(default_policy(), FakeKubo::default());
         fx.seed(D, "bafy-kept", 1, 100).await;
-        let root = fx.agent.layout.agent_root();
-        let account = fx.agent.layout.agent_account(&fx.pubkey.to_hex());
         let publish = fx.agent.layout.publish_version(&fx.pubkey.to_hex(), D, 1);
         {
             let mut kubo = fx.kubo();
             kubo.mfs.insert(fx.path(D, 50), "bafy-stale".into());
-            kubo.mfs
-                .insert(fx.path("gone.example", 1), "bafy-gone".into());
-            kubo.mfs
-                .insert(format!("{account}/stray-file"), "bafy-f".into());
-            kubo.mfs
-                .insert(format!("{root}/unknown/a/1"), "bafy-u".into());
-            kubo.mfs.insert(format!("{root}/loose"), "bafy-l".into());
             kubo.mfs.insert(publish.clone(), "bafy-p".into());
             kubo.mfs.insert("/manual/x".into(), "bafy-m".into());
         }

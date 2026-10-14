@@ -196,70 +196,53 @@ async fn reports_left_on_relays_are_withdrawn_or_kept_on_startup() {
 }
 
 #[tokio::test]
-async fn stale_reports_are_withdrawn_once_the_relays_answer() {
-    let fx = Fixture::new(default_policy(), FakeKubo::default());
-    fx.seed(D, "bafy-a", 1, 100).await;
-    let now = now_secs();
-    let stale = replica_report_event(
-        &fx.agent.reporter.keys,
-        &fx.pubkey,
-        "gone.example",
-        &[CID_B],
-        now - 10,
-        now + REPORT_TTL,
-    );
-    {
-        let mut relay = fx.relay();
-        relay.stored = vec![stale];
-        relay.fail_fetch = true;
+async fn stale_reports_are_withdrawn_once_own_reports_are_read_in_full() {
+    for (case, partial) in [("fetch failed", false), ("walk cut short", true)] {
+        let fx = Fixture::new(default_policy(), FakeKubo::default());
+        fx.seed(D, "bafy-a", 1, 100).await;
+        let now = now_secs();
+        let stale = replica_report_event(
+            &fx.agent.reporter.keys,
+            &fx.pubkey,
+            "gone.example",
+            &[CID_B],
+            now - 10,
+            now + REPORT_TTL,
+        );
+        {
+            let mut relay = fx.relay();
+            relay.fail_fetch = !partial;
+            relay.partial_fetch = partial;
+        }
+
+        fx.agent.sync_reports().await;
+        assert_eq!(
+            fx.take_reports(),
+            vec![(fx.key(D), cids(&["bafy-a"]))],
+            "{case}"
+        );
+
+        {
+            let mut relay = fx.relay();
+            relay.stored.push(stale);
+            relay.fail_fetch = false;
+            relay.partial_fetch = false;
+        }
+        fx.agent.sync_reports().await;
+        assert!(fx.take_reports().is_empty(), "{case}");
+        assert_eq!(fx.relay().own_fetches, 1, "{case}");
+
+        fx.agent.sync_reports_in_round().await;
+        assert_eq!(
+            fx.take_reports(),
+            vec![(fx.key("gone.example"), vec![])],
+            "{case}"
+        );
+        assert_eq!(fx.relay().own_fetches, 2, "{case}");
+
+        fx.agent.sync_reports_in_round().await;
+        assert_eq!(fx.relay().own_fetches, 2, "{case}");
     }
-
-    fx.agent.sync_reports().await;
-    assert_eq!(fx.take_reports(), vec![(fx.key(D), cids(&["bafy-a"]))]);
-
-    fx.relay().fail_fetch = false;
-    fx.agent.sync_reports().await;
-    assert!(fx.take_reports().is_empty());
-    assert_eq!(fx.relay().own_fetches, 1);
-
-    fx.agent.sync_reports_in_round().await;
-    assert_eq!(fx.take_reports(), vec![(fx.key("gone.example"), vec![])]);
-    assert_eq!(fx.relay().own_fetches, 2);
-}
-
-#[tokio::test]
-async fn own_reports_are_fetched_again_after_a_walk_cut_short() {
-    let fx = Fixture::new(default_policy(), FakeKubo::default());
-    fx.seed(D, "bafy-a", 1, 100).await;
-    let now = now_secs();
-    let stale = replica_report_event(
-        &fx.agent.reporter.keys,
-        &fx.pubkey,
-        "gone.example",
-        &[CID_B],
-        now - 10,
-        now + REPORT_TTL,
-    );
-    fx.relay().partial_fetch = true;
-
-    fx.agent.sync_reports().await;
-    assert_eq!(fx.take_reports(), vec![(fx.key(D), cids(&["bafy-a"]))]);
-
-    {
-        let mut relay = fx.relay();
-        relay.stored.push(stale);
-        relay.partial_fetch = false;
-    }
-    fx.agent.sync_reports().await;
-    assert!(fx.take_reports().is_empty());
-    assert_eq!(fx.relay().own_fetches, 1);
-
-    fx.agent.sync_reports_in_round().await;
-    assert_eq!(fx.take_reports(), vec![(fx.key("gone.example"), vec![])]);
-    assert_eq!(fx.relay().own_fetches, 2);
-
-    fx.agent.sync_reports_in_round().await;
-    assert_eq!(fx.relay().own_fetches, 2);
 }
 
 #[tokio::test]

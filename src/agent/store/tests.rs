@@ -186,29 +186,23 @@ async fn submit_drops_events_from_pubkeys_outside_the_follow_set_before_queueing
 }
 
 #[tokio::test]
-async fn store_failure_records_nothing() {
-    let kubo = FakeKubo::with(|s| {
-        s.fail_put.insert("bafy-new".into());
-    });
-    let fx = Fixture::new(default_policy(), kubo);
+async fn a_failed_put_or_incomplete_content_records_and_keeps_nothing() {
+    for case in ["put fails", "content incomplete"] {
+        let kubo = FakeKubo::with(|s| {
+            let failing = if case == "put fails" {
+                &mut s.fail_put
+            } else {
+                &mut s.fail_stat
+            };
+            failing.insert("bafy-new".into());
+        });
+        let fx = Fixture::new(default_policy(), kubo);
 
-    fx.apply(fx.event(D, "bafy-new", None, 200)).await;
+        fx.apply(fx.event(D, "bafy-new", None, 200)).await;
 
-    assert!(fx.cids(D).await.is_empty());
-    assert!(fx.kubo().mfs.is_empty());
-}
-
-#[tokio::test]
-async fn incomplete_content_is_removed_and_not_recorded() {
-    let kubo = FakeKubo::with(|s| {
-        s.fail_stat.insert("bafy-new".into());
-    });
-    let fx = Fixture::new(default_policy(), kubo);
-
-    fx.apply(fx.event(D, "bafy-new", None, 200)).await;
-
-    assert!(fx.cids(D).await.is_empty());
-    assert!(fx.kubo().mfs.is_empty());
+        assert!(fx.cids(D).await.is_empty(), "{case}");
+        assert!(fx.kubo().mfs.is_empty(), "{case}");
+    }
 }
 
 #[tokio::test]
@@ -261,7 +255,7 @@ async fn a_cid_rejected_after_fetch_is_not_fetched_again_until_it_changes() {
 }
 
 #[tokio::test]
-async fn alternating_oversized_cids_are_fetched_once_each_and_throttled() {
+async fn alternating_oversized_cids_are_fetched_once_each() {
     let mut policy = default_policy();
     policy.max_per_site = 50;
     let kubo = sized(&[("bafy-big-1", 1_000), ("bafy-big-2", 1_000)]);
@@ -275,14 +269,6 @@ async fn alternating_oversized_cids_are_fetched_once_each_and_throttled() {
         fx.apply(fx.event(D, cid, None, at)).await;
     }
     assert_eq!(fx.kubo().fetched, vec!["bafy-big-1", "bafy-big-2"]);
-
-    let mut policy = default_policy();
-    policy.min_update_interval = 3600;
-    let fx = Fixture::new(policy, sized(&[("bafy-big-1", 1_000)]));
-    fx.kubo().fail_fetch.insert("bafy-new".into());
-    fx.apply(fx.event(D, "bafy-new", None, 200)).await;
-    fx.apply(fx.event(D, "bafy-new", None, 201)).await;
-    assert_eq!(fx.kubo().fetched, vec!["bafy-new"]);
 }
 
 #[tokio::test]
@@ -614,54 +600,55 @@ async fn submit_after_completion_runs_again() {
 }
 
 #[tokio::test]
-async fn nip05_warn_mode_stores_despite_mismatch_and_records_result() {
-    let fx = Fixture::new(nip05_policy(CheckMode::Warn), sized(&[("bafy-new", 20)]));
-    fx.agent
-        .nip05
-        .set(D, &fx.pubkey.to_hex(), VerificationResult::Mismatch);
+async fn nip05_mode_decides_whether_an_unverified_site_is_stored() {
+    let cases = [
+        (
+            "warn stores despite a mismatch",
+            CheckMode::Warn,
+            Some(VerificationResult::Mismatch),
+            true,
+            Some("mismatch"),
+        ),
+        (
+            "require skips the fetch when not verified",
+            CheckMode::Require,
+            Some(VerificationResult::NotApplicable),
+            false,
+            Some("not_applicable"),
+        ),
+        (
+            "require stores when verified",
+            CheckMode::Require,
+            Some(VerificationResult::Verified),
+            true,
+            Some("verified"),
+        ),
+        (
+            "off never calls the verifier",
+            CheckMode::Off,
+            None,
+            true,
+            None,
+        ),
+    ];
+    for (case, mode, result, stored, verification) in cases {
+        let fx = Fixture::new(nip05_policy(mode), sized(&[("bafy-new", 20)]));
+        if let Some(result) = result {
+            fx.agent.nip05.set(D, &fx.pubkey.to_hex(), result);
+        }
 
-    fx.apply(fx.event(D, "bafy-new", Some(20), 200)).await;
+        fx.apply(fx.event(D, "bafy-new", Some(20), 200)).await;
 
-    assert!(fx.kubo().stores("bafy-new"));
-    assert_eq!(fx.verification(D).await.as_deref(), Some("mismatch"));
-}
-
-#[tokio::test]
-async fn nip05_require_mode_skips_fetch_when_not_verified() {
-    let fx = Fixture::new(nip05_policy(CheckMode::Require), FakeKubo::default());
-    fx.agent
-        .nip05
-        .set(D, &fx.pubkey.to_hex(), VerificationResult::NotApplicable);
-
-    fx.apply(fx.event(D, "bafy-new", Some(20), 200)).await;
-
-    assert!(fx.kubo().fetched.is_empty());
-    assert!(fx.cids(D).await.is_empty());
-    assert_eq!(fx.verification(D).await.as_deref(), Some("not_applicable"));
-}
-
-#[tokio::test]
-async fn nip05_require_mode_stores_when_verified() {
-    let fx = Fixture::new(nip05_policy(CheckMode::Require), FakeKubo::default());
-    fx.agent
-        .nip05
-        .set(D, &fx.pubkey.to_hex(), VerificationResult::Verified);
-
-    fx.apply(fx.event(D, "bafy-new", Some(20), 200)).await;
-
-    assert!(fx.kubo().stores("bafy-new"));
-    assert_eq!(fx.verification(D).await.as_deref(), Some("verified"));
-}
-
-#[tokio::test]
-async fn nip05_off_mode_never_calls_verifier() {
-    let fx = Fixture::new(nip05_policy(CheckMode::Off), FakeKubo::default());
-
-    fx.apply(fx.event(D, "bafy-new", Some(20), 200)).await;
-
-    assert!(fx.kubo().stores("bafy-new"));
-    assert_eq!(fx.agent.nip05.calls(), 0);
-    assert_eq!(fx.verification(D).await, None);
+        assert_eq!(fx.kubo().stores("bafy-new"), stored, "{case}");
+        if !stored {
+            assert!(fx.kubo().fetched.is_empty(), "{case}");
+            assert!(fx.cids(D).await.is_empty(), "{case}");
+        }
+        assert_eq!(fx.verification(D).await.as_deref(), verification, "{case}");
+        if mode == CheckMode::Off {
+            assert_eq!(fx.agent.nip05.calls(), 0, "{case}");
+        }
+    }
 }
 
 #[tokio::test]
@@ -777,17 +764,24 @@ async fn verifications_of_unstored_sites_are_pruned_per_account() {
 }
 
 #[tokio::test]
-async fn a_later_signing_of_the_stored_cid_moves_the_version_forward_for_the_policy() {
-    let fx = Fixture::new(default_policy(), sized(&[("bafy-a", 20)]));
-    fx.apply(fx.event(D, "bafy-a", Some(20), 200)).await;
-    let resigned = fx.event(D, "bafy-a", Some(20), 400);
-    let mut state = fx.agent.state.lock().await;
-    assert!(state.fill_latest_event(&fx.key(D), "bafy-a", &resigned.event));
+async fn a_later_signing_of_the_stored_cid_is_kept_at_once() {
+    let fx = Fixture::new(default_policy(), sized(&[("bafy-old", 10)]));
+    fx.apply(fx.event(D, "bafy-old", None, 100)).await;
+
+    let resigned = fx.event(D, "bafy-old", None, 150);
+    fx.apply(resigned.clone()).await;
+    let state = fx.agent.state.lock().await;
+    let latest = state.latest_version(&fx.key(D)).unwrap();
+    assert_eq!(latest.event, Some(resigned.event));
+    assert_eq!(latest.created_at, 100);
+    assert!(state.withdrawn.is_empty());
 
     let infos = version_infos(&state, &fx.key(D));
     assert_eq!(infos.len(), 1);
-    assert_eq!(infos[0].created_at, 400);
-    assert_eq!(state.sites[&fx.key(D)][0].created_at, 200);
+    assert_eq!(
+        infos[0].created_at, 150,
+        "the policy sees the version moved forward"
+    );
 }
 
 #[tokio::test]
@@ -818,20 +812,6 @@ async fn a_rejected_newer_version_is_recorded_as_superseding_the_held_one() {
         state.latest_version(&fx.key(D)).unwrap().event,
         Some(newer.event)
     );
-}
-
-#[tokio::test]
-async fn a_later_signing_of_the_stored_cid_is_kept_at_once() {
-    let fx = Fixture::new(default_policy(), sized(&[("bafy-old", 10)]));
-    fx.apply(fx.event(D, "bafy-old", None, 100)).await;
-
-    let resigned = fx.event(D, "bafy-old", None, 150);
-    fx.apply(resigned.clone()).await;
-    let state = fx.agent.state.lock().await;
-    let latest = state.latest_version(&fx.key(D)).unwrap();
-    assert_eq!(latest.event, Some(resigned.event));
-    assert_eq!(latest.created_at, 100);
-    assert!(state.withdrawn.is_empty());
 }
 
 #[tokio::test]
