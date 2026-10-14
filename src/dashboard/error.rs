@@ -124,38 +124,28 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn malformed_json_body_is_bad_request_with_json_error_even_without_relay() {
-        let app = router(test_state());
-        let req = post_json("/api/mirror/add", "{not json");
-        let resp = call(app, req).await;
-        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
-        let body = json_body(resp).await;
-        assert!(body["error"].is_string());
-    }
-
-    #[tokio::test]
-    async fn json_body_missing_a_field_is_bad_request_not_unprocessable() {
-        let app = router(test_state());
-        let req = post_json("/api/mirror/add", "{}");
-        let resp = call(app, req).await;
-        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
-        let body = json_body(resp).await;
-        assert!(body["error"].is_string());
-    }
-
-    #[tokio::test]
-    async fn missing_content_type_is_bad_request_with_json_error() {
-        let app = router(test_state());
-        let req = request("POST", "/api/mirror/add").header("x-swing-dashboard", "1").body(Body::from(
-                serde_json::json!({ "keys": [nostr_sdk::prelude::Keys::generate().public_key().to_hex()] })
-                    .to_string(),
-            )).unwrap();
-        let resp = call(app, req).await;
-        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
-        let body = json_body(resp).await;
-        assert!(
-            body["error"].as_str().unwrap().contains("Content-Type"),
-            "{body}"
-        );
+    async fn unreadable_json_bodies_are_bad_request_with_a_json_error() {
+        let key = nostr_sdk::prelude::Keys::generate().public_key().to_hex();
+        let cases = [
+            ("malformed", post_json("/api/mirror/add", "{not json"), ""),
+            ("missing a field", post_json("/api/mirror/add", "{}"), ""),
+            (
+                "no content type",
+                request("POST", "/api/mirror/add")
+                    .header("x-swing-dashboard", "1")
+                    .body(Body::from(serde_json::json!({ "keys": [key] }).to_string()))
+                    .unwrap(),
+                "Content-Type",
+            ),
+        ];
+        for (case, req, error) in cases {
+            let resp = call(router(test_state()), req).await;
+            assert_eq!(resp.status(), StatusCode::BAD_REQUEST, "{case}");
+            let body = json_body(resp).await;
+            assert!(
+                body["error"].as_str().unwrap().contains(error),
+                "{case}: {body}"
+            );
+        }
     }
 }

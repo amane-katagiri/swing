@@ -174,24 +174,22 @@ fn action_error_replaces_the_status_line_with_its_first_line_shortened() {
 
 #[test]
 fn registration_counts_as_removed_only_after_it_was_seen() {
-    let mut watch = RegistrationWatch::default();
-    assert!(!watch.removed(Some(false)));
-    assert!(!watch.removed(None));
-    assert!(!watch.removed(Some(false)));
-    assert!(!watch.removed(Some(true)));
-    assert!(!watch.removed(Some(true)));
-    assert!(watch.removed(Some(false)));
-}
-
-#[test]
-fn an_unknown_registration_keeps_the_tray_open() {
-    let mut watch = RegistrationWatch::default();
-    assert!(!watch.removed(Some(true)));
-    assert!(!watch.removed(None));
-    assert!(!watch.removed(None));
-    assert!(!watch.removed(Some(true)));
-    assert!(!watch.removed(None));
-    assert!(watch.removed(Some(false)));
+    for (case, seen) in [
+        (
+            "removed after being seen",
+            &[Some(false), None, Some(false), Some(true), Some(true)][..],
+        ),
+        (
+            "unknown keeps the tray open",
+            &[Some(true), None, None, Some(true), None][..],
+        ),
+    ] {
+        let mut watch = RegistrationWatch::default();
+        for (i, registered) in seen.iter().enumerate() {
+            assert!(!watch.removed(*registered), "{case}: step {i}");
+        }
+        assert!(watch.removed(Some(false)), "{case}");
+    }
 }
 
 #[test]

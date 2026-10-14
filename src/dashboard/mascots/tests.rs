@@ -34,21 +34,23 @@ fn minimal_manifest(sprite: &str) -> String {
 }
 
 #[test]
-fn valid_pack_ids() {
-    assert!(is_valid_pack_id("a"));
-    assert!(is_valid_pack_id("neko2"));
-    assert!(is_valid_pack_id("my-pack-99"));
-    assert!(is_valid_pack_id(&"a".repeat(32)));
-}
-
-#[test]
-fn invalid_pack_ids() {
-    assert!(!is_valid_pack_id(""));
-    assert!(!is_valid_pack_id(&"a".repeat(33)));
-    assert!(!is_valid_pack_id("-abc"));
-    assert!(!is_valid_pack_id("Abc"));
-    assert!(!is_valid_pack_id("abc_def"));
-    assert!(!is_valid_pack_id("abc/def"));
+fn pack_ids_are_short_lowercase_names() {
+    let longest = "a".repeat(32);
+    let too_long = "a".repeat(33);
+    for (id, valid) in [
+        ("a", true),
+        ("neko2", true),
+        ("my-pack-99", true),
+        (longest.as_str(), true),
+        ("", false),
+        (too_long.as_str(), false),
+        ("-abc", false),
+        ("Abc", false),
+        ("abc_def", false),
+        ("abc/def", false),
+    ] {
+        assert_eq!(is_valid_pack_id(id), valid, "{id:?}");
+    }
 }
 
 #[test]
@@ -111,121 +113,75 @@ fn a_bundled_id_collision_is_skipped() {
 }
 
 #[test]
-fn a_missing_manifest_is_skipped() {
-    let dir = tempfile::tempdir().unwrap();
-    std::fs::create_dir_all(dir.path().join("my-pack")).unwrap();
-    let registry = MascotRegistry::load(Some(dir.path()));
-    assert!(registry.find("my-pack").is_none());
-}
-
-#[test]
-fn bad_json_is_skipped() {
-    let dir = tempfile::tempdir().unwrap();
-    let pack_dir = dir.path().join("my-pack");
-    std::fs::create_dir_all(&pack_dir).unwrap();
-    std::fs::write(pack_dir.join("manifest.json"), "not json").unwrap();
-    let registry = MascotRegistry::load(Some(dir.path()));
-    assert!(registry.find("my-pack").is_none());
-}
-
-#[test]
-fn wrong_format_is_skipped() {
-    let dir = tempfile::tempdir().unwrap();
-    write_pack(
-        dir.path(),
-        "my-pack",
-        &minimal_manifest("sprite.png").replace(r#""format":1"#, r#""format":2"#),
-        &png(8, 8),
+fn a_pack_with_a_bad_manifest_or_sprite_is_skipped() {
+    let manifest = minimal_manifest("sprite.png");
+    let mut too_big_sprite = png(8, 8);
+    too_big_sprite.resize((MAX_SPRITE_BYTES + 1) as usize, 0);
+    let too_big_manifest = format!(
+        "{manifest}{}",
+        " ".repeat((MAX_MANIFEST_BYTES + 1) as usize)
     );
-    let registry = MascotRegistry::load(Some(dir.path()));
-    assert!(registry.find("my-pack").is_none());
-    assert_eq!(
-        load_error(dir.path(), "my-pack"),
-        "manifest.json format must be 1"
-    );
-}
-
-#[test]
-fn sprite_path_traversal_is_skipped() {
-    let dir = tempfile::tempdir().unwrap();
-    let pack_dir = dir.path().join("my-pack");
-    std::fs::create_dir_all(&pack_dir).unwrap();
-    std::fs::write(
-        pack_dir.join("manifest.json"),
-        minimal_manifest("../sprite.png"),
-    )
-    .unwrap();
-    std::fs::write(dir.path().join("sprite.png"), b"x").unwrap();
-    let registry = MascotRegistry::load(Some(dir.path()));
-    assert!(registry.find("my-pack").is_none());
-}
-
-#[test]
-fn sprite_bad_extension_is_skipped() {
-    let dir = tempfile::tempdir().unwrap();
-    let pack_dir = dir.path().join("my-pack");
-    std::fs::create_dir_all(&pack_dir).unwrap();
-    std::fs::write(
-        pack_dir.join("manifest.json"),
-        minimal_manifest("sprite.bmp"),
-    )
-    .unwrap();
-    std::fs::write(pack_dir.join("sprite.bmp"), b"x").unwrap();
-    let registry = MascotRegistry::load(Some(dir.path()));
-    assert!(registry.find("my-pack").is_none());
-}
-
-#[test]
-fn sprite_missing_is_skipped() {
-    let dir = tempfile::tempdir().unwrap();
-    let pack_dir = dir.path().join("my-pack");
-    std::fs::create_dir_all(&pack_dir).unwrap();
-    std::fs::write(
-        pack_dir.join("manifest.json"),
-        minimal_manifest("sprite.png"),
-    )
-    .unwrap();
-    let registry = MascotRegistry::load(Some(dir.path()));
-    assert!(registry.find("my-pack").is_none());
-}
-
-#[test]
-fn sprite_too_big_is_skipped() {
-    let dir = tempfile::tempdir().unwrap();
-    let pack_dir = dir.path().join("my-pack");
-    std::fs::create_dir_all(&pack_dir).unwrap();
-    std::fs::write(
-        pack_dir.join("manifest.json"),
-        minimal_manifest("sprite.png"),
-    )
-    .unwrap();
-    let mut big = png(8, 8);
-    big.resize((MAX_SPRITE_BYTES + 1) as usize, 0);
-    std::fs::write(pack_dir.join("sprite.png"), big).unwrap();
-    let registry = MascotRegistry::load(Some(dir.path()));
-    assert!(registry.find("my-pack").is_none());
-    assert!(load_error(dir.path(), "my-pack").contains("byte limit"));
-}
-
-#[test]
-fn manifest_too_big_is_skipped() {
-    let dir = tempfile::tempdir().unwrap();
-    let pack_dir = dir.path().join("my-pack");
-    std::fs::create_dir_all(&pack_dir).unwrap();
-    let padding = " ".repeat((MAX_MANIFEST_BYTES + 1) as usize);
-    std::fs::write(
-        pack_dir.join("manifest.json"),
-        format!("{}{padding}", minimal_manifest("sprite.png")),
-    )
-    .unwrap();
-    std::fs::write(pack_dir.join("sprite.png"), png(8, 8)).unwrap();
-    let registry = MascotRegistry::load(Some(dir.path()));
-    assert!(registry.find("my-pack").is_none());
-    let reason = load_error(dir.path(), "my-pack");
-    assert!(
-        reason.starts_with("manifest.json ") && reason.contains("byte limit"),
-        "{reason}"
-    );
+    type Sprite<'a> = Option<(&'a str, Vec<u8>)>;
+    let cases: Vec<(&str, Option<String>, Sprite, &[&str])> = vec![
+        ("missing manifest", None, None, &[]),
+        ("bad json", Some("not json".into()), None, &[]),
+        (
+            "wrong format",
+            Some(manifest.replace(r#""format":1"#, r#""format":2"#)),
+            Some(("sprite.png", png(8, 8))),
+            &["manifest.json format must be 1"],
+        ),
+        (
+            "sprite path traversal",
+            Some(minimal_manifest("../sprite.png")),
+            Some(("../sprite.png", b"x".to_vec())),
+            &[],
+        ),
+        (
+            "sprite with a bad extension",
+            Some(minimal_manifest("sprite.bmp")),
+            Some(("sprite.bmp", b"x".to_vec())),
+            &[],
+        ),
+        ("sprite missing", Some(manifest.clone()), None, &[]),
+        (
+            "sprite over the byte limit",
+            Some(manifest.clone()),
+            Some(("sprite.png", too_big_sprite)),
+            &["byte limit"],
+        ),
+        (
+            "manifest over the byte limit",
+            Some(too_big_manifest),
+            Some(("sprite.png", png(8, 8))),
+            &["manifest.json ", "byte limit"],
+        ),
+        (
+            "oversized sprite image",
+            Some(manifest.clone()),
+            Some(("sprite.png", png(65535, 65535))),
+            &[],
+        ),
+    ];
+    for (case, manifest, sprite, reason) in cases {
+        let dir = tempfile::tempdir().unwrap();
+        let pack_dir = dir.path().join("my-pack");
+        std::fs::create_dir_all(&pack_dir).unwrap();
+        if let Some(manifest) = manifest {
+            std::fs::write(pack_dir.join("manifest.json"), manifest).unwrap();
+        }
+        if let Some((name, bytes)) = sprite {
+            std::fs::write(pack_dir.join(name), bytes).unwrap();
+        }
+        let registry = MascotRegistry::load(Some(dir.path()));
+        assert!(registry.find("my-pack").is_none(), "{case}");
+        if !reason.is_empty() {
+            let got = load_error(dir.path(), "my-pack");
+            for part in reason {
+                assert!(got.contains(part), "{case}: {got}");
+            }
+        }
+    }
 }
 
 #[cfg(unix)]
@@ -264,19 +220,6 @@ fn bundled_sprites_pass_the_sprite_checks() {
     for bundled in BUNDLED {
         check_sprite(bundled.sprite, "image/png").unwrap();
     }
-}
-
-#[test]
-fn an_oversized_sprite_image_is_skipped() {
-    let dir = tempfile::tempdir().unwrap();
-    write_pack(
-        dir.path(),
-        "my-pack",
-        &minimal_manifest("sprite.png"),
-        &png(65535, 65535),
-    );
-    let registry = MascotRegistry::load(Some(dir.path()));
-    assert!(registry.find("my-pack").is_none());
 }
 
 #[cfg(unix)]
@@ -326,7 +269,22 @@ fn a_hard_linked_sprite_is_skipped() {
 }
 
 #[test]
-fn packs_over_the_cap_are_dropped_before_they_are_read() {
+fn user_packs_are_capped_before_they_are_read() {
+    let dir = tempfile::tempdir().unwrap();
+    for i in 0..40 {
+        write_pack(
+            dir.path(),
+            &format!("pack-{i:02}"),
+            &minimal_manifest("sprite.png"),
+            &png(8, 8),
+        );
+    }
+    let registry = MascotRegistry::load(Some(dir.path()));
+    let loaded: Vec<usize> = (0..40)
+        .filter(|i| registry.find(&format!("pack-{i:02}")).is_some())
+        .collect();
+    assert_eq!(loaded, (0..MAX_USER_PACKS).collect::<Vec<_>>());
+
     let dir = tempfile::tempdir().unwrap();
     std::fs::create_dir(dir.path().join("pack-00")).unwrap();
     for i in 1..=MAX_USER_PACKS {
@@ -342,7 +300,8 @@ fn packs_over_the_cap_are_dropped_before_they_are_read() {
     assert!(
         registry
             .find(&format!("pack-{:02}", MAX_USER_PACKS - 1))
-            .is_some()
+            .is_some(),
+        "a broken pack still takes a slot"
     );
     assert!(
         registry
@@ -370,30 +329,6 @@ fn skip_warnings_are_capped() {
     }
     assert_eq!(log.logged, MAX_LOGGED_SKIPS);
     assert_eq!(log.suppressed, 5);
-}
-
-#[test]
-fn more_than_32_user_packs_are_capped() {
-    let dir = tempfile::tempdir().unwrap();
-    for i in 0..40 {
-        write_pack(
-            dir.path(),
-            &format!("pack-{i:02}"),
-            &minimal_manifest("sprite.png"),
-            &png(8, 8),
-        );
-    }
-    let registry = MascotRegistry::load(Some(dir.path()));
-    let user_count = (0..40)
-        .filter(|i| registry.find(&format!("pack-{i:02}")).is_some())
-        .count();
-    assert_eq!(user_count, MAX_USER_PACKS);
-    for i in 0..MAX_USER_PACKS {
-        assert!(
-            registry.find(&format!("pack-{i:02}")).is_some(),
-            "pack-{i:02}"
-        );
-    }
 }
 
 #[test]

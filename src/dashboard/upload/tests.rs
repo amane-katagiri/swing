@@ -1,29 +1,67 @@
 use super::*;
 
 #[test]
-fn validate_relative_path_accepts_normal_paths() {
-    assert!(validate_relative_path("index.html").is_ok());
-    assert!(validate_relative_path("css/style.css").is_ok());
-    assert!(validate_relative_path("a/b/c.txt").is_ok());
-}
-
-#[test]
-fn validate_relative_path_rejects_traversal_and_absolute_paths() {
-    assert!(validate_relative_path("").is_err());
-    assert!(validate_relative_path("/index.html").is_err());
-    assert!(validate_relative_path("../secret").is_err());
-    assert!(validate_relative_path("a/../b").is_err());
-    assert!(validate_relative_path("a/./b").is_err());
-    assert!(validate_relative_path("a//b").is_err());
-    assert!(validate_relative_path("a\\b").is_err());
-    assert!(validate_relative_path("a\u{0}b").is_err());
-    assert!(validate_relative_path(".").is_err());
-    assert!(validate_relative_path("..").is_err());
+fn validate_relative_path_accepts_only_portable_relative_paths() {
+    let deep = vec!["a"; MAX_PATH_SEGMENTS].join("/");
+    let too_deep = vec!["a"; MAX_PATH_SEGMENTS + 1].join("/");
+    let long = "a".repeat(MAX_PATH_LEN);
+    let too_long = "a".repeat(MAX_PATH_LEN + 1);
+    for path in [
+        "index.html",
+        "css/style.css",
+        "a/b/c.txt",
+        "foo.bar",
+        deep.as_str(),
+        long.as_str(),
+        "null",
+        "NULL",
+        "com10",
+        "COM10",
+        "lpt0.txt",
+        "console.txt",
+        "scones.txt",
+    ] {
+        assert!(validate_relative_path(path).is_ok(), "{path:?}");
+    }
+    for (case, path) in [
+        ("empty", ""),
+        ("absolute", "/index.html"),
+        ("parent", "../secret"),
+        ("inner parent", "a/../b"),
+        ("inner current", "a/./b"),
+        ("empty segment", "a//b"),
+        ("backslash", "a\\b"),
+        ("nul byte", "a\u{0}b"),
+        ("current", "."),
+        ("parent only", ".."),
+        ("drive", "C:foo/x"),
+        ("stream", "index.html:stream"),
+        ("inner colon", "dir/a:b"),
+        ("trailing dot", "foo."),
+        ("trailing space", "foo "),
+        ("directory with trailing dot", "dir./file"),
+        ("directory with trailing space", "dir /file"),
+        ("too many segments", too_deep.as_str()),
+        ("too long", too_long.as_str()),
+    ] {
+        assert!(validate_relative_path(path).is_err(), "{case}: {path:?}");
+    }
 }
 
 #[test]
 fn validate_relative_path_rejects_every_windows_device_name() {
     for name in [
+        "CON", "con", "Con", "PRN", "AUX", "NUL", "COM1", "com9", "LPT1", "lpt9",
+    ] {
+        for path in [
+            name.to_string(),
+            format!("{name}.txt"),
+            format!("dir/{name}"),
+        ] {
+            assert!(validate_relative_path(&path).is_err(), "{path}");
+        }
+    }
+    for path in [
         "nul",
         "a/NUL.txt",
         "nul .txt",
@@ -32,69 +70,8 @@ fn validate_relative_path_rejects_every_windows_device_name() {
         "conin$",
         "CONOUT$.log",
     ] {
-        assert!(validate_relative_path(name).is_err(), "{name}");
+        assert!(validate_relative_path(path).is_err(), "{path}");
     }
-    for name in ["null", "com10", "lpt0.txt", "console.txt"] {
-        assert!(validate_relative_path(name).is_ok(), "{name}");
-    }
-}
-
-#[test]
-fn validate_relative_path_rejects_colons() {
-    assert!(validate_relative_path("C:foo/x").is_err());
-    assert!(validate_relative_path("index.html:stream").is_err());
-    assert!(validate_relative_path("dir/a:b").is_err());
-}
-
-#[test]
-fn validate_relative_path_rejects_too_many_segments() {
-    let deep = (0..MAX_PATH_SEGMENTS)
-        .map(|_| "a")
-        .collect::<Vec<_>>()
-        .join("/");
-    assert!(validate_relative_path(&deep).is_ok());
-    let too_deep = (0..=MAX_PATH_SEGMENTS)
-        .map(|_| "a")
-        .collect::<Vec<_>>()
-        .join("/");
-    assert!(validate_relative_path(&too_deep).is_err());
-}
-
-#[test]
-fn validate_relative_path_rejects_too_long_paths() {
-    let ok = "a".repeat(MAX_PATH_LEN);
-    assert!(validate_relative_path(&ok).is_ok());
-    let too_long = "a".repeat(MAX_PATH_LEN + 1);
-    assert!(validate_relative_path(&too_long).is_err());
-}
-
-#[test]
-fn validate_relative_path_rejects_windows_reserved_device_names() {
-    for name in [
-        "CON", "con", "Con", "PRN", "AUX", "NUL", "COM1", "com9", "LPT1", "lpt9",
-    ] {
-        assert!(validate_relative_path(name).is_err(), "{name}");
-        assert!(
-            validate_relative_path(&format!("{name}.txt")).is_err(),
-            "{name}.txt"
-        );
-        assert!(
-            validate_relative_path(&format!("dir/{name}")).is_err(),
-            "dir/{name}"
-        );
-    }
-    assert!(validate_relative_path("COM10").is_ok());
-    assert!(validate_relative_path("NULL").is_ok());
-    assert!(validate_relative_path("scones.txt").is_ok());
-}
-
-#[test]
-fn validate_relative_path_rejects_trailing_dot_or_space_segments() {
-    assert!(validate_relative_path("foo.").is_err());
-    assert!(validate_relative_path("foo ").is_err());
-    assert!(validate_relative_path("dir./file").is_err());
-    assert!(validate_relative_path("dir /file").is_err());
-    assert!(validate_relative_path("foo.bar").is_ok());
 }
 
 #[cfg(unix)]
@@ -137,49 +114,173 @@ fn upload_dir_entries(state_dir: &Path) -> Vec<PathBuf> {
     }
 }
 
-#[tokio::test]
-async fn upload_rejects_an_invalid_relative_path() {
+type Part<'a> = (&'a str, Option<&'a str>, &'a [u8]);
+
+async fn upload_with(parts: &[Part<'_>]) -> (StatusCode, serde_json::Value) {
     let dir = tempfile::tempdir().unwrap();
     let state = test_state_with(dir.path().to_path_buf(), 2 * (1u64 << 30));
     let boundary = "SwingTestBoundary";
-    let body = multipart_body(
-        boundary,
-        &[
-            ("site", None, b"example.com"),
-            ("file", Some("../evil.txt"), b"hello"),
-        ],
-    );
-    let app = router(state);
+    let body = multipart_body(boundary, parts);
     let resp = call(
-        app,
+        router(state),
         multipart_request("/api/publish/upload", boundary, body),
     )
     .await;
-    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    let status = resp.status();
+    let body = json_body(resp).await;
     assert!(upload_dir_entries(dir.path()).is_empty());
+    (status, body)
 }
 
 #[tokio::test]
-async fn upload_rejects_more_files_than_the_limit() {
-    let dir = tempfile::tempdir().unwrap();
-    let state = test_state_with(dir.path().to_path_buf(), 2 * (1u64 << 30));
-    let boundary = "SwingTestBoundary";
-    let mut parts: Vec<(&str, Option<&str>, &[u8])> = vec![("site", None, b"example.com")];
+async fn upload_rejects_bad_parts_before_writing_or_touching_the_relay() {
+    const HTML: &[u8] = b"<html></html>";
     let names: Vec<String> = (0..=MAX_UPLOAD_FILES)
         .map(|i| format!("f{i}.txt"))
         .collect();
-    for name in &names {
-        parts.push(("file", Some(name.as_str()), b"x"));
+    let mut too_many: Vec<Part> = vec![("site", None, b"example.com")];
+    too_many.extend(
+        names
+            .iter()
+            .map(|name| ("file", Some(name.as_str()), &b"x"[..])),
+    );
+    let long_message = vec![b'a'; crate::nostr::budget::MAX_CONTENT_BYTES + 1];
+    let big_field = vec![b'a'; MAX_TEXT_FIELD_BYTES + 1];
+    let big_unknown = vec![b'a'; MAX_TEXT_FIELD_BYTES * 4];
+    let site = ("site", None, &b"example.com"[..]);
+    let index = ("file", Some("index.html"), HTML);
+    let cases: Vec<(&str, Vec<Part>, StatusCode, &str)> = vec![
+        (
+            "invalid relative path",
+            vec![site, ("file", Some("../evil.txt"), b"hello")],
+            StatusCode::BAD_REQUEST,
+            "../evil.txt",
+        ),
+        (
+            "more files than the limit",
+            too_many,
+            StatusCode::BAD_REQUEST,
+            "file must include at most",
+        ),
+        (
+            "no files",
+            vec![site],
+            StatusCode::BAD_REQUEST,
+            "file must include at least one entry",
+        ),
+        (
+            "no site",
+            vec![index],
+            StatusCode::BAD_REQUEST,
+            "missing site",
+        ),
+        (
+            "invalid site",
+            vec![("site", None, b""), index],
+            StatusCode::BAD_REQUEST,
+            "invalid site",
+        ),
+        (
+            "invalid title",
+            vec![site, ("title", None, b"bad\ntitle"), index],
+            StatusCode::BAD_REQUEST,
+            "invalid title",
+        ),
+        (
+            "note without a url",
+            vec![site, ("note", None, b"true"), index],
+            StatusCode::BAD_REQUEST,
+            "invalid note: needs a URL",
+        ),
+        (
+            "message over the content limit",
+            vec![site, ("message", None, &long_message), index],
+            StatusCode::BAD_REQUEST,
+            "invalid message: ",
+        ),
+        (
+            "invalid check_size",
+            vec![site, ("check_size", None, b"loud"), index],
+            StatusCode::BAD_REQUEST,
+            "invalid check_size",
+        ),
+        (
+            "invalid check_links",
+            vec![site, ("check_links", None, b"strict"), index],
+            StatusCode::BAD_REQUEST,
+            "invalid check_links",
+        ),
+        (
+            "paths differing only in case",
+            vec![
+                site,
+                ("file", Some("Index.html"), b"a"),
+                ("file", Some("index.HTML"), b"b"),
+            ],
+            StatusCode::BAD_REQUEST,
+            "duplicate",
+        ),
+        (
+            "a file then a directory at its path",
+            vec![site, ("file", Some("a"), b"x"), ("file", Some("a/b"), b"y")],
+            StatusCode::BAD_REQUEST,
+            "conflicts",
+        ),
+        (
+            "a directory then a file at its path",
+            vec![site, ("file", Some("a/b"), b"x"), ("file", Some("a"), b"y")],
+            StatusCode::BAD_REQUEST,
+            "conflicts",
+        ),
+        (
+            "oversized text field",
+            vec![
+                ("message", None, &big_field),
+                site,
+                ("file", Some("index.html"), b"x"),
+            ],
+            StatusCode::BAD_REQUEST,
+            "message",
+        ),
+        (
+            "unknown fields are skipped whatever their size",
+            vec![
+                ("unknown", None, &big_unknown),
+                ("site", None, b""),
+                ("file", Some("index.html"), b"x"),
+            ],
+            StatusCode::BAD_REQUEST,
+            "invalid site",
+        ),
+        (
+            "breaking links under warn go on to ipfs",
+            vec![
+                site,
+                ("check_links", None, b"warn"),
+                ("file", Some("index.html"), br#"<a href="/x">x</a>"#),
+            ],
+            StatusCode::SERVICE_UNAVAILABLE,
+            "agent is not ready",
+        ),
+        (
+            "dotfiles under warn go on to ipfs",
+            vec![
+                site,
+                ("check_dotfiles", None, b"warn"),
+                ("file", Some(".env"), b"SECRET=1"),
+            ],
+            StatusCode::SERVICE_UNAVAILABLE,
+            "agent is not ready",
+        ),
+    ];
+    for (case, parts, want_status, error) in cases {
+        let (status, body) = upload_with(&parts).await;
+        assert_eq!(status, want_status, "{case}");
+        assert!(
+            body["error"].as_str().unwrap().contains(error),
+            "{case}: {body}"
+        );
     }
-    let body = multipart_body(boundary, &parts);
-    let app = router(state);
-    let resp = call(
-        app,
-        multipart_request("/api/publish/upload", boundary, body),
-    )
-    .await;
-    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
-    assert!(upload_dir_entries(dir.path()).is_empty());
 }
 
 #[tokio::test]
@@ -225,38 +326,6 @@ async fn create_private_dir_refuses_an_existing_entry() {
 }
 
 #[tokio::test]
-async fn upload_rejects_zero_files() {
-    let dir = tempfile::tempdir().unwrap();
-    let state = test_state_with(dir.path().to_path_buf(), 2 * (1u64 << 30));
-    let boundary = "SwingTestBoundary";
-    let body = multipart_body(boundary, &[("site", None, b"example.com")]);
-    let app = router(state);
-    let resp = call(
-        app,
-        multipart_request("/api/publish/upload", boundary, body),
-    )
-    .await;
-    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
-    assert!(upload_dir_entries(dir.path()).is_empty());
-}
-
-#[tokio::test]
-async fn upload_rejects_a_missing_site() {
-    let dir = tempfile::tempdir().unwrap();
-    let state = test_state_with(dir.path().to_path_buf(), 2 * (1u64 << 30));
-    let boundary = "SwingTestBoundary";
-    let body = multipart_body(boundary, &[("file", Some("index.html"), b"<html></html>")]);
-    let app = router(state);
-    let resp = call(
-        app,
-        multipart_request("/api/publish/upload", boundary, body),
-    )
-    .await;
-    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
-    assert!(upload_dir_entries(dir.path()).is_empty());
-}
-
-#[tokio::test]
 async fn upload_over_the_body_limit_is_rejected_with_json_413() {
     let dir = tempfile::tempdir().unwrap();
     let state = test_state_with(dir.path().to_path_buf(), 16);
@@ -278,132 +347,6 @@ async fn upload_over_the_body_limit_is_rejected_with_json_413() {
     let body = json_body(resp).await;
     assert!(body["error"].is_string());
     assert!(upload_dir_entries(dir.path()).is_empty());
-}
-
-#[tokio::test]
-async fn upload_rejects_an_invalid_site_before_touching_the_relay() {
-    let dir = tempfile::tempdir().unwrap();
-    let state = test_state_with(dir.path().to_path_buf(), 2 * (1u64 << 30));
-    let boundary = "SwingTestBoundary";
-    let body = multipart_body(
-        boundary,
-        &[
-            ("site", None, b""),
-            ("file", Some("index.html"), b"<html></html>"),
-        ],
-    );
-    let app = router(state);
-    let resp = call(
-        app,
-        multipart_request("/api/publish/upload", boundary, body),
-    )
-    .await;
-    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
-    let body = json_body(resp).await;
-    assert!(body["error"].as_str().unwrap().contains("invalid site"));
-    assert!(upload_dir_entries(dir.path()).is_empty());
-}
-
-#[tokio::test]
-async fn upload_rejects_an_invalid_title_before_touching_the_relay() {
-    let dir = tempfile::tempdir().unwrap();
-    let state = test_state_with(dir.path().to_path_buf(), 2 * (1u64 << 30));
-    let boundary = "SwingTestBoundary";
-    let body = multipart_body(
-        boundary,
-        &[
-            ("site", None, b"example.com"),
-            ("title", None, b"bad\ntitle"),
-            ("file", Some("index.html"), b"<html></html>"),
-        ],
-    );
-    let app = router(state);
-    let resp = call(
-        app,
-        multipart_request("/api/publish/upload", boundary, body),
-    )
-    .await;
-    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
-    let body = json_body(resp).await;
-    assert!(body["error"].as_str().unwrap().contains("invalid title"));
-    assert!(upload_dir_entries(dir.path()).is_empty());
-}
-
-#[tokio::test]
-async fn upload_rejects_a_note_without_a_url_before_touching_the_relay() {
-    let dir = tempfile::tempdir().unwrap();
-    let state = test_state_with(dir.path().to_path_buf(), 2 * (1u64 << 30));
-    let boundary = "SwingTestBoundary";
-    let body = multipart_body(
-        boundary,
-        &[
-            ("site", None, b"example.com"),
-            ("note", None, b"true"),
-            ("file", Some("index.html"), b"<html></html>"),
-        ],
-    );
-    let app = router(state);
-    let resp = call(
-        app,
-        multipart_request("/api/publish/upload", boundary, body),
-    )
-    .await;
-    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
-    let body = json_body(resp).await;
-    assert_eq!(body["error"], "invalid note: needs a URL");
-    assert!(upload_dir_entries(dir.path()).is_empty());
-}
-
-async fn upload_with(parts: &[(&str, Option<&str>, &[u8])]) -> (StatusCode, serde_json::Value) {
-    let dir = tempfile::tempdir().unwrap();
-    let state = test_state_with(dir.path().to_path_buf(), 2 * (1u64 << 30));
-    let boundary = "SwingTestBoundary";
-    let body = multipart_body(boundary, parts);
-    let resp = call(
-        router(state),
-        multipart_request("/api/publish/upload", boundary, body),
-    )
-    .await;
-    let status = resp.status();
-    let body = json_body(resp).await;
-    assert!(upload_dir_entries(dir.path()).is_empty());
-    (status, body)
-}
-
-#[tokio::test]
-async fn upload_rejects_a_message_over_the_content_limit() {
-    let long = vec![b'a'; crate::nostr::budget::MAX_CONTENT_BYTES + 1];
-    let (status, body) = upload_with(&[
-        ("site", None, b"example.com"),
-        ("message", None, &long),
-        ("file", Some("index.html"), b"<html></html>"),
-    ])
-    .await;
-    assert_eq!(status, StatusCode::BAD_REQUEST);
-    assert!(
-        body["error"]
-            .as_str()
-            .unwrap()
-            .starts_with("invalid message: "),
-        "{body}"
-    );
-}
-
-#[tokio::test]
-async fn upload_rejects_an_invalid_check_mode_part() {
-    let (status, body) = upload_with(&[
-        ("site", None, b"example.com"),
-        ("check_size", None, b"loud"),
-        ("file", Some("index.html"), b"<html></html>"),
-    ])
-    .await;
-    assert_eq!(status, StatusCode::BAD_REQUEST);
-    assert!(
-        body["error"]
-            .as_str()
-            .unwrap()
-            .contains("invalid check_size")
-    );
 }
 
 #[tokio::test]
@@ -466,102 +409,6 @@ async fn upload_with_breaking_links_under_require_is_422_with_the_link_results()
         serde_json::json!([{"file": "index.html", "reference": "/style.css", "files": 1}])
     );
     assert!(links["guide"].as_str().unwrap() == crate::publish::links::SITE_GUIDE_URL);
-}
-
-#[tokio::test]
-async fn upload_with_breaking_links_under_warn_goes_on_to_ipfs() {
-    let (status, body) = upload_with(&[
-        ("site", None, b"example.com"),
-        ("check_links", None, b"warn"),
-        ("file", Some("index.html"), br#"<a href="/x">x</a>"#),
-    ])
-    .await;
-    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
-    assert_eq!(body["error"], "agent is not ready");
-}
-
-#[tokio::test]
-async fn upload_rejects_an_invalid_check_links_part() {
-    let (status, body) = upload_with(&[
-        ("site", None, b"example.com"),
-        ("check_links", None, b"strict"),
-        ("file", Some("index.html"), b"<html></html>"),
-    ])
-    .await;
-    assert_eq!(status, StatusCode::BAD_REQUEST);
-    assert!(
-        body["error"]
-            .as_str()
-            .unwrap()
-            .contains("invalid check_links")
-    );
-}
-
-#[tokio::test]
-async fn upload_with_dotfiles_under_warn_goes_on_to_ipfs() {
-    let (status, body) = upload_with(&[
-        ("site", None, b"example.com"),
-        ("check_dotfiles", None, b"warn"),
-        ("file", Some(".env"), b"SECRET=1"),
-    ])
-    .await;
-    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
-    assert_eq!(body["error"], "agent is not ready");
-}
-
-#[tokio::test]
-async fn upload_rejects_paths_that_differ_only_in_case() {
-    let (status, body) = upload_with(&[
-        ("site", None, b"example.com"),
-        ("file", Some("Index.html"), b"a"),
-        ("file", Some("index.HTML"), b"b"),
-    ])
-    .await;
-    assert_eq!(status, StatusCode::BAD_REQUEST);
-    assert!(body["error"].as_str().unwrap().contains("duplicate"));
-}
-
-#[tokio::test]
-async fn upload_rejects_a_file_and_a_directory_at_the_same_path() {
-    for (first, second) in [("a", "a/b"), ("a/b", "a")] {
-        let (status, body) = upload_with(&[
-            ("site", None, b"example.com"),
-            ("file", Some(first), b"x"),
-            ("file", Some(second), b"y"),
-        ])
-        .await;
-        assert_eq!(status, StatusCode::BAD_REQUEST, "{first} then {second}");
-        assert!(
-            body["error"].as_str().unwrap().contains("conflicts"),
-            "{body}"
-        );
-    }
-}
-
-#[tokio::test]
-async fn upload_rejects_an_oversized_text_field() {
-    let big = vec![b'a'; MAX_TEXT_FIELD_BYTES + 1];
-    let (status, body) = upload_with(&[
-        ("message", None, &big),
-        ("site", None, b"example.com"),
-        ("file", Some("index.html"), b"x"),
-    ])
-    .await;
-    assert_eq!(status, StatusCode::BAD_REQUEST);
-    assert!(body["error"].as_str().unwrap().contains("message"));
-}
-
-#[tokio::test]
-async fn upload_skips_unknown_fields() {
-    let big = vec![b'a'; MAX_TEXT_FIELD_BYTES * 4];
-    let (status, body) = upload_with(&[
-        ("unknown", None, &big),
-        ("site", None, b""),
-        ("file", Some("index.html"), b"x"),
-    ])
-    .await;
-    assert_eq!(status, StatusCode::BAD_REQUEST);
-    assert!(body["error"].as_str().unwrap().contains("invalid site"));
 }
 
 #[test]

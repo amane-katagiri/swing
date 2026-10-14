@@ -341,39 +341,36 @@ mod tests {
     use crate::test_support::{MINIMAL_TOML, config_at};
 
     #[test]
-    fn missing_config_under_missing_directories_is_writable_when_the_nearest_one_is() {
-        let dir = tempfile::tempdir().unwrap();
-        let cfg = config_at(
-            MINIMAL_TOML,
-            dir.path().join("a").join("b").join("swing.toml"),
-            false,
-        );
-        assert!(is_config_writable(&cfg));
-    }
-
-    #[test]
-    fn missing_config_under_a_file_is_not_writable() {
+    fn config_is_writable_when_the_file_or_its_nearest_directory_is() {
         let dir = tempfile::tempdir().unwrap();
         let file = dir.path().join("file");
         std::fs::write(&file, "").unwrap();
-        let cfg = config_at(MINIMAL_TOML, file.join("swing.toml"), false);
-        assert!(!is_config_writable(&cfg));
-    }
-
-    #[test]
-    fn missing_config_in_a_writable_directory_is_writable() {
-        let dir = tempfile::tempdir().unwrap();
-        let cfg = config_at(MINIMAL_TOML, dir.path().join("swing.toml"), false);
-        assert!(is_config_writable(&cfg));
-    }
-
-    #[test]
-    fn existing_writable_config_is_writable() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("swing.toml");
-        std::fs::write(&path, "").unwrap();
-        let cfg = config_at(MINIMAL_TOML, path, true);
-        assert!(is_config_writable(&cfg));
+        let existing = dir.path().join("existing.toml");
+        std::fs::write(&existing, "").unwrap();
+        for (case, path, exists, writable) in [
+            (
+                "missing under missing directories",
+                dir.path().join("a").join("b").join("swing.toml"),
+                false,
+                true,
+            ),
+            (
+                "missing under a file",
+                file.join("swing.toml"),
+                false,
+                false,
+            ),
+            (
+                "missing in a writable directory",
+                dir.path().join("swing.toml"),
+                false,
+                true,
+            ),
+            ("existing and writable", existing, true, true),
+        ] {
+            let cfg = config_at(MINIMAL_TOML, path, exists);
+            assert_eq!(is_config_writable(&cfg), writable, "{case}");
+        }
     }
 
     #[cfg(unix)]

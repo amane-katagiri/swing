@@ -123,26 +123,35 @@ async fn index_is_served_as_html_with_security_headers() {
 }
 
 #[tokio::test]
-async fn table_driven_assets_have_expected_content_types() {
-    for asset in super::STATIC_ASSETS {
-        let expected = match asset.path.rsplit_once('.').map(|(_, ext)| ext) {
-            None if asset.path == "/" => "text/html; charset=utf-8",
-            Some("js") => "text/javascript; charset=utf-8",
-            Some("css") => "text/css; charset=utf-8",
-            Some("svg") => "image/svg+xml",
-            Some("png") => "image/png",
-            Some("woff2") => "font/woff2",
-            _ => panic!("no expected content type for {}", asset.path),
-        };
-        let app = router(test_state());
-        let req = get(asset.path);
-        let resp = call(app, req).await;
-        assert_eq!(resp.status(), StatusCode::OK, "{}", asset.path);
+async fn every_asset_is_served_with_its_content_type() {
+    let mut cases: Vec<(&str, &str)> = super::STATIC_ASSETS
+        .iter()
+        .map(|asset| {
+            let expected = match asset.path.rsplit_once('.').map(|(_, ext)| ext) {
+                None if asset.path == "/" => "text/html; charset=utf-8",
+                Some("js") => "text/javascript; charset=utf-8",
+                Some("css") => "text/css; charset=utf-8",
+                Some("svg") => "image/svg+xml",
+                Some("png") => "image/png",
+                Some("woff2") => "font/woff2",
+                _ => panic!("no expected content type for {}", asset.path),
+            };
+            (asset.path, expected)
+        })
+        .collect();
+    cases.extend([
+        ("/desktop-page.html", "text/html; charset=utf-8"),
+        ("/desktop-page.css", "text/css; charset=utf-8"),
+        ("/desktop-banner", "image/gif"),
+        ("/custom.css", "text/css; charset=utf-8"),
+    ]);
+    for (path, expected) in cases {
+        let resp = call(router(test_state()), get(path)).await;
+        assert_eq!(resp.status(), StatusCode::OK, "{path}");
         assert_eq!(
             resp.headers().get("content-type").unwrap(),
             expected,
-            "{}",
-            asset.path
+            "{path}"
         );
     }
 }
@@ -151,26 +160,6 @@ async fn table_driven_assets_have_expected_content_types() {
 fn etags_differ_between_assets() {
     let tags: std::collections::BTreeSet<_> = super::PREPARED.iter().map(|p| &p.etag).collect();
     assert_eq!(tags.len(), super::STATIC_ASSETS.len());
-}
-
-#[tokio::test]
-async fn state_dependent_assets_have_expected_content_types() {
-    for (path, expected) in [
-        ("/desktop-page.html", "text/html; charset=utf-8"),
-        ("/desktop-page.css", "text/css; charset=utf-8"),
-        ("/desktop-banner", "image/gif"),
-        ("/custom.css", "text/css; charset=utf-8"),
-    ] {
-        let app = router(test_state());
-        let req = get(path);
-        let resp = call(app, req).await;
-        assert_eq!(resp.status(), StatusCode::OK, "{path}");
-        assert_eq!(
-            resp.headers().get("content-type").unwrap(),
-            expected,
-            "{path}"
-        );
-    }
 }
 
 #[tokio::test]

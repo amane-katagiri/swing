@@ -52,67 +52,107 @@ async fn relay_queries_are_refused_once_every_permit_stays_taken() {
 }
 
 #[tokio::test]
-async fn webring_depth_over_the_limit_is_bad_request() {
-    let (status, body) = send_json(router(test_state()), "GET", "/api/webring?depth=5", None).await;
-    assert_eq!(status, StatusCode::BAD_REQUEST);
-    assert!(
-        body["error"].as_str().unwrap().contains("depth must be"),
-        "{body}"
-    );
+async fn requests_over_a_count_limit_are_bad_request() {
+    let keys = |n: usize| -> Vec<String> {
+        (0..n)
+            .map(|_| Keys::generate().public_key().to_hex())
+            .collect()
+    };
+    let query = |name: &str| {
+        (0..101)
+            .map(|i| format!("{name}=key-{i}"))
+            .collect::<Vec<_>>()
+            .join("&")
+    };
+    let cases = [
+        (
+            "webring depth",
+            "GET",
+            "/api/webring?depth=5".to_string(),
+            None,
+            "depth must be between 0 and",
+        ),
+        (
+            "webring roots",
+            "GET",
+            format!("/api/webring?{}", query("root")),
+            None,
+            "root must include at most 100 entries",
+        ),
+        (
+            "replica keys",
+            "GET",
+            format!("/api/replicas?{}", query("key")),
+            None,
+            "key must include at most 100 entries",
+        ),
+        (
+            "mirror add keys",
+            "POST",
+            "/api/mirror/add".to_string(),
+            Some(serde_json::json!({ "keys": keys(101) })),
+            "at most 100 entries",
+        ),
+        (
+            "mirror preview keys",
+            "POST",
+            "/api/mirror/preview".to_string(),
+            Some(serde_json::json!({ "keys": keys(101) })),
+            "at most 100 entries",
+        ),
+        (
+            "empty mirror preview",
+            "POST",
+            "/api/mirror/preview".to_string(),
+            Some(serde_json::json!({ "keys": [] })),
+            "at least one entry",
+        ),
+    ];
+    for (case, method, uri, body, error) in cases {
+        let (status, body) = send_json(router(test_state()), method, &uri, body).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{case}");
+        assert!(
+            body["error"].as_str().unwrap().contains(error),
+            "{case}: {body}"
+        );
+    }
 }
 
 #[tokio::test]
-async fn mirror_add_rejects_more_than_the_key_limit() {
-    let keys: Vec<String> = (0..101)
-        .map(|_| Keys::generate().public_key().to_hex())
-        .collect();
-    let (status, body) = send_json(
-        router(test_state()),
-        "POST",
-        "/api/mirror/add",
-        Some(serde_json::json!({ "keys": keys })),
-    )
-    .await;
-    assert_eq!(status, StatusCode::BAD_REQUEST);
-    assert!(
-        body["error"]
-            .as_str()
-            .unwrap()
-            .contains("at most 100 entries"),
-        "{body}"
-    );
-}
-
-#[tokio::test]
-async fn webring_rejects_more_roots_than_the_limit() {
-    let query: String = (0..101)
-        .map(|i| format!("root=key-{i}"))
-        .collect::<Vec<_>>()
-        .join("&");
-    let app = router(test_state());
-    let req = get(format!("/api/webring?{query}"));
-    let resp = call(app, req).await;
-    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
-}
-
-#[tokio::test]
-async fn replicas_rejects_more_keys_than_the_limit() {
-    let query: String = (0..101)
-        .map(|i| format!("key=key-{i}"))
-        .collect::<Vec<_>>()
-        .join("&");
-    let app = router(test_state());
-    let req = get(format!("/api/replicas?{query}"));
-    let resp = call(app, req).await;
-    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
-}
-
-#[tokio::test]
-async fn publish_sites_without_relay_reports_service_unavailable() {
-    let app = router(test_state());
-    let req = get("/api/publish/sites");
-    let resp = call(app, req).await;
-    assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
+async fn endpoints_without_their_backend_are_service_unavailable() {
+    let dir = tempfile::tempdir().unwrap();
+    let (config, _secret_hex) = test_config_in_dir(dir.path(), true, false);
+    let setup_mode = build_state(config, test_exit(), None, TEST_TOKEN);
+    for (case, uri, state, error) in [
+        (
+            "sites before the relay",
+            "/api/sites",
+            test_state(),
+            "agent is not ready",
+        ),
+        (
+            "publish sites before the relay",
+            "/api/publish/sites",
+            test_state(),
+            "agent is not ready",
+        ),
+        (
+            "status before ipfs",
+            "/api/status",
+            test_state(),
+            "agent is not ready",
+        ),
+        (
+            "sites in setup mode",
+            "/api/sites",
+            setup_mode,
+            "agent is not configured",
+        ),
+    ] {
+        let (status, body) = send_json(router(state), "GET", uri, None).await;
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{case}");
+        assert_eq!(body["error"], error, "{case}");
+    }
 }
 
 #[tokio::test]
@@ -132,14 +172,6 @@ async fn previous_files_checks_the_site_before_the_relay() {
         let resp = call(router(test_state()), req).await;
         assert_eq!(resp.status(), status, "{uri}");
     }
-}
-
-#[tokio::test]
-async fn status_without_ipfs_reports_service_unavailable() {
-    let app = router(test_state());
-    let req = get("/api/status");
-    let resp = call(app, req).await;
-    assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
 }
 
 async fn ready_state_with_relays(
@@ -389,58 +421,6 @@ async fn mirror_preview_works_in_setup_mode_and_marks_invalid_keys() {
     assert_eq!(keys[1]["input"], "nope");
     assert!(keys[1]["npub"].is_null());
     assert!(keys[1]["fingerprint"].is_null());
-}
-
-#[tokio::test]
-async fn mirror_preview_rejects_an_empty_or_oversized_list() {
-    let empty = serde_json::json!({ "keys": [] });
-    let (status, body) = send_json(
-        router(test_state()),
-        "POST",
-        "/api/mirror/preview",
-        Some(empty),
-    )
-    .await;
-    assert_eq!(status, StatusCode::BAD_REQUEST);
-    assert!(
-        body["error"]
-            .as_str()
-            .unwrap()
-            .contains("at least one entry"),
-        "{body}"
-    );
-    let keys: Vec<String> = (0..101)
-        .map(|_| Keys::generate().public_key().to_hex())
-        .collect();
-    let many = serde_json::json!({ "keys": keys });
-    let (status, body) = send_json(
-        router(test_state()),
-        "POST",
-        "/api/mirror/preview",
-        Some(many),
-    )
-    .await;
-    assert_eq!(status, StatusCode::BAD_REQUEST);
-    assert!(
-        body["error"]
-            .as_str()
-            .unwrap()
-            .contains("at most 100 entries"),
-        "{body}"
-    );
-}
-
-#[tokio::test]
-async fn setup_mode_relay_endpoints_report_not_configured() {
-    let dir = tempfile::tempdir().unwrap();
-    let (config, _secret_hex) = test_config_in_dir(dir.path(), true, false);
-    let state = build_state(config, test_exit(), None, TEST_TOKEN);
-    let app = router(state);
-    let req = get("/api/sites");
-    let resp = call(app, req).await;
-    assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
-    let json = json_body(resp).await;
-    assert_eq!(json["error"], "agent is not configured");
 }
 
 #[tokio::test]

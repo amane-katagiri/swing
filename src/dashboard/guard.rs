@@ -205,64 +205,82 @@ mod tests {
         SocketAddr::new(std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST), 8082);
 
     #[test]
-    fn host_allowed_accepts_the_literal_listen_ip() {
+    fn host_allowed_accepts_only_loopback_the_listen_ip_and_allowed_hosts() {
         let v4: SocketAddr = "192.168.1.5:8082".parse().unwrap();
-        assert!(host_allowed("192.168.1.5:8082", &[], v4));
-        assert!(host_allowed("192.168.1.5", &[], v4));
-        assert!(!host_allowed("192.168.1.6:8082", &[], v4));
-        assert!(!host_allowed("evil.example:8082", &[], v4));
-
         let v6: SocketAddr = "[fd00::1]:8082".parse().unwrap();
-        assert!(host_allowed("[fd00::1]:8082", &[], v6));
-        assert!(host_allowed("[FD00:0::1]", &[], v6));
-        assert!(!host_allowed("[fd00::2]:8082", &[], v6));
-        assert!(!host_allowed("[fd00::1]junk", &[], v6));
-    }
-
-    #[test]
-    fn host_allowed_does_not_accept_the_unspecified_address() {
         let any: SocketAddr = "0.0.0.0:8082".parse().unwrap();
-        assert!(!host_allowed("0.0.0.0:8082", &[], any));
         let any6: SocketAddr = "[::]:8082".parse().unwrap();
-        assert!(!host_allowed("[::]:8082", &[], any6));
-    }
-
-    #[test]
-    fn host_allowed_rejects_bracketed_host_with_trailing_junk() {
-        assert!(!host_allowed("[::1]xyz", &[], LOOPBACK));
-        assert!(!host_allowed("[::1]:8082xyz", &[], LOOPBACK));
-    }
-
-    #[test]
-    fn host_allowed_rejects_non_digit_ports() {
-        assert!(!host_allowed("localhost:abc", &[], LOOPBACK));
-    }
-
-    #[test]
-    fn host_allowed_accepts_loopback_forms() {
-        assert!(host_allowed("localhost:8082", &[], LOOPBACK));
-        assert!(host_allowed("127.0.0.1:8082", &[], LOOPBACK));
-        assert!(host_allowed("127.0.0.1", &[], LOOPBACK));
-        assert!(host_allowed("[::1]:8082", &[], LOOPBACK));
-        assert!(host_allowed("[::1]", &[], LOOPBACK));
-    }
-
-    #[test]
-    fn host_allowed_checks_allowed_hosts_case_insensitively() {
         let allowed = vec!["My-Site.example".to_string()];
-        assert!(host_allowed("my-site.example:8082", &allowed, LOOPBACK));
-        assert!(!host_allowed("other.example:8082", &allowed, LOOPBACK));
-    }
-
-    #[test]
-    fn host_allowed_rejects_unknown_hosts() {
-        assert!(!host_allowed("evil.example", &[], LOOPBACK));
-        assert!(!host_allowed("evil.example:8082", &[], LOOPBACK));
-    }
-
-    #[test]
-    fn host_allowed_rejects_junk_disguised_as_localhost() {
-        assert!(!host_allowed("evil.com:8082@localhost", &[], LOOPBACK));
+        let cases = [
+            (
+                "listen ipv4 with port",
+                "192.168.1.5:8082",
+                &[][..],
+                v4,
+                true,
+            ),
+            ("listen ipv4", "192.168.1.5", &[], v4, true),
+            ("other ipv4", "192.168.1.6:8082", &[], v4, false),
+            ("name on an ip listen", "evil.example:8082", &[], v4, false),
+            ("listen ipv6 with port", "[fd00::1]:8082", &[], v6, true),
+            (
+                "listen ipv6 spelled differently",
+                "[FD00:0::1]",
+                &[],
+                v6,
+                true,
+            ),
+            ("other ipv6", "[fd00::2]:8082", &[], v6, false),
+            ("ipv6 with trailing junk", "[fd00::1]junk", &[], v6, false),
+            ("unspecified ipv4", "0.0.0.0:8082", &[], any, false),
+            ("unspecified ipv6", "[::]:8082", &[], any6, false),
+            ("loopback with junk", "[::1]xyz", &[], LOOPBACK, false),
+            (
+                "loopback with junk after the port",
+                "[::1]:8082xyz",
+                &[],
+                LOOPBACK,
+                false,
+            ),
+            ("non-digit port", "localhost:abc", &[], LOOPBACK, false),
+            ("localhost", "localhost:8082", &[], LOOPBACK, true),
+            ("127.0.0.1 with port", "127.0.0.1:8082", &[], LOOPBACK, true),
+            ("127.0.0.1", "127.0.0.1", &[], LOOPBACK, true),
+            ("::1 with port", "[::1]:8082", &[], LOOPBACK, true),
+            ("::1", "[::1]", &[], LOOPBACK, true),
+            (
+                "allowed host, other case",
+                "my-site.example:8082",
+                &allowed,
+                LOOPBACK,
+                true,
+            ),
+            (
+                "not an allowed host",
+                "other.example:8082",
+                &allowed,
+                LOOPBACK,
+                false,
+            ),
+            ("unknown host", "evil.example", &[], LOOPBACK, false),
+            (
+                "unknown host with port",
+                "evil.example:8082",
+                &[],
+                LOOPBACK,
+                false,
+            ),
+            (
+                "junk disguised as localhost",
+                "evil.com:8082@localhost",
+                &[],
+                LOOPBACK,
+                false,
+            ),
+        ];
+        for (case, host, allowed, listen, want) in cases {
+            assert_eq!(host_allowed(host, allowed, listen), want, "{case}: {host}");
+        }
     }
 
     #[test]

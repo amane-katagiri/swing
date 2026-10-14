@@ -277,74 +277,37 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn allowed_host_from_config_is_accepted() {
-        let (mut config, secret_hex) = test_config(true);
-        config.dashboard.allowed_hosts = vec!["my.example".to_string()];
-        let state = build_state(config, test_exit(), test_keys(&secret_hex), TEST_TOKEN);
-        let app = router(state);
-        let req = Request::builder()
-            .uri("/api/config")
-            .header("Host", "my.example:8082")
-            .body(Body::empty())
-            .unwrap();
-        let resp = call(app, req).await;
-        assert_eq!(resp.status(), StatusCode::OK);
-    }
-
-    #[tokio::test]
-    async fn the_literal_listen_ip_is_accepted_as_host() {
-        for listen in ["192.168.1.5:8082", "[fd00::1]:8082"] {
-            let (mut config, secret_hex) = test_config(true);
-            config.dashboard.listen = listen.parse().unwrap();
-            let state = build_state(config, test_exit(), test_keys(&secret_hex), TEST_TOKEN);
-            let req = Request::builder()
-                .uri("/api/overview")
-                .header("Host", listen)
-                .body(Body::empty())
-                .unwrap();
-            let resp = call(router(Arc::clone(&state)), req).await;
-            assert_eq!(resp.status(), StatusCode::OK, "{listen}");
-
-            let req = Request::builder()
-                .uri("/api/overview")
-                .header("Host", "192.168.1.99:8082")
-                .body(Body::empty())
-                .unwrap();
-            let resp = call(router(state), req).await;
-            assert_eq!(resp.status(), StatusCode::FORBIDDEN, "{listen}");
+    async fn write_requests_need_the_marker_header_and_a_matching_origin() {
+        let body = || Body::from("{\"keys\":[]}");
+        let cases = [
+            (
+                "no marker header",
+                request("POST", "/api/mirror/add")
+                    .header("content-type", "application/json")
+                    .body(body())
+                    .unwrap(),
+                StatusCode::FORBIDDEN,
+            ),
+            (
+                "mismatched origin",
+                request("POST", "/api/mirror/add")
+                    .header("x-swing-dashboard", "1")
+                    .header("origin", "http://evil.example")
+                    .header("content-type", "application/json")
+                    .body(body())
+                    .unwrap(),
+                StatusCode::FORBIDDEN,
+            ),
+            (
+                "guard passes, no keys",
+                post_json("/api/mirror/add", "{\"keys\":[]}"),
+                StatusCode::BAD_REQUEST,
+            ),
+        ];
+        for (case, req, status) in cases {
+            let resp = call(router(test_state()), req).await;
+            assert_eq!(resp.status(), status, "{case}");
         }
-    }
-
-    #[tokio::test]
-    async fn write_request_without_marker_header_is_forbidden() {
-        let app = router(test_state());
-        let req = request("POST", "/api/mirror/add")
-            .header("content-type", "application/json")
-            .body(Body::from("{\"keys\":[]}"))
-            .unwrap();
-        let resp = call(app, req).await;
-        assert_eq!(resp.status(), StatusCode::FORBIDDEN);
-    }
-
-    #[tokio::test]
-    async fn write_request_with_mismatched_origin_is_forbidden() {
-        let app = router(test_state());
-        let req = request("POST", "/api/mirror/add")
-            .header("x-swing-dashboard", "1")
-            .header("origin", "http://evil.example")
-            .header("content-type", "application/json")
-            .body(Body::from("{\"keys\":[]}"))
-            .unwrap();
-        let resp = call(app, req).await;
-        assert_eq!(resp.status(), StatusCode::FORBIDDEN);
-    }
-
-    #[tokio::test]
-    async fn write_request_without_body_keys_is_bad_request_when_guard_passes() {
-        let app = router(test_state());
-        let req = post_json("/api/mirror/add", "{\"keys\":[]}");
-        let resp = call(app, req).await;
-        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
     }
 
     #[tokio::test]
@@ -358,14 +321,6 @@ mod tests {
         assert!(!pending.is_finished());
         drop(held);
         let resp = pending.await.unwrap();
-        assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
-    }
-
-    #[tokio::test]
-    async fn requests_without_relay_report_service_unavailable_not_a_panic() {
-        let app = router(test_state());
-        let req = get("/api/sites");
-        let resp = call(app, req).await;
         assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
     }
 
