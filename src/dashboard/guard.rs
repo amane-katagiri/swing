@@ -328,4 +328,87 @@ mod tests {
             "127.0.0.1:8082"
         ));
     }
+
+    mod through_the_router {
+        use super::super::super::router;
+        use super::super::super::test_support::*;
+        use axum::body::Body;
+        use axum::http::{Request, StatusCode};
+        use std::sync::Arc;
+
+        fn request(method: &str, uri: &str, host: Option<&str>) -> Request<Body> {
+            let mut builder = Request::builder().method(method).uri(uri);
+            if let Some(host) = host {
+                builder = builder.header("Host", host);
+            }
+            builder.body(Body::empty()).unwrap()
+        }
+
+        #[tokio::test]
+        async fn a_request_without_a_host_header_is_refused() {
+            let state = test_state();
+            for uri in ["/api/overview", "/"] {
+                let resp = call(router(Arc::clone(&state)), request("GET", uri, None)).await;
+                assert_eq!(resp.status(), StatusCode::FORBIDDEN, "{uri}");
+                assert_eq!(
+                    resp.headers().get("x-content-type-options").unwrap(),
+                    "nosniff"
+                );
+                assert_eq!(
+                    resp.headers().get("cache-control").is_some(),
+                    uri.starts_with("/api/"),
+                    "{uri}"
+                );
+                assert_eq!(error_body(resp).await["error"], "missing Host header");
+            }
+        }
+
+        #[tokio::test]
+        async fn only_protected_files_outside_the_api_get_corp() {
+            let state = test_state();
+            let resp = call(
+                router(Arc::clone(&state)),
+                request("GET", "/api/overview", Some("127.0.0.1:8082")),
+            )
+            .await;
+            assert_eq!(resp.status(), StatusCode::OK);
+            assert_eq!(resp.headers().get("cache-control").unwrap(), "no-store");
+            assert_eq!(resp.headers().get("x-frame-options").unwrap(), "SAMEORIGIN");
+            assert!(resp.headers().get("cross-origin-resource-policy").is_none());
+
+            let resp = call_anonymous(
+                router(Arc::clone(&state)),
+                request("GET", "/", Some("127.0.0.1:8082")),
+            )
+            .await;
+            assert_eq!(resp.status(), StatusCode::OK);
+            assert!(resp.headers().get("content-security-policy").is_some());
+            assert!(resp.headers().get("cross-origin-resource-policy").is_none());
+        }
+
+        #[tokio::test]
+        async fn a_cookie_authenticated_head_passes_with_the_marker() {
+            let state = test_state();
+            let session = crate::auth::new_session(TEST_TOKEN, crate::auth::DASHBOARD_SESSION);
+            let mut req = request("HEAD", "/api/overview", Some("127.0.0.1:8082"));
+            req.headers_mut().insert(
+                "cookie",
+                format!("swing_session_8082={session}").parse().unwrap(),
+            );
+            req.headers_mut()
+                .insert("x-swing-dashboard", "1".parse().unwrap());
+            let resp = call_anonymous(router(Arc::clone(&state)), req).await;
+            assert_eq!(resp.status(), StatusCode::OK);
+
+            let mut req = request("HEAD", "/api/overview", Some("127.0.0.1:8082"));
+            req.headers_mut().insert(
+                "cookie",
+                format!("swing_session_8082={session}").parse().unwrap(),
+            );
+            req.headers_mut()
+                .insert("x-swing-dashboard", "yes".parse().unwrap());
+            let resp = call_anonymous(router(state), req).await;
+            assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+        }
+    }
 }
