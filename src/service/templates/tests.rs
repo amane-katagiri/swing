@@ -74,20 +74,25 @@ fn systemd_unit_user_scope() {
         &SystemdScope::User,
     )
     .unwrap();
-    assert!(unit.contains("Description=SWING mirror agent"));
-    assert!(unit.contains("After=network-online.target"));
-    assert!(unit.contains("Wants=network-online.target"));
-    assert!(
-        unit.contains("ExecStart=\"/home/u/.cargo/bin/swing\" up --config \"/home/u/swing.toml\"")
-    );
-    assert!(unit.contains("WorkingDirectory=/home/u\nRestart=on-failure\n"));
-    assert!(unit.contains("RestartSec=5"));
-    assert!(unit.contains("KillSignal=SIGTERM"));
-    assert!(unit.contains("TimeoutStopSec=90\n"));
-    assert!(unit.contains("WantedBy=default.target"));
-    assert!(!unit.contains("User="));
-    assert!(!unit.contains("ProtectSystem"));
+    assert_eq!(unit, USER_UNIT);
 }
+
+const USER_UNIT: &str = r#"[Unit]
+Description=SWING mirror agent
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+ExecStart="/home/u/.cargo/bin/swing" up --config "/home/u/swing.toml"
+WorkingDirectory=/home/u
+Restart=on-failure
+RestartSec=5
+KillSignal=SIGTERM
+TimeoutStopSec=90
+
+[Install]
+WantedBy=default.target
+"#;
 
 #[test]
 fn systemd_unit_system_scope_runs_as_the_user_with_hardening() {
@@ -140,40 +145,51 @@ fn systemd_unit_system_scope_adds_writable_paths_outside_the_workdir() {
 }
 
 #[test]
-fn systemd_unit_quotes_paths_with_spaces_and_escapes() {
-    let unit = systemd_unit(
-        Path::new("/home/u/my apps/swing"),
-        Path::new("/home/u/my dir/swing.toml"),
-        Path::new("/home/u/my dir"),
-        &SYSTEM,
-    )
-    .unwrap();
-    assert!(unit.contains("\"/home/u/my apps/swing\""));
-    assert!(unit.contains("\"/home/u/my dir/swing.toml\""));
-    assert!(unit.contains("WorkingDirectory=/home/u/my dir\n"));
-    assert!(unit.contains("ReadWritePaths=\"/home/u/my dir\"\n"));
-}
-
-#[test]
-fn systemd_unit_escapes_quotes_and_backslashes() {
-    let quoted = quote_systemd_arg("a\"b\\c");
-    assert_eq!(quoted, "\"a\\\"b\\\\c\"");
+fn systemd_unit_quotes_and_escapes_paths() {
+    let cases = [
+        (
+            "spaces",
+            [
+                "/home/u/my apps/swing",
+                "/home/u/my dir/swing.toml",
+                "/home/u/my dir",
+            ],
+            [
+                "\"/home/u/my apps/swing\"",
+                "\"/home/u/my dir/swing.toml\"",
+                "WorkingDirectory=/home/u/my dir\n",
+                "ReadWritePaths=\"/home/u/my dir\"\n",
+            ],
+        ),
+        (
+            "specifiers and variables",
+            [
+                "/home/u/$HOME/swing",
+                "/home/u/100%/swing.toml",
+                "/home/u/100%",
+            ],
+            [
+                "\"/home/u/$$HOME/swing\"",
+                "\"/home/u/100%%/swing.toml\"",
+                "WorkingDirectory=/home/u/100%%\n",
+                "ReadWritePaths=\"/home/u/100%%\"\n",
+            ],
+        ),
+    ];
+    for (case, [exe, config, workdir], parts) in cases {
+        let unit = systemd_unit(
+            Path::new(exe),
+            Path::new(config),
+            Path::new(workdir),
+            &SYSTEM,
+        )
+        .unwrap();
+        for part in parts {
+            assert!(unit.contains(part), "{case}: {part:?} in {unit}");
+        }
+    }
+    assert_eq!(quote_systemd_arg("a\"b\\c"), "\"a\\\"b\\\\c\"");
     assert_eq!(quote_systemd_path("a\"b\\c$"), "\"a\\\"b\\\\c$\"");
-}
-
-#[test]
-fn systemd_unit_escapes_specifiers_and_variables() {
-    let unit = systemd_unit(
-        Path::new("/home/u/$HOME/swing"),
-        Path::new("/home/u/100%/swing.toml"),
-        Path::new("/home/u/100%"),
-        &SYSTEM,
-    )
-    .unwrap();
-    assert!(unit.contains("\"/home/u/$$HOME/swing\""));
-    assert!(unit.contains("\"/home/u/100%%/swing.toml\""));
-    assert!(unit.contains("WorkingDirectory=/home/u/100%%\n"));
-    assert!(unit.contains("ReadWritePaths=\"/home/u/100%%\"\n"));
 }
 
 #[test]
@@ -217,7 +233,7 @@ fn templates_reject_non_utf8_paths() {
 }
 
 #[test]
-fn launchd_plist_has_expected_keys() {
+fn launchd_plist_matches_the_expected_text() {
     let plist = launchd_plist(
         Path::new("/usr/local/bin/swing"),
         Path::new("/Users/u/swing.toml"),
@@ -225,32 +241,52 @@ fn launchd_plist_has_expected_keys() {
         Path::new("/Users/u/Library/Logs/swing.log"),
     )
     .unwrap();
-    assert!(plist.contains("<key>Label</key>"));
-    assert!(plist.contains("<string>jp.ne.ama.swing</string>"));
-    assert!(plist.contains("<key>ProgramArguments</key>"));
-    assert!(plist.contains("<string>/usr/local/bin/swing</string>"));
-    assert!(plist.contains("<string>up</string>"));
-    assert!(plist.contains("<string>--config</string>"));
-    assert!(plist.contains("<string>/Users/u/swing.toml</string>"));
-    assert!(plist.contains("<key>WorkingDirectory</key>"));
-    assert!(plist.contains("<string>/Users/u</string>"));
-    assert!(plist.contains("<key>RunAtLoad</key>"));
-    assert!(plist.contains("<true/>"));
-    assert!(plist.contains("<key>KeepAlive</key>"));
-    assert!(plist.contains("<key>SuccessfulExit</key>\n        <false/>"));
-    assert!(plist.contains("<key>ExitTimeOut</key>\n    <integer>90</integer>"));
-    assert!(plist.contains("<key>StandardOutPath</key>"));
-    assert!(plist.contains("<string>/Users/u/Library/Logs/swing.log</string>"));
-    assert!(plist.contains("<key>StandardErrorPath</key>"));
-    assert!(plist.contains("<key>EnvironmentVariables</key>"));
-    assert!(plist.contains("/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"));
-    assert!(plist.contains(
-            "<key>AssociatedBundleIdentifiers</key>\n    <array>\n        <string>jp.ne.ama.swing</string>"
-        ));
+    assert_eq!(plist, LAUNCHD_PLIST);
 }
 
+const LAUNCHD_PLIST: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>jp.ne.ama.swing</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/local/bin/swing</string>
+        <string>up</string>
+        <string>--config</string>
+        <string>/Users/u/swing.toml</string>
+    </array>
+    <key>WorkingDirectory</key>
+    <string>/Users/u</string>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <dict>
+        <key>SuccessfulExit</key>
+        <false/>
+    </dict>
+    <key>ExitTimeOut</key>
+    <integer>90</integer>
+    <key>StandardOutPath</key>
+    <string>/Users/u/Library/Logs/swing.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/u/Library/Logs/swing.log</string>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+    </dict>
+    <key>AssociatedBundleIdentifiers</key>
+    <array>
+        <string>jp.ne.ama.swing</string>
+    </array>
+</dict>
+</plist>
+"#;
+
 #[test]
-fn launchd_plist_xml_escapes_values() {
+fn xml_templates_escape_their_values() {
     let plist = launchd_plist(
         Path::new("/usr/local/bin/swing"),
         Path::new("/Users/u/A&B<C>.toml"),
@@ -258,45 +294,9 @@ fn launchd_plist_xml_escapes_values() {
         Path::new("/Users/u/Library/Logs/swing.log"),
     )
     .unwrap();
-    assert!(plist.contains("A&amp;B&lt;C&gt;.toml"));
-    assert!(!plist.contains("A&B<C>.toml"));
-}
+    assert!(plist.contains("A&amp;B&lt;C&gt;.toml"), "{plist}");
+    assert!(!plist.contains("A&B<C>.toml"), "{plist}");
 
-#[test]
-fn schtasks_xml_has_expected_elements() {
-    let xml = schtasks_xml(
-        Path::new(r"C:\Program Files\swing\swing.exe"),
-        Path::new(r"C:\Users\u\swing.toml"),
-        Path::new(r"C:\Users\u"),
-        Path::new(r"C:\Users\u\swing.log"),
-        "DOMAIN\\user",
-    )
-    .unwrap();
-    assert!(xml.contains(r#"xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task""#));
-    assert!(xml.contains("<RegistrationInfo>"));
-    assert!(xml.contains("<Description>SWING mirror agent</Description>"));
-    assert!(xml.contains("<LogonTrigger>"));
-    assert!(xml.contains("<UserId>DOMAIN\\user</UserId>"));
-    assert!(xml.contains("<LogonType>InteractiveToken</LogonType>"));
-    assert!(xml.contains("<RunLevel>LeastPrivilege</RunLevel>"));
-    assert!(xml.contains("<MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>"));
-    assert!(xml.contains("<DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>"));
-    assert!(xml.contains("<StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>"));
-    assert!(xml.contains("<StartWhenAvailable>true</StartWhenAvailable>"));
-    assert!(xml.contains("<ExecutionTimeLimit>PT0S</ExecutionTimeLimit>"));
-    assert!(xml.contains("<Hidden>true</Hidden>"));
-    assert!(!xml.contains("<RestartOnFailure>"));
-    assert!(xml.contains("<Command>%SystemRoot%\\System32\\conhost.exe</Command>"));
-    assert!(xml.contains(
-        "<Arguments>--headless &quot;C:\\Program Files\\swing\\swing.exe&quot; up --config"
-    ));
-    assert!(xml.contains("<WorkingDirectory>C:\\Users\\u</WorkingDirectory>"));
-    assert!(xml.contains("&quot;C:\\Users\\u\\swing.toml&quot;"));
-    assert!(xml.contains("&quot;C:\\Users\\u\\swing.log&quot; --exit-with-parent</Arguments>"));
-}
-
-#[test]
-fn schtasks_xml_escapes_ampersand_and_angle_brackets() {
     let xml = schtasks_xml(
         Path::new(r"C:\swing.exe"),
         Path::new(r"C:\a&b<c>.toml"),
@@ -305,7 +305,57 @@ fn schtasks_xml_escapes_ampersand_and_angle_brackets() {
         "user<1>&",
     )
     .unwrap();
-    assert!(xml.contains("a&amp;b&lt;c&gt;.toml"));
-    assert!(xml.contains("<UserId>user&lt;1&gt;&amp;</UserId>"));
-    assert!(!xml.contains("a&b<c>.toml"));
+    assert!(xml.contains("a&amp;b&lt;c&gt;.toml"), "{xml}");
+    assert!(xml.contains("<UserId>user&lt;1&gt;&amp;</UserId>"), "{xml}");
+    assert!(!xml.contains("a&b<c>.toml"), "{xml}");
 }
+
+#[test]
+fn schtasks_xml_matches_the_expected_text() {
+    let xml = schtasks_xml(
+        Path::new(r"C:\Program Files\swing\swing.exe"),
+        Path::new(r"C:\Users\u\swing.toml"),
+        Path::new(r"C:\Users\u"),
+        Path::new(r"C:\Users\u\swing.log"),
+        "DOMAIN\\user",
+    )
+    .unwrap();
+    assert_eq!(xml, SCHTASKS_XML);
+}
+
+const SCHTASKS_XML: &str = r#"<?xml version="1.0" encoding="UTF-16"?>
+<Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
+  <RegistrationInfo>
+    <Description>SWING mirror agent</Description>
+  </RegistrationInfo>
+  <Triggers>
+    <LogonTrigger>
+      <Enabled>true</Enabled>
+      <UserId>DOMAIN\user</UserId>
+    </LogonTrigger>
+  </Triggers>
+  <Principals>
+    <Principal id="Author">
+      <UserId>DOMAIN\user</UserId>
+      <LogonType>InteractiveToken</LogonType>
+      <RunLevel>LeastPrivilege</RunLevel>
+    </Principal>
+  </Principals>
+  <Settings>
+    <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>
+    <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>
+    <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>
+    <StartWhenAvailable>true</StartWhenAvailable>
+    <ExecutionTimeLimit>PT0S</ExecutionTimeLimit>
+    <Hidden>true</Hidden>
+    <Enabled>true</Enabled>
+  </Settings>
+  <Actions Context="Author">
+    <Exec>
+      <Command>%SystemRoot%\System32\conhost.exe</Command>
+      <Arguments>--headless &quot;C:\Program Files\swing\swing.exe&quot; up --config &quot;C:\Users\u\swing.toml&quot; --log-file &quot;C:\Users\u\swing.log&quot; --exit-with-parent</Arguments>
+      <WorkingDirectory>C:\Users\u</WorkingDirectory>
+    </Exec>
+  </Actions>
+</Task>
+"#;
