@@ -104,7 +104,7 @@ mod tests {
     use super::super::router;
     use super::super::test_support::*;
     use axum::body::Body;
-    use axum::http::{Request, StatusCode};
+    use axum::http::StatusCode;
 
     #[tokio::test]
     async fn internal_errors_do_not_reach_the_client() {
@@ -126,53 +126,33 @@ mod tests {
     #[tokio::test]
     async fn malformed_json_body_is_bad_request_with_json_error_even_without_relay() {
         let app = router(test_state());
-        let req = Request::builder()
-            .method("POST")
-            .uri("/api/mirror/add")
-            .header("Host", "127.0.0.1:8082")
-            .header("x-swing-dashboard", "1")
-            .header("content-type", "application/json")
-            .body(Body::from("{not json"))
-            .unwrap();
+        let req = post_json("/api/mirror/add", "{not json");
         let resp = call(app, req).await;
         assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
-        let body = error_body(resp).await;
+        let body = json_body(resp).await;
         assert!(body["error"].is_string());
     }
 
     #[tokio::test]
     async fn json_body_missing_a_field_is_bad_request_not_unprocessable() {
         let app = router(test_state());
-        let req = Request::builder()
-            .method("POST")
-            .uri("/api/mirror/add")
-            .header("Host", "127.0.0.1:8082")
-            .header("x-swing-dashboard", "1")
-            .header("content-type", "application/json")
-            .body(Body::from("{}"))
-            .unwrap();
+        let req = post_json("/api/mirror/add", "{}");
         let resp = call(app, req).await;
         assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
-        let body = error_body(resp).await;
+        let body = json_body(resp).await;
         assert!(body["error"].is_string());
     }
 
     #[tokio::test]
     async fn missing_content_type_is_bad_request_with_json_error() {
         let app = router(test_state());
-        let req = Request::builder()
-            .method("POST")
-            .uri("/api/mirror/add")
-            .header("Host", "127.0.0.1:8082")
-            .header("x-swing-dashboard", "1")
-            .body(Body::from(
+        let req = request("POST", "/api/mirror/add").header("x-swing-dashboard", "1").body(Body::from(
                 serde_json::json!({ "keys": [nostr_sdk::prelude::Keys::generate().public_key().to_hex()] })
                     .to_string(),
-            ))
-            .unwrap();
+            )).unwrap();
         let resp = call(app, req).await;
         assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
-        let body = error_body(resp).await;
+        let body = json_body(resp).await;
         assert!(
             body["error"].as_str().unwrap().contains("Content-Type"),
             "{body}"

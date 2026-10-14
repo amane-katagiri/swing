@@ -133,30 +133,11 @@ mod tests {
     use axum::http::{Request, StatusCode};
     use std::sync::Arc;
 
-    fn get(uri: &str) -> Request<Body> {
-        Request::builder()
-            .uri(uri)
-            .header("Host", "127.0.0.1:8082")
-            .body(Body::empty())
-            .unwrap()
-    }
-
     fn dashboard_get(uri: &str) -> Request<Body> {
         let mut req = get(uri);
         req.headers_mut()
             .insert("x-swing-dashboard", "1".parse().unwrap());
         req
-    }
-
-    fn post_json(uri: &str, body: &str) -> Request<Body> {
-        Request::builder()
-            .method("POST")
-            .uri(uri)
-            .header("Host", "127.0.0.1:8082")
-            .header("x-swing-dashboard", "1")
-            .header("content-type", "application/json")
-            .body(Body::from(body.to_string()))
-            .unwrap()
     }
 
     fn set_cookie(resp: &axum::http::Response<Body>) -> Option<String> {
@@ -172,10 +153,7 @@ mod tests {
     async fn issue_code(state: &Arc<AppState>) -> String {
         let resp = call(router(Arc::clone(state)), post_json("/api/login-code", "")).await;
         assert_eq!(resp.status(), StatusCode::OK);
-        let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
-            .await
-            .unwrap();
-        let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        let json = json_body(resp).await;
         assert_eq!(json["expires_in"], 300);
         json["code"].as_str().unwrap().to_string()
     }
@@ -349,7 +327,7 @@ mod tests {
         let code = issue_code(&state).await;
         let resp = call_anonymous(
             router(Arc::clone(&state)),
-            get(&format!("/login?code={code}")),
+            get(format!("/login?code={code}")),
         )
         .await;
         assert_eq!(resp.status(), StatusCode::SEE_OTHER);
@@ -361,7 +339,7 @@ mod tests {
 
         let resp = call_anonymous(
             router(Arc::clone(&state)),
-            post_json("/api/login", &format!("{{\"code\":\"{code}\"}}")),
+            post_json("/api/login", format!("{{\"code\":\"{code}\"}}")),
         )
         .await;
         assert_eq!(resp.status(), StatusCode::OK);
@@ -376,14 +354,11 @@ mod tests {
         let nonce = crate::auth::new_identity_nonce();
         let resp = call_anonymous(
             router(Arc::clone(&state)),
-            post_json("/api/identity", &format!("{{\"nonce\":\"{nonce}\"}}")),
+            post_json("/api/identity", format!("{{\"nonce\":\"{nonce}\"}}")),
         )
         .await;
         assert_eq!(resp.status(), StatusCode::OK);
-        let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
-            .await
-            .unwrap();
-        let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        let json = json_body(resp).await;
         assert!(crate::auth::verify_identity_proof(
             TEST_TOKEN,
             &nonce,
@@ -458,7 +433,7 @@ mod tests {
 
     async fn login_cookie(state: &Arc<AppState>, forwarded_proto: Option<&str>) -> String {
         let code = issue_code(state).await;
-        let mut req = post_json("/api/login", &format!("{{\"code\":\"{code}\"}}"));
+        let mut req = post_json("/api/login", format!("{{\"code\":\"{code}\"}}"));
         if let Some(proto) = forwarded_proto {
             req.headers_mut()
                 .insert("x-forwarded-proto", proto.parse().unwrap());

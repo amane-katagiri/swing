@@ -711,7 +711,7 @@ mod tests {
         )
         .await;
         assert_eq!(resp.status(), StatusCode::PAYLOAD_TOO_LARGE);
-        let body = error_body(resp).await;
+        let body = json_body(resp).await;
         assert!(body["error"].is_string());
         assert!(upload_dir_entries(dir.path()).is_empty());
     }
@@ -735,7 +735,7 @@ mod tests {
         )
         .await;
         assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
-        let body = error_body(resp).await;
+        let body = json_body(resp).await;
         assert!(body["error"].as_str().unwrap().contains("invalid site"));
         assert!(upload_dir_entries(dir.path()).is_empty());
     }
@@ -760,7 +760,7 @@ mod tests {
         )
         .await;
         assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
-        let body = error_body(resp).await;
+        let body = json_body(resp).await;
         assert!(body["error"].as_str().unwrap().contains("invalid title"));
         assert!(upload_dir_entries(dir.path()).is_empty());
     }
@@ -785,7 +785,7 @@ mod tests {
         )
         .await;
         assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
-        let body = error_body(resp).await;
+        let body = json_body(resp).await;
         assert_eq!(body["error"], "invalid note: needs a URL");
         assert!(upload_dir_entries(dir.path()).is_empty());
     }
@@ -801,7 +801,7 @@ mod tests {
         )
         .await;
         let status = resp.status();
-        let body = error_body(resp).await;
+        let body = json_body(resp).await;
         assert!(upload_dir_entries(dir.path()).is_empty());
         (status, body)
     }
@@ -1048,17 +1048,7 @@ mod tests {
             None => std::task::Poll::Pending,
         });
         let body = axum::body::Body::from_stream(stream);
-        let req = axum::http::Request::builder()
-            .method("POST")
-            .uri("/api/publish/upload")
-            .header("Host", "127.0.0.1:8082")
-            .header("x-swing-dashboard", "1")
-            .header(
-                "content-type",
-                format!("multipart/form-data; boundary={boundary}"),
-            )
-            .body(body)
-            .unwrap();
+        let req = multipart_request("/api/publish/upload", boundary, body);
 
         let app = router(state);
         let handle = tokio::spawn(async move {

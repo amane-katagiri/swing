@@ -359,7 +359,7 @@ mod tests {
                     uri.starts_with("/api/"),
                     "{uri}"
                 );
-                assert_eq!(error_body(resp).await["error"], "missing Host header");
+                assert_eq!(json_body(resp).await["error"], "missing Host header");
             }
         }
 

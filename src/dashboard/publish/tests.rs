@@ -99,7 +99,7 @@ impl Rig {
         )
         .await;
         let status = resp.status();
-        (status, error_body(resp).await)
+        (status, json_body(resp).await)
     }
 
     async fn site_events(&self) -> Vec<Event> {

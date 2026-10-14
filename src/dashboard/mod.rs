@@ -259,7 +259,7 @@ pub async fn serve(
 
 #[cfg(test)]
 mod tests {
-    use super::test_support::*;
+    use super::test_support::{get, *};
     use super::*;
     use axum::body::Body;
     use axum::http::{Request, StatusCode};
@@ -318,10 +318,7 @@ mod tests {
     #[tokio::test]
     async fn write_request_without_marker_header_is_forbidden() {
         let app = router(test_state());
-        let req = Request::builder()
-            .method("POST")
-            .uri("/api/mirror/add")
-            .header("Host", "127.0.0.1:8082")
+        let req = request("POST", "/api/mirror/add")
             .header("content-type", "application/json")
             .body(Body::from("{\"keys\":[]}"))
             .unwrap();
@@ -332,10 +329,7 @@ mod tests {
     #[tokio::test]
     async fn write_request_with_mismatched_origin_is_forbidden() {
         let app = router(test_state());
-        let req = Request::builder()
-            .method("POST")
-            .uri("/api/mirror/add")
-            .header("Host", "127.0.0.1:8082")
+        let req = request("POST", "/api/mirror/add")
             .header("x-swing-dashboard", "1")
             .header("origin", "http://evil.example")
             .header("content-type", "application/json")
@@ -348,14 +342,7 @@ mod tests {
     #[tokio::test]
     async fn write_request_without_body_keys_is_bad_request_when_guard_passes() {
         let app = router(test_state());
-        let req = Request::builder()
-            .method("POST")
-            .uri("/api/mirror/add")
-            .header("Host", "127.0.0.1:8082")
-            .header("x-swing-dashboard", "1")
-            .header("content-type", "application/json")
-            .body(Body::from("{\"keys\":[]}"))
-            .unwrap();
+        let req = post_json("/api/mirror/add", "{\"keys\":[]}");
         let resp = call(app, req).await;
         assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
     }
@@ -365,14 +352,7 @@ mod tests {
         let state = test_state();
         let held = state.locks.mirror_writes().await;
         let key = nostr_sdk::prelude::Keys::generate().public_key().to_hex();
-        let req = Request::builder()
-            .method("POST")
-            .uri("/api/mirror/remove")
-            .header("Host", "127.0.0.1:8082")
-            .header("x-swing-dashboard", "1")
-            .header("content-type", "application/json")
-            .body(Body::from(format!("{{\"keys\":[\"{key}\"]}}")))
-            .unwrap();
+        let req = post_json("/api/mirror/remove", format!("{{\"keys\":[\"{key}\"]}}"));
         let pending = tokio::spawn(call(router(state.clone()), req));
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
         assert!(!pending.is_finished());
@@ -384,11 +364,7 @@ mod tests {
     #[tokio::test]
     async fn requests_without_relay_report_service_unavailable_not_a_panic() {
         let app = router(test_state());
-        let req = Request::builder()
-            .uri("/api/sites")
-            .header("Host", "127.0.0.1:8082")
-            .body(Body::empty())
-            .unwrap();
+        let req = get("/api/sites");
         let resp = call(app, req).await;
         assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
     }
@@ -432,20 +408,12 @@ mod tests {
         let state = build_state(config, test_exit(), test_keys(&secret_hex), TEST_TOKEN);
 
         let app = router(Arc::clone(&state));
-        let req = Request::builder()
-            .uri("/")
-            .header("Host", "127.0.0.1:8082")
-            .body(Body::empty())
-            .unwrap();
+        let req = get("/");
         let resp = call(app, req).await;
         assert_eq!(resp.status(), StatusCode::NOT_FOUND);
 
         let app = router(state);
-        let req = Request::builder()
-            .uri("/api/overview")
-            .header("Host", "127.0.0.1:8082")
-            .body(Body::empty())
-            .unwrap();
+        let req = get("/api/overview");
         let resp = call(app, req).await;
         assert_eq!(resp.status(), StatusCode::OK);
     }

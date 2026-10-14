@@ -177,8 +177,7 @@ mod tests {
     use super::super::router;
     use super::super::test_support::*;
     use super::AppState;
-    use axum::body::Body;
-    use axum::http::{Request, StatusCode};
+    use axum::http::StatusCode;
     use nostr_sdk::prelude::{Keys, PublicKey};
     use std::sync::Arc;
     use std::time::Duration;
@@ -201,17 +200,10 @@ mod tests {
         assert!(state.setup_mode());
         let app = router(state);
         let body = serde_json::json!({ "secret_key": null, "items": {} }).to_string();
-        let req = Request::builder()
-            .method("POST")
-            .uri("/api/setup")
-            .header("Host", "127.0.0.1:8082")
-            .header("x-swing-dashboard", "1")
-            .header("content-type", "application/json")
-            .body(Body::from(body))
-            .unwrap();
+        let req = post_json("/api/setup", body);
         let resp = call(app, req).await;
         assert_eq!(resp.status(), StatusCode::OK);
-        let json = error_body(resp).await;
+        let json = json_body(resp).await;
         assert_eq!(json["ok"], true);
         assert_eq!(json["restart"], true);
         assert!(json["npub"].as_str().unwrap().starts_with("npub1"));
@@ -547,14 +539,7 @@ mod tests {
     async fn post_setup_when_already_configured_is_conflict() {
         let app = router(test_state());
         let body = serde_json::json!({ "secret_key": null, "items": {} }).to_string();
-        let req = Request::builder()
-            .method("POST")
-            .uri("/api/setup")
-            .header("Host", "127.0.0.1:8082")
-            .header("x-swing-dashboard", "1")
-            .header("content-type", "application/json")
-            .body(Body::from(body))
-            .unwrap();
+        let req = post_json("/api/setup", body);
         let resp = call(app, req).await;
         assert_eq!(resp.status(), StatusCode::CONFLICT);
     }

@@ -271,7 +271,7 @@ mod tests {
         )
         .await;
         let status = resp.status();
-        let body = error_body(resp).await;
+        let body = json_body(resp).await;
         assert_eq!(
             std::fs::read_dir(dir.path()).unwrap().count(),
             0,

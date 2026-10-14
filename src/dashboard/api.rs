@@ -396,7 +396,7 @@ mod tests {
     use super::super::test_support::*;
     use super::AppState;
     use axum::body::Body;
-    use axum::http::{Request, StatusCode};
+    use axum::http::StatusCode;
     use nostr_sdk::prelude::Keys;
     use std::sync::Arc;
 
@@ -407,11 +407,7 @@ mod tests {
         let (config, secret_hex) = test_config(true);
         let state = build_state(config, test_exit(), test_keys(&secret_hex), TEST_TOKEN);
         let app = router(state);
-        let req = Request::builder()
-            .uri("/api/config")
-            .header("Host", "127.0.0.1:8082")
-            .body(Body::empty())
-            .unwrap();
+        let req = get("/api/config");
         let resp = call(app, req).await;
         assert_eq!(resp.status(), StatusCode::OK);
         let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
@@ -487,11 +483,7 @@ mod tests {
             .collect::<Vec<_>>()
             .join("&");
         let app = router(test_state());
-        let req = Request::builder()
-            .uri(format!("/api/webring?{query}"))
-            .header("Host", "127.0.0.1:8082")
-            .body(Body::empty())
-            .unwrap();
+        let req = get(format!("/api/webring?{query}"));
         let resp = call(app, req).await;
         assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
     }
@@ -503,11 +495,7 @@ mod tests {
             .collect::<Vec<_>>()
             .join("&");
         let app = router(test_state());
-        let req = Request::builder()
-            .uri(format!("/api/replicas?{query}"))
-            .header("Host", "127.0.0.1:8082")
-            .body(Body::empty())
-            .unwrap();
+        let req = get(format!("/api/replicas?{query}"));
         let resp = call(app, req).await;
         assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
     }
@@ -515,11 +503,7 @@ mod tests {
     #[tokio::test]
     async fn publish_sites_without_relay_reports_service_unavailable() {
         let app = router(test_state());
-        let req = Request::builder()
-            .uri("/api/publish/sites")
-            .header("Host", "127.0.0.1:8082")
-            .body(Body::empty())
-            .unwrap();
+        let req = get("/api/publish/sites");
         let resp = call(app, req).await;
         assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
     }
@@ -537,11 +521,7 @@ mod tests {
                 StatusCode::SERVICE_UNAVAILABLE,
             ),
         ] {
-            let req = Request::builder()
-                .uri(uri)
-                .header("Host", "127.0.0.1:8082")
-                .body(Body::empty())
-                .unwrap();
+            let req = get(uri);
             let resp = call(router(test_state()), req).await;
             assert_eq!(resp.status(), status, "{uri}");
         }
@@ -550,11 +530,7 @@ mod tests {
     #[tokio::test]
     async fn status_without_ipfs_reports_service_unavailable() {
         let app = router(test_state());
-        let req = Request::builder()
-            .uri("/api/status")
-            .header("Host", "127.0.0.1:8082")
-            .body(Body::empty())
-            .unwrap();
+        let req = get("/api/status");
         let resp = call(app, req).await;
         assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
     }
@@ -639,10 +615,7 @@ mod tests {
     async fn shutdown_without_marker_header_is_forbidden() {
         let token = tokio_util::sync::CancellationToken::new();
         let app = router(test_state_with_exit(ExitRequest::new(token.clone())));
-        let req = Request::builder()
-            .method("POST")
-            .uri("/api/shutdown")
-            .header("Host", "127.0.0.1:8082")
+        let req = request("POST", "/api/shutdown")
             .body(Body::empty())
             .unwrap();
         let resp = call(app, req).await;
@@ -654,16 +627,13 @@ mod tests {
     async fn shutdown_with_marker_header_is_accepted_and_cancels_the_token() {
         let token = tokio_util::sync::CancellationToken::new();
         let app = router(test_state_with_exit(ExitRequest::new(token.clone())));
-        let req = Request::builder()
-            .method("POST")
-            .uri("/api/shutdown")
-            .header("Host", "127.0.0.1:8082")
+        let req = request("POST", "/api/shutdown")
             .header("x-swing-dashboard", "1")
             .body(Body::empty())
             .unwrap();
         let resp = call(app, req).await;
         assert_eq!(resp.status(), StatusCode::ACCEPTED);
-        let json = error_body(resp).await;
+        let json = json_body(resp).await;
         assert_eq!(json["ok"], true);
         assert_eq!(json["action"], "stop");
         assert!(token.is_cancelled());
@@ -674,16 +644,13 @@ mod tests {
         let token = tokio_util::sync::CancellationToken::new();
         let exit = ExitRequest::new(token.clone());
         let app = router(test_state_with_exit(exit.clone()));
-        let req = Request::builder()
-            .method("POST")
-            .uri("/api/restart")
-            .header("Host", "127.0.0.1:8082")
+        let req = request("POST", "/api/restart")
             .header("x-swing-dashboard", "1")
             .body(Body::empty())
             .unwrap();
         let resp = call(app, req).await;
         assert_eq!(resp.status(), StatusCode::ACCEPTED);
-        let json = error_body(resp).await;
+        let json = json_body(resp).await;
         assert_eq!(json["action"], "restart");
         assert!(token.is_cancelled());
         assert!(exit.restart_requested());
@@ -699,17 +666,14 @@ mod tests {
             "items": { "policy.max_total_storage": "20GB" }
         })
         .to_string();
-        let req = Request::builder()
-            .method("PUT")
-            .uri("/api/config")
-            .header("Host", "127.0.0.1:8082")
+        let req = request("PUT", "/api/config")
             .header("x-swing-dashboard", "1")
             .header("content-type", "application/json")
             .body(Body::from(body))
             .unwrap();
         let resp = call(app.clone(), req).await;
         assert_eq!(resp.status(), StatusCode::OK);
-        let json = error_body(resp).await;
+        let json = json_body(resp).await;
         assert_eq!(json["restart_required"], true);
         assert!(dir.path().join("swing.toml").exists());
         let policy = json["sections"]
@@ -727,14 +691,10 @@ mod tests {
         assert_eq!(item["source"], "file");
         assert_eq!(item["raw"], "20 GiB");
 
-        let get_req = Request::builder()
-            .uri("/api/config")
-            .header("Host", "127.0.0.1:8082")
-            .body(Body::empty())
-            .unwrap();
+        let get_req = get("/api/config");
         let get_resp = call(app, get_req).await;
         assert_eq!(get_resp.status(), StatusCode::OK);
-        let get_json = error_body(get_resp).await;
+        let get_json = json_body(get_resp).await;
         assert_eq!(get_json["restart_required"], true);
         let policy = get_json["sections"]
             .as_array()
@@ -870,14 +830,10 @@ mod tests {
         let (config, _secret_hex) = test_config_in_dir(dir.path(), true, false);
         let state = build_state(config, test_exit(), None, TEST_TOKEN);
         let app = router(state);
-        let req = Request::builder()
-            .uri("/api/sites")
-            .header("Host", "127.0.0.1:8082")
-            .body(Body::empty())
-            .unwrap();
+        let req = get("/api/sites");
         let resp = call(app, req).await;
         assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
-        let json = error_body(resp).await;
+        let json = json_body(resp).await;
         assert_eq!(json["error"], "agent is not configured");
     }
 
@@ -887,14 +843,10 @@ mod tests {
         let (config, _secret_hex) = test_config_in_dir(dir.path(), true, false);
         let state = build_state(config, test_exit(), None, TEST_TOKEN);
         let app = router(state);
-        let req = Request::builder()
-            .uri("/api/overview")
-            .header("Host", "127.0.0.1:8082")
-            .body(Body::empty())
-            .unwrap();
+        let req = get("/api/overview");
         let resp = call(app, req).await;
         assert_eq!(resp.status(), StatusCode::OK);
-        let json = error_body(resp).await;
+        let json = json_body(resp).await;
         assert_eq!(json["setup"], true);
         assert!(json["pubkey"].is_null());
         assert!(json["npub"].is_null());

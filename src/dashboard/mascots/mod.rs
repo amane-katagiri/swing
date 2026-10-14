@@ -340,24 +340,6 @@ mod tests {
     use super::super::test_support::*;
     use super::image::png;
     use super::*;
-    use axum::body::Body;
-    use axum::http::Request;
-
-    async fn get(app: axum::Router, path: &str) -> Response {
-        let req = Request::builder()
-            .uri(path)
-            .header("Host", "127.0.0.1:8082")
-            .body(Body::empty())
-            .unwrap();
-        call(app, req).await
-    }
-
-    async fn body_json(resp: Response) -> serde_json::Value {
-        let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
-            .await
-            .unwrap();
-        serde_json::from_slice(&body).unwrap()
-    }
 
     fn write_pack(dir: &std::path::Path, id: &str, manifest: &str, sprite: &[u8]) {
         let pack_dir = dir.join(id);
@@ -783,13 +765,13 @@ mod tests {
         config.dashboard.mascots_dir = Some(dir.path().to_path_buf());
         let state = build_state(config, test_exit(), test_keys(&secret_hex), TEST_TOKEN);
 
-        let resp = get(router(state), "/mascots/index.json").await;
+        let resp = call(router(state), get("/mascots/index.json")).await;
         assert_eq!(resp.status(), StatusCode::OK);
         assert_eq!(
             resp.headers().get("content-type").unwrap(),
             "application/json"
         );
-        let index = body_json(resp).await;
+        let index = json_body(resp).await;
         let ids: Vec<&str> = index["packs"]
             .as_array()
             .unwrap()
@@ -813,9 +795,9 @@ mod tests {
         config.dashboard.mascots_dir = Some(dir.path().to_path_buf());
         let state = build_state(config, test_exit(), test_keys(&secret_hex), TEST_TOKEN);
 
-        let resp = get(
+        let resp = call(
             router(std::sync::Arc::clone(&state)),
-            "/mascots/my-pack/manifest.json",
+            get("/mascots/my-pack/manifest.json"),
         )
         .await;
         assert_eq!(resp.status(), StatusCode::OK);
@@ -824,9 +806,9 @@ mod tests {
             "application/json"
         );
 
-        let resp = get(
+        let resp = call(
             router(std::sync::Arc::clone(&state)),
-            "/mascots/my-pack/sprite.png",
+            get("/mascots/my-pack/sprite.png"),
         )
         .await;
         assert_eq!(resp.status(), StatusCode::OK);
@@ -836,22 +818,22 @@ mod tests {
             .unwrap();
         assert_eq!(body.as_ref(), png(16, 8).as_slice());
 
-        let resp = get(router(state), "/mascots/my-pack/other.png").await;
+        let resp = call(router(state), get("/mascots/my-pack/other.png")).await;
         assert_eq!(resp.status(), StatusCode::NOT_FOUND);
     }
 
     #[tokio::test]
     async fn an_unknown_pack_id_is_not_found() {
         let app = router(test_state());
-        let resp = get(app, "/mascots/does-not-exist/manifest.json").await;
+        let resp = call(app, get("/mascots/does-not-exist/manifest.json")).await;
         assert_eq!(resp.status(), StatusCode::NOT_FOUND);
     }
 
     #[tokio::test]
     async fn every_bundled_mascot_pack_is_served() {
-        let resp = get(router(test_state()), "/mascots/index.json").await;
+        let resp = call(router(test_state()), get("/mascots/index.json")).await;
         assert_eq!(resp.status(), StatusCode::OK);
-        let index = body_json(resp).await;
+        let index = json_body(resp).await;
         let packs = index["packs"].as_array().unwrap();
         assert_eq!(
             packs
@@ -863,12 +845,12 @@ mod tests {
         for pack in packs {
             let base = pack["base"].as_str().unwrap();
             let manifest_path = format!("{base}manifest.json");
-            let resp = get(router(test_state()), &manifest_path).await;
+            let resp = call(router(test_state()), get(&manifest_path)).await;
             assert_eq!(resp.status(), StatusCode::OK, "{manifest_path}");
-            let manifest = body_json(resp).await;
+            let manifest = json_body(resp).await;
             let sprite = manifest["sprite"].as_str().unwrap();
             let sprite_path = format!("{base}{sprite}");
-            let resp = get(router(test_state()), &sprite_path).await;
+            let resp = call(router(test_state()), get(&sprite_path)).await;
             assert_eq!(resp.status(), StatusCode::OK, "{sprite_path}");
         }
     }

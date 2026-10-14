@@ -227,8 +227,7 @@ fn image_content_type(path: &Path) -> Result<&'static str> {
 mod tests {
     use super::super::router;
     use super::super::test_support::*;
-    use axum::body::Body;
-    use axum::http::{Request, StatusCode};
+    use axum::http::StatusCode;
 
     #[tokio::test]
     async fn every_imported_module_is_served() {
@@ -245,11 +244,7 @@ mod tests {
         }
         assert!(modules.contains("pairing.js"));
         for module in modules {
-            let req = Request::builder()
-                .uri(format!("/{module}"))
-                .header("Host", "127.0.0.1:8082")
-                .body(Body::empty())
-                .unwrap();
+            let req = get(format!("/{module}"));
             let resp = call(router(test_state()), req).await;
             assert_eq!(resp.status(), StatusCode::OK, "{module}");
         }
@@ -326,11 +321,7 @@ mod tests {
         }
         assert!(hrefs.contains("/style.css"));
         for href in hrefs {
-            let req = Request::builder()
-                .uri(href.clone())
-                .header("Host", "127.0.0.1:8082")
-                .body(Body::empty())
-                .unwrap();
+            let req = get(href.clone());
             let resp = call(router(test_state()), req).await;
             assert_eq!(resp.status(), StatusCode::OK, "{href}");
         }
@@ -339,11 +330,7 @@ mod tests {
     #[tokio::test]
     async fn index_is_served_as_html_with_security_headers() {
         let app = router(test_state());
-        let req = Request::builder()
-            .uri("/")
-            .header("Host", "127.0.0.1:8082")
-            .body(Body::empty())
-            .unwrap();
+        let req = get("/");
         let resp = call(app, req).await;
         assert_eq!(resp.status(), StatusCode::OK);
         assert_eq!(
@@ -375,11 +362,7 @@ mod tests {
                 _ => panic!("no expected content type for {}", asset.path),
             };
             let app = router(test_state());
-            let req = Request::builder()
-                .uri(asset.path)
-                .header("Host", "127.0.0.1:8082")
-                .body(Body::empty())
-                .unwrap();
+            let req = get(asset.path);
             let resp = call(app, req).await;
             assert_eq!(resp.status(), StatusCode::OK, "{}", asset.path);
             assert_eq!(
@@ -406,11 +389,7 @@ mod tests {
             ("/custom.css", "text/css; charset=utf-8"),
         ] {
             let app = router(test_state());
-            let req = Request::builder()
-                .uri(path)
-                .header("Host", "127.0.0.1:8082")
-                .body(Body::empty())
-                .unwrap();
+            let req = get(path);
             let resp = call(app, req).await;
             assert_eq!(resp.status(), StatusCode::OK, "{path}");
             assert_eq!(
@@ -451,11 +430,7 @@ mod tests {
             ("/desktop-banner", "image/gif", b"GIF89a"),
         ] {
             let app = router(std::sync::Arc::clone(&state));
-            let req = Request::builder()
-                .uri(path)
-                .header("Host", "127.0.0.1:8082")
-                .body(Body::empty())
-                .unwrap();
+            let req = get(path);
             let resp = call(app, req).await;
             assert_eq!(resp.status(), StatusCode::OK, "{path}");
             assert_eq!(

@@ -128,11 +128,30 @@ pub(crate) async fn call(app: Router, mut req: Request<Body>) -> Response<Body> 
     call_anonymous(app, req).await
 }
 
-pub(crate) async fn error_body(resp: Response<Body>) -> serde_json::Value {
+pub(crate) async fn json_body(resp: Response<Body>) -> serde_json::Value {
     let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
         .await
         .unwrap();
-    serde_json::from_slice(&body).expect("error body must be JSON")
+    serde_json::from_slice(&body).expect("body must be JSON")
+}
+
+pub(crate) fn request(method: &str, uri: impl AsRef<str>) -> axum::http::request::Builder {
+    Request::builder()
+        .method(method)
+        .uri(uri.as_ref())
+        .header("Host", "127.0.0.1:8082")
+}
+
+pub(crate) fn get(uri: impl AsRef<str>) -> Request<Body> {
+    request("GET", uri).body(Body::empty()).unwrap()
+}
+
+pub(crate) fn post_json(uri: impl AsRef<str>, body: impl Into<String>) -> Request<Body> {
+    request("POST", uri)
+        .header("x-swing-dashboard", "1")
+        .header("content-type", "application/json")
+        .body(Body::from(body.into()))
+        .unwrap()
 }
 
 pub(crate) async fn send_json(
@@ -141,11 +160,7 @@ pub(crate) async fn send_json(
     uri: &str,
     body: Option<serde_json::Value>,
 ) -> (StatusCode, serde_json::Value) {
-    let mut builder = Request::builder()
-        .method(method)
-        .uri(uri)
-        .header("Host", "127.0.0.1:8082")
-        .header("x-swing-dashboard", "1");
+    let mut builder = request(method, uri).header("x-swing-dashboard", "1");
     let body = match body {
         Some(json) => {
             builder = builder.header("content-type", "application/json");
@@ -183,21 +198,14 @@ pub(crate) fn multipart_body(boundary: &str, parts: &[(&str, Option<&str>, &[u8]
     body
 }
 
-pub(crate) fn multipart_request(
-    uri: &str,
-    boundary: &str,
-    body: Vec<u8>,
-) -> axum::http::Request<axum::body::Body> {
-    axum::http::Request::builder()
-        .method("POST")
-        .uri(uri)
-        .header("Host", "127.0.0.1:8082")
+pub(crate) fn multipart_request(uri: &str, boundary: &str, body: impl Into<Body>) -> Request<Body> {
+    request("POST", uri)
         .header("x-swing-dashboard", "1")
         .header(
             "content-type",
             format!("multipart/form-data; boundary={boundary}"),
         )
-        .body(axum::body::Body::from(body))
+        .body(body.into())
         .unwrap()
 }
 

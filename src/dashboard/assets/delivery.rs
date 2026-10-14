@@ -142,12 +142,10 @@ mod tests {
     use super::super::super::router;
     use super::super::super::test_support::*;
     use axum::body::Body;
-    use axum::http::{Request, StatusCode};
+    use axum::http::StatusCode;
 
     async fn get_with(path: &str, if_none_match: Option<&str>) -> axum::response::Response {
-        let mut req = Request::builder()
-            .uri(path)
-            .header("Host", "127.0.0.1:8082");
+        let mut req = request("GET", path);
         if let Some(tag) = if_none_match {
             req = req.header("If-None-Match", tag);
         }
@@ -202,10 +200,7 @@ mod tests {
         accept: &str,
         if_none_match: Option<&str>,
     ) -> axum::response::Response {
-        let mut req = Request::builder()
-            .uri(path)
-            .header("Host", "127.0.0.1:8082")
-            .header("Accept-Encoding", accept);
+        let mut req = request("GET", path).header("Accept-Encoding", accept);
         if let Some(tag) = if_none_match {
             req = req.header("If-None-Match", tag);
         }
