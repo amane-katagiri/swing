@@ -366,6 +366,23 @@ mod tests {
         std::fs::write(pack_dir.join("sprite.png"), sprite).unwrap();
     }
 
+    fn load_error(dir: &std::path::Path, id: &str) -> String {
+        let root = Dir::open_root(dir).unwrap();
+        match load_user_pack(&root, id) {
+            Ok(_) => panic!("{id} loaded"),
+            Err(reason) => reason,
+        }
+    }
+
+    fn candidate_error(dir: &std::path::Path, name: &str) -> String {
+        let entry = std::fs::read_dir(dir)
+            .unwrap()
+            .map(Result::unwrap)
+            .find(|entry| entry.file_name() == name)
+            .unwrap();
+        candidate_id(&entry).unwrap_err()
+    }
+
     fn minimal_manifest(sprite: &str) -> String {
         format!(
             r#"{{"format":1,"sprite":"{sprite}","frame":{{"width":8,"height":8}},"animations":{{"idle":{{"frames":[0]}}}}}}"#
@@ -421,19 +438,32 @@ mod tests {
     #[test]
     fn an_invalid_id_is_skipped() {
         let dir = tempfile::tempdir().unwrap();
-        write_pack(dir.path(), "Bad_Id", &minimal_manifest("sprite.png"), b"x");
+        write_pack(
+            dir.path(),
+            "Bad_Id",
+            &minimal_manifest("sprite.png"),
+            &png(8, 8),
+        );
         let registry = MascotRegistry::load(Some(dir.path()));
         assert!(registry.find("Bad_Id").is_none());
+        assert!(candidate_error(dir.path(), "Bad_Id").contains("invalid pack id"));
     }
 
     #[test]
     fn a_bundled_id_collision_is_skipped() {
         let dir = tempfile::tempdir().unwrap();
-        write_pack(dir.path(), "neko", &minimal_manifest("sprite.png"), b"x");
+        write_pack(
+            dir.path(),
+            "neko",
+            &minimal_manifest("sprite.png"),
+            &png(8, 8),
+        );
         let registry = MascotRegistry::load(Some(dir.path()));
+        let bundled = BUNDLED.iter().find(|b| b.id == "neko").unwrap();
         let pack = registry.find("neko").unwrap();
-        assert_eq!(pack.sprite_content_type, "image/png");
-        assert_ne!(pack.sprite.as_ref(), b"x");
+        assert_eq!(pack.sprite.as_ref(), bundled.sprite);
+        assert_eq!(pack.manifest.as_ref(), bundled.manifest.as_bytes());
+        assert!(candidate_error(dir.path(), "neko").contains("collides with a bundled pack"));
     }
 
     #[test]
@@ -460,11 +490,15 @@ mod tests {
         write_pack(
             dir.path(),
             "my-pack",
-            r#"{"format":2,"sprite":"sprite.png"}"#,
-            b"x",
+            &minimal_manifest("sprite.png").replace(r#""format":1"#, r#""format":2"#),
+            &png(8, 8),
         );
         let registry = MascotRegistry::load(Some(dir.path()));
         assert!(registry.find("my-pack").is_none());
+        assert_eq!(
+            load_error(dir.path(), "my-pack"),
+            "manifest.json format must be 1"
+        );
     }
 
     #[test]
@@ -521,10 +555,12 @@ mod tests {
             minimal_manifest("sprite.png"),
         )
         .unwrap();
-        let big = vec![0u8; (MAX_SPRITE_BYTES + 1) as usize];
+        let mut big = png(8, 8);
+        big.resize((MAX_SPRITE_BYTES + 1) as usize, 0);
         std::fs::write(pack_dir.join("sprite.png"), big).unwrap();
         let registry = MascotRegistry::load(Some(dir.path()));
         assert!(registry.find("my-pack").is_none());
+        assert!(load_error(dir.path(), "my-pack").contains("byte limit"));
     }
 
     #[test]
@@ -538,9 +574,14 @@ mod tests {
             format!("{}{padding}", minimal_manifest("sprite.png")),
         )
         .unwrap();
-        std::fs::write(pack_dir.join("sprite.png"), b"x").unwrap();
+        std::fs::write(pack_dir.join("sprite.png"), png(8, 8)).unwrap();
         let registry = MascotRegistry::load(Some(dir.path()));
         assert!(registry.find("my-pack").is_none());
+        let reason = load_error(dir.path(), "my-pack");
+        assert!(
+            reason.starts_with("manifest.json ") && reason.contains("byte limit"),
+            "{reason}"
+        );
     }
 
     #[cfg(unix)]

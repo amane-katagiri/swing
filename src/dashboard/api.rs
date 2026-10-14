@@ -447,31 +447,35 @@ mod tests {
 
     #[tokio::test]
     async fn webring_depth_over_the_limit_is_bad_request() {
-        let app = router(test_state());
-        let req = Request::builder()
-            .uri("/api/webring?depth=5")
-            .header("Host", "127.0.0.1:8082")
-            .body(Body::empty())
-            .unwrap();
-        let resp = call(app, req).await;
-        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+        let (status, body) =
+            send_json(router(test_state()), "GET", "/api/webring?depth=5", None).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert!(
+            body["error"].as_str().unwrap().contains("depth must be"),
+            "{body}"
+        );
     }
 
     #[tokio::test]
     async fn mirror_add_rejects_more_than_the_key_limit() {
-        let keys: Vec<String> = (0..101).map(|i| format!("key-{i}")).collect();
-        let req_body = serde_json::json!({ "keys": keys }).to_string();
-        let app = router(test_state());
-        let req = Request::builder()
-            .method("POST")
-            .uri("/api/mirror/add")
-            .header("Host", "127.0.0.1:8082")
-            .header("x-swing-dashboard", "1")
-            .header("content-type", "application/json")
-            .body(Body::from(req_body))
-            .unwrap();
-        let resp = call(app, req).await;
-        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+        let keys: Vec<String> = (0..101)
+            .map(|_| Keys::generate().public_key().to_hex())
+            .collect();
+        let (status, body) = send_json(
+            router(test_state()),
+            "POST",
+            "/api/mirror/add",
+            Some(serde_json::json!({ "keys": keys })),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert!(
+            body["error"]
+                .as_str()
+                .unwrap()
+                .contains("at most 100 entries"),
+            "{body}"
+        );
     }
 
     #[tokio::test]
@@ -861,7 +865,7 @@ mod tests {
     #[tokio::test]
     async fn mirror_preview_rejects_an_empty_or_oversized_list() {
         let empty = serde_json::json!({ "keys": [] });
-        let (status, _) = send_json(
+        let (status, body) = send_json(
             router(test_state()),
             "POST",
             "/api/mirror/preview",
@@ -869,9 +873,18 @@ mod tests {
         )
         .await;
         assert_eq!(status, StatusCode::BAD_REQUEST);
-        let keys: Vec<String> = (0..101).map(|i| format!("key-{i}")).collect();
+        assert!(
+            body["error"]
+                .as_str()
+                .unwrap()
+                .contains("at least one entry"),
+            "{body}"
+        );
+        let keys: Vec<String> = (0..101)
+            .map(|_| Keys::generate().public_key().to_hex())
+            .collect();
         let many = serde_json::json!({ "keys": keys });
-        let (status, _) = send_json(
+        let (status, body) = send_json(
             router(test_state()),
             "POST",
             "/api/mirror/preview",
@@ -879,6 +892,13 @@ mod tests {
         )
         .await;
         assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert!(
+            body["error"]
+                .as_str()
+                .unwrap()
+                .contains("at most 100 entries"),
+            "{body}"
+        );
     }
 
     #[tokio::test]

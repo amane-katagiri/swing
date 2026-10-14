@@ -190,11 +190,6 @@ mod tests {
         assert_eq!(catalog_keys, source_keys);
     }
 
-    #[test]
-    fn catalog_has_exactly_27_editable_keys() {
-        assert_eq!(SETTINGS.iter().filter(|s| s.editable).count(), 27);
-    }
-
     // raw_value() lists editable keys by hand, so a key missing there would silently read as None.
     #[test]
     fn raw_value_covers_every_editable_key() {

@@ -165,11 +165,17 @@ mod tests {
             .uri("/api/mirror/add")
             .header("Host", "127.0.0.1:8082")
             .header("x-swing-dashboard", "1")
-            .body(Body::from("{\"keys\":[\"abc\"]}"))
+            .body(Body::from(
+                serde_json::json!({ "keys": [nostr_sdk::prelude::Keys::generate().public_key().to_hex()] })
+                    .to_string(),
+            ))
             .unwrap();
         let resp = call(app, req).await;
         assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
         let body = error_body(resp).await;
-        assert!(body["error"].is_string());
+        assert!(
+            body["error"].as_str().unwrap().contains("Content-Type"),
+            "{body}"
+        );
     }
 }

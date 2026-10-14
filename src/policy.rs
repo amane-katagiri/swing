@@ -378,12 +378,18 @@ mod tests {
         c1.keep_days = 10;
         let day = 86_400u64;
         let now = 100 * day;
-        let existing = vec![v("ancient", 10, day), v("recent_old", 10, now - 20 * day)];
+        let existing = vec![
+            v("ancient", 10, day),
+            v("recent_old", 10, now - 20 * day),
+            v("recent", 10, now - day),
+        ];
         let cand = c("new", Some(10), now - 1);
         let d = decide(&existing, Usage::default(), &cand, &c1, now);
         assert_eq!(d.store, Some("new".to_string()));
-        assert!(d.evict.contains(&"ancient".to_string()));
-        assert!(d.evict.contains(&"recent_old".to_string()));
+        assert_eq!(
+            d.evict,
+            vec!["ancient".to_string(), "recent_old".to_string()]
+        );
     }
 
     #[test]

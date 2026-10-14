@@ -886,9 +886,23 @@ mod tests {
                 event: None,
             },
         );
-        state.remove_versions(&key, &["cid1".to_string()]);
+        let cids = |removed: Vec<VersionRecord>| -> Vec<String> {
+            removed.into_iter().map(|v| v.cid).collect()
+        };
+        assert_eq!(
+            cids(state.remove_versions(&key, &["cid1".to_string(), "missing".to_string()])),
+            vec!["cid1".to_string()]
+        );
         assert_eq!(state.site_bytes(&key), 20);
-        state.remove_versions(&key, &["cid2".to_string()]);
+        assert_eq!(
+            cids(state.remove_versions(&key, &["cid2".to_string()])),
+            vec!["cid2".to_string()]
+        );
         assert!(!state.sites.contains_key(&key));
+        assert!(
+            state
+                .remove_versions(&key, &["cid2".to_string()])
+                .is_empty()
+        );
     }
 }

@@ -365,6 +365,15 @@ mod tests {
     #[tokio::test]
     async fn table_driven_assets_have_expected_content_types() {
         for asset in super::STATIC_ASSETS {
+            let expected = match asset.path.rsplit_once('.').map(|(_, ext)| ext) {
+                None if asset.path == "/" => "text/html; charset=utf-8",
+                Some("js") => "text/javascript; charset=utf-8",
+                Some("css") => "text/css; charset=utf-8",
+                Some("svg") => "image/svg+xml",
+                Some("png") => "image/png",
+                Some("woff2") => "font/woff2",
+                _ => panic!("no expected content type for {}", asset.path),
+            };
             let app = router(test_state());
             let req = Request::builder()
                 .uri(asset.path)
@@ -375,7 +384,7 @@ mod tests {
             assert_eq!(resp.status(), StatusCode::OK, "{}", asset.path);
             assert_eq!(
                 resp.headers().get("content-type").unwrap(),
-                asset.content_type,
+                expected,
                 "{}",
                 asset.path
             );

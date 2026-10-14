@@ -976,9 +976,11 @@ fn gateway_upstream_defaults_to_managed_kubo_gateway_listen() {
 fn gateway_upstream_defaults_to_localhost_when_unmanaged() {
     let cfg = build_config(minimal_file(), None, |k| match k {
         "SWING_KUBO_MANAGED" => Some("false".into()),
+        "SWING_KUBO_GATEWAY_LISTEN" => Some("127.0.0.1:9999".into()),
         _ => None,
     })
     .unwrap();
+    assert!(!cfg.kubo.managed);
     assert_eq!(cfg.gateway.upstream, "http://127.0.0.1:8080");
 }
 

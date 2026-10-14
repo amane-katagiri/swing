@@ -705,6 +705,12 @@ mod tests {
     use super::*;
 
     #[test]
+    fn cli_definition_is_consistent() {
+        use clap::CommandFactory;
+        Cli::command().debug_assert();
+    }
+
+    #[test]
     fn publish_takes_the_check_mode_flags() {
         let cli = Cli::try_parse_from([
             "swing",

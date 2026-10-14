@@ -401,7 +401,10 @@ mod tests {
     #[tokio::test]
     async fn public_only_resolver_refuses_loopback_names() {
         let name: Name = "localhost".parse().unwrap();
-        assert!(PublicOnlyResolver.resolve(name).await.is_err());
+        let Err(err) = PublicOnlyResolver.resolve(name).await else {
+            panic!("localhost resolved to a public address");
+        };
+        assert_eq!(err.to_string(), "localhost has no public address");
     }
 
     #[tokio::test]

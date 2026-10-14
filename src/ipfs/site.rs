@@ -447,10 +447,15 @@ mod tests {
 
         let (_, entries) = walk_root(dir.path()).unwrap();
         let names = entry_names(&entries);
-        assert!(names.contains(&"file:index.html".to_string()));
-        assert!(names.contains(&"dir:css".to_string()));
-        assert!(names.contains(&"file:css/style.css".to_string()));
-        assert!(names.contains(&"dir:empty".to_string()));
+        assert_eq!(
+            names,
+            vec![
+                "dir:css".to_string(),
+                "file:css/style.css".to_string(),
+                "dir:empty".to_string(),
+                "file:index.html".to_string(),
+            ]
+        );
     }
 
     #[cfg(unix)]

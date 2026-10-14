@@ -401,15 +401,21 @@ mod tests {
 
     #[tokio::test]
     async fn check_validates_paths_like_upload() {
-        for listing in [
-            &br#"[{"path":"../x","size":1}]"#[..],
-            br#"[{"path":"/x","size":1}]"#,
-            br#"[{"path":"a//b","size":1}]"#,
-            br#"[{"path":"a","size":1},{"path":"A","size":1}]"#,
-            br#"[{"path":"a","size":1},{"path":"a/b","size":1}]"#,
-            br#"[{"path":"nul.txt","size":1}]"#,
-            br#"[]"#,
-            br#"{"path":"x"}"#,
+        for (listing, cause) in [
+            (&br#"[{"path":"../x","size":1}]"#[..], ". or .. segments"),
+            (br#"[{"path":"/x","size":1}]"#, "must not start with /"),
+            (br#"[{"path":"a//b","size":1}]"#, "empty segments"),
+            (
+                br#"[{"path":"a","size":1},{"path":"A","size":1}]"#,
+                "duplicate file path",
+            ),
+            (
+                br#"[{"path":"a","size":1},{"path":"a/b","size":1}]"#,
+                "conflicts with another uploaded path",
+            ),
+            (br#"[{"path":"nul.txt","size":1}]"#, "reserved device name"),
+            (br#"[]"#, "at least one entry"),
+            (br#"{"path":"x"}"#, "must be a JSON array"),
         ] {
             let (status, body) =
                 check_with(&[("site", None, b"example.com"), ("files", None, listing)]).await;
@@ -419,15 +425,28 @@ mod tests {
                 "{}: {body}",
                 String::from_utf8_lossy(listing)
             );
+            assert!(body["error"].as_str().unwrap().contains(cause), "{body}");
         }
     }
 
     #[tokio::test]
     async fn check_rejects_contents_that_are_not_listed_or_not_read() {
-        for (listing, name) in [
-            (&br#"[{"path":"a.html","size":1}]"#[..], "b.html"),
-            (br#"[{"path":"a.png","size":1}]"#, "a.png"),
-            (br#"[{"path":"big.html","size":9000000}]"#, "big.html"),
+        for (listing, name, cause) in [
+            (
+                &br#"[{"path":"a.html","size":1}]"#[..],
+                "b.html",
+                "not in files",
+            ),
+            (
+                br#"[{"path":"a.png","size":1}]"#,
+                "a.png",
+                "not read by the link check",
+            ),
+            (
+                br#"[{"path":"big.html","size":9000000}]"#,
+                "big.html",
+                "not read by the link check",
+            ),
         ] {
             let (status, body) = check_with(&[
                 ("site", None, b"example.com"),
@@ -436,6 +455,7 @@ mod tests {
             ])
             .await;
             assert_eq!(status, StatusCode::BAD_REQUEST, "{name}: {body}");
+            assert!(body["error"].as_str().unwrap().contains(cause), "{body}");
         }
     }
 
@@ -450,27 +470,40 @@ mod tests {
         )
         .await;
         assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE);
-        for parts in [
-            vec![("files", None, &br#"[{"path":"a","size":1}]"#[..])],
-            vec![("site", None, &b"example.com"[..])],
-            vec![
-                ("site", None, b"example.com"),
-                ("nip05", None, b"strict"),
-                ("files", None, br#"[{"path":"a","size":1}]"#),
-            ],
-            vec![
-                ("site", None, b"example.com"),
-                ("check_links", None, b"strict"),
-                ("files", None, br#"[{"path":"a","size":1}]"#),
-            ],
-            vec![
-                ("site", None, b"example.com"),
-                ("url", None, b"ftp://example.com/"),
-                ("files", None, br#"[{"path":"a","size":1}]"#),
-            ],
+        for (parts, cause) in [
+            (
+                vec![("files", None, &br#"[{"path":"a","size":1}]"#[..])],
+                "missing site",
+            ),
+            (vec![("site", None, &b"example.com"[..])], "missing files"),
+            (
+                vec![
+                    ("site", None, b"example.com"),
+                    ("nip05", None, b"strict"),
+                    ("files", None, br#"[{"path":"a","size":1}]"#),
+                ],
+                "invalid nip05",
+            ),
+            (
+                vec![
+                    ("site", None, b"example.com"),
+                    ("check_links", None, b"strict"),
+                    ("files", None, br#"[{"path":"a","size":1}]"#),
+                ],
+                "invalid check_links",
+            ),
+            (
+                vec![
+                    ("site", None, b"example.com"),
+                    ("url", None, b"ftp://example.com/"),
+                    ("files", None, br#"[{"path":"a","size":1}]"#),
+                ],
+                "invalid url",
+            ),
         ] {
             let (status, body) = check_with(&parts).await;
             assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+            assert!(body["error"].as_str().unwrap().contains(cause), "{body}");
         }
     }
 }

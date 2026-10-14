@@ -520,7 +520,7 @@ mod tests {
     async fn with_taken_ports(
         shift_ports: bool,
         env: fn(&str) -> Option<String>,
-    ) -> (Config, std::net::SocketAddr, std::net::SocketAddr) {
+    ) -> (Config, std::net::SocketAddr, std::net::SocketAddr, bool) {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("swing.toml");
         let dashboard = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -541,19 +541,21 @@ mod tests {
         config.config_exists = true;
         let result = bind_dashboard(config, shift_ports).await;
         let saved = Config::load(Some(&path)).unwrap();
-        match result {
+        let bound = match result {
             Ok((listener, config)) => {
                 assert_eq!(listener.local_addr().unwrap(), config.dashboard.listen);
                 assert_eq!(saved.dashboard.listen, config.dashboard.listen);
+                true
             }
-            Err(_) => assert!(!shift_ports || env("SWING_DASHBOARD_LISTEN").is_some()),
-        }
-        (saved, d, g)
+            Err(_) => false,
+        };
+        (saved, d, g, bound)
     }
 
     #[tokio::test]
     async fn setup_mode_moves_taken_ports_and_writes_them() {
-        let (saved, d, g) = with_taken_ports(true, |_| None).await;
+        let (saved, d, g, bound) = with_taken_ports(true, |_| None).await;
+        assert!(bound);
         assert_ne!(saved.dashboard.listen, d);
         assert_ne!(saved.kubo.gateway_listen, g);
         assert_eq!(saved.kubo.gateway_listen.ip(), g.ip());
@@ -568,17 +570,19 @@ mod tests {
 
     #[tokio::test]
     async fn without_port_shift_a_taken_dashboard_port_fails_and_nothing_is_written() {
-        let (saved, d, g) = with_taken_ports(false, |_| None).await;
+        let (saved, d, g, bound) = with_taken_ports(false, |_| None).await;
+        assert!(!bound);
         assert_eq!(saved.dashboard.listen, d);
         assert_eq!(saved.kubo.gateway_listen, g);
     }
 
     #[tokio::test]
     async fn env_sourced_ports_are_never_moved() {
-        let (saved, _, g) = with_taken_ports(true, |k| {
+        let (saved, _, g, bound) = with_taken_ports(true, |k| {
             (k == "SWING_KUBO_GATEWAY_LISTEN").then(|| "127.0.0.1:1".to_string())
         })
         .await;
+        assert!(bound);
         assert_eq!(saved.kubo.gateway_listen, g);
     }
 

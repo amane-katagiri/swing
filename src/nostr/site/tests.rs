@@ -129,8 +129,9 @@ fn rejects_a_site_event_whose_cid_codec_is_not_dag_pb() {
 #[test]
 fn rejects_wrong_kind() {
     let k = keys();
-    let ev = make_site_event(&k, 1, "example.com", "bafyxyz", 1000);
-    assert!(parse_site_event(&ev, 35980).is_err());
+    let ev = make_site_event(&k, 1, "example.com", CID_A, 1000);
+    let err = parse_site_event(&ev, 35980).unwrap_err().to_string();
+    assert!(err.contains("unexpected kind"), "{err}");
 }
 
 #[test]
@@ -158,10 +159,11 @@ fn rejects_invalid_cid_value() {
 fn rejects_missing_d_tag() {
     let k = keys();
     let ev = EventBuilder::new(Kind::Custom(35980), "")
-        .tag(Tag::custom("cid", ["bafyxyz".to_string()]))
+        .tag(Tag::custom("cid", [CID_A.to_string()]))
         .finalize(&k)
         .unwrap();
-    assert!(parse_site_event(&ev, 35980).is_err());
+    let err = parse_site_event(&ev, 35980).unwrap_err().to_string();
+    assert!(err.contains("missing d tag"), "{err}");
 }
 
 #[test]
@@ -169,10 +171,11 @@ fn rejects_empty_d_tag() {
     let k = keys();
     let ev = EventBuilder::new(Kind::Custom(35980), "")
         .tag(Tag::custom("d", [String::new()]))
-        .tag(Tag::custom("cid", ["bafyxyz".to_string()]))
+        .tag(Tag::custom("cid", [CID_A.to_string()]))
         .finalize(&k)
         .unwrap();
-    assert!(parse_site_event(&ev, 35980).is_err());
+    let err = parse_site_event(&ev, 35980).unwrap_err().to_string();
+    assert!(err.contains("empty d tag"), "{err}");
 }
 
 #[test]
@@ -181,10 +184,11 @@ fn rejects_d_tag_too_long() {
     let long_d = "a".repeat(254);
     let ev = EventBuilder::new(Kind::Custom(35980), "")
         .tag(Tag::custom("d", [long_d]))
-        .tag(Tag::custom("cid", ["bafyxyz".to_string()]))
+        .tag(Tag::custom("cid", [CID_A.to_string()]))
         .finalize(&k)
         .unwrap();
-    assert!(parse_site_event(&ev, 35980).is_err());
+    let err = parse_site_event(&ev, 35980).unwrap_err().to_string();
+    assert!(err.contains("d tag too long"), "{err}");
 }
 
 #[test]
@@ -192,10 +196,11 @@ fn rejects_d_tag_with_control_characters() {
     let k = keys();
     let ev = EventBuilder::new(Kind::Custom(35980), "")
         .tag(Tag::custom("d", ["example.com\ncom".to_string()]))
-        .tag(Tag::custom("cid", ["bafyxyz".to_string()]))
+        .tag(Tag::custom("cid", [CID_A.to_string()]))
         .finalize(&k)
         .unwrap();
-    assert!(parse_site_event(&ev, 35980).is_err());
+    let err = parse_site_event(&ev, 35980).unwrap_err().to_string();
+    assert!(err.contains("control or invisible"), "{err}");
 }
 
 #[test]
