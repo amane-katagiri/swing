@@ -252,39 +252,43 @@ impl Nip05Verify for HttpNip05Verifier {
                 return VerificationResult::Error(e.to_string(), category);
             }
         };
-        if !resp.status().is_success() {
+        read_response(resp, pubkey_hex).await
+    }
+}
+
+async fn read_response(resp: reqwest::Response, pubkey_hex: &str) -> VerificationResult {
+    if !resp.status().is_success() {
+        return VerificationResult::Error(
+            format!("HTTP status {}", resp.status()),
+            ErrorCategory::InvalidResponse,
+        );
+    }
+
+    let mut body = Vec::new();
+    let mut stream = resp.bytes_stream();
+    while let Some(chunk) = stream.next().await {
+        let chunk = match chunk {
+            Ok(c) => c,
+            Err(e) => {
+                let category = classify_reqwest_error(&e);
+                return VerificationResult::Error(e.to_string(), category);
+            }
+        };
+        if body.len() + chunk.len() > MAX_BODY_BYTES {
             return VerificationResult::Error(
-                format!("HTTP status {}", resp.status()),
+                "response body exceeds the size cap".to_string(),
                 ErrorCategory::InvalidResponse,
             );
         }
+        body.extend_from_slice(&chunk);
+    }
 
-        let mut body = Vec::new();
-        let mut stream = resp.bytes_stream();
-        while let Some(chunk) = stream.next().await {
-            let chunk = match chunk {
-                Ok(c) => c,
-                Err(e) => {
-                    let category = classify_reqwest_error(&e);
-                    return VerificationResult::Error(e.to_string(), category);
-                }
-            };
-            if body.len() + chunk.len() > MAX_BODY_BYTES {
-                return VerificationResult::Error(
-                    "response body exceeds the size cap".to_string(),
-                    ErrorCategory::InvalidResponse,
-                );
-            }
-            body.extend_from_slice(&chunk);
-        }
-
-        match String::from_utf8(body) {
-            Ok(text) => evaluate_body(&text, pubkey_hex),
-            Err(_) => VerificationResult::Error(
-                "response body is not valid UTF-8".to_string(),
-                ErrorCategory::InvalidResponse,
-            ),
-        }
+    match String::from_utf8(body) {
+        Ok(text) => evaluate_body(&text, pubkey_hex),
+        Err(_) => VerificationResult::Error(
+            "response body is not valid UTF-8".to_string(),
+            ErrorCategory::InvalidResponse,
+        ),
     }
 }
 
@@ -515,5 +519,91 @@ mod tests {
             classify_from_flags(false, false),
             ErrorCategory::InvalidResponse
         );
+    }
+
+    #[tokio::test]
+    async fn a_d_that_is_not_a_hostname_is_not_looked_up() {
+        assert_eq!(
+            HttpNip05Verifier::new().verify("my-blog", "abcdef").await,
+            VerificationResult::NotApplicable
+        );
+    }
+
+    async fn served(
+        status: u16,
+        headers: &'static [(&'static str, &'static str)],
+        body: Vec<u8>,
+        pubkey_hex: &str,
+    ) -> VerificationResult {
+        let router = axum::Router::new().route(
+            "/.well-known/nostr.json",
+            axum::routing::get(move || async move {
+                let mut resp = axum::response::Response::new(axum::body::Body::from(body));
+                *resp.status_mut() = axum::http::StatusCode::from_u16(status).unwrap();
+                for (name, value) in headers {
+                    resp.headers_mut().insert(*name, value.parse().unwrap());
+                }
+                resp
+            }),
+        );
+        let addr = crate::test_support::serve_router(router).await;
+        let resp = HttpNip05Verifier::new()
+            .http
+            .get(format!("http://{addr}/.well-known/nostr.json?name=_"))
+            .send()
+            .await
+            .unwrap();
+        read_response(resp, pubkey_hex).await
+    }
+
+    fn invalid(result: VerificationResult) -> String {
+        match result {
+            VerificationResult::Error(message, ErrorCategory::InvalidResponse) => message,
+            other => panic!("expected an invalid response, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn a_served_nostr_json_is_read_and_evaluated() {
+        let body = br#"{"names":{"_":"abcdef"}}"#.to_vec();
+        assert_eq!(
+            served(200, &[], body.clone(), "abcdef").await,
+            VerificationResult::Verified
+        );
+        assert_eq!(
+            served(200, &[], body, "012345").await,
+            VerificationResult::Mismatch
+        );
+    }
+
+    #[tokio::test]
+    async fn non_success_and_redirects_are_not_followed() {
+        let body = br#"{"names":{"_":"abcdef"}}"#.to_vec();
+        assert!(invalid(served(404, &[], body.clone(), "abcdef").await).contains("404"));
+        let redirected = served(
+            302,
+            &[("location", "https://example.com/.well-known/nostr.json")],
+            body,
+            "abcdef",
+        )
+        .await;
+        assert!(invalid(redirected).contains("302"));
+    }
+
+    #[tokio::test]
+    async fn bodies_over_the_cap_or_not_utf8_are_refused() {
+        let mut big = br#"{"names":{"_":"abcdef"}, "pad":""#.to_vec();
+        big.resize(MAX_BODY_BYTES + 1, b' ');
+        assert!(invalid(served(200, &[], big, "abcdef").await).contains("size cap"));
+
+        let mut exact = br#"{"names":{"_":"abcdef"}}"#.to_vec();
+        exact.resize(MAX_BODY_BYTES, b' ');
+        assert_eq!(
+            served(200, &[], exact, "abcdef").await,
+            VerificationResult::Verified
+        );
+
+        let latin1 = b"{\"names\":{\"_\":\"abcdef\"},\"x\":\"\xff\"}".to_vec();
+        assert!(invalid(served(200, &[], latin1, "abcdef").await).contains("UTF-8"));
     }
 }
