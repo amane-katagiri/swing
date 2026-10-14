@@ -10,6 +10,12 @@ pub(crate) fn keys() -> Keys {
     Keys::generate()
 }
 
+pub(crate) fn sorted_pubkeys(n: usize) -> Vec<PublicKey> {
+    let mut pks: Vec<PublicKey> = (0..n).map(|_| Keys::generate().public_key()).collect();
+    pks.sort();
+    pks
+}
+
 pub(crate) fn unused_dir() -> std::path::PathBuf {
     static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
     let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -902,13 +908,26 @@ pub(crate) async fn serve_raw(response: impl Into<String>) -> RawServer {
     RawServer { addr, requests }
 }
 
-pub(crate) fn unanswered_signer(relay: &str, user: PublicKey) -> crate::signer::Signer {
-    let file = crate::signer::RemoteSignerFile {
-        app_secret_key: Keys::generate().secret_key().to_secret_hex().into(),
-        signer_pubkey: Keys::generate().public_key().to_hex(),
+pub(crate) fn random_pubkey() -> PublicKey {
+    Keys::generate().public_key()
+}
+
+pub(crate) fn remote_signer_file(
+    app: &Keys,
+    signer: PublicKey,
+    relay: &str,
+    user: PublicKey,
+) -> crate::signer::RemoteSignerFile {
+    crate::signer::RemoteSignerFile {
+        app_secret_key: app.secret_key().to_secret_hex().into(),
+        signer_pubkey: signer.to_hex(),
         relays: vec![relay.to_string()],
         user_pubkey: user.to_hex(),
-    };
+    }
+}
+
+pub(crate) fn unanswered_signer(relay: &str, user: PublicKey) -> crate::signer::Signer {
+    let file = remote_signer_file(&Keys::generate(), random_pubkey(), relay, user);
     let remote =
         crate::signer::RemoteSigner::from_file(&file, std::time::Duration::from_millis(500))
             .unwrap();

@@ -331,6 +331,7 @@ mod tests {
     use std::sync::Mutex;
 
     use super::*;
+    use crate::test_support::sorted_pubkeys;
 
     struct FakeSource {
         sets: HashMap<PublicKey, Vec<PublicKey>>,
@@ -372,15 +373,9 @@ mod tests {
         }
     }
 
-    fn keys(n: usize) -> Vec<PublicKey> {
-        let mut pks: Vec<PublicKey> = (0..n).map(|_| Keys::generate().public_key()).collect();
-        pks.sort();
-        pks
-    }
-
     #[tokio::test]
     async fn crawl_expands_only_along_outbound_edges_past_the_roots() {
-        let k = keys(5);
+        let k = sorted_pubkeys(5);
         let (me, bob, carol, dave, erin) = (k[0], k[1], k[2], k[3], k[4]);
         let source = FakeSource::new(&[
             (me, &[bob]),
@@ -404,7 +399,7 @@ mod tests {
 
     #[tokio::test]
     async fn crawl_at_depth_zero_still_queries_referencing_for_the_roots() {
-        let k = keys(2);
+        let k = sorted_pubkeys(2);
         let source = FakeSource::new(&[(k[0], &[k[1]])]);
         let result = crawl(&source, &[k[0]], 0).await.unwrap();
         assert_eq!(result.depths, BTreeMap::from([(k[0], 0)]));
@@ -452,7 +447,7 @@ mod tests {
 
     #[test]
     fn build_graph_drops_self_links_outside_targets_and_disconnected_accounts() {
-        let k = keys(5);
+        let k = sorted_pubkeys(5);
         let (me, bob, carol, stale, outside) = (k[0], k[1], k[2], k[3], k[4]);
         let crawl = Crawl {
             depths: BTreeMap::from([(me, 0), (bob, 1), (carol, 1), (stale, 1)]),
@@ -476,7 +471,7 @@ mod tests {
 
     #[test]
     fn build_graph_keeps_roots_without_follow_sets() {
-        let k = keys(2);
+        let k = sorted_pubkeys(2);
         let crawl = Crawl {
             depths: BTreeMap::from([(k[0], 0), (k[1], 0)]),
             follows: HashMap::new(),

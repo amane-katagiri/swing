@@ -426,6 +426,7 @@ fn check_signed(event: &Event, user: PublicKey, expected_id: EventId) -> Result<
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::{random_pubkey, remote_signer_file};
 
     #[test]
     fn answer_filter_pins_the_author_only_once_the_signer_is_known() {
@@ -443,12 +444,12 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         assert!(RemoteSignerFile::load(dir.path()).unwrap().is_none());
         let app = Keys::generate();
-        let file = RemoteSignerFile {
-            app_secret_key: app.secret_key().to_secret_hex().into(),
-            signer_pubkey: Keys::generate().public_key().to_hex(),
-            relays: vec!["wss://relay.example".to_string()],
-            user_pubkey: Keys::generate().public_key().to_hex(),
-        };
+        let file = remote_signer_file(
+            &app,
+            random_pubkey(),
+            "wss://relay.example",
+            random_pubkey(),
+        );
         file.save(dir.path()).unwrap();
         assert_eq!(
             RemoteSignerFile::load(dir.path()).unwrap(),
@@ -487,12 +488,12 @@ mod tests {
     }
 
     fn saved_file() -> RemoteSignerFile {
-        RemoteSignerFile {
-            app_secret_key: Keys::generate().secret_key().to_secret_hex().into(),
-            signer_pubkey: Keys::generate().public_key().to_hex(),
-            relays: vec!["ws://127.0.0.1:1".to_string()],
-            user_pubkey: Keys::generate().public_key().to_hex(),
-        }
+        remote_signer_file(
+            &Keys::generate(),
+            random_pubkey(),
+            "ws://127.0.0.1:1",
+            random_pubkey(),
+        )
     }
 
     #[test]
@@ -585,12 +586,12 @@ mod tests {
             .await
         };
 
-        let file = RemoteSignerFile {
-            app_secret_key: app.secret_key().to_secret_hex().into(),
-            signer_pubkey: signer_keys.public_key().to_hex(),
-            relays: vec![url.to_string()],
-            user_pubkey: user.public_key().to_hex(),
-        };
+        let file = remote_signer_file(
+            &app,
+            signer_keys.public_key(),
+            url.as_str(),
+            user.public_key(),
+        );
         let remote = RemoteSigner::from_file(&file, Duration::from_secs(5)).unwrap();
         let event = remote
             .sign(EventBuilder::new(Kind::Custom(35981), ""))
@@ -698,12 +699,12 @@ mod tests {
             })
             .await
         };
-        let file = RemoteSignerFile {
-            app_secret_key: Keys::generate().secret_key().to_secret_hex().into(),
-            signer_pubkey: signer_keys.public_key().to_hex(),
-            relays: vec![url.to_string()],
-            user_pubkey: Keys::generate().public_key().to_hex(),
-        };
+        let file = remote_signer_file(
+            &Keys::generate(),
+            signer_keys.public_key(),
+            url.as_str(),
+            random_pubkey(),
+        );
         let remote = RemoteSigner::from_file(&file, Duration::from_secs(5)).unwrap();
         let err = remote
             .sign(EventBuilder::new(Kind::Custom(35981), ""))

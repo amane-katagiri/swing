@@ -188,16 +188,11 @@ mod tests {
 
     use super::*;
     use crate::nostr::SiteEvent;
+    use crate::test_support::{CID_A, site_event_fixture, sorted_pubkeys};
     use crate::webring::{site_labels, site_name_lists};
 
-    fn keys(n: usize) -> Vec<PublicKey> {
-        let mut pks: Vec<PublicKey> = (0..n).map(|_| Keys::generate().public_key()).collect();
-        pks.sort();
-        pks
-    }
-
     fn site(pk: PublicKey, d: &str) -> SiteEvent {
-        crate::test_support::site_event_fixture(pk, d, crate::test_support::CID_A, 1)
+        site_event_fixture(pk, d, CID_A, 1)
     }
 
     fn site_names(
@@ -208,7 +203,7 @@ mod tests {
     }
 
     fn sample() -> (Vec<PublicKey>, Graph, HashMap<PublicKey, String>) {
-        let k = keys(4);
+        let k = sorted_pubkeys(4);
         let (me, bob, carol, dave) = (k[0], k[1], k[2], k[3]);
         let graph = Graph {
             nodes: BTreeMap::from([(me, 0), (bob, 1), (carol, 1), (dave, 2)]),
@@ -275,7 +270,7 @@ mod tests {
 
     #[test]
     fn site_labels_show_the_first_name_and_count_the_rest() {
-        let k = keys(3);
+        let k = sorted_pubkeys(3);
         let nodes = BTreeMap::from([(k[0], 0), (k[1], 1), (k[2], 1)]);
         let labels = site_names(
             &nodes,
@@ -293,7 +288,7 @@ mod tests {
 
     #[test]
     fn text_labels_disambiguate_duplicate_site_names() {
-        let k = keys(2);
+        let k = sorted_pubkeys(2);
         let nodes = BTreeMap::from([(k[0], 0), (k[1], 1)]);
         let names = site_names(
             &nodes,
