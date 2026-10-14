@@ -93,7 +93,6 @@ mod tests {
     use axum::routing::{any, post};
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::{Arc, Mutex};
-    use tokio::net::TcpListener;
 
     const TOKEN: &str = "tok";
     const FAST: Duration = Duration::from_millis(20);
@@ -213,9 +212,7 @@ mod tests {
 
     #[tokio::test]
     async fn stop_against_nothing_is_not_running() {
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let addr = listener.local_addr().unwrap();
-        drop(listener);
+        let addr = crate::test_support::unused_local_addr();
         let client = ApiClient::new(addr, Some(TOKEN.to_string()));
         // Windows retries a refused connection for about 2s before reporting it.
         wait(&client, false, Duration::from_secs(10), FAST)

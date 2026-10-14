@@ -381,14 +381,12 @@ mod tests {
     #[cfg(unix)]
     #[tokio::test]
     async fn saved_state_and_new_state_dir_are_private() {
-        use std::os::unix::fs::PermissionsExt;
         let dir = tempfile::tempdir().unwrap();
         let state_dir = dir.path().join("state");
         let path = state_dir.join("state.json");
         State::default().save(&path).await.unwrap();
-        let mode = |p: &Path| std::fs::metadata(p).unwrap().permissions().mode() & 0o777;
-        assert_eq!(mode(&state_dir), 0o700);
-        assert_eq!(mode(&path), 0o600);
+        assert_eq!(crate::test_support::mode(&state_dir), 0o700);
+        assert_eq!(crate::test_support::mode(&path), 0o600);
     }
 
     #[tokio::test]

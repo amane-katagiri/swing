@@ -254,6 +254,7 @@ pub async fn serve(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::serve_router;
     use axum::Json;
     use serde_json::{Value, json};
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -282,38 +283,35 @@ mod tests {
         .into_response()
     }
 
-    async fn start_upstream() -> (String, tokio::task::JoinHandle<()>) {
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let addr = listener.local_addr().unwrap();
-        let app = Router::new().fallback(echo_upstream);
-        let handle = tokio::spawn(async move {
-            axum::serve(listener, app.into_make_service())
-                .await
-                .unwrap();
-        });
-        (format!("http://{addr}"), handle)
+    struct Gateway {
+        url: String,
+        token: CancellationToken,
+        handle: tokio::task::JoinHandle<()>,
     }
 
-    async fn start_gateway(
-        hosts: Vec<String>,
-        upstream: String,
-    ) -> (String, CancellationToken, tokio::task::JoinHandle<()>) {
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let addr = listener.local_addr().unwrap();
-        let token = CancellationToken::new();
-        let child = token.clone();
-        let handle = tokio::spawn(async move {
-            serve(listener, hosts, upstream, child).await.unwrap();
-        });
-        tokio::task::yield_now().await;
-        (format!("http://{addr}"), token, handle)
-    }
+    impl Gateway {
+        async fn start(upstream: String) -> Self {
+            let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let url = format!("http://{}", listener.local_addr().unwrap());
+            let token = CancellationToken::new();
+            let child = token.clone();
+            let hosts = vec!["example.com".to_string()];
+            let handle = tokio::spawn(async move {
+                serve(listener, hosts, upstream, child).await.unwrap();
+            });
+            tokio::task::yield_now().await;
+            Self { url, token, handle }
+        }
 
-    fn dead_upstream_url() -> String {
-        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        let addr = listener.local_addr().unwrap();
-        drop(listener);
-        format!("http://{addr}")
+        async fn echo() -> Self {
+            let upstream = serve_router(Router::new().fallback(echo_upstream)).await;
+            Self::start(format!("http://{upstream}")).await
+        }
+
+        async fn stop(self) {
+            self.token.cancel();
+            self.handle.await.unwrap();
+        }
     }
 
     async fn raw_request(gateway: &str, method: &str, path: &str) -> String {
@@ -333,9 +331,8 @@ mod tests {
 
     #[tokio::test]
     async fn methods_other_than_get_and_head_are_not_allowed() {
-        let (upstream, _upstream_handle) = start_upstream().await;
-        let (gateway, token, gateway_handle) =
-            start_gateway(vec!["example.com".to_string()], upstream).await;
+        let gw = Gateway::echo().await;
+        let gateway = &gw.url;
 
         let client = reqwest::Client::new();
         for method in ["POST", "PUT", "DELETE", "PATCH", "OPTIONS", "PROPFIND"] {
@@ -365,15 +362,13 @@ mod tests {
             .unwrap();
         assert_eq!(resp.status(), reqwest::StatusCode::OK);
 
-        token.cancel();
-        gateway_handle.await.unwrap();
+        gw.stop().await;
     }
 
     #[tokio::test]
     async fn content_paths_are_not_found_however_spelled() {
-        let (upstream, _upstream_handle) = start_upstream().await;
-        let (gateway, token, gateway_handle) =
-            start_gateway(vec!["example.com".to_string()], upstream).await;
+        let gw = Gateway::echo().await;
+        let gateway = &gw.url;
 
         for path in [
             "/ipfs",
@@ -394,20 +389,18 @@ mod tests {
             "/\\ipfs\\bafy",
         ] {
             for method in ["GET", "HEAD"] {
-                let text = raw_request(&gateway, method, path).await;
+                let text = raw_request(gateway, method, path).await;
                 assert!(text.starts_with("HTTP/1.1 404"), "{method} {path}: {text}");
             }
         }
 
-        token.cancel();
-        gateway_handle.await.unwrap();
+        gw.stop().await;
     }
 
     #[tokio::test]
     async fn site_paths_are_proxied() {
-        let (upstream, _upstream_handle) = start_upstream().await;
-        let (gateway, token, gateway_handle) =
-            start_gateway(vec!["example.com".to_string()], upstream).await;
+        let gw = Gateway::echo().await;
+        let gateway = &gw.url;
 
         for path in [
             "/",
@@ -419,7 +412,7 @@ mod tests {
             "/?ipfs=/ipfs/bafy",
             "/%41bout.html",
         ] {
-            let text = raw_request(&gateway, "GET", path).await;
+            let text = raw_request(gateway, "GET", path).await;
             assert!(text.starts_with("HTTP/1.1 200"), "{path}: {text}");
             assert!(
                 text.contains(&format!("\"path\":\"{path}\"")),
@@ -427,15 +420,13 @@ mod tests {
             );
         }
 
-        token.cancel();
-        gateway_handle.await.unwrap();
+        gw.stop().await;
     }
 
     #[tokio::test]
     async fn allowed_host_is_proxied_with_forwarded_headers() {
-        let (upstream, _upstream_handle) = start_upstream().await;
-        let (gateway, token, gateway_handle) =
-            start_gateway(vec!["example.com".to_string()], upstream).await;
+        let gw = Gateway::echo().await;
+        let gateway = &gw.url;
 
         let client = reqwest::Client::new();
         let resp = client
@@ -461,15 +452,13 @@ mod tests {
         assert_eq!(body["path"], "/some/path?q=1");
         assert_eq!(body["body"], "hello body");
 
-        token.cancel();
-        gateway_handle.await.unwrap();
+        gw.stop().await;
     }
 
     #[tokio::test]
     async fn disallowed_host_is_not_found() {
-        let (upstream, _upstream_handle) = start_upstream().await;
-        let (gateway, token, gateway_handle) =
-            start_gateway(vec!["example.com".to_string()], upstream).await;
+        let gw = Gateway::echo().await;
+        let gateway = &gw.url;
 
         let client = reqwest::Client::new();
         let resp = client
@@ -481,15 +470,13 @@ mod tests {
         assert_eq!(resp.status(), reqwest::StatusCode::NOT_FOUND);
         assert_eq!(resp.bytes().await.unwrap().len(), 0);
 
-        token.cancel();
-        gateway_handle.await.unwrap();
+        gw.stop().await;
     }
 
     #[tokio::test]
     async fn missing_host_is_not_found() {
-        let (upstream, _upstream_handle) = start_upstream().await;
-        let (gateway, token, gateway_handle) =
-            start_gateway(vec!["example.com".to_string()], upstream).await;
+        let gw = Gateway::echo().await;
+        let gateway = &gw.url;
 
         let mut raw = tokio::net::TcpStream::connect(gateway.trim_start_matches("http://"))
             .await
@@ -502,15 +489,13 @@ mod tests {
         let text = String::from_utf8_lossy(&buf);
         assert!(text.starts_with("HTTP/1.1 404"), "response: {text}");
 
-        token.cancel();
-        gateway_handle.await.unwrap();
+        gw.stop().await;
     }
 
     #[tokio::test]
     async fn host_matching_is_case_and_port_insensitive() {
-        let (upstream, _upstream_handle) = start_upstream().await;
-        let (gateway, token, gateway_handle) =
-            start_gateway(vec!["example.com".to_string()], upstream).await;
+        let gw = Gateway::echo().await;
+        let gateway = &gw.url;
 
         let client = reqwest::Client::new();
         let resp = client
@@ -521,15 +506,13 @@ mod tests {
             .unwrap();
         assert_eq!(resp.status(), reqwest::StatusCode::OK);
 
-        token.cancel();
-        gateway_handle.await.unwrap();
+        gw.stop().await;
     }
 
     #[tokio::test]
     async fn the_configured_host_is_forwarded_instead_of_the_client_header() {
-        let (upstream, _upstream_handle) = start_upstream().await;
-        let (gateway, token, gateway_handle) =
-            start_gateway(vec!["example.com".to_string()], upstream).await;
+        let gw = Gateway::echo().await;
+        let gateway = &gw.url;
 
         let client = reqwest::Client::new();
         let resp = client
@@ -553,8 +536,7 @@ mod tests {
             assert_eq!(resp.status(), reqwest::StatusCode::NOT_FOUND, "{junk}");
         }
 
-        token.cancel();
-        gateway_handle.await.unwrap();
+        gw.stop().await;
     }
 
     #[tokio::test]
@@ -597,8 +579,9 @@ mod tests {
 
     #[tokio::test]
     async fn upstream_connection_failure_is_bad_gateway() {
-        let (gateway, token, gateway_handle) =
-            start_gateway(vec!["example.com".to_string()], dead_upstream_url()).await;
+        let dead = crate::test_support::unused_local_addr();
+        let gw = Gateway::start(format!("http://{dead}")).await;
+        let gateway = &gw.url;
 
         let client = reqwest::Client::new();
         let resp = client
@@ -610,7 +593,6 @@ mod tests {
         assert_eq!(resp.status(), reqwest::StatusCode::BAD_GATEWAY);
         assert_eq!(resp.bytes().await.unwrap().len(), 0);
 
-        token.cancel();
-        gateway_handle.await.unwrap();
+        gw.stop().await;
     }
 }

@@ -214,7 +214,6 @@ mod tests {
     use axum::Json;
     use axum::routing::get;
     use serde::{Deserialize, Serialize};
-    use tokio::net::TcpListener;
 
     #[test]
     fn http_error_display_strips_terminal_controls() {
@@ -254,9 +253,7 @@ mod tests {
 
     #[tokio::test]
     async fn get_against_a_stopped_server_is_unreachable() {
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let addr = listener.local_addr().unwrap();
-        drop(listener);
+        let addr = crate::test_support::unused_local_addr();
 
         let client = ApiClient::new(addr, None);
         let err = client.get::<Pong>("/ping").await.unwrap_err();
@@ -459,12 +456,8 @@ mod tests {
 
     #[tokio::test]
     async fn unspecified_listen_address_connects_over_loopback() {
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let port = listener.local_addr().unwrap().port();
         let router = axum::Router::new().route("/ping", get(ready));
-        tokio::spawn(async move {
-            axum::serve(listener, router).await.unwrap();
-        });
+        let port = serve_router(router).await.port();
 
         let unspecified = SocketAddr::from(([0, 0, 0, 0], port));
         let client = ApiClient::new(unspecified, None);

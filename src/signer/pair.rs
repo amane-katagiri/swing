@@ -403,15 +403,39 @@ mod tests {
         }
     }
 
-    async fn wait_until_paired(pairing: &Pairing) -> PairedSigner {
-        let deadline = tokio::time::Instant::now() + Duration::from_secs(20);
+    async fn wait_past(
+        pairing: &Pairing,
+        within: Duration,
+        pending: impl Fn(&PairingState) -> bool,
+    ) -> PairingState {
+        let deadline = tokio::time::Instant::now() + within;
         loop {
-            match pairing.state() {
-                PairingState::Ready(paired) => return *paired,
-                PairingState::Failed(e) => panic!("pairing failed: {e}"),
-                _ if tokio::time::Instant::now() > deadline => panic!("pairing timed out"),
-                _ => tokio::time::sleep(Duration::from_millis(100)).await,
+            let state = pairing.state();
+            if !pending(&state) {
+                return state;
             }
+            assert!(
+                tokio::time::Instant::now() < deadline,
+                "pairing timed out: {state:?}"
+            );
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+    }
+
+    async fn wait_until_paired(pairing: &Pairing) -> PairedSigner {
+        let pending =
+            |s: &PairingState| matches!(s, PairingState::Waiting | PairingState::Checking { .. });
+        match wait_past(pairing, Duration::from_secs(20), pending).await {
+            PairingState::Ready(paired) => *paired,
+            other => panic!("pairing failed: {other:?}"),
+        }
+    }
+
+    async fn wait_for_failure(pairing: &Pairing) -> String {
+        let pending = |s: &PairingState| matches!(s, PairingState::Waiting);
+        match wait_past(pairing, Duration::from_secs(10), pending).await {
+            PairingState::Failed(e) => e,
+            other => panic!("unexpected state: {other:?}"),
         }
     }
 
@@ -554,20 +578,9 @@ mod tests {
             ..request_via(RelayUrl::parse("ws://127.0.0.1:1").unwrap())
         })
         .unwrap();
-        let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
-        loop {
-            match pairing.state() {
-                PairingState::Failed(e) => {
-                    assert!(e.contains("could not connect to the relay"), "{e}");
-                    assert!(e.contains("ws://127.0.0.1:1"), "{e}");
-                    return;
-                }
-                PairingState::Waiting if tokio::time::Instant::now() < deadline => {
-                    tokio::time::sleep(Duration::from_millis(100)).await;
-                }
-                other => panic!("unexpected state: {other:?}"),
-            }
-        }
+        let e = wait_for_failure(&pairing).await;
+        assert!(e.contains("could not connect to the relay"), "{e}");
+        assert!(e.contains("ws://127.0.0.1:1"), "{e}");
     }
 
     async fn serve_fake_signer<F>(
@@ -677,19 +690,10 @@ mod tests {
             )
             .await
         };
-        let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
-        loop {
-            match pairing.state() {
-                PairingState::Failed(e) => {
-                    assert_eq!(e, "the signer app refused the request: user rejected");
-                    break;
-                }
-                PairingState::Waiting if tokio::time::Instant::now() < deadline => {
-                    tokio::time::sleep(Duration::from_millis(100)).await;
-                }
-                other => panic!("unexpected state: {other:?}"),
-            }
-        }
+        assert_eq!(
+            wait_for_failure(&pairing).await,
+            "the signer app refused the request: user rejected"
+        );
         answering.abort();
         client.shutdown().await;
     }

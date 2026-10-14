@@ -532,7 +532,6 @@ mod tests {
     #[cfg(unix)]
     #[tokio::test]
     async fn create_private_dir_all_makes_new_dirs_0700() {
-        use std::os::unix::fs::PermissionsExt;
         let dir = tempfile::tempdir().unwrap();
         let nested = dir
             .path()
@@ -545,20 +544,17 @@ mod tests {
             dir.path().join(crate::publish::DASHBOARD_UPLOAD_DIR),
             nested,
         ] {
-            let mode = std::fs::metadata(&p).unwrap().permissions().mode();
-            assert_eq!(mode & 0o777, 0o700, "{}", p.display());
+            assert_eq!(crate::test_support::mode(&p), 0o700, "{}", p.display());
         }
     }
 
     #[cfg(unix)]
     #[tokio::test]
     async fn create_private_file_makes_new_files_0600() {
-        use std::os::unix::fs::PermissionsExt;
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("file.txt");
         create_private_file(&path).await.unwrap();
-        let mode = std::fs::metadata(&path).unwrap().permissions().mode();
-        assert_eq!(mode & 0o777, 0o600);
+        assert_eq!(crate::test_support::mode(&path), 0o600);
     }
 
     use super::super::router;

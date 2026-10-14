@@ -158,11 +158,9 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn acquire_creates_state_dir_as_0700() {
-        use std::os::unix::fs::PermissionsExt;
         let dir = tempfile::tempdir().unwrap();
         let state_dir = dir.path().join("nested").join("state");
         let _lock = acquire(&state_dir).unwrap();
-        let mode = std::fs::metadata(&state_dir).unwrap().permissions().mode();
-        assert_eq!(mode & 0o777, 0o700);
+        assert_eq!(crate::test_support::mode(&state_dir), 0o700);
     }
 }

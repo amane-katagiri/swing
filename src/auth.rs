@@ -491,13 +491,11 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn create_private_dir_all_creates_new_dirs_as_0700() {
-        use std::os::unix::fs::PermissionsExt;
         let dir = tempfile::tempdir().unwrap();
         let nested = dir.path().join("a").join("b");
         create_private_dir_all(&nested).unwrap();
         for p in [dir.path().join("a"), nested] {
-            let mode = std::fs::metadata(&p).unwrap().permissions().mode();
-            assert_eq!(mode & 0o777, 0o700, "{}", p.display());
+            assert_eq!(crate::test_support::mode(&p), 0o700, "{}", p.display());
         }
     }
 
@@ -510,7 +508,6 @@ mod tests {
         std::fs::create_dir(&existing).unwrap();
         std::fs::set_permissions(&existing, std::fs::Permissions::from_mode(0o755)).unwrap();
         create_private_dir_all(&existing).unwrap();
-        let mode = std::fs::metadata(&existing).unwrap().permissions().mode();
-        assert_eq!(mode & 0o777, 0o755);
+        assert_eq!(crate::test_support::mode(&existing), 0o755);
     }
 }

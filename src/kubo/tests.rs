@@ -526,13 +526,11 @@ fn find_on_path_skips_relative_entries() {
 #[cfg(unix)]
 #[tokio::test]
 async fn ensure_repo_creates_a_private_repo_dir() {
-    use std::os::unix::fs::PermissionsExt;
     let dir = tempfile::tempdir().unwrap();
     let bin = fake_kubo(dir.path(), "exit 0", "mine");
     let repo = dir.path().join("custom/repo");
     assert!(ensure_repo(&bin, &repo).await.unwrap());
-    let mode = std::fs::metadata(&repo).unwrap().permissions().mode();
-    assert_eq!(mode & 0o777, 0o700);
+    assert_eq!(crate::test_support::mode(&repo), 0o700);
 }
 
 #[test]

@@ -340,25 +340,20 @@ mod tests {
         update(&cfg, &items).unwrap();
         #[cfg(unix)]
         {
-            use std::os::unix::fs::PermissionsExt;
-            let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
-            assert_eq!(mode, 0o600);
+            assert_eq!(crate::test_support::mode(&path), 0o600);
         }
     }
 
     #[cfg(unix)]
     #[test]
     fn missing_parent_directory_is_created_as_0700() {
-        use std::os::unix::fs::PermissionsExt;
-
         let dir = tempfile::tempdir().unwrap();
         let parent = dir.path().join("nested");
         let path = parent.join("swing.toml");
         let cfg = config_at(MINIMAL_TOML, path.clone(), false);
         let items = items(&[("nostr.mirror_set", "newset")]);
         update(&cfg, &items).unwrap();
-        let mode = std::fs::metadata(&parent).unwrap().permissions().mode() & 0o777;
-        assert_eq!(mode, 0o700);
+        assert_eq!(crate::test_support::mode(&parent), 0o700);
     }
 
     #[cfg(unix)]
@@ -373,8 +368,7 @@ mod tests {
         let cfg = Config::load(Some(&path)).unwrap();
         let items = items(&[("nostr.mirror_set", "newset")]);
         update(&cfg, &items).unwrap();
-        let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
-        assert_eq!(mode, 0o600);
+        assert_eq!(crate::test_support::mode(&path), 0o600);
     }
 
     #[test]

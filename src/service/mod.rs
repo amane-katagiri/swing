@@ -354,10 +354,8 @@ mod tests {
         assert!(crate::config::Config::load(Some(&path)).is_ok());
         #[cfg(unix)]
         {
-            use std::os::unix::fs::PermissionsExt;
-            let mode = |p: &Path| std::fs::metadata(p).unwrap().permissions().mode() & 0o777;
-            assert_eq!(mode(&path), 0o600);
-            assert_eq!(mode(path.parent().unwrap()), 0o700);
+            assert_eq!(crate::test_support::mode(&path), 0o600);
+            assert_eq!(crate::test_support::mode(path.parent().unwrap()), 0o700);
         }
         std::fs::write(&path, "[nostr]\n").unwrap();
         create_empty_config(&path).unwrap();
