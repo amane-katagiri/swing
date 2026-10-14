@@ -102,7 +102,7 @@ pub(super) async fn run_publish(
         .map_err(|e| ApiError::BadRequest(format!("invalid note: {e}")))?;
     let title = publish::normalize_title(fields.title.as_deref()).map_err(|_| {
         ApiError::BadRequest(
-            "invalid title: must not exceed 256 bytes and must not contain control characters"
+            "invalid title: must not exceed 256 bytes and must not contain control or invisible formatting characters"
                 .to_string(),
         )
     })?;

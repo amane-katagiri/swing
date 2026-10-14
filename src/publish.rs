@@ -529,7 +529,7 @@ fn check_arguments<'a>(
     }
     let Ok(title) = normalize_title(title) else {
         anyhow::bail!(
-            "invalid --title: must not exceed 256 bytes and must not contain control characters"
+            "invalid --title: must not exceed 256 bytes and must not contain control or invisible formatting characters"
         )
     };
     if let Some(message) = message {

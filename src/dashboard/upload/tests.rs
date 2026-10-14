@@ -184,7 +184,7 @@ async fn upload_rejects_bad_parts_before_writing_or_touching_the_relay() {
             "invalid title",
             vec![site, ("title", None, b"bad\ntitle"), index],
             StatusCode::BAD_REQUEST,
-            "invalid title",
+            "invisible formatting characters",
         ),
         (
             "note without a url",

@@ -8,7 +8,7 @@
 
 - `--site` は必須で、そのまま `d` になる。条件を満たさなければ `invalid --site` でエラー終了する。
 - `--url` は任意。指定すると `url` タグになり、条件を満たさなければ `invalid --url: ...` でエラー終了する。省略すると `url` タグを付けない。
-- `--title` は任意。指定すると `title` タグになる。空白のみなら付けない扱いにし、条件を満たさなければ `invalid --title: ...` でエラー終了する。
+- `--title` は任意。指定すると `title` タグになる。空白のみなら付けない扱いにし、条件（256 バイト以下で、制御文字と見えない書式文字を含まない。受け取る側の `title` の判定と同じ `nostr::valid_title`）を満たさなければ `invalid --title: ...` でエラー終了する。
 - `--message` はサイトイベントの `content` になる（省略時は空文字）。上限を超えたら何もせずに `invalid --message: must not exceed 4096 bytes (got N bytes)` でエラー終了する。
 - `--note` を付けると、サイトイベントの後に[通常の投稿](../publish.md#通常の投稿)もする。`--url` が要り、無ければ clap が引数の誤りとして止める。
 - `--nip05`・`--check-dotfiles`・`--check-size`・`--check-links`・`--check-unchanged` は確認のモード（`off`/`warn`/`require`）。省略時は `[publish]` の同名の設定（既定は `check_dotfiles` が `require`・`check_size` が `warn`・`check_links` が `warn`・`check_unchanged` が `require`）。5 つは表示や処理の前にまとめて解釈し、不正な値は `invalid --<フラグ名>` でエラー終了する。

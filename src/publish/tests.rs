@@ -229,6 +229,11 @@ fn normalize_title_trims_and_rejects_oversized_or_control_titles() {
         ("trimmed", Some("  My Site  "), Ok(Some("My Site"))),
         ("oversized", Some(long.as_str()), Err(())),
         ("control character", Some("bad\ntitle"), Err(())),
+        (
+            "zero-width joiner",
+            Some("\u{1f9d1}\u{200d}\u{1f4bb}"),
+            Err(()),
+        ),
     ] {
         assert_eq!(
             normalize_title(input).map_err(|InvalidTitle| ()),
