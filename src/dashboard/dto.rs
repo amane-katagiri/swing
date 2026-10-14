@@ -1116,4 +1116,35 @@ mod tests {
         assert!(!error.contains('\x1b'));
         assert_eq!(error.chars().count(), MAX_RELAY_ERROR_CHARS + 1);
     }
+
+    #[test]
+    fn gateway_url_links_only_stored_content_through_a_configured_gateway() {
+        let cases = [
+            (
+                Some("http://gw.example"),
+                true,
+                Some("http://gw.example/ipfs/bafy/"),
+            ),
+            (
+                Some("http://gw.example/"),
+                true,
+                Some("http://gw.example/ipfs/bafy/"),
+            ),
+            (
+                Some("http://gw.example//"),
+                true,
+                Some("http://gw.example/ipfs/bafy/"),
+            ),
+            (Some("http://gw.example/"), false, None),
+            (Some(""), true, None),
+            (None, true, None),
+        ];
+        for (gateway, stored, expected) in cases {
+            assert_eq!(
+                gateway_url(gateway, "bafy", stored).as_deref(),
+                expected,
+                "{gateway:?} stored={stored}"
+            );
+        }
+    }
 }

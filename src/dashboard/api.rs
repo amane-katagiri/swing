@@ -22,6 +22,8 @@ use super::dto;
 use super::error::{ApiError, AppJson, blocking, internal, settings_error, upstream};
 
 mod network;
+#[cfg(test)]
+mod ready_tests;
 
 pub use network::network;
 

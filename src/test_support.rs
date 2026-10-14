@@ -607,6 +607,23 @@ impl KuboApi {
                 }),
             )
             .route(
+                "/api/v0/files/stat",
+                post(|State(s): Shared, RawQuery(q): RawQuery| async move {
+                    let path = kubo_args(q).remove(0);
+                    if let Some(cid) = path.strip_prefix("/ipfs/") {
+                        return kubo_ok(
+                            serde_json::json!({ "Hash": cid, "Type": "directory" }).to_string(),
+                        );
+                    }
+                    match s.lock().unwrap().mfs.get(&path) {
+                        Some(cid) => kubo_ok(
+                            serde_json::json!({ "Hash": cid, "Type": "directory" }).to_string(),
+                        ),
+                        None => kubo_error("files/stat: file does not exist"),
+                    }
+                }),
+            )
+            .route(
                 "/api/v0/dag/stat",
                 post(|State(s): Shared| async move {
                     let size = s.lock().unwrap().dag_size;
