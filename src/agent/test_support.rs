@@ -6,7 +6,7 @@ use nostr_sdk::prelude::*;
 
 use crate::config::{CheckMode, Config, IpfsApi, PolicyConfig};
 use crate::nip05::{Nip05Verify, VerificationResult};
-use crate::nostr::{Paged, ReportRelay};
+use crate::nostr::{AnchorRelay, Paged, ReportRelay};
 use crate::state::{self, SiteKey, State, VersionRecord};
 
 use super::Agent;
@@ -61,6 +61,12 @@ pub(super) struct FakeRelayState {
     pub(super) send_attempts: usize,
     pub(super) about_since: Vec<Option<u64>>,
     pub(super) about_reporters: Vec<Vec<PublicKey>>,
+    pub(super) anchor_ads: Vec<Event>,
+    pub(super) anchor_sent: Vec<Event>,
+    pub(super) followers: HashSet<PublicKey>,
+    pub(super) fail_anchor_fetch: bool,
+    pub(super) anchor_fetches: usize,
+    pub(super) anchor_gate: Option<std::sync::Arc<tokio::sync::Notify>>,
 }
 
 pub(super) struct FakeRelay {
@@ -115,6 +121,20 @@ impl ReportRelay for FakeRelay {
             .collect())
     }
 
+    async fn fetch_reports_by(
+        &self,
+        report_kind: u16,
+        _sites: &[Coordinate],
+        reporters: &[PublicKey],
+    ) -> anyhow::Result<Vec<Event>> {
+        let s = self.s.lock().unwrap();
+        Ok(s.stored
+            .iter()
+            .filter(|e| e.kind == Kind::Custom(report_kind) && reporters.contains(&e.pubkey))
+            .cloned()
+            .collect())
+    }
+
     async fn send_report(&self, report: EventBuilder) -> anyhow::Result<bool> {
         let event = report.finalize(&self.keys)?;
         let mut s = self.s.lock().unwrap();
@@ -127,6 +147,70 @@ impl ReportRelay for FakeRelay {
         }
         s.sent.push(event.clone());
         s.stored.push(event);
+        Ok(true)
+    }
+}
+
+impl AnchorRelay for FakeRelay {
+    async fn fetch_anchor_ads(&self, advertisers: &[PublicKey]) -> anyhow::Result<Vec<Event>> {
+        let gate = self.s.lock().unwrap().anchor_gate.clone();
+        if let Some(gate) = gate {
+            gate.notified().await;
+        }
+        let mut s = self.s.lock().unwrap();
+        s.anchor_fetches += 1;
+        if s.fail_anchor_fetch {
+            anyhow::bail!("simulated anchor fetch failure");
+        }
+        Ok(s.anchor_ads
+            .iter()
+            .filter(|e| advertisers.contains(&e.pubkey))
+            .cloned()
+            .collect())
+    }
+
+    async fn fetch_own_anchor_ads(&self, peer_id: &str) -> anyhow::Result<Vec<Event>> {
+        let mut s = self.s.lock().unwrap();
+        s.anchor_fetches += 1;
+        if s.fail_anchor_fetch {
+            anyhow::bail!("simulated anchor fetch failure");
+        }
+        Ok(s.anchor_ads
+            .iter()
+            .filter(|e| {
+                e.pubkey == self.keys.public_key()
+                    && e.tags.identifier().as_deref() == Some(peer_id)
+            })
+            .cloned()
+            .collect())
+    }
+
+    async fn fetch_followers_among(
+        &self,
+        _mirror_set: &str,
+        accounts: &[PublicKey],
+        _followed: PublicKey,
+    ) -> anyhow::Result<HashSet<PublicKey>> {
+        let s = self.s.lock().unwrap();
+        Ok(accounts
+            .iter()
+            .filter(|a| s.followers.contains(a))
+            .copied()
+            .collect())
+    }
+
+    async fn send_anchor_ad(&self, ad: EventBuilder) -> anyhow::Result<bool> {
+        let event = ad.finalize(&self.keys)?;
+        let mut s = self.s.lock().unwrap();
+        s.send_attempts += 1;
+        if s.fail_sign {
+            anyhow::bail!("simulated signer failure");
+        }
+        if s.reject {
+            return Ok(false);
+        }
+        s.anchor_sent.push(event.clone());
+        s.anchor_ads.push(event);
         Ok(true)
     }
 }
@@ -183,12 +267,16 @@ pub(super) struct Fixture {
 
 impl Fixture {
     pub(super) fn new(policy: PolicyConfig, kubo: FakeKubo) -> Self {
+        Self::with_config(test_config(policy), kubo)
+    }
+
+    pub(super) fn with_config(config: Config, kubo: FakeKubo) -> Self {
         let dir = tempfile::tempdir().unwrap();
         let state_path = dir.path().join("state.json");
         let keys = Keys::generate();
         let pubkey = keys.public_key();
         let agent = Agent::new(
-            test_config(policy),
+            config,
             kubo,
             FakeNip05::default(),
             FakeRelay::default(),

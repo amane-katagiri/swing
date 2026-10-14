@@ -66,7 +66,7 @@ TOML の構文や型のエラーは `line <行>, column <桁>: <理由>` の形�
 - `[nostr].relays` が空（TOML の空配列、または空の要素だけの環境変数）なら既定の relay（`DEFAULT_RELAYS`）に戻し、出どころを `Default` にする。エラーにはしない。
 - `[nostr].relays` の各要素は `ws://` か `wss://` の relay の URL（nostr-sdk の `RelayUrl::parse` が通ること）。違反は `invalid [nostr].relays entry <値>: <理由>`。
 - `[nostr].mirror_set` は d タグとして使える値（`nostr::validate_d_tag`。空でなく、長すぎず、制御文字・見えない書式文字を含まない）。
-- `poll_interval`・`concurrency`・`max_sites_per_account`・`[publish].keep_versions`・`[agent].fetch_timeout`・`[agent].fetch_idle_timeout`・`[dashboard].max_upload` は 0 不可。
+- `poll_interval`・`concurrency`・`max_sites_per_account`・`[publish].keep_versions`・`[agent].fetch_timeout`・`[agent].fetch_idle_timeout`・`[dashboard].max_upload` は 0 不可。`[anchor].max_peers` は 0〜16（0 ならアンカーに接続しない。範囲外は `[anchor].max_peers must be between 0 and 16`。[`agent/anchors.md`](agent/anchors.md#設定anchor)）。
 - `report_ttl` は半分が `poll_interval` より大きく、`nostr::MAX_REPORT_AGE`（[`nostr.md`](nostr.md#レプリカ報告の信頼度replicastier)）以下（超えると `report_ttl must be at most 7d`）。
 - `mfs_root` は `/` で始まる絶対パス。`/` そのもの、空の要素、`.`、`..` は不可。末尾の `/` は取り除く。
 - `[ipfs].api`・`[gateway].upstream`・`[dashboard].public_url`・`[dashboard].gateway` は `http(s)://host[:port]` の形。末尾の `/` を取り除いた値が、`Url` として解釈した http(s) のオリジンの文字列（`origin().ascii_serialization()`）と一致すること。パス・クエリ・フラグメント・`@`・制御文字・大文字のホスト名・既定のポートの明示は不可。`[dashboard].gateway` だけは空文字と空白だけの値も可（空文字として扱う）。
@@ -107,6 +107,8 @@ TOML の構文や型のエラーは `line <行>, column <桁>: <理由>` の形�
 | `policy.nip05` / `publish.nip05` / `publish.check_dotfiles` / `publish.check_size` / `publish.check_links` / `publish.check_unchanged` | mode（`off`/`warn`/`require`） |
 | `agent.poll_interval` / `report_ttl` | duration |
 | `agent.concurrency` | integer |
+| `anchor.advertise` | bool |
+| `anchor.max_peers` | integer |
 | `publish.keep_versions` | integer |
 | `publish.dotfiles_allow` | list |
 | `kubo.storage_max` | size |

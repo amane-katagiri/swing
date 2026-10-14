@@ -41,8 +41,11 @@
 
 - 画面を開くたびと、見出しの右の再読み込みのアイコンボタン（`#network-reload`。Publish 画面の「自分のサイト」と同じ形。見出しの下線を全幅に保つため、`h2` 自体に `swing-heading-row` を付けて中に置く。呼び出し中は無効）で [`GET /api/network`](../http-api/status.md#get-apinetwork) を呼ぶ。自動では呼び直さない。
 - 判定を `swing-status` の 1 行で出す。`public` は「このノードは外から直接アクセスできます。」（`data-kind="ok"`）、`private` は「このノードは外から直接アクセスできません。」（`warn`）、`offline` は「このノードはオフラインです。」（`error`）、`unknown` とほかの値は「外からこのノードにアクセスできるか判定中です。」（`info`）。その下に判定ごとの説明を 1 段落出す（届かないときは、ホールパンチでしか取得されないことと swarm のポートの TCP と UDP を外から受けると届きやすくなること、判定中は起動から数分かかること）。`reachability` が `public` でなく `nat` があれば、ルーターの外側の NAT についての段落を足す。
-- `offline` では説明（Kubo がネットワークにつながずに動いていて、ほかの参加者とやりとりしないこと）だけを出し、リンクも表も出さない。
+- `public` では、判定の説明の後に、アンカーとしての広告の状態の段落を足す。`anchor.advertising` なら「このノードをアンカーとして広告中です。…」、`anchor.advertise` が `false` なら「アンカーとしての広告は設定でオフです（[anchor] advertise）。」、ほかは「外から直接アクセスできる状態がしばらく続けば、このノードをアンカーとして広告します。」。`public` でなければ広告の状態は出さない（判定の説明で足りる）。
+- `offline` では説明（Kubo がネットワークにつながずに動いていて、ほかの参加者とやりとりしないこと）だけを出し、リンクもアドレスの表もアンカーの部分も出さない。
 - それ以外で `public` でなければ続けて `guide` へのリンク（「修正ガイド」。動作性の確認のリンクと同じ名前）を出す。最後に、アドレスごとの結果の表（`.swing-table`。列は「アドレス」と「外からの接続」。後者は `swing-badge` の `data-reach` で、`reachable` は「届く」（`--swing-ok`）、`unreachable` は「届かない」（`--swing-warn`）、`unknown` は「未確認」（既定の灰色。AutoNAT がまだ試していないアドレス））を出す。アドレスが 1 つも無ければ表の代わりにその旨を `swing-hint` で出す。
+- `offline` 以外では、最後に `anchor`（[アンカー](../../agent/anchors.md)）を「アンカー」の `h3`（`#network-content h3` で上に `--swing-space-5`）の下に出す。
+  - `anchors` があれば説明の `swing-hint` と表（`.swing-table`。列は「アカウント」（フィンガープリントの先頭 1 つと npub の短縮。`title` に npub 全体）・「PeerID」（等幅の短縮。`title` に全体）・「選んだ理由」（`mutual` は「相互ミラー」、`coverage` は「ミラー対象を N サイト保存」）・「接続」（`connected` が `true` なら `swing-badge` の `data-reach="reachable"` で「接続中」、`false` なら `data-reach="unknown"` で「未接続」、`null` なら「–」））。無ければ `swing-hint` で、`max_peers` が 0 なら設定でオフであること、ほかは接続しているアンカーが無いことを出す。
 - 読み込み中と失敗は `#network-status` に出し、失敗したら前の結果を消す。言語を切り替えると手元の結果で描き直す。
 
 ## プロセス操作

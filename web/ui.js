@@ -29,7 +29,8 @@ export function fingerprintBadge(ids, count) {
   const shown = fingerprintIds(ids, count);
   if (shown.length === 0) return null;
   const chars = shown.map(emojiChar).join(' ');
-  const wrap = el('span', { class: 'swing-fingerprint', role: 'img', 'aria-label': chars, title: t('fingerprintTitle', { emoji: chars }) });
+  const full = fingerprintIds(ids).map(emojiChar).join(' ');
+  const wrap = el('span', { class: 'swing-fingerprint', role: 'img', 'aria-label': chars, title: t('fingerprintTitle', { emoji: full }) });
   for (const id of shown) {
     const svg = document.createElementNS(SVG_NS, 'svg');
     svg.setAttribute('aria-hidden', 'true');

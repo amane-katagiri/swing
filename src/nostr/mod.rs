@@ -4,24 +4,29 @@ use std::hash::Hash;
 
 use nostr_sdk::prelude::*;
 
+mod anchor;
 mod client;
 mod follow;
 mod report;
 mod resend;
 mod site;
 
+pub use anchor::{
+    ANCHOR_KIND, AdReachability, AnchorAd, build_anchor_ad_builder, latest_anchor_ads,
+    parse_anchor_ad, validate_peer_id,
+};
 pub use client::{
-    DeletionAnswers, Paged, RelayAnswers, RelayClient, RelaySendResult, ReportRelay, SiteAnswer,
-    bounded_client, print_relay_line, print_relay_send_result_lines, relay_send_results,
-    with_rejection_hint,
+    AnchorRelay, DeletionAnswers, Paged, RelayAnswers, RelayClient, RelaySendResult, ReportRelay,
+    SiteAnswer, bounded_client, print_relay_line, print_relay_send_result_lines,
+    relay_send_results, with_rejection_hint,
 };
 pub use follow::{
     FollowSetChoice, choose_follow_set, extract_follow_set_pubkeys, follow_set_pubkeys_capped,
     is_follow_set_of, is_saved_follow_set_of,
 };
 pub use report::{
-    MAX_REPORT_AGE, ReplicaReport, build_replica_report_builder, parse_replica_report,
-    site_coordinate,
+    MAX_REPORT_AGE, ReplicaReport, build_replica_report_builder, counted_replica_reports,
+    parse_replica_report, site_coordinate,
 };
 pub use resend::{ResendPlan, Withdrawals, keep_newest_site, plan_site_resends, saved_site_event};
 pub use site::{

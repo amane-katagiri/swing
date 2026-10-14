@@ -39,10 +39,12 @@ Twemoji の画像は CC-BY 4.0。表示（作者・ライセンス・元のリ�
 ## 表示（`ui.js::fingerprintBadge`, `graph.js`）
 
 - 部品は [`web/ui.md`](web/ui.md)、class は [`css.md`](css.md)（`swing-fingerprint`・`swing-node-emoji`）。
+- 先頭の 1 つだけを出す場所でも、ツールチップ（`title`）には 4 つ全部を出す。
 - 出す場所:
   - Sites 画面（[`views.md`](views.md#sites-画面)）: アカウントの見出し（カード・テーブル・Unfollowed）に 4 つ、Storage check の表のアカウント列に先頭の 1 つ、「ミラーに追加」の入力中に鍵ごとに 4 つ。
   - Publish 画面（[`views/publish.md`](views/publish.md)）: 自分の情報の「フィンガープリント」の行に 4 つと、絵文字の文字としてコピーするボタン。
   - Webring 画面（[`views/webring.md`](views/webring.md)）: グラフのノードの円の中に先頭の 1 つ、`list` 表示の各行・詳細パネルの見出しと報告者一覧に 4 つ。
+  - Settings 画面（[`views/settings.md`](views/settings.md)）: 「ネットワーク」のアンカーの表のアカウント列に先頭の 1 つ。
   - Desktop 画面: 「ミラーに追加」ダイアログの入力中に鍵ごとに 4 つ。ここだけは画面の見た目に合わせて 16×16 のドット絵にして出す（`desktop-fingerprint.js::deskFingerprint`。[`desktop/mirror-add.md`](desktop/mirror-add.md#フィンガープリントのドット絵)）。
 
 ## テスト

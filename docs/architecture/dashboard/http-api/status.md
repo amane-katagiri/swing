@@ -1,4 +1,4 @@
-# 状態の取得（`src/dashboard/api.rs`, `src/dashboard/dto.rs`）
+# 状態の取得（`src/dashboard/api.rs`, `src/dashboard/api/network.rs`, `src/dashboard/dto.rs`, `src/dashboard/dto/network.rs`）
 
 [`../http-api.md`](../http-api.md) の子ページ。共通の形式・エラー・準備状態は親ページを参照。
 
@@ -82,11 +82,16 @@
 Kubo の `POST /api/v0/swarm/addrs/autonat`（`ipfs::IpfsClient::autonat`、タイムアウト 10 秒）の結果。外部の Kubo（`[kubo].managed = false`）でも同じ。relay には接続せず、Kubo に新しく確かめさせることもしない（Kubo が持っている判定を読むだけ）ので軽い。
 
 ```json
-{ "reachability": "private", "nat": "cgnat", "reachable": [], "unreachable": ["/ip4/198.51.100.7/tcp/4001"], "unknown": ["/ip4/198.51.100.7/udp/4001/quic-v1"], "guide": "https://github.com/amane-katagiri/swing/blob/v…/docs/guide/operation.md#外から届くか" }
+{ "reachability": "private", "nat": "cgnat", "reachable": [], "unreachable": ["/ip4/198.51.100.7/tcp/4001"], "unknown": ["/ip4/198.51.100.7/udp/4001/quic-v1"], "guide": "https://github.com/amane-katagiri/swing/blob/v…/docs/guide/operation.md#外から届くか",
+  "anchor": { "advertise": true, "advertising": false, "max_peers": 4, "anchors": [ { "peer_id": "12D3KooW…", "pubkey": "<hex>", "npub": "npub1…", "fingerprint": ["1f355", "…"], "reason": "mutual", "sites": 0, "connected": true } ] } }
 ```
 
 - `reachability`: ノード全体の判定。Kubo の `reachability`（`Public`・`Private`・`Unknown`）を小文字にしたもので、ほかの値は `unknown`。Kubo の起動直後は `unknown` で、AutoNAT V2 が確かめ終えるまで数分かかる。Kubo が `--offline` で動いていて、RPC が Kubo の `ErrNotOnline`（本文に `this command must be run in online mode` を含むエラー）を返したときは `offline` で、`nat` は `null`、リストはすべて空。
 - `nat`: Kubo の `nat`（`DetectNAT` の推定）。UPnP などで分かったルーターの外側のアドレスがプロバイダーの共有アドレス（`100.64.0.0/10`）なら `cgnat`、プライベートアドレスなら `double-nat`。分からないとき・`reachability` が `public` のとき・ほかの値は `null`。
 - `reachable`・`unreachable`・`unknown`: AutoNAT V2 がアドレスごとに確かめた結果（届いた・届かなかった・まだ確かめていない multiaddr）。Kubo は空のリストを省くので、そのときは空の配列。
 - `guide`: 届くようにする方法の手引き（[`../../../guide/operation.md#外から届くか`](../../../guide/operation.md#外から届くか)）の、このバージョンのタグの URL。
+- `anchor`: アンカー（[`../../agent/anchors.md`](../../agent/anchors.md)）。agent のメモリ（`AppState::anchors`）にある最後の結果で、relay には問い合わせない。
+  - `advertise`・`max_peers`: 今動いている設定の `[anchor]` の値。
+  - `advertising`: 最後に出した（か relay から読んだ）自分の広告が期限内の `public` なら `true`。
+  - `anchors`: 最後の選び直しで選んだアンカー。`reason` は `mutual`（相互の関係）か `coverage`（ミラー対象のサイトを保存している）、`sites` はそのアンカーの作者が保存しているミラー対象のサイトの数。`connected` は agent がアンカーを選び直すたび（poll ごと）に Kubo の `swarm/peers` を読んだ最後の結果（[`../../agent/anchors.md#接続の確認`](../../agent/anchors.md#接続の確認)）で、PeerID があれば `true`、無ければ `false`、まだ読んでいないときと読めなかったとき（`--offline` の Kubo など）は `null`。この API は `swarm/peers` を呼ばない。名前は解決しないので、作者は pubkey・npub・フィンガープリント（`AccountDto` と同じ形で、同じ階層に並べる）で出す。
 - `offline` 以外で Kubo が失敗したとき（このコマンドの無い古い Kubo など）は 502。

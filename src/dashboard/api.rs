@@ -21,6 +21,10 @@ use super::AppState;
 use super::dto;
 use super::error::{ApiError, AppJson, blocking, internal, settings_error, upstream};
 
+mod network;
+
+pub use network::network;
+
 const MAX_KEYS: usize = 100;
 const RELAY_QUERY_WAIT: std::time::Duration = std::time::Duration::from_secs(20);
 
@@ -147,14 +151,6 @@ pub async fn status(State(state): State<Arc<AppState>>) -> Result<Json<dto::Stat
         .await
         .map_err(upstream)?;
     Ok(Json(dto::status_dto(&report)))
-}
-
-pub async fn network(
-    State(state): State<Arc<AppState>>,
-) -> Result<Json<dto::NetworkDto>, ApiError> {
-    let ipfs = state.require_ipfs().await?;
-    let autonat = ipfs.autonat().await.map_err(upstream)?;
-    Ok(Json(dto::network_dto(autonat)))
 }
 
 pub async fn mirror_list(
@@ -555,100 +551,6 @@ mod tests {
             .unwrap();
         let resp = call(app, req).await;
         assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
-    }
-
-    async fn state_with_kubo(kubo: axum::Router) -> Arc<AppState> {
-        let state = test_state();
-        let (_, secret_hex) = test_config(true);
-        let relay = crate::nostr::RelayClient::connect(test_keys(&secret_hex).unwrap(), &[])
-            .await
-            .unwrap();
-        let addr = crate::test_support::serve_router(kubo).await;
-        let ipfs = crate::ipfs::IpfsClient::new(format!("http://{addr}"));
-        state.set_ready(Arc::new(relay), ipfs).await;
-        state
-    }
-
-    #[tokio::test]
-    async fn network_without_ipfs_reports_service_unavailable() {
-        let (status, json) = send_json(router(test_state()), "GET", "/api/network", None).await;
-        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
-        assert_eq!(json["error"], "agent is not ready");
-    }
-
-    #[tokio::test]
-    async fn network_reports_what_autonat_found() {
-        let kubo = axum::Router::new().route(
-            "/api/v0/swarm/addrs/autonat",
-            axum::routing::post(|| async {
-                r#"{"reachability":"Private","nat":"double-nat","unreachable":["/ip4/198.51.100.7/tcp/4001"],"unknown":["/ip4/198.51.100.7/udp/4001/quic-v1"]}"#
-            }),
-        );
-        let state = state_with_kubo(kubo).await;
-        let (status, json) = send_json(router(state), "GET", "/api/network", None).await;
-        assert_eq!(status, StatusCode::OK);
-        assert_eq!(
-            json,
-            serde_json::json!({
-                "reachability": "private",
-                "nat": "double-nat",
-                "reachable": [],
-                "unreachable": ["/ip4/198.51.100.7/tcp/4001"],
-                "unknown": ["/ip4/198.51.100.7/udp/4001/quic-v1"],
-                "guide": super::dto::REACHABILITY_GUIDE_URL,
-            })
-        );
-    }
-
-    fn failing_kubo(message: &'static str) -> axum::Router {
-        axum::Router::new().route(
-            "/api/v0/swarm/addrs/autonat",
-            axum::routing::post(move || async move {
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    format!(r#"{{"Message":"{message}","Code":0,"Type":"error"}}"#),
-                )
-            }),
-        )
-    }
-
-    #[tokio::test]
-    async fn network_reports_an_offline_kubo_as_offline() {
-        let state = state_with_kubo(failing_kubo(
-            "this command must be run in online mode. Try running 'ipfs daemon' first",
-        ))
-        .await;
-        let (status, json) = send_json(router(state), "GET", "/api/network", None).await;
-        assert_eq!(status, StatusCode::OK);
-        assert_eq!(json["reachability"], "offline");
-        assert!(json["nat"].is_null());
-        for list in ["reachable", "unreachable", "unknown"] {
-            assert_eq!(json[list], serde_json::json!([]), "{list}");
-        }
-    }
-
-    #[tokio::test]
-    async fn network_reports_a_kubo_failure_as_bad_gateway() {
-        let state = state_with_kubo(failing_kubo("routing: not supported")).await;
-        let (status, json) = send_json(router(state), "GET", "/api/network", None).await;
-        assert_eq!(status, StatusCode::BAD_GATEWAY);
-        let message = json["error"].as_str().unwrap();
-        assert!(message.contains("not supported"), "{message}");
-    }
-
-    #[test]
-    fn the_reachability_guide_points_at_a_heading_in_the_operation_guide() {
-        let anchor = super::dto::REACHABILITY_GUIDE_URL
-            .rsplit_once('#')
-            .unwrap()
-            .1;
-        let guide = include_str!("../../docs/guide/operation.md");
-        assert!(
-            guide
-                .lines()
-                .any(|l| l.trim_start_matches('#').trim() == anchor),
-            "{anchor}"
-        );
     }
 
     async fn ready_state_with_relays(

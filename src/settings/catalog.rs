@@ -316,6 +316,32 @@ pub const SETTINGS: &[Setting] = &[
         },
     },
     Setting {
+        key: "anchor.advertise",
+        section: "anchor",
+        field: "advertise",
+        env: "SWING_ANCHOR_ADVERTISE",
+        kind: Kind::Bool,
+        example: Example::Value("true"),
+        editable: true,
+        description: Text {
+            en: "Advertise this node as an anchor (kind 35982, only its PeerID) while Kubo finds it reachable from the internet, so participants behind NAT keep a connection to it. Turning it off withdraws a published ad.",
+            ja: "Kubo が外から届くと判定している間、このノードをアンカーとして広告する（kind 35982。載せるのは PeerID だけ）。NAT の内側の参加者がこのノードへ接続を張り続けるようになる。オフにすると出した広告を取り下げる",
+        },
+    },
+    Setting {
+        key: "anchor.max_peers",
+        section: "anchor",
+        field: "max_peers",
+        env: "SWING_ANCHOR_MAX_PEERS",
+        kind: Kind::Integer,
+        example: Example::Value("4"),
+        editable: true,
+        description: Text {
+            en: "How many anchors advertised by accounts in the Follow Set Kubo keeps connections to (Kubo peering), from 0 to 16; 0 keeps none.",
+            ja: "Follow Set のアカウントが広告したアンカーのうち、Kubo が接続を張り続ける（Kubo の peering）数の上限。0〜16 で、0 なら張らない",
+        },
+    },
+    Setting {
         key: "publish.nip05",
         section: "publish",
         field: "nip05",

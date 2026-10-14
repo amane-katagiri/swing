@@ -392,6 +392,25 @@ fn resolve_agent<E: Fn(&str) -> Option<String>>(
     })
 }
 
+fn resolve_anchor<E: Fn(&str) -> Option<String>>(
+    r: &mut Resolver<E>,
+    file: AnchorFile,
+) -> Result<AnchorConfig> {
+    let advertise = r.typed("anchor.advertise", file.advertise, parse_bool, true)?;
+    let max_peers = r.typed("anchor.max_peers", file.max_peers, integer, 4)?;
+    if max_peers > crate::anchor::MAX_PEERS {
+        bail!(
+            "{} must be between 0 and {}",
+            r.name("anchor.max_peers"),
+            crate::anchor::MAX_PEERS
+        );
+    }
+    Ok(AnchorConfig {
+        advertise,
+        max_peers,
+    })
+}
+
 fn resolve_publish<E: Fn(&str) -> Option<String>>(
     r: &mut Resolver<E>,
     file: PublishFile,
@@ -632,6 +651,7 @@ pub(super) fn build_config(
     let nostr = resolve_nostr(&mut r, file.nostr)?;
     let policy = resolve_policy(&mut r, file.policy)?;
     let agent = resolve_agent(&mut r, file.agent, base)?;
+    let anchor = resolve_anchor(&mut r, file.anchor)?;
     let kubo = resolve_kubo(
         &mut r,
         file.kubo,
@@ -650,6 +670,7 @@ pub(super) fn build_config(
         ipfs,
         policy,
         agent,
+        anchor,
         publish,
         dashboard,
         kubo,

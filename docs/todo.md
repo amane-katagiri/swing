@@ -4,9 +4,10 @@
 
 | 優先度 | タスク | 出所 |
 |---|---|---|
-| 中 | 届く（`public`）参加者を「アンカー」として、届かない参加者の Kubo がそこへ常に接続しておく（Kubo の `Peering.Peers`）。届かないノードどうしはホールパンチに失敗するとデータをやりとりできないので、アンカーを経由して広げる。誰をアンカーにするか（下の告知を使うか、設定で手で指定するか）と、アンカー側の接続数の負担も合わせて決める | [到達性の表示](log/2026-10-14-reachability-status.md) |
-| 中 | アンカーになれる参加者の PeerID とアドレスを Nostr で告知する。新しいイベントか d タグを使うので、先に [`docs/extensions.md`](extensions.md) の予約表と [`docs/protocol.md`](protocol.md) を更新する。偽の告知でほかのノードへ接続を集められないよう、誰の告知を使うか（Follow Set の相手だけなど）も決める | [到達性の表示](log/2026-10-14-reachability-status.md) |
-| 低 | ミラーする側が、サイトイベントの作者（公開した本人）の PeerID へ直接つなぎにいく。作者が届く場合や、ホールパンチが効く場合に DHT の検索を待たずに取得を始められる。作者の PeerID を知る手段（上の告知など）が前提 | [到達性の表示](log/2026-10-14-reachability-status.md) |
+| 低 | ミラーする側が、サイトイベントの作者（公開した本人）の PeerID へ直接つなぎにいく。作者が届く場合や、ホールパンチが効く場合に DHT の検索を待たずに取得を始められる。作者がアンカーとして広告していれば、その広告（kind 35982）の `d` が作者の PeerID になる（広告していない作者の PeerID を知る手段はまだ無い）。アンカーへの peering とは別に、取得の前に `swarm/connect` で `/p2p/<PeerID>` へつなぐ形が考えられる | [到達性の表示](log/2026-10-14-reachability-status.md)、[アンカーへの peering](log/2026-10-14-anchor-peering.md) |
+| 低 | 外部の Kubo（`[kubo].managed = false`）では、`swing up` を止めると、SWING が足したアンカーへの peering が Kubo の再起動まで残る（足した集合をメモリにしか持たないため）。`<state_dir>` に足した PeerID を書いておき、次の起動で選ばなかったものを外す | [アンカーへの peering](log/2026-10-14-anchor-peering.md) |
+| 低 | アンカーの広告は今の PeerID の分だけを扱う。Kubo のリポジトリを作り直して PeerID が変わると、前の PeerID の `public` の広告は取り下げずに期限（3 日）切れを待つ。同じ鍵で別のノードを動かしている場合と見分けられないので、取り下げるなら PeerID ごとに自分のノードだった記録が要る | [アンカーへの peering](log/2026-10-14-anchor-peering.md) |
+| 低 | デモ環境のサンプルデータにアンカーの広告が無い（`swing` に任意のイベントを署名して送るコマンドが無いため）。デモの Kubo は `--offline` なので、広告と peering の実際の動きも確かめられない | [アンカーへの peering](log/2026-10-14-anchor-peering.md) |
 | 低 | 専用の relay を置き、`Swarm.RelayService` の上限を上げて `Swarm.RelayClient.StaticRelays` で使う。go-libp2p がその接続を制限付き（limited）として扱い Bitswap に使わないままなら意味が無いので、上限を上げた relay 経由の接続でデータが流れるかを先に確かめる | [到達性の表示](log/2026-10-14-reachability-status.md) |
 | 低 | 届かない（`private`）環境で公開した人に、届く参加者がミラーし終えるまで起動しておくようダッシュボードで知らせる（レプリカ報告が届くまでなど、何を「ミラーし終えた」の目安にするかも決める） | [到達性の表示](log/2026-10-14-reachability-status.md) |
 | 低 | ミラーしているサイトをサイト単位で削除する操作（CLI とダッシュボード）。今はサイトが state から消えるのは、フォローを外して `remove_on_unfollow` が有効なときだけで、古い版の整理も最新版は残す。そのため作者が更新をやめたサイトも `max_sites_per_account` の枠を使い続け、枠が埋まるとその作者の新しいサイトはミラーされない。消したサイトが次の poll でまた取り込まれないよう、除外の記録（state.json に持つか）も合わせて決める | [セキュリティレビュー](log/2026-09-29-security-review-and-cleanup.md) |

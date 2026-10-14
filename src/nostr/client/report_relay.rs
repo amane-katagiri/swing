@@ -1,6 +1,6 @@
 use std::future::Future;
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use nostr_sdk::prelude::*;
 
 use super::super::budget;
@@ -17,6 +17,12 @@ pub trait ReportRelay {
         author: PublicKey,
         reporters: &[PublicKey],
         since: Option<u64>,
+    ) -> impl Future<Output = Result<Vec<Event>>> + Send;
+    fn fetch_reports_by(
+        &self,
+        report_kind: u16,
+        sites: &[Coordinate],
+        reporters: &[PublicKey],
     ) -> impl Future<Output = Result<Vec<Event>>> + Send;
     fn send_report(&self, report: EventBuilder) -> impl Future<Output = Result<bool>> + Send;
 }
@@ -65,10 +71,19 @@ impl ReportRelay for RelayClient {
             .collect())
     }
 
+    async fn fetch_reports_by(
+        &self,
+        report_kind: u16,
+        sites: &[Coordinate],
+        reporters: &[PublicKey],
+    ) -> Result<Vec<Event>> {
+        self.fetch_replica_reports_by(report_kind, sites, reporters)
+            .await
+    }
+
     async fn send_report(&self, report: EventBuilder) -> Result<bool> {
-        let event = self.sign(report).await.context("signing replica report")?;
-        let output = self.publish_to_relays(&event).await?;
-        Ok(!output.success.is_empty())
+        self.sign_and_publish(report, "signing replica report")
+            .await
     }
 }
 
@@ -89,6 +104,15 @@ impl<T: ReportRelay + Send + Sync> ReportRelay for std::sync::Arc<T> {
         since: Option<u64>,
     ) -> Result<Vec<Event>> {
         T::fetch_reports_about(self, report_kind, author, reporters, since).await
+    }
+
+    async fn fetch_reports_by(
+        &self,
+        report_kind: u16,
+        sites: &[Coordinate],
+        reporters: &[PublicKey],
+    ) -> Result<Vec<Event>> {
+        T::fetch_reports_by(self, report_kind, sites, reporters).await
     }
 
     async fn send_report(&self, report: EventBuilder) -> Result<bool> {

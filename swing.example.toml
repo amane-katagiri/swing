@@ -33,6 +33,10 @@ fetch_idle_timeout = "2m"            # SWING_FETCH_IDLE_TIMEOUT: 取得中にデ
 concurrency = 4                      # SWING_CONCURRENCY: 同時に取得・保存するサイト数
 report_ttl = "3d"                    # SWING_REPORT_TTL: レプリカ報告の有効期間。半分の期間を過ぎたら新しい報告を出す。poll_interval の 2 倍より長く、7d 以下にする必要がある（受信側はそれより古い報告を数えない）
 
+[anchor]
+advertise = true                     # SWING_ANCHOR_ADVERTISE: Kubo が外から届くと判定している間、このノードをアンカーとして広告する（kind 35982。載せるのは PeerID だけ）。NAT の内側の参加者がこのノードへ接続を張り続けるようになる。オフにすると出した広告を取り下げる
+max_peers = 4                        # SWING_ANCHOR_MAX_PEERS: Follow Set のアカウントが広告したアンカーのうち、Kubo が接続を張り続ける（Kubo の peering）数の上限。0〜16 で、0 なら張らない
+
 [publish]
 nip05 = "warn"                       # SWING_PUBLISH_NIP05: swing publish の NIP-05 検証モード（off / warn / require、--nip05 が優先）
 keep_versions = 5                    # SWING_PUBLISH_KEEP_VERSIONS: swing publish が自分のノードに残す版の数

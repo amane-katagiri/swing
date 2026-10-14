@@ -66,6 +66,7 @@ pub struct AppState {
     login_codes: LoginCodes,
     pub(crate) stats: Arc<stats::Recorder>,
     pub(crate) activity: Arc<Activity>,
+    pub(crate) anchors: Arc<crate::anchor::AnchorStatus>,
 }
 
 impl AppState {
@@ -111,6 +112,7 @@ impl AppState {
             login_codes: LoginCodes::default(),
             stats: Arc::default(),
             activity: Arc::default(),
+            anchors: Arc::default(),
         })
     }
 

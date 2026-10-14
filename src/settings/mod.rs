@@ -66,11 +66,12 @@ pub struct Setting {
     pub description: Text,
 }
 
-pub const SECTION_ORDER: [&str; 8] = [
+pub const SECTION_ORDER: [&str; 9] = [
     "nostr",
     "ipfs",
     "policy",
     "agent",
+    "anchor",
     "publish",
     "dashboard",
     "kubo",
@@ -158,6 +159,8 @@ pub fn raw_value(config: &Config, key: &str) -> Option<RawValue> {
         "policy.nip05" => RawValue::Str(config.policy.nip05.name().to_string()),
         "publish.nip05" => RawValue::Str(config.publish.nip05.name().to_string()),
         "agent.concurrency" => RawValue::Str(config.agent.concurrency.to_string()),
+        "anchor.advertise" => RawValue::Str(config.anchor.advertise.to_string()),
+        "anchor.max_peers" => RawValue::Str(config.anchor.max_peers.to_string()),
         "publish.keep_versions" => RawValue::Str(config.publish.keep_versions.to_string()),
         "publish.check_dotfiles" => RawValue::Str(config.publish.check_dotfiles.name().to_string()),
         "publish.dotfiles_allow" => RawValue::List(config.publish.dotfiles_allow.clone()),
@@ -188,8 +191,8 @@ mod tests {
     }
 
     #[test]
-    fn catalog_has_exactly_25_editable_keys() {
-        assert_eq!(SETTINGS.iter().filter(|s| s.editable).count(), 25);
+    fn catalog_has_exactly_27_editable_keys() {
+        assert_eq!(SETTINGS.iter().filter(|s| s.editable).count(), 27);
     }
 
     // raw_value() lists editable keys by hand, so a key missing there would silently read as None.

@@ -76,7 +76,18 @@ SWING は、常時起動のサーバでも、普段使いの PC でも動かせ�
 - Docker Compose で動かしている場合、Kubo はブリッジネットワークの中にいるので UPnP でポートを開けられません。ルーターで手動で転送してください（compose はホストの `4001` をコンテナに渡しています）。Linux ならホストネットワーク（`network_mode: host`）で動かす方法もあります。
 - 回線そのものがプロバイダーの NAT（CGNAT）の内側にあると、自分のルーターで転送しても届きません。Settings 画面や `swing status` に CGNAT・二重 NAT の注記が出たら、IPv6 が使えるか、プロバイダーのグローバル IP アドレスのオプションがあるかを確かめてください。
 
-判定の取り方の詳細は [`docs/architecture/dashboard/http-api/status.md`](../architecture/dashboard/http-api/status.md#get-apinetwork) を参照してください。
+#### アンカー
+
+届かないノードどうしでもサイトを渡せるよう、SWING は届く参加者のノードを「アンカー」として使います。次のことは自動で行われます。
+
+- 自分のノードが外から届くとしばらく判定され続けると、そのノードをアンカーとして Nostr で広告します（kind 35982）。届かなくなったとしばらく判定され続けると、広告を取り下げます。
+- ミラー対象の参加者が広告したアンカーから最大 4 つを選び、Kubo からそこへの接続を張り続けます。自分をミラーしている（相互の）参加者のアンカーを先に選び、残りは自分のミラー対象のサイトを多く保存しているアンカーから選びます。届かないノードから張った接続でも、アンカーはその接続を通してあなたのサイトを取得できます。
+
+広告をやめたいときは `[anchor] advertise = false`（`SWING_ANCHOR_ADVERTISE=false`）にします。出していた広告は取り下げられます。アンカーへの接続の数は `[anchor] max_peers`（`SWING_ANCHOR_MAX_PEERS`、0〜16、`0` で接続しない）で変えられます。広告中かどうかと選んだアンカーは、Settings 画面の「ネットワーク」パネルと `swing status` に出ます。
+
+広告に載せるのはノードの PeerID だけで、IP アドレスは載せません。ただし、PeerID からは IPFS の DHT でノードのアドレスを引けます。これは広告が無くても同じで、IPFS に参加しているノードのアドレスは誰でも調べられます。広告によって増えるのは、あなたの Nostr の公開鍵とそのノードが結びつくことです。
+
+判定の取り方の詳細は [`docs/architecture/dashboard/http-api/status.md`](../architecture/dashboard/http-api/status.md#get-apinetwork)、アンカーの選び方と時間の目安は [`docs/architecture/agent/anchors.md`](../architecture/agent/anchors.md) を参照してください。
 
 ### 起動中のリソースと通信量の見積もり
 
@@ -96,3 +107,10 @@ SWING は、常時起動のサーバでも、普段使いの PC でも動かせ�
 ## 設定一覧
 
 TOML の設定ファイル（`swing.toml`）を使う場合と、環境変数だけで動かす場合のどちらにも対応しています。優先順位は環境変数 > TOML > 既定値。キーごとの環境変数名・既定値・説明は [`swing.example.toml`](../../swing.example.toml) にすべて載っています（`swing config example` で生成、Docker Compose 用の `.env` は [`.env.example`](../../.env.example)、`swing config env-example` で生成）。設定ファイルの探し方は「[設定ファイルとデータの置き場所](install.md#設定ファイルとデータの置き場所)」のとおりです。探索順の詳細や、容量・時間の書式（`"100GiB"` や `"10m"` のような文字列）は [`docs/architecture/config.md`](../architecture/config.md) を参照してください。ダッシュボードから編集できるのはそのうちの一部（ホワイトリスト、[`docs/architecture/config.md`](../architecture/config.md#編集できるキー)）で、環境変数で設定した項目は編集できません。
+
+アンカー（「[外から届くか](#外から届くか)」）についての設定は `[anchor]` にあります。
+
+| キー | 環境変数 | 既定値 | 意味 |
+|---|---|---|---|
+| `advertise` | `SWING_ANCHOR_ADVERTISE` | `true` | 外から届くと判定されている間、このノードをアンカーとして広告する |
+| `max_peers` | `SWING_ANCHOR_MAX_PEERS` | `4` | 接続を張り続けるアンカーの数。0〜16 で、`0` なら接続しない |

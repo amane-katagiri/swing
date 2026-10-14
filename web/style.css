@@ -1137,6 +1137,10 @@ body[data-view="sites"][data-style="table"] .swing-site-set {
   margin-top: var(--swing-space-5);
 }
 
+#network-content h3 {
+  margin-top: var(--swing-space-5);
+}
+
 .swing-table-scroll {
   width: 100%;
   overflow-x: auto;

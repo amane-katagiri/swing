@@ -3,7 +3,7 @@ use std::sync::Mutex;
 
 use nostr_sdk::prelude::*;
 
-use crate::ipfs::{FetchLimits, Fetched, KuboStore, MfsEntry};
+use crate::ipfs::{AutoNat, FetchLimits, Fetched, KuboNode, KuboStore, MfsEntry, Reachability};
 use crate::nostr::{SiteEvent, SiteFields, build_replica_report_builder, build_site_event_builder};
 
 pub(crate) fn keys() -> Keys {
@@ -12,6 +12,10 @@ pub(crate) fn keys() -> Keys {
 
 pub(crate) const CID_A: &str = "bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi";
 pub(crate) const CID_B: &str = "QmYwAPJzv5CZsnA9LqYKXfRSZryVXxNn7ZP1FyEBgvJvHR";
+
+pub(crate) const PEER_OWN: &str = "12D3KooWFK7pX3nw57FVQT5J99MvHcwhrcpe4hn6xsVm9WqfWJYy";
+pub(crate) const PEER_A: &str = "12D3KooWQqg6fSEnehBFPAzVpSwWzFheYrfktHPXLoNDJUisx9LJ";
+pub(crate) const PEER_B: &str = "12D3KooWM767xB2P4epkwMAcYQoVDPpnNPa2hofDgzRbTQsnsRQ6";
 
 pub(crate) fn replica_report_event(
     reporter: &Keys,
@@ -164,6 +168,13 @@ pub(crate) struct FakeKuboState {
     pub(crate) files: HashSet<String>,
     pub(crate) dag_stats: Vec<String>,
     pub(crate) dir_checks: Vec<String>,
+    pub(crate) peering: std::collections::BTreeSet<String>,
+    pub(crate) fail_peering: std::collections::BTreeSet<String>,
+    pub(crate) fail_peering_list: bool,
+    pub(crate) reachability: Option<Reachability>,
+    pub(crate) fail_node: bool,
+    pub(crate) node_calls: usize,
+    pub(crate) connected: std::collections::BTreeSet<String>,
 }
 
 impl FakeKuboState {
@@ -188,6 +199,67 @@ impl FakeKubo {
         let kubo = Self::default();
         f(&mut kubo.s.lock().unwrap());
         kubo
+    }
+}
+
+impl KuboNode for FakeKubo {
+    async fn peer_id(&self) -> anyhow::Result<String> {
+        let mut s = self.s.lock().unwrap();
+        s.node_calls += 1;
+        if s.fail_node {
+            anyhow::bail!("simulated id failure");
+        }
+        Ok(PEER_OWN.to_string())
+    }
+
+    async fn autonat(&self) -> anyhow::Result<AutoNat> {
+        let mut s = self.s.lock().unwrap();
+        s.node_calls += 1;
+        if s.fail_node {
+            anyhow::bail!("simulated autonat failure");
+        }
+        Ok(AutoNat {
+            reachability: s.reachability.unwrap_or(Reachability::Unknown),
+            nat: None,
+            reachable: Vec::new(),
+            unreachable: Vec::new(),
+            unknown: Vec::new(),
+        })
+    }
+
+    async fn peering_list(&self) -> anyhow::Result<std::collections::BTreeSet<String>> {
+        let s = self.s.lock().unwrap();
+        if s.fail_peering_list {
+            anyhow::bail!("simulated peering/ls failure");
+        }
+        Ok(s.peering.clone())
+    }
+
+    async fn peering_add(&self, peer_id: &str) -> anyhow::Result<()> {
+        let mut s = self.s.lock().unwrap();
+        if s.fail_peering.contains(peer_id) {
+            anyhow::bail!("simulated peering/add failure");
+        }
+        s.peering.insert(peer_id.to_string());
+        Ok(())
+    }
+
+    async fn peering_remove(&self, peer_id: &str) -> anyhow::Result<()> {
+        let mut s = self.s.lock().unwrap();
+        if s.fail_peering.contains(peer_id) {
+            anyhow::bail!("simulated peering/rm failure");
+        }
+        s.peering.remove(peer_id);
+        Ok(())
+    }
+
+    async fn connected_peers(&self) -> anyhow::Result<std::collections::BTreeSet<String>> {
+        let mut s = self.s.lock().unwrap();
+        s.node_calls += 1;
+        if s.fail_node {
+            anyhow::bail!("simulated swarm/peers failure");
+        }
+        Ok(s.connected.clone())
     }
 }
 

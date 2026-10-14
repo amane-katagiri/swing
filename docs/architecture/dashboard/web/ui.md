@@ -2,7 +2,7 @@
 
 [`../web.md`](../web.md) の子ページ。複数の画面で使う部品と、全画面に共通の見た目・振る舞い。
 
-- 絵文字のフィンガープリント（`ui.js::fingerprintBadge(ids, count)`）: `.swing-fingerprint`（`role="img"`）の中に、絵文字ごとの `<svg><use href="/emoji.svg#e-<コードポイント>"/></svg>` を並べる。`count` を渡すと先頭からその数だけ。`aria-label` は絵文字の文字そのもの（既定がテキスト表示のものも絵文字として読まれるよう、それぞれに異体字セレクタ U+FE0F を付ける）を空白でつないだもの、`title` はそれに「本人の証明ではない」旨を添えた文言（`fingerprintTitle`）。形式に合わない ID は捨て、1 つも残らなければ何も出さない（[`fingerprint.md`](../fingerprint.md)）。
+- 絵文字のフィンガープリント（`ui.js::fingerprintBadge(ids, count)`）: `.swing-fingerprint`（`role="img"`）の中に、絵文字ごとの `<svg><use href="/emoji.svg#e-<コードポイント>"/></svg>` を並べる。`count` を渡すと先頭からその数だけ。`aria-label` は絵文字の文字そのもの（既定がテキスト表示のものも絵文字として読まれるよう、それぞれに異体字セレクタ U+FE0F を付ける）を空白でつないだもの、`title` は `count` に関わらず 4 つ全部を同じ形でつなぎ、「本人の証明ではない」旨を添えた文言（`fingerprintTitle`）。形式に合わない ID は捨て、1 つも残らなければ何も出さない（[`fingerprint.md`](../fingerprint.md)）。
 - busy 表示: `setBusy(button, bool)` で `disabled`・`aria-busy`・`.is-busy` を切り替える。
 - コピー（`util.js::copyWithFeedback`）: 押すと `data-copied` と `data-copy-failed` の両方を付け（成功なら `"true"`/`"false"`、失敗なら逆）、1.5 秒後に両方外す。文言はどのボタンも共通の `copy`（押した後は `copied`・`copyFailed`）で、対象の違いは `aria-label` 側で表す。
 - サイドナビ: 下端のトグル（`#nav-toggle`）で畳むとアイコンだけの幅（`--swing-nav-collapsed-width`）になり、各リンクの `title` にラベルを入れる。状態は `localStorage["swing:nav:collapsed"]` に保存し、`<body data-nav="collapsed">` で表す。フッタ（`.swing-nav-footer`）はミラーセット名とバージョン（`publish.js::updateNavFooter`）と、上から <https://nostter.app/search?q=%23swingpublish> への「#swingpublish」と <https://yureko.samoyed.moe/> への「ゆれ子のSWING日記」のリンクを出す。リンクは `index.html` に固定で書いて `[data-home-link]` を付け（新しいタブで開く）、最初は隠しておいて `updateNavFooter` で出し、ログイン画面に移ったら `app.js::showRoute` で隠す。

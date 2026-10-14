@@ -5,9 +5,9 @@ use nostr_sdk::prelude::*;
 use tokio::task::JoinSet;
 use tracing::warn;
 
-use crate::ipfs::KuboStore;
+use crate::ipfs::{KuboNode, KuboStore};
 use crate::nip05::Nip05Verify;
-use crate::nostr::{self, RelayClient, ReportRelay, SignedSite};
+use crate::nostr::{self, AnchorRelay, RelayClient, ReportRelay, SignedSite};
 use crate::state::State;
 
 use super::{Agent, now_secs};
@@ -18,9 +18,9 @@ pub(super) async fn refresh_follow_set<C, N, R>(
     tasks: &mut JoinSet<()>,
 ) -> Option<Vec<PublicKey>>
 where
-    C: KuboStore + Send + Sync + 'static,
+    C: KuboStore + KuboNode + Send + Sync + 'static,
     N: Nip05Verify + Send + Sync + 'static,
-    R: ReportRelay + Send + Sync + 'static,
+    R: ReportRelay + AnchorRelay + Send + Sync + 'static,
 {
     let follow_event = choose_and_apply_follow_set(relay, agent).await?;
     Some(resubscribe_and_backfill(relay, agent, tasks, follow_event).await)
@@ -31,9 +31,9 @@ async fn choose_and_apply_follow_set<C, N, R>(
     agent: &Arc<Agent<C, N, R>>,
 ) -> Option<Event>
 where
-    C: KuboStore + Send + Sync + 'static,
+    C: KuboStore + KuboNode + Send + Sync + 'static,
     N: Nip05Verify + Send + Sync + 'static,
-    R: ReportRelay + Send + Sync + 'static,
+    R: ReportRelay + AnchorRelay + Send + Sync + 'static,
 {
     let config = &agent.config;
     let (fetched, fetch_succeeded) = match relay.fetch_follow_set(&config.nostr.mirror_set).await {
@@ -92,9 +92,9 @@ async fn resubscribe_and_backfill<C, N, R>(
     follow_event: Event,
 ) -> Vec<PublicKey>
 where
-    C: KuboStore + Send + Sync + 'static,
+    C: KuboStore + KuboNode + Send + Sync + 'static,
     N: Nip05Verify + Send + Sync + 'static,
-    R: ReportRelay + Send + Sync + 'static,
+    R: ReportRelay + AnchorRelay + Send + Sync + 'static,
 {
     let config = &agent.config;
     let (targets, truncated) = nostr::follow_set_pubkeys_capped(&follow_event);
@@ -131,6 +131,12 @@ where
                 }
                 limit_sites_per_account(latest, &state, config.policy.max_sites_per_account)
             };
+            agent.set_followed_sites(
+                selected
+                    .iter()
+                    .map(|s| (s.site.pubkey, s.site.d.clone()))
+                    .collect(),
+            );
             for ev in selected {
                 agent.submit(ev, tasks);
             }

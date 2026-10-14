@@ -1,5 +1,6 @@
 pub mod activity;
 pub mod agent;
+pub mod anchor;
 pub mod api_client;
 pub mod auth;
 pub mod config;

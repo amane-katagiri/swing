@@ -73,6 +73,19 @@ pub fn parse_replica_report(
     })
 }
 
+// The newest event per address is chosen before parsing so a broken newest report still hides an older valid one.
+pub fn counted_replica_reports(
+    events: impl IntoIterator<Item = Event>,
+    report_kind: u16,
+    site_event_kind: u16,
+    now: u64,
+) -> impl Iterator<Item = ReplicaReport> {
+    super::newest_by_address(events, now)
+        .into_iter()
+        .filter_map(move |event| parse_replica_report(&event, report_kind, site_event_kind).ok())
+        .filter(move |report| !report.cids.is_empty() && report.counts_at(now))
+}
+
 pub fn build_replica_report_builder(
     report_kind: u16,
     site_event_kind: u16,

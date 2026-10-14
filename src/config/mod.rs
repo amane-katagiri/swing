@@ -114,6 +114,13 @@ pub struct AgentFile {
 
 #[derive(Debug, Clone, Deserialize, Default)]
 #[serde(default)]
+pub struct AnchorFile {
+    pub advertise: Option<bool>,
+    pub max_peers: Option<usize>,
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(default)]
 pub struct PublishFile {
     pub nip05: Option<String>,
     pub keep_versions: Option<usize>,
@@ -167,6 +174,7 @@ pub struct ConfigFile {
     pub ipfs: IpfsFile,
     pub policy: PolicyFile,
     pub agent: AgentFile,
+    pub anchor: AnchorFile,
     pub publish: PublishFile,
     pub dashboard: DashboardFile,
     pub kubo: KuboFile,
@@ -276,6 +284,12 @@ pub struct AgentConfig {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AnchorConfig {
+    pub advertise: bool,
+    pub max_peers: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PublishConfig {
     pub nip05: CheckMode,
     pub keep_versions: usize,
@@ -350,6 +364,7 @@ pub struct Config {
     pub ipfs: IpfsConfig,
     pub policy: PolicyConfig,
     pub agent: AgentConfig,
+    pub anchor: AnchorConfig,
     pub publish: PublishConfig,
     pub dashboard: DashboardConfig,
     pub kubo: KuboConfig,

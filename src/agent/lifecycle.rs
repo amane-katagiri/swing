@@ -43,17 +43,22 @@ pub async fn run_until(
     let site_event_kind = config.nostr.site_event_kind;
     let mut poll_timer = tokio::time::interval(config.agent.poll_interval);
     poll_timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    let mut anchor_timer = tokio::time::interval(crate::anchor::CHECK_INTERVAL);
+    anchor_timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     let gateway_hosts = config.gateway.hosts.clone();
     let gateway_upstream = config.gateway.upstream.clone();
-    let agent = Arc::new(Agent::new(
-        config,
-        ipfs,
-        HttpNip05Verifier::public_only(),
-        Arc::clone(&relay),
-        state,
-        state_path,
-        Arc::clone(&dashboard.activity),
-    ));
+    let agent = Arc::new(
+        Agent::new(
+            config,
+            ipfs,
+            HttpNip05Verifier::public_only(),
+            Arc::clone(&relay),
+            state,
+            state_path,
+            Arc::clone(&dashboard.activity),
+        )
+        .with_anchors(Arc::clone(&dashboard.anchors)),
+    );
     // A select! arm body is not polled against the other arms, so a signal arriving during it would wait for the body to finish.
     if race_with_shutdown(agent.reconcile(), &shutdown).await {
         info!("shutdown requested during startup reconciliation");
@@ -99,6 +104,9 @@ pub async fn run_until(
                     info!("shutdown requested during poll");
                     break 'outer Ok(());
                 }
+            }
+            _ = anchor_timer.tick() => {
+                agent.start_anchor_check(&mut tasks);
             }
             _ = notify.notified() => {
                 if race_with_shutdown(super::poll_once(&relay, &agent, &mut tasks), &shutdown).await {

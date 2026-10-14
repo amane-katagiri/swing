@@ -9,8 +9,10 @@ use serde::Deserialize;
 use crate::kubo::ApiSecret;
 use crate::mfs;
 
+mod peering;
 mod site;
 
+pub use peering::{KuboNode, parse_peering_ls, parse_swarm_peers};
 pub use site::{SiteEntry, SiteFile, SiteListing};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

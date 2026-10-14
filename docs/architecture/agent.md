@@ -9,6 +9,7 @@
 - [`agent/replicas.md`](agent/replicas.md): レプリカ報告の送信と、他の報告者の報告の時刻の記録
 - [`agent/resend.md`](agent/resend.md): 保存した版のサイトイベントの再送
 - [`agent/state.md`](agent/state.md): `state.json` の形式と各項目の扱い
+- [`agent/anchors.md`](agent/anchors.md): アンカーの広告（kind 35982）と、選んだアンカーへの Kubo の peering
 
 ## agent/ の構成
 
@@ -20,6 +21,7 @@
 | `agent/resend.rs` | 保存した版のサイトイベントの再送（[`agent/resend.md`](agent/resend.md)） |
 | `agent/store.rs` | キューイングと直列実行、保存の順序（[`agent/store.md`](agent/store.md)）、NIP-05 検証 |
 | `agent/replicas.rs` | レプリカ報告（[`agent/replicas.md`](agent/replicas.md)） |
+| `agent/anchors.rs` | アンカーの広告と選び直し（[`agent/anchors.md`](agent/anchors.md)） |
 | `agent/test_support.rs` | テスト用の偽の relay・NIP-05 検証と設定（`#[cfg(test)]`） |
 
 ## 全体の流れ
@@ -33,8 +35,10 @@
    3. unfollow
    4. 対象 pubkey 群のサイトイベントを購読し直してから過去分を取得し、`nostr::select_latest`（未来ずれの許容は [`nostr.md`](nostr.md#未来ずれの許容nostrmax_future_skew)）でサイトごとの最新版を選び、pubkey ごとに、保存済みのサイトすべてと、それ以外のサイトを `created_at` の新しい順に合計 `max_sites_per_account` 件まで、タスクに投入する。一時的な取得・保存の失敗はここで再試行される（[取得の試行の間引き](agent/store.md#取得の試行の間引き)により、サイトごとに `min_update_interval` に 1 回まで）。投入の前に、選んだ最新版のうち state のそのサイトの最新の版と `cid` が一致するものを、その版のサイトイベントとして入れ、変わったら state を保存する（`State::fill_latest_event`。条件は [`agent/state.md`](agent/state.md#sitesevent)）。同じ `cid` を作者が後で署名し直した版は `policy::decide` で `duplicate_cid` になり版としては記録しないが、ここで保存している版のイベントを置き換える。続けて、この poll の対象 pubkey を[再送の確認](agent/resend.md#確認の間隔とタスク)の対象として 5 のタスクに渡す（過去分の取得に失敗しても渡す）。
    5. レプリカ報告の同期（Follow Set が決まらなくても行う）、他の報告者が自分のサイトについて出した報告の時刻の記録（[`agent/replicas.md`](agent/replicas.md)）、間隔が来ていれば再送の確認を、この順に 1 つの別タスク（報告の回）で始める。poll はその終わりを待たない。前の回のタスクがまだ動いていれば今回は始めない。
-5. 購読で届いたサイトイベントをタスクに投入する（投入前に捨てる条件は下記「並行処理」の `submit`）。購読 ID と kind が一致しない通知は debug、パースできないサイトイベントは warn を出して捨てる。
-6. タスクはサイト単位で[保存の順序](agent/store.md#保存の順序)に従って処理する。
+   6. アンカーの選び直しと Kubo の peering への反映、選んだアンカーへの接続の確認（[`agent/anchors.md`](agent/anchors.md#接続する側)）を、報告の回とは別のタスクで始める。poll はその終わりを待たない。前の選び直しのタスクがまだ動いていれば今回は始めない。
+5. `anchor::CHECK_INTERVAL`（60 秒）ごとの tick で、AutoNAT を読んでアンカーの広告を確かめるタスクを始める（前のタスクがまだ動いていれば始めない。[`agent/anchors.md`](agent/anchors.md#広告を出す側)）。
+6. 購読で届いたサイトイベントをタスクに投入する（投入前に捨てる条件は下記「並行処理」の `submit`）。購読 ID と kind が一致しない通知は debug、パースできないサイトイベントは warn を出して捨てる。
+7. タスクはサイト単位で[保存の順序](agent/store.md#保存の順序)に従って処理する。
 
 relay の切断、Kubo のエラー、不正なイベントはログに出して続ける。relay への再接続と再購読は nostr-sdk が行う。nostr-sdk の通知チャネルから溢れた分は、上の 4 の 4（poll ごとの過去分の取得）で回収される。通知ストリーム自体が終わったらエラーで終了する。
 
@@ -42,7 +46,7 @@ relay の切断、Kubo のエラー、不正なイベントはログに出して
 
 `swing up` はシグナルから作った `CancellationToken`（の子トークン）を `run_until` に渡す（`cancel_on_signal` の詳細は [`up.md#shutdownshutdownrs`](up.md#shutdownshutdownrs)）。`run_until` 自体はシグナルを直接扱わない。起動時の突き合わせと `poll_once` はこのトークンの cancel と競争させ（`race_with_shutdown`）、cancel が先に届いたら処理中の I/O を打ち切って shutdown に進む。
 
-shutdown・poll 中の停止検知・relay 通知ストリーム終了のいずれでループを抜けても（正常終了でもエラーでも）、`run_until` はループを抜けた後に必ず `shutdown_gateway`（gateway の子トークンを cancel してサーバタスクを最大 5 秒待つ。超えたら warn を出して待つのをやめる）→ relay 切断 → `dashboard.set_not_ready()` の順で後始末する。サイトのタスク・レプリカ報告の回・保存した版のサイトイベントの再送の確認は 1 つの `JoinSet` で動かし、`run_until` が返るときに待たずに中断する。ダッシュボードの API サーバは agent の外で動く（[`up.md`](up.md)）。
+shutdown・poll 中の停止検知・relay 通知ストリーム終了のいずれでループを抜けても（正常終了でもエラーでも）、`run_until` はループを抜けた後に必ず `shutdown_gateway`（gateway の子トークンを cancel してサーバタスクを最大 5 秒待つ。超えたら warn を出して待つのをやめる）→ relay 切断 → `dashboard.set_not_ready()` の順で後始末する。サイトのタスク・レプリカ報告の回・保存した版のサイトイベントの再送の確認・アンカーの選び直し・アンカーの広告の確認は 1 つの `JoinSet` で動かし、`run_until` が返るときに待たずに中断する。ダッシュボードの API サーバは agent の外で動く（[`up.md`](up.md)）。
 
 ダッシュボードとの共有のしかたは [`dashboard.md#概要`](dashboard.md#概要)。内蔵 gateway は agent の state や Kubo RPC を一切使わず、Kubo の gateway へ透過的にプロキシするだけ（[`gateway.md`](gateway.md)）。
 

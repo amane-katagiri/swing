@@ -59,7 +59,8 @@
   - 取得: 次の 2 つを並行して行い、合わせる。片方が失敗したら warn を出してもう片方だけで数え、両方失敗したときだけエラーにする。
     - サイトイベントの座標（`<[nostr].site_event_kind>:<作者>:<d>`）を `#a` に入れた取得。
     - 信頼できる報告者（`Chosen::trusted_reporters`: サイトの作者、オペレータの Follow Set、その作者たちの Follow Set の順に重複を除き、`MAX_TRUSTED_REPORTERS`（1000）人まで）を `authors` に入れた取得（`fetch_replica_reports_by`）。
-  - 報告者・`d` ごとに最新の 1 件だけを残す（`newest_by_address`。未来ずれの許容を超えるものは先に捨てる）。
+  - 次の 3 つは `nostr::counted_replica_reports` にまとめ、アンカーの選び直し（[`agent/anchors.md`](agent/anchors.md#接続する側)）と共有する。
+  - 報告者・`d` ごとに最新の 1 件だけを残す（`newest_by_address`。未来ずれの許容を超えるものは先に捨てる）。パースより先に選ぶので、壊れた最新の報告は古い正しい報告を隠す。
   - パースに失敗したもの（[検証](#検証)）と `cid` タグが無いものは数えない。
   - 残りは `ReplicaReport::counts_at(now)` が true のもの（`created_at` が未来ずれの許容以内、`now - created_at` が `nostr::MAX_REPORT_AGE`（7 日）以内、`expiration` が無いか `now` より先）だけを数える。
 - `collect_reports` は、`MAX_REPORTS_PER_SITE` で切り詰める前に、サイトごとの報告を `(tier, created_at 降順, reporter の hex)` の順に並べ替える。tier が高い（`Author` → `Chosen` → `Other`）報告者ほど、`created_at` が古くても切り詰めで残る。

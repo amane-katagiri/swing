@@ -11,11 +11,13 @@ use super::{
 };
 use crate::signer::Signer;
 
+mod anchor_relay;
 mod fetch;
 mod report_relay;
 mod resend;
 mod send;
 
+pub use anchor_relay::AnchorRelay;
 pub use fetch::Paged;
 use fetch::{
     FETCH_DEADLINE, FETCH_TIMEOUT, FetchCap, Measured, capped_limit, collect_newest, gather,
@@ -118,6 +120,12 @@ impl RelayClient {
 
     pub async fn sign(&self, builder: EventBuilder) -> Result<Event> {
         self.signer.sign(builder).await
+    }
+
+    async fn sign_and_publish(&self, builder: EventBuilder, context: &'static str) -> Result<bool> {
+        let event = self.sign(builder).await.context(context)?;
+        let output = self.publish_to_relays(&event).await?;
+        Ok(!output.success.is_empty())
     }
 
     pub async fn shutdown(&self) {

@@ -1,4 +1,4 @@
-# 表示と Follow Set の操作（`src/mirror/print.rs`, `src/replicas.rs`, `src/health.rs`, `src/stats.rs`, `src/webring/render.rs`）
+# 表示と Follow Set の操作（`src/mirror/print.rs`, `src/replicas.rs`, `src/health.rs`, `src/health/network.rs`, `src/stats.rs`, `src/webring/render.rs`）
 
 [`../cli.md`](../cli.md) の子ページ。`mirror list` / `add` / `remove`・`sites`・`replicas`・`status`・`stats`・`webring` の出力の形式。ダッシュボード API と共有する集計は [`../mirror.md`](../mirror.md)（Follow Set と sites）・[`../health.md`](../health.md)（status）・[`../webring.md`](../webring.md)（webring）にある。relay・Kubo へ直接つなぐか API を経由するかは [`../cli.md#共通`](../cli.md#共通)。
 
@@ -35,6 +35,7 @@
 `GET /api/status` を叩き（[共通](../cli.md#共通)）、API 側が `state.json` と Kubo だけを見て組み立てた結果（[`../health.md`](../health.md#status-の集計healthcollect_status)）を印字する。agent が未準備なら失敗する（[`../dashboard/http-api.md#共通`](../dashboard/http-api.md#共通)）。
 
 - 先頭に、続けて叩く `GET /api/network`（[`../dashboard/http-api/status.md#get-apinetwork`](../dashboard/http-api/status.md#get-apinetwork)）の結果を `Reachability: public|private|unknown` の 1 行で出す。`nat` があれば `private`・`unknown` の後に ` (behind carrier-grade NAT)`／` (behind double NAT)` を付ける。`private` には、ほかの参加者がホールパンチでしか取得できないことと、swarm のポート（TCP と UDP）を外から受けると届きやすくなることの 2 行、`nat` があればルーターでの転送だけでは足りないかもしれないことの 1 行、`guide` の URL の 1 行を添える。`unknown` には Kubo の起動から数分かかることの 1 行、`offline` には Kubo がネットワークにつながずに動いていてほかの参加者と何もやりとりしないことの 1 行を添える。`/api/network` が失敗したら `Reachability: unknown (<理由>)` だけを出して続ける。到達性は問題に数えず、終了コードを変えない。
+- 続けて、`/api/network` の `anchor`（[`../agent/anchors.md`](../agent/anchors.md)）から、`advertising` なら `Anchor: advertising` の 1 行、選んだアンカーがあれば `Anchors: <接続中> of <選んだ数> connected` の 1 行（どのアンカーの `connected` も `null` なら `Anchors: <選んだ数> selected`）を出す。どちらも無ければ何も出さない。
 - `Stored versions (<state.json のパス>):` の下に、版ごとにパス・`cid`・`size` と判定を 1 行表示する。判定は `[ok]` / `[missing]` / `[cid mismatch]` / `[incomplete]` / `[check failed]` で、`ok` 以外は `: <理由>` を添える。キーが読めない版はキーと `cid` に `[invalid site key]` を付けて出す。
 - `Actual size` 見出しの下に、サイトのパスごとの実容量と `total` を表示する。測れなかったものは `unknown`。
 - `Not in state` 見出しの下に、state に無いパスを表示する。一覧に失敗したディレクトリは `[list failed]: <理由>` 付きで出す。

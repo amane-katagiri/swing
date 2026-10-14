@@ -169,13 +169,7 @@ fn collect_reports(
     chosen: &Chosen,
 ) -> HashMap<SiteAddress, SiteReportSet> {
     let mut out: HashMap<SiteAddress, Vec<ReplicaReport>> = HashMap::new();
-    for event in nostr::newest_by_address(events, now) {
-        let Ok(report) = nostr::parse_replica_report(&event, report_kind, site_event_kind) else {
-            continue;
-        };
-        if report.cids.is_empty() || !report.counts_at(now) {
-            continue;
-        }
+    for report in nostr::counted_replica_reports(events, report_kind, site_event_kind, now) {
         out.entry((report.author, report.d.clone()))
             .or_default()
             .push(report);

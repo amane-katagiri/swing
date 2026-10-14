@@ -158,6 +158,8 @@ fn config_value(
             )),
         ),
         "agent.concurrency" => (ConfigValue::Num(config.agent.concurrency as u64), None),
+        "anchor.advertise" => (ConfigValue::Bool(config.anchor.advertise), None),
+        "anchor.max_peers" => (ConfigValue::Num(config.anchor.max_peers as u64), None),
         "agent.report_ttl" => (
             ConfigValue::Num(config.agent.report_ttl.as_secs()),
             Some(format_duration_secs(config.agent.report_ttl.as_secs())),

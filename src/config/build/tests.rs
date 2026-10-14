@@ -105,6 +105,30 @@ fn zero_poll_interval_is_rejected() {
 }
 
 #[test]
+fn anchor_max_peers_is_limited() {
+    assert_env_rejects(
+        "SWING_ANCHOR_MAX_PEERS",
+        "17",
+        "SWING_ANCHOR_MAX_PEERS must be between 0 and 16",
+    );
+    let mut file = minimal_file();
+    file.anchor.max_peers = Some(17);
+    let err = build_config(file, None, |_| None).unwrap_err();
+    assert_eq!(
+        err.to_string(),
+        "[anchor].max_peers must be between 0 and 16"
+    );
+    for ok in [0, 16] {
+        let mut file = minimal_file();
+        file.anchor.max_peers = Some(ok);
+        assert_eq!(
+            build_config(file, None, |_| None).unwrap().anchor.max_peers,
+            ok
+        );
+    }
+}
+
+#[test]
 fn zero_concurrency_and_idle_timeout_are_rejected() {
     assert_env_rejects(
         "SWING_CONCURRENCY",

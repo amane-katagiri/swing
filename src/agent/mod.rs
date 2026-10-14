@@ -1,3 +1,4 @@
+mod anchors;
 mod follow;
 mod lifecycle;
 mod replicas;
@@ -21,13 +22,14 @@ use tracing::{debug, info, warn};
 use crate::activity::Activity;
 use crate::config::Config;
 use crate::health;
-use crate::ipfs::KuboStore;
+use crate::ipfs::{KuboNode, KuboStore};
 use crate::mfs::MfsLayout;
 use crate::nip05::Nip05Verify;
-use crate::nostr::{RelayClient, ReportRelay};
+use crate::nostr::{AnchorRelay, RelayClient, ReportRelay};
 use crate::policy;
 use crate::state::{SiteKey, State, VersionRecord};
 
+use anchors::AnchorAgentState;
 use replicas::ReportBook;
 use store::Queued;
 
@@ -40,20 +42,21 @@ async fn poll_once<C, N, R>(
     agent: &Arc<Agent<C, N, R>>,
     tasks: &mut JoinSet<()>,
 ) where
-    C: KuboStore + Send + Sync + 'static,
+    C: KuboStore + KuboNode + Send + Sync + 'static,
     N: Nip05Verify + Send + Sync + 'static,
-    R: ReportRelay + Send + Sync + 'static,
+    R: ReportRelay + AnchorRelay + Send + Sync + 'static,
 {
     agent.sweep().await;
     let targets = follow::refresh_follow_set(relay, agent, tasks).await;
     agent.start_report_round(relay, targets, tasks);
+    agent.start_anchor_refresh(tasks);
 }
 
 impl<C, N, R> Agent<C, N, R>
 where
-    C: KuboStore + Send + Sync + 'static,
+    C: KuboStore + KuboNode + Send + Sync + 'static,
     N: Nip05Verify + Send + Sync + 'static,
-    R: ReportRelay + Send + Sync + 'static,
+    R: ReportRelay + AnchorRelay + Send + Sync + 'static,
 {
     // The resend runs in the report round's task so its fetches never overlap the reports'.
     fn start_report_round(
@@ -92,6 +95,29 @@ where
         }));
         true
     }
+
+    fn start_anchor_check(self: &Arc<Self>, tasks: &mut JoinSet<()>) {
+        let mut check = self.anchors.check.lock().unwrap();
+        if check.as_ref().is_some_and(|c| !c.is_finished()) {
+            return;
+        }
+        let agent = Arc::clone(self);
+        *check = Some(tasks.spawn(async move { agent.check_anchor_ad().await }));
+    }
+
+    fn start_anchor_refresh(self: &Arc<Self>, tasks: &mut JoinSet<()>) -> bool {
+        let mut refresh = self.anchors.refresh.lock().unwrap();
+        if refresh.as_ref().is_some_and(|r| !r.is_finished()) {
+            debug!("the previous anchor refresh is still running; skipping this one");
+            return false;
+        }
+        let agent = Arc::clone(self);
+        *refresh = Some(tasks.spawn(async move {
+            let targets: Vec<PublicKey> = agent.targets.read().unwrap().iter().copied().collect();
+            agent.refresh_anchors(&targets).await;
+        }));
+        true
+    }
 }
 
 struct Agent<C, N, R> {
@@ -112,6 +138,7 @@ struct Agent<C, N, R> {
     attempts: Mutex<store::Attempts>,
     report_round: Mutex<Option<AbortHandle>>,
     resend: Mutex<resend::Schedule>,
+    anchors: AnchorAgentState,
 }
 
 impl<C: KuboStore, N: Nip05Verify, R: ReportRelay> Agent<C, N, R> {
@@ -144,7 +171,13 @@ impl<C: KuboStore, N: Nip05Verify, R: ReportRelay> Agent<C, N, R> {
             attempts: Mutex::default(),
             report_round: Mutex::new(None),
             resend: Mutex::default(),
+            anchors: AnchorAgentState::default(),
         }
+    }
+
+    fn with_anchors(mut self, status: Arc<crate::anchor::AnchorStatus>) -> Self {
+        self.anchors = AnchorAgentState::with_status(status);
+        self
     }
 
     fn is_target(&self, pubkey: &PublicKey) -> bool {

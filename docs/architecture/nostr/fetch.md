@@ -77,7 +77,7 @@ agent の保存した版のサイトイベントの再送（[`../agent/resend.md
 
 - relay への `Filter::limit` は `capped_limit(count, per)`（`nostr/client/fetch.rs`。`min(count * per, MAX_RELAY_FETCH_LIMIT)`）で、取得先の件数（作者数・サイト数など）に経路ごとの倍率を掛けて決める。`limit` は relay ごとに付くので、合計の取得件数は relay 数倍になり得る。
 - 作者（または `#p` の相手）を並べる取得は、組に分けて別々の REQ にする。
-  - `fetch_follow_sets`・`fetch_follow_set_authors_referencing`: `AUTHORS_PER_FILTER`（50）人ずつ 1 つのフィルタにまとめ、`limit` もその組の人数から決める（`RelayClient::fetch_by_authors`）。
+  - `fetch_follow_sets`・`fetch_follow_set_authors_referencing`・`fetch_followers_among`: `AUTHORS_PER_FILTER`（50）人ずつ 1 つのフィルタにまとめ、`limit` もその組の人数から決める（`RelayClient::fetch_by_authors`）。
   - `fetch_replica_reports_by`: 報告者 `AUTHORS_PER_FILTER`（50）人 × 座標 `COORDINATES_PER_FILTER`（250）件の組ごとに REQ を 1 つ作り、`limit` は組の人数 × 座標数 × 2。
-  - `fetch_site_events`・`fetch_reports_about`: `AUTHORS_PER_SPLIT_REQ`（10）人ずつ 1 つの REQ にまとめ、その中で作者ごとに別のフィルタを置き、`limit` も作者ごとに付ける（`RelayClient::fetch_per_author`。サイトイベントは `MAX_SITES_PER_AUTHOR_LISTED`、報告はその 2 倍）。
+  - `fetch_site_events`・`fetch_reports_about`・`fetch_anchor_ads`: `AUTHORS_PER_SPLIT_REQ`（10）人ずつ 1 つの REQ にまとめ、その中で作者ごとに別のフィルタを置き、`limit` も作者ごとに付ける（`RelayClient::fetch_per_author`。サイトイベントは `MAX_SITES_PER_AUTHOR_LISTED`、報告はその 2 倍、アンカー広告は 8）。
 - `fetch_replica_reports` は複数サイトの座標（`COORDINATES_PER_FILTER` 件まで）を 1 つのフィルタにまとめるので、1 サイトの報告が多いと同じ組の他のサイトの報告が押し出されることがある（ダッシュボードは `key`/`root` を 1 リクエストあたり 100 件までに絞る）。
