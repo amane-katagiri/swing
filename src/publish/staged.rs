@@ -62,76 +62,50 @@ impl Drop for StagedVersion {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::{Arc, Mutex};
     use std::time::Duration;
 
-    use axum::extract::{RawQuery, State};
-    use axum::routing::post;
-
     use super::*;
+    use crate::test_support::KuboApi;
 
-    type Removed = Arc<Mutex<Vec<String>>>;
+    const VERSION: &str = "/swing/publish/k/s/100";
 
-    async fn fake_kubo(answer: &'static str) -> (IpfsClient, Removed) {
-        let removed: Removed = Arc::default();
-        let router = axum::Router::new()
-            .route(
-                "/api/v0/files/rm",
-                post(
-                    move |State(removed): State<Removed>, RawQuery(query): RawQuery| async move {
-                        removed.lock().unwrap().push(query.unwrap_or_default());
-                        answer
-                    },
-                ),
-            )
-            .with_state(removed.clone());
-        let addr = crate::test_support::serve_router(router).await;
-        (IpfsClient::new(format!("http://{addr}")), removed)
-    }
-
-    fn removed_paths(removed: &Removed) -> Vec<String> {
-        removed
-            .lock()
-            .unwrap()
-            .iter()
-            .filter_map(|q| {
-                q.split('&')
-                    .find_map(|kv| kv.strip_prefix("arg="))
-                    .map(str::to_string)
-            })
-            .collect()
-    }
-
-    async fn wait_for_removal(removed: &Removed) {
+    async fn wait_for_removal(kubo: &KuboApi) {
         for _ in 0..100 {
-            if !removed.lock().unwrap().is_empty() {
+            if !kubo.s.lock().unwrap().removed.is_empty() {
                 return;
             }
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
     }
 
+    fn removed(kubo: &KuboApi) -> Vec<String> {
+        kubo.s.lock().unwrap().removed.clone()
+    }
+
     #[tokio::test]
     async fn withdraw_removes_the_version() {
-        let (ipfs, removed) = fake_kubo("").await;
-        let staged = StagedVersion::new(&ipfs, "/swing/publish/k/s/100".to_string());
+        let kubo = KuboApi::serve("").await;
+        let staged = StagedVersion::new(&kubo.client(), VERSION.to_string());
         staged.withdraw().await.unwrap();
-        assert_eq!(removed_paths(&removed), vec!["/swing/publish/k/s/100"]);
+        assert_eq!(removed(&kubo), [VERSION]);
     }
 
     #[tokio::test]
     async fn fail_removes_the_version_and_returns_the_error() {
-        let (ipfs, removed) = fake_kubo("").await;
-        let staged = StagedVersion::new(&ipfs, "/swing/publish/k/s/100".to_string());
+        let kubo = KuboApi::serve("").await;
+        let staged = StagedVersion::new(&kubo.client(), VERSION.to_string());
         let err = staged.fail(anyhow::anyhow!("no relay accepted")).await;
         assert_eq!(format!("{err:#}"), "no relay accepted");
-        assert_eq!(removed_paths(&removed), vec!["/swing/publish/k/s/100"]);
+        assert_eq!(removed(&kubo), [VERSION]);
     }
 
     #[tokio::test]
     async fn fail_reports_a_removal_failure_with_the_error() {
-        let (ipfs, _removed) = fake_kubo("file does not exist").await;
-        let staged = StagedVersion::new(&ipfs, "/swing/publish/k/s/100".to_string());
+        let kubo = KuboApi::serve("").await;
+        kubo.with(|s| {
+            s.fail_remove.insert(VERSION.to_string());
+        });
+        let staged = StagedVersion::new(&kubo.client(), VERSION.to_string());
         let err = staged.fail(anyhow::anyhow!("signing failed")).await;
         let text = format!("{err:#}");
         assert!(text.starts_with("signing failed; could not remove /swing/publish/k/s/100"));
@@ -139,21 +113,18 @@ mod tests {
 
     #[tokio::test]
     async fn keep_leaves_the_version_in_place() {
-        let (ipfs, removed) = fake_kubo("").await;
-        let staged = StagedVersion::new(&ipfs, "/swing/publish/k/s/100".to_string());
-        assert_eq!(staged.keep(), "/swing/publish/k/s/100");
+        let kubo = KuboApi::serve("").await;
+        let staged = StagedVersion::new(&kubo.client(), VERSION.to_string());
+        assert_eq!(staged.keep(), VERSION);
         tokio::time::sleep(Duration::from_millis(100)).await;
-        assert!(removed.lock().unwrap().is_empty());
+        assert!(kubo.calls().is_empty());
     }
 
     #[tokio::test]
     async fn dropping_an_unannounced_version_removes_it() {
-        let (ipfs, removed) = fake_kubo("").await;
-        drop(StagedVersion::new(
-            &ipfs,
-            "/swing/publish/k/s/100".to_string(),
-        ));
-        wait_for_removal(&removed).await;
-        assert_eq!(removed_paths(&removed), vec!["/swing/publish/k/s/100"]);
+        let kubo = KuboApi::serve("").await;
+        drop(StagedVersion::new(&kubo.client(), VERSION.to_string()));
+        wait_for_removal(&kubo).await;
+        assert_eq!(removed(&kubo), [VERSION]);
     }
 }

@@ -474,6 +474,8 @@ pub(crate) struct KuboApiState {
     pub(crate) fail_remove: HashSet<String>,
     pub(crate) links: HashMap<String, Vec<(String, String, u8)>>,
     pub(crate) dag_size: u64,
+    pub(crate) taken: HashSet<String>,
+    pub(crate) calls: Vec<String>,
     pub(crate) unexpected: Vec<String>,
 }
 
@@ -554,7 +556,7 @@ impl KuboApi {
                     let args = kubo_args(q);
                     let cid = args[0].strip_prefix("/ipfs/").unwrap().to_string();
                     let mut s = s.lock().unwrap();
-                    if s.mfs.contains_key(&args[1]) {
+                    if s.mfs.contains_key(&args[1]) || s.taken.contains(&args[1]) {
                         return kubo_error(
                             "cp: cannot put node: directory already has entry by that name",
                         );
@@ -653,6 +655,15 @@ impl KuboApi {
                 s.lock().unwrap().unexpected.push(uri.path().to_string());
                 axum::http::StatusCode::INTERNAL_SERVER_ERROR
             })
+            .layer(axum::middleware::map_request_with_state(
+                std::sync::Arc::clone(&s),
+                |State(s): Shared, req: axum::extract::Request| async move {
+                    let path = req.uri().path();
+                    let call = path.strip_prefix("/api/v0/").unwrap_or(path).to_string();
+                    s.lock().unwrap().calls.push(call);
+                    req
+                },
+            ))
             .with_state(std::sync::Arc::clone(&s));
         let addr = serve_router(router).await;
         Self {
@@ -668,6 +679,80 @@ impl KuboApi {
     pub(crate) fn paths(&self) -> Vec<String> {
         self.s.lock().unwrap().paths()
     }
+
+    pub(crate) fn with(&self, f: impl FnOnce(&mut KuboApiState)) {
+        f(&mut self.s.lock().unwrap());
+    }
+
+    pub(crate) fn calls(&self) -> Vec<String> {
+        self.s.lock().unwrap().calls.clone()
+    }
+}
+
+pub(crate) async fn kubo_replying(
+    replies: &[(&'static str, u16, &'static str)],
+) -> crate::ipfs::IpfsClient {
+    let mut router = axum::Router::new();
+    for &(endpoint, status, body) in replies {
+        router = router.route(
+            &format!("/api/v0/{endpoint}"),
+            axum::routing::post(move || async move {
+                (axum::http::StatusCode::from_u16(status).unwrap(), body)
+            }),
+        );
+    }
+    let addr = serve_router(router).await;
+    crate::ipfs::IpfsClient::new(format!("http://{addr}"))
+}
+
+pub(crate) struct RawServer {
+    pub(crate) addr: std::net::SocketAddr,
+    requests: std::sync::Arc<Mutex<Vec<String>>>,
+}
+
+impl RawServer {
+    pub(crate) fn port(&self) -> u16 {
+        self.addr.port()
+    }
+
+    pub(crate) fn url(&self) -> String {
+        format!("http://{}", self.addr)
+    }
+
+    pub(crate) fn requests(&self) -> Vec<String> {
+        self.requests.lock().unwrap().clone()
+    }
+}
+
+pub(crate) fn http_response(status: &str, body: &str) -> String {
+    format!(
+        "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+        body.len()
+    )
+}
+
+pub(crate) async fn serve_raw(response: impl Into<String>) -> RawServer {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let response: std::sync::Arc<str> = response.into().into();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let requests = std::sync::Arc::new(Mutex::new(Vec::new()));
+    let seen = std::sync::Arc::clone(&requests);
+    tokio::spawn(async move {
+        while let Ok((mut socket, _)) = listener.accept().await {
+            let seen = std::sync::Arc::clone(&seen);
+            let response = std::sync::Arc::clone(&response);
+            tokio::spawn(async move {
+                let mut buf = [0u8; 4096];
+                let n = socket.read(&mut buf).await.unwrap_or(0);
+                seen.lock()
+                    .unwrap()
+                    .push(String::from_utf8_lossy(&buf[..n]).to_ascii_lowercase());
+                let _ = socket.write_all(response.as_bytes()).await;
+            });
+        }
+    });
+    RawServer { addr, requests }
 }
 
 pub(crate) fn unanswered_signer(relay: &str, user: PublicKey) -> crate::signer::Signer {

@@ -1,75 +1,26 @@
-use std::sync::{Arc, Mutex};
-
-use axum::extract::RawQuery;
-use axum::http::{StatusCode, Uri};
-use axum::routing::post;
 use nostr_sdk::prelude::*;
 
 use super::*;
 use crate::config;
+use crate::mfs::MfsLayout;
 use crate::publish::ModeOverrides;
-use crate::test_support::CID_A;
+use crate::test_support::{CID_A, KuboApi, events_on_relay, make_site_event, relay_holding};
 
 const HASHED: &str = "bafybeicwrird3ditgfyu4snq6i3x6i564gfcywffrwcgumnjhyiva3p2ra";
 
-type Calls = Arc<Mutex<Vec<String>>>;
-
-struct FakeKubo {
-    api: String,
-    calls: Calls,
-}
-
-async fn fake_kubo(newest_version: Option<u64>) -> FakeKubo {
-    let calls = Calls::default();
-    let (add_log, ls_log, files_log, other_log) =
-        (calls.clone(), calls.clone(), calls.clone(), calls.clone());
-    let router = axum::Router::new()
-        .route(
-            "/api/v0/add",
-            post(
-                move |RawQuery(q): RawQuery, _body: axum::body::Bytes| async move {
-                    add_log
-                        .lock()
-                        .unwrap()
-                        .push(format!("add?{}", q.unwrap_or_default()));
-                    format!(r#"{{"Name":"x","Hash":"{HASHED}","Size":"3"}}"#)
-                },
-            ),
-        )
-        .route(
-            "/api/v0/files/ls",
-            post(move || async move {
-                files_log.lock().unwrap().push("files/ls".to_string());
-                match newest_version {
-                    Some(v) => (
-                        StatusCode::OK,
-                        format!(r#"{{"Entries":[{{"Name":"{v}","Type":1,"Hash":"bafy"}}]}}"#),
-                    ),
-                    None => (
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        r#"{"Message":"file does not exist","Code":0,"Type":"error"}"#.to_string(),
-                    ),
-                }
-            }),
-        )
-        .route(
-            "/api/v0/ls",
-            post(move || async move {
-                ls_log.lock().unwrap().push("ls".to_string());
-                axum::Json(serde_json::json!({ "Objects": [{ "Hash": CID_A, "Links": [
-                    { "Name": "index.html", "Hash": "f1", "Type": 2 },
-                ] }] }))
-            }),
-        )
-        .fallback(move |uri: Uri| async move {
-            other_log.lock().unwrap().push(uri.path().to_string());
-            StatusCode::INTERNAL_SERVER_ERROR
-        });
-    let addr = crate::test_support::serve_router(router).await;
-    FakeKubo {
-        api: format!("http://{addr}"),
-        calls,
-    }
+async fn fake_kubo(keys: &Keys, newest_version: Option<u64>) -> KuboApi {
+    let kubo = KuboApi::serve(HASHED).await;
+    let site = MfsLayout::new("/swing").publish_site(&keys.public_key().to_hex(), "example.com");
+    kubo.with(|s| {
+        if let Some(v) = newest_version {
+            s.mfs.insert(format!("{site}/{v}"), CID_A.to_string());
+        }
+        for cid in [CID_A, HASHED] {
+            let index = ("index.html".to_string(), "f1".to_string(), 2);
+            s.links.insert(cid.to_string(), vec![index]);
+        }
+    });
+    kubo
 }
 
 fn site_dir(files: &[(&str, &str)]) -> tempfile::TempDir {
@@ -126,42 +77,8 @@ fn modes(unchanged: &str) -> ModeOverrides {
 }
 
 async fn relay_with_previous(keys: &Keys, cid: &str) -> (LocalRelay, String) {
-    let local = LocalRelay::new();
-    local.run().await.unwrap();
-    let url = local.url().await.to_string();
-    let event = crate::nostr::build_site_event_builder(
-        35980,
-        &crate::nostr::SiteFields {
-            d: "example.com",
-            cid,
-            url: None,
-            size: Some(10),
-            title: None,
-            message: None,
-        },
-    )
-    .custom_created_at(Timestamp::from_secs(Timestamp::now().as_secs() - 100))
-    .finalize(keys)
-    .unwrap();
-    let client = Client::default();
-    client.add_relay(url.as_str()).await.unwrap();
-    client.connect().await;
-    client.send_event(&event).await.unwrap();
-    client.shutdown().await;
-    (local, url)
-}
-
-async fn events_on(url: &str, author: PublicKey) -> usize {
-    let client = Client::default();
-    client.add_relay(url).await.unwrap();
-    client.connect().await;
-    let events = client
-        .fetch_events(Filter::new().author(author))
-        .timeout(std::time::Duration::from_secs(5))
-        .await
-        .unwrap();
-    client.shutdown().await;
-    events.len()
+    let created_at = Timestamp::now().as_secs() - 100;
+    relay_holding(&[make_site_event(keys, 35980, "example.com", cid, created_at)]).await
 }
 
 struct NeverVerified;
@@ -176,13 +93,13 @@ impl Nip05Verify for NeverVerified {
 async fn a_dry_run_only_hashes_and_reads_and_never_signs_or_sends() {
     let keys = Keys::generate();
     let (_relay, url) = relay_with_previous(&keys, CID_A).await;
-    let kubo = fake_kubo(None).await;
+    let kubo = fake_kubo(&keys, None).await;
     let state = tempfile::tempdir().unwrap();
     let site = site_dir(&[("index.html", "hi"), ("blog/new.html", "new")]);
     let config = test_config(
         state.path(),
         Some(&keys),
-        Some(&kubo.api),
+        Some(&kubo.url),
         std::slice::from_ref(&url),
     );
     let request = request(modes("require"));
@@ -194,31 +111,32 @@ async fn a_dry_run_only_hashes_and_reads_and_never_signs_or_sends() {
     assert_eq!(evaluation.outcome(), Outcome::Publish);
     assert_eq!(evaluation.new_files, vec!["blog/new.html"]);
     assert_eq!(evaluation.unchanged.status, UnchangedStatus::Changed);
-    let calls = kubo.calls.lock().unwrap().clone();
-    let adds: Vec<&String> = calls.iter().filter(|c| c.starts_with("add?")).collect();
+    let calls = kubo.calls();
+    let adds = kubo.s.lock().unwrap().adds.clone();
     assert_eq!(adds.len(), 1, "{calls:?}");
-    assert!(adds[0].contains("only-hash=true"), "{calls:?}");
-    assert!(adds[0].contains("pin=false"), "{calls:?}");
+    assert!(adds[0].contains("only-hash=true"), "{adds:?}");
+    assert!(adds[0].contains("pin=false"), "{adds:?}");
     assert!(
         calls
             .iter()
-            .all(|c| c.starts_with("add?") || c == "files/ls" || c == "ls"),
+            .all(|c| c == "add" || c == "files/ls" || c == "ls"),
         "{calls:?}"
     );
-    assert_eq!(events_on(&url, keys.public_key()).await, 1);
+    let events = events_on_relay(&url, Filter::new().author(keys.public_key())).await;
+    assert_eq!(events.len(), 1);
 }
 
 #[tokio::test]
 async fn the_same_cid_under_require_is_reported_as_unchanged_without_stopping() {
     let keys = Keys::generate();
     let (_relay, url) = relay_with_previous(&keys, HASHED).await;
-    let kubo = fake_kubo(None).await;
+    let kubo = fake_kubo(&keys, None).await;
     let state = tempfile::tempdir().unwrap();
     let site = site_dir(&[("index.html", "hi")]);
     let config = test_config(
         state.path(),
         Some(&keys),
-        Some(&kubo.api),
+        Some(&kubo.url),
         std::slice::from_ref(&url),
     );
     let request = request(modes("require"));
@@ -239,13 +157,13 @@ async fn the_same_cid_under_require_is_reported_as_unchanged_without_stopping() 
 async fn every_stop_condition_is_collected_and_fails_the_run() {
     let keys = Keys::generate();
     let future = Timestamp::now().as_secs() + crate::nostr::MAX_FUTURE_SKEW + 3600;
-    let kubo = fake_kubo(Some(future)).await;
+    let kubo = fake_kubo(&keys, Some(future)).await;
     let state = tempfile::tempdir().unwrap();
     let site = site_dir(&[
         ("index.html", r#"<a href="/about/">a</a>"#),
         (".env", "SECRET=1"),
     ]);
-    let config = test_config(state.path(), Some(&keys), Some(&kubo.api), &[]);
+    let config = test_config(state.path(), Some(&keys), Some(&kubo.url), &[]);
     let mut overrides = modes("require");
     overrides.nip05 = Some("require".into());
     overrides.check_links = Some("require".into());
@@ -291,11 +209,9 @@ async fn every_stop_condition_is_collected_and_fails_the_run() {
         err.to_string().starts_with("the publish would stop: "),
         "{err}"
     );
-    let calls = kubo.calls.lock().unwrap().clone();
+    let calls = kubo.calls();
     assert!(
-        calls
-            .iter()
-            .all(|c| c.starts_with("add?") || c == "files/ls"),
+        calls.iter().all(|c| c == "add" || c == "files/ls"),
         "{calls:?}"
     );
 }
@@ -355,13 +271,13 @@ async fn without_a_key_or_kubo_the_local_checks_still_run_and_the_rest_is_unknow
 async fn the_unchanged_check_is_reported_even_when_off_but_never_skips() {
     let keys = Keys::generate();
     let (_relay, url) = relay_with_previous(&keys, HASHED).await;
-    let kubo = fake_kubo(None).await;
+    let kubo = fake_kubo(&keys, None).await;
     let state = tempfile::tempdir().unwrap();
     let site = site_dir(&[("index.html", "hi")]);
     let config = test_config(
         state.path(),
         Some(&keys),
-        Some(&kubo.api),
+        Some(&kubo.url),
         std::slice::from_ref(&url),
     );
     let request = request(modes("off"));

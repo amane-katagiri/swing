@@ -654,6 +654,7 @@ impl IpfsClient {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::kubo_replying;
 
     #[test]
     fn percent_encode_leaves_safe_chars_and_slash_boundary() {
@@ -719,26 +720,17 @@ mod tests {
         assert!(parse_autonat("{}").is_err());
     }
 
-    fn fake_autonat(status: u16, body: &'static str) -> axum::Router {
-        axum::Router::new().route(
-            "/api/v0/swarm/addrs/autonat",
-            axum::routing::post(move || async move {
-                (axum::http::StatusCode::from_u16(status).unwrap(), body)
-            }),
-        )
-    }
-
     #[tokio::test]
     async fn autonat_reports_an_offline_kubo_as_offline() {
-        let addr = crate::test_support::serve_router(fake_autonat(
+        let parsed = kubo_replying(&[(
+            "swarm/addrs/autonat",
             500,
             r#"{"Message":"this command must be run in online mode. Try running 'ipfs daemon' first","Code":0,"Type":"error"}"#,
-        ))
-        .await;
-        let parsed = IpfsClient::new(format!("http://{addr}"))
-            .autonat()
-            .await
-            .unwrap();
+        )])
+        .await
+        .autonat()
+        .await
+        .unwrap();
         assert_eq!(parsed.reachability, Reachability::Offline);
         assert_eq!(parsed.nat, None);
         assert!(parsed.reachable.is_empty() && parsed.unreachable.is_empty());
@@ -747,15 +739,15 @@ mod tests {
 
     #[tokio::test]
     async fn autonat_keeps_other_kubo_failures_as_errors() {
-        let addr = crate::test_support::serve_router(fake_autonat(
+        let err = kubo_replying(&[(
+            "swarm/addrs/autonat",
             500,
             r#"{"Message":"something else broke","Code":0,"Type":"error"}"#,
-        ))
-        .await;
-        let err = IpfsClient::new(format!("http://{addr}"))
-            .autonat()
-            .await
-            .unwrap_err();
+        )])
+        .await
+        .autonat()
+        .await
+        .unwrap_err();
         assert!(format!("{err:#}").contains("something else"), "{err:#}");
     }
 
@@ -784,28 +776,15 @@ mod tests {
 
     #[tokio::test]
     async fn hash_site_sends_the_add_query_with_only_hash() {
-        use axum::extract::RawQuery;
-        let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
-        let log = seen.clone();
-        let router = axum::Router::new().route(
-            "/api/v0/add",
-            axum::routing::post(
-                move |RawQuery(q): RawQuery, _body: axum::body::Bytes| async move {
-                    log.lock().unwrap().push(q.unwrap_or_default());
-                    r#"{"Name":"x","Hash":"bafyx","Size":"3"}"#
-                },
-            ),
-        );
-        let addr = crate::test_support::serve_router(router).await;
-        let client = IpfsClient::new(format!("http://{addr}"));
+        let kubo = crate::test_support::KuboApi::serve("bafyx").await;
+        let client = kubo.client();
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("index.html"), b"hi").unwrap();
         let listing = || SiteListing::read(dir.path()).unwrap();
         assert_eq!(client.add_site(listing()).await.unwrap(), "bafyx");
         assert_eq!(client.hash_site(listing()).await.unwrap(), "bafyx");
-        let seen = seen.lock().unwrap().clone();
         assert_eq!(
-            seen,
+            kubo.s.lock().unwrap().adds,
             [
                 format!("{ADD_QUERY}&only-hash=false"),
                 format!("{ADD_QUERY}&only-hash=true"),
@@ -880,27 +859,13 @@ mod tests {
         assert!(err.to_string().contains("no progress"), "{err}");
     }
 
-    async fn fake_kubo_replying(replies: &[(&'static str, u16, &'static str)]) -> IpfsClient {
-        let mut router = axum::Router::new();
-        for &(endpoint, status, body) in replies {
-            router = router.route(
-                &format!("/api/v0/{endpoint}"),
-                axum::routing::post(move || async move {
-                    (axum::http::StatusCode::from_u16(status).unwrap(), body)
-                }),
-            );
-        }
-        let addr = crate::test_support::serve_router(router).await;
-        IpfsClient::new(format!("http://{addr}"))
-    }
-
     const KUBO_MISSING: &str =
         r#"{"Message":"files/ls: file does not exist","Code":0,"Type":"error"}"#;
     const KUBO_BROKEN: &str = r#"{"Message":"repo is locked","Code":0,"Type":"error"}"#;
 
     #[tokio::test]
     async fn mfs_remove_treats_a_200_with_a_message_as_a_failure() {
-        let failing = fake_kubo_replying(&[("files/rm", 200, "Error: cannot remove\n")]).await;
+        let failing = kubo_replying(&[("files/rm", 200, "Error: cannot remove\n")]).await;
         let err = failing.mfs_remove("/swing/x").await.unwrap_err();
         assert!(
             err.to_string()
@@ -908,16 +873,16 @@ mod tests {
             "{err}"
         );
 
-        let clean = fake_kubo_replying(&[("files/rm", 200, "\n")]).await;
+        let clean = kubo_replying(&[("files/rm", 200, "\n")]).await;
         clean.mfs_remove("/swing/x").await.unwrap();
 
-        let broken = fake_kubo_replying(&[("files/rm", 500, KUBO_BROKEN)]).await;
+        let broken = kubo_replying(&[("files/rm", 500, KUBO_BROKEN)]).await;
         assert!(broken.mfs_remove("/swing/x").await.is_err());
     }
 
     #[tokio::test]
     async fn a_missing_mfs_path_reads_as_empty_and_other_failures_stay_errors() {
-        let missing = fake_kubo_replying(&[
+        let missing = kubo_replying(&[
             ("files/ls", 500, KUBO_MISSING),
             ("files/stat", 500, KUBO_MISSING),
         ])
@@ -925,7 +890,7 @@ mod tests {
         assert_eq!(missing.mfs_list("/swing/a").await.unwrap(), vec![]);
         assert_eq!(missing.mfs_stat_cid("/swing/a").await.unwrap(), None);
 
-        let present = fake_kubo_replying(&[
+        let present = kubo_replying(&[
             (
                 "files/ls",
                 200,
@@ -958,7 +923,7 @@ mod tests {
             Some("bafyf")
         );
 
-        let broken = fake_kubo_replying(&[
+        let broken = kubo_replying(&[
             ("files/ls", 500, KUBO_BROKEN),
             ("files/stat", 500, KUBO_BROKEN),
         ])
@@ -969,10 +934,10 @@ mod tests {
 
     #[tokio::test]
     async fn mfs_place_tells_an_existing_entry_from_a_failure() {
-        let placed = fake_kubo_replying(&[("files/mkdir", 200, ""), ("files/cp", 200, "")]).await;
+        let placed = kubo_replying(&[("files/mkdir", 200, ""), ("files/cp", 200, "")]).await;
         assert!(placed.mfs_place(CID, "/swing/a/b").await.unwrap());
 
-        let exists = fake_kubo_replying(&[
+        let exists = kubo_replying(&[
             ("files/mkdir", 200, ""),
             (
                 "files/cp",
@@ -984,10 +949,10 @@ mod tests {
         assert!(!exists.mfs_place(CID, "/swing/a/b").await.unwrap());
 
         let broken =
-            fake_kubo_replying(&[("files/mkdir", 200, ""), ("files/cp", 500, KUBO_BROKEN)]).await;
+            kubo_replying(&[("files/mkdir", 200, ""), ("files/cp", 500, KUBO_BROKEN)]).await;
         assert!(broken.mfs_place(CID, "/swing/a/b").await.is_err());
 
-        let no_parent = fake_kubo_replying(&[("files/mkdir", 500, KUBO_BROKEN)]).await;
+        let no_parent = kubo_replying(&[("files/mkdir", 500, KUBO_BROKEN)]).await;
         assert!(no_parent.mfs_place(CID, "/swing/a/b").await.is_err());
     }
 
@@ -1064,7 +1029,7 @@ mod tests {
 
     #[tokio::test]
     async fn fetch_dag_reports_a_refused_export_with_its_message() {
-        let client = fake_kubo_replying(&[("dag/export", 500, KUBO_BROKEN)]).await;
+        let client = kubo_replying(&[("dag/export", 500, KUBO_BROKEN)]).await;
         let err = client.fetch_dag(CID, ROOMY).await.unwrap_err();
         let shown = format!("{err:#}");
         assert!(shown.contains("dag/export failed: 500"), "{shown}");
@@ -1083,56 +1048,36 @@ mod tests {
             .unwrap();
     }
 
-    #[test]
-    fn kubo_client_ignores_proxy_environment() {
-        use std::io::{Read, Write};
-        let kubo = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        let kubo_addr = kubo.local_addr().unwrap();
-        kubo.set_nonblocking(true).unwrap();
-        let server = std::thread::spawn(move || {
-            let deadline = std::time::Instant::now() + Duration::from_secs(30);
-            let mut sock = loop {
-                match kubo.accept() {
-                    Ok((sock, _)) => break sock,
-                    Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                        assert!(
-                            std::time::Instant::now() < deadline,
-                            "the probe never reached Kubo"
-                        );
-                        std::thread::sleep(Duration::from_millis(10));
-                    }
-                    Err(e) => panic!("{e}"),
-                }
-            };
-            sock.set_nonblocking(false).unwrap();
-            let mut buf = [0u8; 4096];
-            let _ = sock.read(&mut buf);
-            sock.write_all(b"HTTP/1.1 200 OK\r\ncontent-length: 2\r\nconnection: close\r\n\r\n{}")
-                .unwrap();
-        });
+    #[tokio::test]
+    async fn kubo_client_ignores_proxy_environment() {
+        let kubo = crate::test_support::serve_raw(
+            "HTTP/1.1 200 OK\r\ncontent-length: 2\r\nconnection: close\r\n\r\n{}",
+        )
+        .await;
         let proxy = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         proxy.set_nonblocking(true).unwrap();
         let proxy_url = format!("http://{}", proxy.local_addr().unwrap());
 
-        let output = std::process::Command::new(std::env::current_exe().unwrap())
+        let output = tokio::process::Command::new(std::env::current_exe().unwrap())
             .args([
                 "--exact",
                 "ipfs::tests::kubo_client_probe",
                 "--ignored",
                 "--quiet",
             ])
-            .env("SWING_TEST_KUBO_PROBE_API", format!("http://{kubo_addr}"))
+            .env("SWING_TEST_KUBO_PROBE_API", kubo.url())
             .env("HTTP_PROXY", &proxy_url)
             .env("http_proxy", &proxy_url)
             .env("ALL_PROXY", &proxy_url)
             .env_remove("NO_PROXY")
             .env_remove("no_proxy")
             .output()
+            .await
             .unwrap();
         let stdout = String::from_utf8_lossy(&output.stdout);
         assert!(output.status.success(), "{stdout}");
         assert!(stdout.contains("1 passed"), "{stdout}");
-        server.join().unwrap();
+        assert_eq!(kubo.requests().len(), 1, "the probe never reached Kubo");
         assert_eq!(
             proxy.accept().unwrap_err().kind(),
             std::io::ErrorKind::WouldBlock,

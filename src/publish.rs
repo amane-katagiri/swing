@@ -861,6 +861,7 @@ pub async fn run(config: Config, dir: &Path, request: Request) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::{KuboApi, site_event_fixture};
 
     #[test]
     fn only_canonical_decimal_names_are_versions() {
@@ -872,59 +873,28 @@ mod tests {
         assert_eq!(newest_version(&names(&["junk", "00"])), None);
     }
 
-    struct FakeKubo {
-        ipfs: IpfsClient,
-        added: std::sync::Arc<std::sync::atomic::AtomicBool>,
-    }
-
-    async fn fake_files_ls(answer: String) -> FakeKubo {
-        let added = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-        let added_flag = added.clone();
-        let router = axum::Router::new()
-            .route(
-                "/api/v0/files/ls",
-                axum::routing::post(move || async move {
-                    if answer == "missing" {
-                        let body = r#"{"Message":"file does not exist","Code":0,"Type":"error"}"#;
-                        return (
-                            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-                            body.to_string(),
-                        );
-                    }
-                    (axum::http::StatusCode::OK, answer)
-                }),
-            )
-            .fallback(move || async move {
-                added_flag.store(true, std::sync::atomic::Ordering::SeqCst);
-                axum::http::StatusCode::INTERNAL_SERVER_ERROR
-            });
-        let addr = crate::test_support::serve_router(router).await;
-        FakeKubo {
-            ipfs: IpfsClient::new(format!("http://{addr}")),
-            added,
-        }
-    }
-
-    fn ls_answer(names: &[u64]) -> String {
-        let entries: Vec<String> = names
-            .iter()
-            .map(|n| format!(r#"{{"Name":"{n}","Type":1,"Hash":"bafy"}}"#))
-            .collect();
-        format!(r#"{{"Entries":[{}]}}"#, entries.join(","))
+    async fn kubo_with_versions(site: &str, versions: &[u64]) -> KuboApi {
+        let kubo = KuboApi::serve(crate::test_support::CID_A).await;
+        kubo.with(|s| {
+            for v in versions {
+                s.mfs.insert(format!("{site}/{v}"), "bafy".to_string());
+            }
+        });
+        kubo
     }
 
     #[tokio::test]
     async fn list_newest_version_reads_the_site_dir() {
-        let kubo = fake_files_ls(ls_answer(&[499, 500])).await;
+        let kubo = kubo_with_versions("/swing/publish/k/s", &[499, 500]).await;
         assert_eq!(
-            list_newest_version(&kubo.ipfs, "/swing/publish/k/s")
+            list_newest_version(&kubo.client(), "/swing/publish/k/s")
                 .await
                 .unwrap(),
             Some(500)
         );
-        let kubo = fake_files_ls("missing".to_string()).await;
+        let kubo = kubo_with_versions("/swing/publish/k/s", &[]).await;
         assert_eq!(
-            list_newest_version(&kubo.ipfs, "/swing/publish/k/s")
+            list_newest_version(&kubo.client(), "/swing/publish/k/s")
                 .await
                 .unwrap(),
             None
@@ -932,16 +902,8 @@ mod tests {
     }
 
     fn relay_state(previous: Option<u64>, relay_offsets: Vec<(String, i64)>) -> RelayState {
-        let previous = previous.map(|created_at| nostr::SiteEvent {
-            pubkey: Keys::generate().public_key(),
-            d: "example.com".to_string(),
-            cid: "bafy".to_string(),
-            url: None,
-            size: None,
-            title: None,
-            message: None,
-            created_at,
-            id: EventId::from_byte_array([0; 32]),
+        let previous = previous.map(|created_at| {
+            site_event_fixture(Keys::generate().public_key(), "example.com", created_at)
         });
         RelayState {
             previous: Ok(previous),
@@ -950,17 +912,17 @@ mod tests {
     }
 
     async fn refused_stage(newest: u64, relays: RelayState) -> (anyhow::Error, bool) {
-        let kubo = fake_files_ls(ls_answer(&[100, newest])).await;
+        let kubo = kubo_with_versions("/swing/publish/k/example.com", &[100, newest]).await;
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("index.html"), b"hi").unwrap();
         let site = SiteListing::read_async(dir.path()).await.unwrap();
         let layout = MfsLayout::new("/swing".to_string());
         let Err(err) =
-            add_and_measure(&kubo.ipfs, &layout, "k", "example.com", &relays, site).await
+            add_and_measure(&kubo.client(), &layout, "k", "example.com", &relays, site).await
         else {
             panic!("add_and_measure should refuse");
         };
-        (err, kubo.added.load(std::sync::atomic::Ordering::SeqCst))
+        (err, kubo.calls().iter().any(|c| c != "files/ls"))
     }
 
     #[tokio::test]
@@ -992,55 +954,14 @@ mod tests {
 
     #[tokio::test]
     async fn add_and_measure_moves_past_a_version_path_another_publish_took() {
-        use axum::extract::RawQuery;
-        use axum::http::StatusCode;
-        use axum::routing::post;
-        type Calls = std::sync::Arc<std::sync::Mutex<Vec<String>>>;
-
         let newest = Timestamp::now().as_secs() + 5;
         let taken = newest + 1;
-        let copied: Calls = Calls::default();
-        let removed: Calls = Calls::default();
-        let (cp_log, rm_log) = (copied.clone(), removed.clone());
-        let router = axum::Router::new()
-            .route(
-                "/api/v0/files/ls",
-                post(move || async move { ls_answer(&[newest]) }),
-            )
-            .route(
-                "/api/v0/add",
-                post(|_upload: axum::body::Bytes| async {
-                    r#"{"Name":"x","Hash":"bafybeicwrird3ditgfyu4snq6i3x6i564gfcywffrwcgumnjhyiva3p2ra","Size":"3"}"#
-                }),
-            )
-            .route("/api/v0/files/mkdir", post(|| async { "" }))
-            .route(
-                "/api/v0/files/cp",
-                post(move |RawQuery(q): RawQuery| async move {
-                    let q = q.unwrap_or_default();
-                    cp_log.lock().unwrap().push(q.clone());
-                    if q.contains(&format!("/{taken}&")) {
-                        let body = format!(
-                            r#"{{"Message":"cp: cannot put node in path /x/{taken}: directory already has entry by that name","Code":0,"Type":"error"}}"#
-                        );
-                        return (StatusCode::INTERNAL_SERVER_ERROR, body);
-                    }
-                    (StatusCode::OK, String::new())
-                }),
-            )
-            .route(
-                "/api/v0/files/rm",
-                post(move |RawQuery(q): RawQuery| async move {
-                    rm_log.lock().unwrap().push(q.unwrap_or_default());
-                    ""
-                }),
-            )
-            .route(
-                "/api/v0/dag/stat",
-                post(|| async { r#"{"TotalSize":42}"# }),
-            );
-        let addr = crate::test_support::serve_router(router).await;
-        let ipfs = IpfsClient::new(format!("http://{addr}"));
+        let site = "/swing/publish/k/example.com";
+        let kubo = kubo_with_versions(site, &[newest]).await;
+        kubo.with(|s| {
+            s.taken.insert(format!("{site}/{taken}"));
+        });
+        let ipfs = kubo.client();
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("index.html"), b"hi").unwrap();
         let site = SiteListing::read_async(dir.path()).await.unwrap();
@@ -1063,13 +984,14 @@ mod tests {
             stage.version.keep(),
             format!("/swing/publish/k/example.com/{}", taken + 1)
         );
-        assert_eq!(copied.lock().unwrap().len(), 2);
-        assert!(removed.lock().unwrap().is_empty());
+        let calls = kubo.calls();
+        assert_eq!(calls.iter().filter(|c| *c == "files/cp").count(), 2);
+        assert!(!calls.contains(&"files/rm".to_string()), "{calls:?}");
     }
 
     #[tokio::test]
     async fn plan_version_ignores_one_lagging_relay_and_dates_after_the_previous() {
-        let kubo = fake_files_ls(ls_answer(&[100])).await;
+        let kubo = kubo_with_versions("/swing/publish/k/s", &[100]).await;
         let now = Timestamp::now().as_secs();
         let relays = RelayState {
             previous: Err("relay down".to_string()),
@@ -1078,13 +1000,13 @@ mod tests {
                 ("wss://b".to_string(), 0),
             ],
         };
-        let created_at = plan_version(&kubo.ipfs, "/swing/publish/k/s", &relays)
+        let created_at = plan_version(&kubo.client(), "/swing/publish/k/s", &relays)
             .await
             .unwrap();
         assert!(created_at >= now, "{created_at}");
         let relays = relay_state(Some(now + 600), Vec::new());
         assert_eq!(
-            plan_version(&kubo.ipfs, "/swing/publish/k/s", &relays)
+            plan_version(&kubo.client(), "/swing/publish/k/s", &relays)
                 .await
                 .unwrap(),
             now + 601

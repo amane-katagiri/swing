@@ -2,7 +2,6 @@ use std::net::SocketAddr;
 #[cfg(unix)]
 use std::path::Path;
 use std::path::PathBuf;
-use std::sync::Arc;
 use std::time::Duration;
 
 use serde_json::json;
@@ -19,6 +18,7 @@ use super::config::{
 use super::daemon::is_repo_lock_error;
 use super::orphan::{PidRecord, read_pid_file};
 use super::*;
+use crate::test_support::{RawServer, http_response, serve_raw};
 
 fn test_kubo_bin() -> PathBuf {
     let bin = std::env::var_os("SWING_TEST_KUBO_BIN")
@@ -180,50 +180,8 @@ fn writes_api_file_then_sleeps(port: u16) -> String {
     format!("echo /ip4/127.0.0.1/tcp/{port} > \"$IPFS_PATH/api\"\nexec sleep 30")
 }
 
-struct IdServer {
-    port: u16,
-    requests: Arc<std::sync::Mutex<Vec<String>>>,
-}
-
-impl IdServer {
-    fn url(&self) -> String {
-        format!("http://127.0.0.1:{}", self.port)
-    }
-
-    fn requests(&self) -> Vec<String> {
-        self.requests.lock().unwrap().clone()
-    }
-}
-
-async fn serve(status: &'static str, body: String) -> IdServer {
-    use tokio::io::{AsyncReadExt, AsyncWriteExt};
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let port = listener.local_addr().unwrap().port();
-    let requests = Arc::new(std::sync::Mutex::new(Vec::new()));
-    let seen = Arc::clone(&requests);
-    tokio::spawn(async move {
-        while let Ok((mut socket, _)) = listener.accept().await {
-            let seen = Arc::clone(&seen);
-            let body = body.clone();
-            tokio::spawn(async move {
-                let mut buf = [0u8; 4096];
-                let n = socket.read(&mut buf).await.unwrap_or(0);
-                seen.lock()
-                    .unwrap()
-                    .push(String::from_utf8_lossy(&buf[..n]).to_ascii_lowercase());
-                let resp = format!(
-                    "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
-                    body.len()
-                );
-                let _ = socket.write_all(resp.as_bytes()).await;
-            });
-        }
-    });
-    IdServer { port, requests }
-}
-
-async fn serve_id(peer_id: &str) -> IdServer {
-    serve("200 OK", format!(r#"{{"ID":"{peer_id}"}}"#)).await
+async fn serve_id(peer_id: &str) -> RawServer {
+    serve_raw(http_response("200 OK", &format!(r#"{{"ID":"{peer_id}"}}"#))).await
 }
 
 fn access(port: u16) -> ApiAccess {
@@ -239,7 +197,7 @@ async fn daemon_wait_healthy_fails_fast_when_the_child_exits() {
     let dir = tempfile::tempdir().unwrap();
     let bin = fake_kubo(dir.path(), "exit 3", "mine");
     let server = serve_id("mine").await;
-    let mut daemon = Daemon::spawn(&bin, dir.path(), &access(server.port))
+    let mut daemon = Daemon::spawn(&bin, dir.path(), &access(server.port()))
         .await
         .unwrap();
     let _ = daemon.wait().await;
@@ -260,10 +218,10 @@ async fn daemon_wait_healthy_requires_the_repo_peer_id() {
     let foreign = serve_id("someone-else").await;
     let bin = fake_kubo(
         dir.path(),
-        &writes_api_file_then_sleeps(foreign.port),
+        &writes_api_file_then_sleeps(foreign.port()),
         "mine",
     );
-    let mut daemon = Daemon::spawn(&bin, dir.path(), &access(foreign.port))
+    let mut daemon = Daemon::spawn(&bin, dir.path(), &access(foreign.port()))
         .await
         .unwrap();
     let err = daemon
@@ -278,8 +236,8 @@ async fn daemon_wait_healthy_requires_the_repo_peer_id() {
     daemon.stop(Duration::ZERO).await.unwrap();
 
     let own = serve_id("mine").await;
-    let bin = fake_kubo(dir.path(), &writes_api_file_then_sleeps(own.port), "mine");
-    let mut daemon = Daemon::spawn(&bin, dir.path(), &access(own.port))
+    let bin = fake_kubo(dir.path(), &writes_api_file_then_sleeps(own.port()), "mine");
+    let mut daemon = Daemon::spawn(&bin, dir.path(), &access(own.port()))
         .await
         .unwrap();
     daemon
@@ -296,11 +254,11 @@ async fn daemon_wait_healthy_sends_nothing_until_kubo_writes_the_api_file() {
     let squatter = serve_id("mine").await;
     std::fs::write(
         dir.path().join("api"),
-        format!("/ip4/127.0.0.1/tcp/{}", squatter.port),
+        format!("/ip4/127.0.0.1/tcp/{}", squatter.port()),
     )
     .unwrap();
     let bin = fake_kubo(dir.path(), "exec sleep 30", "mine");
-    let mut daemon = Daemon::spawn(&bin, dir.path(), &access(squatter.port))
+    let mut daemon = Daemon::spawn(&bin, dir.path(), &access(squatter.port()))
         .await
         .unwrap();
     assert!(!dir.path().join("api").exists());
@@ -325,11 +283,11 @@ async fn daemon_wait_healthy_refuses_without_a_readable_peer_id() {
     let server = serve_id("mine").await;
     let bin = fake_kubo(
         dir.path(),
-        &writes_api_file_then_sleeps(server.port),
+        &writes_api_file_then_sleeps(server.port()),
         "mine",
     );
     std::fs::write(dir.path().join("config"), r#"{"Identity":{}}"#).unwrap();
-    let mut daemon = Daemon::spawn(&bin, dir.path(), &access(server.port))
+    let mut daemon = Daemon::spawn(&bin, dir.path(), &access(server.port()))
         .await
         .unwrap();
     let err = daemon
@@ -378,10 +336,10 @@ async fn managed_client_uses_the_port_stored_with_the_secret() {
     let own = serve_id("mine").await;
     std::fs::write(
         dir.path().join("api"),
-        format!("/ip4/127.0.0.1/tcp/{}", stale.port),
+        format!("/ip4/127.0.0.1/tcp/{}", stale.port()),
     )
     .unwrap();
-    write_api_access(dir.path(), &access(own.port)).unwrap();
+    write_api_access(dir.path(), &access(own.port())).unwrap();
     let client = managed_client(dir.path(), dir.path()).await.unwrap();
     assert_eq!(client.api_url(), own.url());
     assert!(stale.requests().is_empty());
@@ -524,26 +482,16 @@ fn apply_config_writes_through_a_symlinked_repo_config() {
 
 #[tokio::test]
 async fn kubo_http_client_sends_the_secret_as_a_bearer_token() {
-    use tokio::io::{AsyncReadExt, AsyncWriteExt};
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let addr = listener.local_addr().unwrap();
-    let server = tokio::spawn(async move {
-        let (mut socket, _) = listener.accept().await.unwrap();
-        let mut buf = vec![0u8; 4096];
-        let n = socket.read(&mut buf).await.unwrap();
-        let body = r#"{"ID":"mine"}"#;
-        let resp = format!(
-            "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
-            body.len()
-        );
-        socket.write_all(resp.as_bytes()).await.unwrap();
-        String::from_utf8_lossy(&buf[..n]).to_ascii_lowercase()
-    });
+    let server = serve_id("mine").await;
     let secret = ApiSecret::parse("abcd").unwrap();
-    let client = crate::ipfs::IpfsClient::with_secret(format!("http://{addr}"), Some(&secret));
+    let client = crate::ipfs::IpfsClient::with_secret(server.url(), Some(&secret));
     assert_eq!(client.peer_id().await.unwrap(), "mine");
-    let request = server.await.unwrap();
-    assert!(request.contains("authorization: bearer abcd"), "{request}");
+    let requests = server.requests();
+    assert_eq!(requests.len(), 1, "{requests:?}");
+    assert!(
+        requests[0].contains("authorization: bearer abcd"),
+        "{requests:?}"
+    );
 }
 
 #[test]
@@ -694,15 +642,15 @@ async fn orphan_shutdown_request(access_port_matches: bool) -> String {
         .unwrap();
     let pid = child.id();
     std::thread::spawn(move || child.wait());
-    let server = serve("500 Internal Server Error", String::new()).await;
-    let record = PidRecord::new(pid, server.port, process_start_marker(pid).unwrap()).unwrap();
+    let server = serve_raw(http_response("500 Internal Server Error", "")).await;
+    let record = PidRecord::new(pid, server.port(), process_start_marker(pid).unwrap()).unwrap();
     std::fs::write(
         dir.path().join("kubo.pid"),
         serde_json::to_string(&record).unwrap(),
     )
     .unwrap();
     let port = if access_port_matches {
-        server.port
+        server.port()
     } else {
         pick_free_port().unwrap()
     };

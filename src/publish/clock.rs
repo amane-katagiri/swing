@@ -331,20 +331,6 @@ mod tests {
         assert_eq!(parse_http_date(""), None);
     }
 
-    async fn serve_raw(response: &'static str) -> std::net::SocketAddr {
-        use tokio::io::{AsyncReadExt, AsyncWriteExt};
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let addr = listener.local_addr().unwrap();
-        tokio::spawn(async move {
-            while let Ok((mut socket, _)) = listener.accept().await {
-                let mut buf = [0u8; 1024];
-                let _ = socket.read(&mut buf).await;
-                let _ = socket.write_all(response.as_bytes()).await;
-            }
-        });
-        addr
-    }
-
     #[tokio::test]
     async fn the_probe_reads_the_date_header_and_skips_relays_without_one() {
         let with_date = axum::Router::new().route(
@@ -362,10 +348,11 @@ mod tests {
             }),
         );
         let dated = crate::test_support::serve_router(with_date).await;
-        let undated = serve_raw(
+        let undated = crate::test_support::serve_raw(
             "HTTP/1.1 200 OK\r\ncontent-type: application/nostr+json\r\ncontent-length: 2\r\nconnection: close\r\n\r\n{}",
         )
-        .await;
+        .await
+        .addr;
         let relays = vec![
             format!("ws://{dated}"),
             format!("ws://{undated}"),
