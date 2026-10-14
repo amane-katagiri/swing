@@ -77,112 +77,103 @@ fn accepts_cidv0_and_canonicalizes_it() {
 
 #[test]
 fn canonical_cid_normalizes_every_spelling_to_cidv1_base32() {
-    assert_eq!(
-        canonical_cid(CID_B).unwrap(),
-        "bafybeie5nqv6kd3qnfjuphmab6atx72bbz674e35siysg2di3q5jltctqq"
-    );
-    assert_eq!(
-        canonical_cid("zdj7Wic6KcJAfWz1c9o4M6kq9Lwd5BfbxkVafnrojaaGiSFxM").unwrap(),
-        CID_A
-    );
-    assert_eq!(canonical_cid(CID_A).unwrap(), CID_A);
-    assert!(canonical_cid("not-a-cid").is_err());
+    for (case, input, want) in [
+        (
+            "cidv0",
+            CID_B,
+            "bafybeie5nqv6kd3qnfjuphmab6atx72bbz674e35siysg2di3q5jltctqq",
+        ),
+        (
+            "base58 cidv1",
+            "zdj7Wic6KcJAfWz1c9o4M6kq9Lwd5BfbxkVafnrojaaGiSFxM",
+            CID_A,
+        ),
+        ("already canonical", CID_A, CID_A),
+    ] {
+        assert_eq!(canonical_cid(input).unwrap(), want, "{case}");
+    }
+    for (case, input, want) in [
+        ("garbage", "not-a-cid", "invalid cid tag"),
+        (
+            "raw codec",
+            "bafkreigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
+            "is not dag-pb",
+        ),
+        (
+            "dag-cbor codec",
+            "bafyreigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
+            "is not dag-pb",
+        ),
+    ] {
+        let err = canonical_cid(input).unwrap_err().to_string();
+        assert!(err.contains(want), "{case}: {err}");
+    }
+}
+
+fn event_with_tags(k: &Keys, tags: &[(&str, &str)]) -> Event {
+    let mut builder = EventBuilder::new(Kind::Custom(35980), "");
+    for (name, value) in tags {
+        builder = builder.tag(Tag::custom(*name, [value.to_string()]));
+    }
+    builder.finalize(k).unwrap()
 }
 
 #[test]
-fn canonical_cid_rejects_non_dag_pb_codecs() {
-    assert!(canonical_cid("bafkreigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi").is_err());
-    assert!(canonical_cid("bafyreigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi").is_err());
-}
-
-#[test]
-fn rejects_a_site_event_whose_cid_codec_is_not_dag_pb() {
-    let k = keys();
-    let ev = make_site_event(
-        &k,
-        35980,
-        "example.com",
-        "bafkreigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
-        1000,
-    );
-    assert!(parse_site_event(&ev, 35980).is_err());
-}
-
-#[test]
-fn rejects_wrong_kind() {
-    let k = keys();
-    let ev = make_site_event(&k, 1, "example.com", CID_A, 1000);
-    let err = parse_site_event(&ev, 35980).unwrap_err().to_string();
-    assert!(err.contains("unexpected kind"), "{err}");
-}
-
-#[test]
-fn rejects_missing_cid_tag() {
-    let k = keys();
-    let ev = EventBuilder::new(Kind::Custom(35980), "")
-        .tag(Tag::identifier("example.com"))
-        .finalize(&k)
-        .unwrap();
-    assert!(parse_site_event(&ev, 35980).is_err());
-}
-
-#[test]
-fn rejects_invalid_cid_value() {
-    let k = keys();
-    let ev = EventBuilder::new(Kind::Custom(35980), "")
-        .tag(Tag::identifier("example.com"))
-        .tag(Tag::custom("cid", ["not-a-cid".to_string()]))
-        .finalize(&k)
-        .unwrap();
-    assert!(parse_site_event(&ev, 35980).is_err());
-}
-
-#[test]
-fn rejects_missing_d_tag() {
-    let k = keys();
-    let ev = EventBuilder::new(Kind::Custom(35980), "")
-        .tag(Tag::custom("cid", [CID_A.to_string()]))
-        .finalize(&k)
-        .unwrap();
-    let err = parse_site_event(&ev, 35980).unwrap_err().to_string();
-    assert!(err.contains("missing d tag"), "{err}");
-}
-
-#[test]
-fn rejects_empty_d_tag() {
-    let k = keys();
-    let ev = EventBuilder::new(Kind::Custom(35980), "")
-        .tag(Tag::custom("d", [String::new()]))
-        .tag(Tag::custom("cid", [CID_A.to_string()]))
-        .finalize(&k)
-        .unwrap();
-    let err = parse_site_event(&ev, 35980).unwrap_err().to_string();
-    assert!(err.contains("empty d tag"), "{err}");
-}
-
-#[test]
-fn rejects_d_tag_too_long() {
+fn invalid_site_events_are_rejected() {
     let k = keys();
     let long_d = "a".repeat(254);
-    let ev = EventBuilder::new(Kind::Custom(35980), "")
-        .tag(Tag::custom("d", [long_d]))
-        .tag(Tag::custom("cid", [CID_A.to_string()]))
-        .finalize(&k)
-        .unwrap();
-    let err = parse_site_event(&ev, 35980).unwrap_err().to_string();
-    assert!(err.contains("d tag too long"), "{err}");
-}
-
-#[test]
-fn rejects_d_tag_with_control_characters() {
-    let k = keys();
-    let ev = EventBuilder::new(Kind::Custom(35980), "")
-        .tag(Tag::custom("d", ["example.com\ncom".to_string()]))
-        .tag(Tag::custom("cid", [CID_A.to_string()]))
-        .finalize(&k)
-        .unwrap();
-    let err = parse_site_event(&ev, 35980).unwrap_err().to_string();
-    assert!(err.contains("control or invisible"), "{err}");
+    let cases = [
+        (
+            "wrong kind",
+            make_site_event(&k, 1, "example.com", CID_A, 1000),
+            "unexpected kind",
+        ),
+        (
+            "missing cid",
+            event_with_tags(&k, &[("d", "example.com")]),
+            "missing cid tag",
+        ),
+        (
+            "invalid cid",
+            event_with_tags(&k, &[("d", "example.com"), ("cid", "not-a-cid")]),
+            "invalid cid tag",
+        ),
+        (
+            "raw codec cid",
+            make_site_event(
+                &k,
+                35980,
+                "example.com",
+                "bafkreigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
+                1000,
+            ),
+            "is not dag-pb",
+        ),
+        (
+            "missing d",
+            event_with_tags(&k, &[("cid", CID_A)]),
+            "missing d tag",
+        ),
+        (
+            "empty d",
+            event_with_tags(&k, &[("d", ""), ("cid", CID_A)]),
+            "empty d tag",
+        ),
+        (
+            "d too long",
+            event_with_tags(&k, &[("d", &long_d), ("cid", CID_A)]),
+            "d tag too long",
+        ),
+        (
+            "d with control characters",
+            event_with_tags(&k, &[("d", "example.com\ncom"), ("cid", CID_A)]),
+            "control or invisible",
+        ),
+    ];
+    for (case, ev, want) in cases {
+        let err = parse_site_event(&ev, 35980).unwrap_err().to_string();
+        assert!(err.contains(want), "{case}: {err}");
+    }
 }
 
 #[test]
@@ -199,75 +190,30 @@ fn accepts_d_tag_at_max_length() {
 }
 
 #[test]
-fn drops_invalid_url_but_keeps_event() {
+fn only_plain_http_urls_are_kept() {
     let k = keys();
-    let ev = EventBuilder::new(Kind::Custom(35980), "")
-        .tag(Tag::identifier("example.com"))
-        .tag(Tag::custom("cid", [CID_A.to_string()]))
-        .tag(Tag::custom("url", ["not a url".to_string()]))
-        .finalize(&k)
-        .unwrap();
-    let parsed = parse_site_event(&ev, 35980).unwrap();
-    assert_eq!(parsed.url, None);
+    let control = "https://example.com/\x1b]0;pwned\x07";
+    assert!(reqwest::Url::parse(control).is_ok());
+    let too_long = format!("https://example.com/{}", "a".repeat(2048));
+    for (case, url, want) in [
+        ("not a url", "not a url", None),
+        ("control characters", control, None),
+        ("non-http scheme", "ftp://example.com/", None),
+        ("too long", too_long.as_str(), None),
+        (
+            "https",
+            "https://example.com/",
+            Some("https://example.com/"),
+        ),
+    ] {
+        let ev = event_with_tags(&k, &[("d", "example.com"), ("cid", CID_A), ("url", url)]);
+        let parsed = parse_site_event(&ev, 35980).unwrap();
+        assert_eq!(parsed.url.as_deref(), want, "{case}");
+    }
 }
 
 #[test]
-fn drops_url_with_control_characters() {
-    let k = keys();
-    let url = "https://example.com/\x1b]0;pwned\x07";
-    assert!(reqwest::Url::parse(url).is_ok());
-    let ev = EventBuilder::new(Kind::Custom(35980), "")
-        .tag(Tag::identifier("example.com"))
-        .tag(Tag::custom("cid", [CID_A.to_string()]))
-        .tag(Tag::custom("url", [url.to_string()]))
-        .finalize(&k)
-        .unwrap();
-    let parsed = parse_site_event(&ev, 35980).unwrap();
-    assert_eq!(parsed.url, None);
-}
-
-#[test]
-fn drops_non_http_scheme_url() {
-    let k = keys();
-    let ev = EventBuilder::new(Kind::Custom(35980), "")
-        .tag(Tag::identifier("example.com"))
-        .tag(Tag::custom("cid", [CID_A.to_string()]))
-        .tag(Tag::custom("url", ["ftp://example.com/".to_string()]))
-        .finalize(&k)
-        .unwrap();
-    let parsed = parse_site_event(&ev, 35980).unwrap();
-    assert_eq!(parsed.url, None);
-}
-
-#[test]
-fn drops_too_long_url() {
-    let k = keys();
-    let long_url = format!("https://example.com/{}", "a".repeat(2048));
-    let ev = EventBuilder::new(Kind::Custom(35980), "")
-        .tag(Tag::identifier("example.com"))
-        .tag(Tag::custom("cid", [CID_A.to_string()]))
-        .tag(Tag::custom("url", [long_url]))
-        .finalize(&k)
-        .unwrap();
-    let parsed = parse_site_event(&ev, 35980).unwrap();
-    assert_eq!(parsed.url, None);
-}
-
-#[test]
-fn keeps_valid_https_url() {
-    let k = keys();
-    let ev = EventBuilder::new(Kind::Custom(35980), "")
-        .tag(Tag::identifier("example.com"))
-        .tag(Tag::custom("cid", [CID_A.to_string()]))
-        .tag(Tag::custom("url", ["https://example.com/".to_string()]))
-        .finalize(&k)
-        .unwrap();
-    let parsed = parse_site_event(&ev, 35980).unwrap();
-    assert_eq!(parsed.url.as_deref(), Some("https://example.com/"));
-}
-
-#[test]
-fn title_round_trips() {
+fn oversized_or_control_titles_are_dropped_but_the_event_is_kept() {
     let k = keys();
     let ev = build_site_event_builder(
         35980,
@@ -281,46 +227,19 @@ fn title_round_trips() {
     .finalize(&k)
     .unwrap();
     let parsed = parse_site_event(&ev, 35980).unwrap();
-    assert_eq!(parsed.title.as_deref(), Some("あまねけ！"));
-}
+    assert_eq!(parsed.title.as_deref(), Some("あまねけ！"), "round trip");
 
-#[test]
-fn drops_oversized_title_but_keeps_event() {
-    let k = keys();
-    let long_title = "a".repeat(257);
-    let ev = EventBuilder::new(Kind::Custom(35980), "")
-        .tag(Tag::identifier("example.com"))
-        .tag(Tag::custom("cid", [CID_A.to_string()]))
-        .tag(Tag::custom("title", [long_title]))
-        .finalize(&k)
-        .unwrap();
-    let parsed = parse_site_event(&ev, 35980).unwrap();
-    assert_eq!(parsed.title, None);
-}
-
-#[test]
-fn drops_title_with_control_characters() {
-    let k = keys();
-    let ev = EventBuilder::new(Kind::Custom(35980), "")
-        .tag(Tag::identifier("example.com"))
-        .tag(Tag::custom("cid", [CID_A.to_string()]))
-        .tag(Tag::custom("title", ["hello\nworld".to_string()]))
-        .finalize(&k)
-        .unwrap();
-    let parsed = parse_site_event(&ev, 35980).unwrap();
-    assert_eq!(parsed.title, None);
-}
-
-#[test]
-fn absent_title_is_none() {
-    let k = keys();
-    let ev = EventBuilder::new(Kind::Custom(35980), "")
-        .tag(Tag::identifier("example.com"))
-        .tag(Tag::custom("cid", [CID_A.to_string()]))
-        .finalize(&k)
-        .unwrap();
-    let parsed = parse_site_event(&ev, 35980).unwrap();
-    assert_eq!(parsed.title, None);
+    let oversized = "a".repeat(257);
+    for (case, title) in [
+        ("absent", None),
+        ("oversized", Some(oversized.as_str())),
+        ("control characters", Some("hello\nworld")),
+    ] {
+        let mut tags = vec![("d", "example.com"), ("cid", CID_A)];
+        tags.extend(title.map(|t| ("title", t)));
+        let parsed = parse_site_event(&event_with_tags(&k, &tags), 35980).unwrap();
+        assert_eq!(parsed.title, None, "{case}");
+    }
 }
 
 #[test]

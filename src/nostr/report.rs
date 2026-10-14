@@ -149,15 +149,20 @@ mod tests {
         assert_eq!(parsed.expiration, Some(1100));
         assert!(parsed.counts_at(1099));
         assert!(!parsed.counts_at(1100));
-    }
 
-    #[test]
-    fn replica_report_without_cids_is_a_withdrawal() {
-        let reporter = keys();
-        let author = keys().public_key();
-        let ev = report(&reporter, &author, "example.com", &[], 1000);
+        let withdrawal = report(&reporter, &author, "example.com", &[], 1000);
+        let parsed = parse_replica_report(&withdrawal, 35981, 35980).unwrap();
+        assert!(
+            parsed.cids.is_empty(),
+            "a report without cids is a withdrawal"
+        );
+
+        let hex = author.to_hex();
+        let d = format!("{hex}:example.com");
+        let a = format!("35980:{hex}:example.com");
+        let ev = report_with_tags(&reporter, &[&["d", &d], &["a", &a], &["cid", CID_A]]);
         let parsed = parse_replica_report(&ev, 35981, 35980).unwrap();
-        assert!(parsed.cids.is_empty());
+        assert_eq!(parsed.expiration, None, "no expiration tag");
     }
 
     #[test]
@@ -259,19 +264,6 @@ mod tests {
         }
     }
 
-    #[test]
-    fn replica_report_without_an_expiration_tag_parses_as_none() {
-        let reporter = keys();
-        let author = keys().public_key();
-        let hex = author.to_hex();
-        let d = format!("{hex}:example.com");
-        let a = format!("35980:{hex}:example.com");
-
-        let ev = report_with_tags(&reporter, &[&["d", &d], &["a", &a], &["cid", CID_A]]);
-        let parsed = parse_replica_report(&ev, 35981, 35980).unwrap();
-        assert_eq!(parsed.expiration, None);
-    }
-
     fn report_at(created_at: u64, expiration: Option<u64>) -> ReplicaReport {
         ReplicaReport {
             reporter: keys().public_key(),
@@ -284,34 +276,41 @@ mod tests {
     }
 
     #[test]
-    fn counts_at_accepts_a_fresh_report_with_no_expiration() {
-        assert!(report_at(1000, None).counts_at(1000));
-    }
-
-    #[test]
-    fn counts_at_rejects_a_report_older_than_max_report_age() {
-        let report = report_at(1000, None);
-        assert!(report.counts_at(1000 + MAX_REPORT_AGE));
-        assert!(!report.counts_at(1000 + MAX_REPORT_AGE + 1));
-
-        let far_future_expiration = report_at(1000, Some(u64::MAX));
-        assert!(!far_future_expiration.counts_at(1000 + MAX_REPORT_AGE + 1));
-    }
-
-    #[test]
-    fn counts_at_rejects_created_at_beyond_the_future_skew() {
-        let report = report_at(1000 + MAX_FUTURE_SKEW, None);
-        assert!(report.counts_at(1000));
-
-        let report = report_at(1000 + MAX_FUTURE_SKEW + 1, None);
-        assert!(!report.counts_at(1000));
-    }
-
-    #[test]
-    fn counts_at_rejects_expiration_exactly_at_now() {
-        let report = report_at(1000, Some(2000));
-        assert!(report.counts_at(1999));
-        assert!(!report.counts_at(2000));
+    fn counts_at_honours_age_future_skew_and_expiration() {
+        for (case, created_at, expiration, now, want) in [
+            ("fresh without expiration", 1000, None, 1000, true),
+            ("at max age", 1000, None, 1000 + MAX_REPORT_AGE, true),
+            ("past max age", 1000, None, 1000 + MAX_REPORT_AGE + 1, false),
+            (
+                "past max age with a far expiration",
+                1000,
+                Some(u64::MAX),
+                1000 + MAX_REPORT_AGE + 1,
+                false,
+            ),
+            (
+                "at the future skew",
+                1000 + MAX_FUTURE_SKEW,
+                None,
+                1000,
+                true,
+            ),
+            (
+                "beyond the future skew",
+                1000 + MAX_FUTURE_SKEW + 1,
+                None,
+                1000,
+                false,
+            ),
+            ("before expiration", 1000, Some(2000), 1999, true),
+            ("at expiration", 1000, Some(2000), 2000, false),
+        ] {
+            assert_eq!(
+                report_at(created_at, expiration).counts_at(now),
+                want,
+                "{case}"
+            );
+        }
     }
 
     #[test]

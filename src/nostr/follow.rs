@@ -153,37 +153,11 @@ mod tests {
     }
 
     #[test]
-    fn choose_follow_set_prefers_the_newest_and_repairs_relays() {
+    fn choose_follow_set_prefers_the_newest_plausible_copy_and_repairs_relays() {
         let k = keys();
         let old = follow_set(&k, "swing", None, "old", &[], 100);
         let new = follow_set(&k, "swing", None, "new", &[], 200);
-
-        assert_eq!(choose_follow_set(None, true, None, 1000), None);
-
-        let c = choose_follow_set(Some(new.clone()), true, None, 1000).unwrap();
-        assert_eq!((c.event.id, c.save, c.republish), (new.id, true, false));
-
-        let c = choose_follow_set(Some(new.clone()), true, Some(old.clone()), 1000).unwrap();
-        assert_eq!((c.event.id, c.save, c.republish), (new.id, true, false));
-
-        let c = choose_follow_set(Some(old.clone()), true, Some(new.clone()), 1000).unwrap();
-        assert_eq!((c.event.id, c.save, c.republish), (new.id, false, true));
-
-        let c = choose_follow_set(Some(new.clone()), true, Some(new.clone()), 1000).unwrap();
-        assert_eq!((c.event.id, c.save, c.republish), (new.id, false, false));
-
-        let c = choose_follow_set(None, true, Some(new.clone()), 1000).unwrap();
-        assert_eq!((c.event.id, c.save, c.republish), (new.id, false, true));
-
-        let c = choose_follow_set(None, false, Some(new.clone()), 1000).unwrap();
-        assert_eq!((c.event.id, c.save, c.republish), (new.id, false, false));
-    }
-
-    #[test]
-    fn choose_follow_set_drops_an_implausible_future_fetch_and_keeps_stored() {
-        let k = keys();
-        let stored = follow_set(&k, "swing", None, "stored", &[], 100);
-        let poisoned_fetch = follow_set(
+        let poisoned = follow_set(
             &k,
             "swing",
             None,
@@ -191,50 +165,78 @@ mod tests {
             &[],
             1000 + MAX_FUTURE_SKEW + 1,
         );
-
-        let c = choose_follow_set(
-            Some(poisoned_fetch.clone()),
-            true,
-            Some(stored.clone()),
-            1000,
-        )
-        .unwrap();
-        assert_eq!((c.event.id, c.save, c.republish), (stored.id, false, true));
-    }
-
-    #[test]
-    fn choose_follow_set_drops_a_poisoned_stored_copy_and_saves_the_fetched_one() {
-        let k = keys();
-        let poisoned_stored = follow_set(
-            &k,
-            "swing",
-            None,
-            "poisoned",
-            &[],
-            1000 + MAX_FUTURE_SKEW + 1,
-        );
-        let fetched = follow_set(&k, "swing", None, "fetched", &[], 100);
-
-        let c =
-            choose_follow_set(Some(fetched.clone()), true, Some(poisoned_stored), 1000).unwrap();
-        assert_eq!((c.event.id, c.save, c.republish), (fetched.id, true, false));
-    }
-
-    #[test]
-    fn choose_follow_set_returns_none_when_only_a_poisoned_stored_copy_exists() {
-        let k = keys();
-        let poisoned_stored = follow_set(
-            &k,
-            "swing",
-            None,
-            "poisoned",
-            &[],
-            1000 + MAX_FUTURE_SKEW + 1,
-        );
-
-        assert_eq!(
-            choose_follow_set(None, true, Some(poisoned_stored), 1000),
-            None
-        );
+        let cases = [
+            ("nothing", None, true, None, None),
+            (
+                "fetched only",
+                Some(&new),
+                true,
+                None,
+                Some((&new, true, false)),
+            ),
+            (
+                "fetched newer",
+                Some(&new),
+                true,
+                Some(&old),
+                Some((&new, true, false)),
+            ),
+            (
+                "stored newer",
+                Some(&old),
+                true,
+                Some(&new),
+                Some((&new, false, true)),
+            ),
+            (
+                "same copy",
+                Some(&new),
+                true,
+                Some(&new),
+                Some((&new, false, false)),
+            ),
+            (
+                "missing on relays",
+                None,
+                true,
+                Some(&new),
+                Some((&new, false, true)),
+            ),
+            (
+                "fetch failed",
+                None,
+                false,
+                Some(&new),
+                Some((&new, false, false)),
+            ),
+            (
+                "fetched from the future",
+                Some(&poisoned),
+                true,
+                Some(&old),
+                Some((&old, false, true)),
+            ),
+            (
+                "stored from the future",
+                Some(&new),
+                true,
+                Some(&poisoned),
+                Some((&new, true, false)),
+            ),
+            (
+                "only a stored copy from the future",
+                None,
+                true,
+                Some(&poisoned),
+                None,
+            ),
+        ];
+        for (case, fetched, fetch_ok, stored, want) in cases {
+            let got = choose_follow_set(fetched.cloned(), fetch_ok, stored.cloned(), 1000)
+                .map(|c| (c.event.id, c.save, c.republish));
+            let want =
+                want.map(|(ev, save, republish): (&Event, bool, bool)| (ev.id, save, republish));
+            assert_eq!(got, want, "{case}");
+        }
     }
 }
