@@ -19,7 +19,7 @@
   - `listen` が未指定アドレス（`0.0.0.0` / `::`）でも、接続先と `Host` ヘッダはループバックの同じポートにする。
   - API に接続できなければ、`status`・`stats`・`mirror add`・`mirror remove`・`dashboard open` は `swing up is not running (cannot connect to <addr>)` で非ゼロ終了し、`stop` は `not running` を出して終了コード 0 で終わる。
 - エラーで終了するときは `Error: <メッセージ>` と、原因があれば `Caused by:` に続けて 1 つずつ（2 つ以上なら番号付きで）標準エラーに出し、終了コード 1 で終わる（`format::error_report`）。メッセージと原因はそれぞれ `format::Sanitized` を通すので、改行を含まず 1 行ずつになる。`RUST_BACKTRACE` などでバックトレースを取っていれば続けて出す。`swing up --log-file` のときは同じエラーをログにも出す。
-- relay・Kubo・署名アプリなど外から来た文字列は、端末やログに出す前に無害化する。`format::Sanitized` は制御文字を空白 1 つに置き換え、見えない書式文字（`nostr::is_unsafe_char`）を取り除く。`format::sanitize_display_text` はそれに加えて文字数で切り（切ったら `…` を足す）、前後の空白を削る。ログは `logging::SanitizedFields` がメッセージと各フィールドの値を `Sanitized` に通して書く。
+- relay・Kubo・署名アプリなど外から来た文字列は、端末やログに出す前に無害化する。`format::Sanitized` は制御文字を空白 1 つに置き換え、見えない書式文字（`nostr::is_unsafe_char`）を取り除く。`format::sanitize_display_text` はダッシュボードの `sanitizeDisplayText` と同じ結果を返す。制御文字（U+2028・U+2029 を含む）の連なりを空白 1 つにし、見えない書式文字を取り除き、前後の空白を削ってから、文字（コードポイント）数で切る（切ったら `…` を足す）。ログは `logging::SanitizedFields` がメッセージと各フィールドの値を `Sanitized` に通して書く。
 - `sites`・`replicas`・`webring`・`mirror list`・`publish` は API を経由せず relay/Kubo に直接つなぐので、`swing up` が動いていなくても使える。これらは秘密鍵か署名アプリの接続情報が要り、どちらも無ければエラー終了する（[`signer.md`](signer.md#signer)）。ただし `publish --dry-run` は鍵が無くても、分かる範囲を確かめて続ける（[`publish/dry-run.md`](publish/dry-run.md)）。
 - API 経由のコマンドは鍵が無くても動く。ただし鍵の無い `swing up` はセットアップモード（[up](#up)）で、そこでは `status`・`mirror add`・`mirror remove` は 503 `agent is not configured` を返す。
 

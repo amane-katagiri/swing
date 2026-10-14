@@ -100,12 +100,27 @@ pub fn error_report(error: &anyhow::Error) -> String {
 }
 
 pub fn sanitize_display_text(text: &str, max_chars: usize) -> String {
-    let cleaned: Vec<char> = Sanitized(text).to_string().chars().collect();
-    let mut shown: String = cleaned.iter().take(max_chars).collect();
-    if cleaned.len() > max_chars {
+    let mut cleaned = String::with_capacity(text.len());
+    let mut in_control = false;
+    for c in text.chars() {
+        if c.is_control() || c == '\u{2028}' || c == '\u{2029}' {
+            if !in_control {
+                cleaned.push(' ');
+            }
+            in_control = true;
+            continue;
+        }
+        in_control = false;
+        if !crate::nostr::is_unsafe_char(c) {
+            cleaned.push(c);
+        }
+    }
+    let cleaned = cleaned.trim();
+    let mut shown: String = cleaned.chars().take(max_chars).collect();
+    if cleaned.chars().count() > max_chars {
         shown.push('\u{2026}');
     }
-    shown.trim().to_string()
+    shown
 }
 
 #[cfg(test)]
@@ -173,15 +188,7 @@ mod tests {
 
     #[test]
     fn sanitize_display_text_truncates_after_sanitizing() {
-        assert_eq!(sanitize_display_text(" a\u{202e}b\nc d", 4), "ab \u{2026}");
-    }
-
-    fn expected(entry: &serde_json::Value) -> &str {
-        entry
-            .get("rust")
-            .or_else(|| entry.get("want"))
-            .and_then(|v| v.as_str())
-            .unwrap()
+        assert_eq!(sanitize_display_text(" a\u{202e}b\nc d", 4), "ab c\u{2026}");
     }
 
     #[test]
@@ -203,7 +210,7 @@ mod tests {
             } else {
                 panic!("U+{cp}: unexpected {out:?}");
             };
-            assert_eq!(got, expected(entry), "U+{cp}");
+            assert_eq!(got, entry["want"].as_str().unwrap(), "U+{cp}");
         }
         for entry in vectors["texts"].as_array().unwrap() {
             let name = entry["name"].as_str().unwrap();
@@ -211,7 +218,7 @@ mod tests {
                 .get("max")
                 .map_or(usize::MAX, |m| m.as_u64().unwrap() as usize);
             let got = sanitize_display_text(entry["input"].as_str().unwrap(), max);
-            assert_eq!(got, expected(entry), "{name}");
+            assert_eq!(got, entry["want"].as_str().unwrap(), "{name}");
         }
     }
 }

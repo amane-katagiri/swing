@@ -29,8 +29,8 @@
     {"cp": "200F", "want": "removed"},
     {"cp": "2010", "want": "kept"},
     {"cp": "2027", "want": "kept"},
-    {"cp": "2028", "js": "space", "rust": "removed", "difference": "web/util.js treats line and paragraph separators as control characters; Rust's char::is_control does not, so is_unsafe_char removes them"},
-    {"cp": "2029", "js": "space", "rust": "removed", "difference": "web/util.js treats line and paragraph separators as control characters; Rust's char::is_control does not, so is_unsafe_char removes them"},
+    {"cp": "2028", "want": "space"},
+    {"cp": "2029", "want": "space"},
     {"cp": "202A", "want": "removed"},
     {"cp": "202B", "want": "removed"},
     {"cp": "202C", "want": "removed"},
@@ -71,9 +71,9 @@
     {"name": "Japanese and emoji are kept", "input": "\u65e5\u672c\u8a9e\ud83c\udf80", "want": "\u65e5\u672c\u8a9e\ud83c\udf80"},
     {"name": "truncated with an ellipsis", "input": "abcd", "max": 3, "want": "abc\u2026"},
     {"name": "space before the ellipsis", "input": "ab cd", "max": 3, "want": "ab \u2026"},
-    {"name": "run of control characters", "input": "a\n\r\tb", "js": "a b", "rust": "a   b", "difference": "web/util.js replaces a run of control characters with one space; Rust replaces each with a space"},
-    {"name": "unsafe character before a leading space", "input": "\u202e a", "js": " a", "rust": "a", "difference": "web/util.js trims before removing unsafe characters; Rust trims the final result"},
-    {"name": "trimming and truncation order", "input": " a\u202eb\nc d", "max": 4, "js": "ab c\u2026", "rust": "ab \u2026", "difference": "web/util.js trims before truncating; Rust truncates the untrimmed text and trims afterwards"},
-    {"name": "truncation of astral characters", "input": "\ud83c\udf80\ud83c\udf80\ud83c\udf80", "max": 2, "js": "\ud83c\udf80\u2026", "rust": "\ud83c\udf80\ud83c\udf80\u2026", "difference": "web/util.js counts UTF-16 code units; Rust counts code points"}
+    {"name": "run of control characters", "input": "a\n\r\tb", "want": "a b"},
+    {"name": "unsafe character before a leading space", "input": "\u202e a", "want": "a"},
+    {"name": "trimming and truncation order", "input": " a\u202eb\nc d", "max": 4, "want": "ab c\u2026"},
+    {"name": "truncation of astral characters", "input": "\ud83c\udf80\ud83c\udf80\ud83c\udf80", "max": 2, "want": "\ud83c\udf80\ud83c\udf80\u2026"}
   ]
 }

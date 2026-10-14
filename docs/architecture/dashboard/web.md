@@ -46,7 +46,7 @@ CSS の読み込み順と上書きの仕方は [`css.md#読み込み順`](css.md
 
 他人の Nostr イベント由来のテキスト（サイトの `title`・`d`・`message`、webring のラベル・names など）と、relay や署名アプリから来てサーバがそのまま返すエラー文言（API の `error`・署名アプリのペアリングの `error`・Publish 画面の `last_failure.message`・Sites 画面の `replicas_error`）は、表示直前に `util.js::sanitizeDisplayText` を通してから DOM に入れる。
 
-- 取り除くもの: 制御文字（C0・DEL・C1 と U+2028/U+2029。空白 1 つに置き換える。`stripControlChars`）と、双方向制御文字と isolate・不可視文字・ゼロ幅文字・ソフトハイフン・行間注釈（U+FFF9–U+FFFB）・タグ文字（U+E0000–U+E007F）（`stripUnsafeUnicode`）。範囲の正本はこの 2 つの関数。
+- 取り除くもの: 制御文字（C0・DEL・C1 と U+2028/U+2029。連なりを空白 1 つに置き換える）と、双方向制御文字と isolate・不可視文字・ゼロ幅文字・ソフトハイフン・行間注釈（U+FFF9–U+FFFB）・タグ文字（U+E0000–U+E007F）（`stripUnsafeUnicode`）。範囲の正本は `util.js` の `CONTROL_RE` と `UNSAFE_UNICODE_RE`。前後の空白を削ってから、文字（コードポイント）数で切り詰める。結果は Rust の `format::sanitize_display_text` と同じで、共有のテストベクタで照らす（[`../testing.md`](../testing.md)）。
 - `sanitizeMessage` は既定 200 文字で `…` に切り詰め、空なら `null` にする。
 - 対象の要素には `dir="auto"` と CSS 側の `unicode-bidi: isolate` を付け、RTL の文字列を周囲の UI の並びに影響させない。
 - 挿入は DOM API だけで行い、`innerHTML` は使わない。`url` は `^https?://` にマッチするときだけリンクにする。

@@ -6,7 +6,7 @@
 
 この実装の判定:
 
-- `d`: 空、253 バイト超、制御文字か見えない書式文字（範囲は [`../protocol.md`](../protocol.md#34-文字と数値の表記)。判定は `nostr::is_unsafe_char`。ダッシュボードの `web/util.js` の `stripControlChars` と `stripUnsafeUnicode` を合わせた範囲と同じ）を含む場合はイベント全体を拒否する。
+- `d`: 空、253 バイト超、制御文字か見えない書式文字（範囲は [`../protocol.md`](../protocol.md#34-文字と数値の表記)。判定は `nostr::is_unsafe_char`。ダッシュボードの `web/util.js` の `CONTROL_RE` と `UNSAFE_UNICODE_RE` を合わせた範囲と同じ）を含む場合はイベント全体を拒否する。
 - `cid`: 規則・正規化・以後の扱いは次の 3 点。
   - 規則: `cid` クレートでパースできない、またはコーデックが dag-pb（`0x70`）でなければイベント全体を拒否する（理由は [`../protocol.md`](../protocol.md#35-cid-の比較とコーデック)）。これはパース時の構文チェックで、取得した root が UnixFS のディレクトリであることは別に確かめる（[`agent/store.md` の「保存の順序」4](agent/store.md#保存の順序)）。
   - 正規化: 通った値を `nostr::canonical_cid` で CIDv1・base32 に変換する。レプリカ報告の `cid` タグ（下記）と、`swing publish` が Kubo から受け取った CID（`publish::add_and_measure`）も同じ関数を通す。

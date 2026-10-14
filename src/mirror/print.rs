@@ -205,7 +205,7 @@ mod tests {
     fn message_line_neutralizes_control_chars_and_truncates() {
         assert_eq!(
             format_message_line("Add posts\n\u{1b}[31mred"),
-            "    message: Add posts  [31mred"
+            "    message: Add posts [31mred"
         );
         assert_eq!(
             format_title_line("My\u{202E}etiS\u{200B}\u{E0041}"),

@@ -83,7 +83,7 @@ test('sanitizeDisplayText collapses control characters, strips unsafe ones and t
   ]);
 });
 
-test('sanitizeDisplayText does not cut a character in half', { skip: 'bug: truncation counts UTF-16 code units and can leave a lone surrogate' }, () => {
+test('sanitizeDisplayText does not cut a character in half', () => {
   assert.equal(sanitizeDisplayText('\u{1f380}\u{1f380}', 1), '\u{1f380}…');
 });
 

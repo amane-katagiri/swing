@@ -150,9 +150,7 @@ export function formatTime(sec) {
   }
 }
 
-function stripControlChars(str) {
-  return String(str).replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]+/g, ' ').trim();
-}
+const CONTROL_RE = /[\u0000-\u001f\u007f-\u009f\u2028\u2029]+/g;
 
 // Other people's event text could use these to visually reorder or hide itself.
 const UNSAFE_UNICODE_RE =
@@ -164,9 +162,10 @@ export function stripUnsafeUnicode(str) {
 
 export function sanitizeDisplayText(str, max) {
   if (str == null) return '';
-  const cleaned = stripUnsafeUnicode(stripControlChars(str));
+  const cleaned = stripUnsafeUnicode(String(str).replace(CONTROL_RE, ' ')).trim();
   if (!max) return cleaned;
-  return cleaned.length > max ? `${cleaned.slice(0, max)}…` : cleaned;
+  const chars = Array.from(cleaned);
+  return chars.length > max ? `${chars.slice(0, max).join('')}…` : cleaned;
 }
 
 export function sanitizeMessage(str, max) {
