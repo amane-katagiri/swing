@@ -265,6 +265,8 @@ fn defaults_applied_when_nothing_set() {
     assert_eq!(cfg.agent.fetch_idle_timeout, Duration::from_secs(120));
     assert_eq!(cfg.agent.concurrency, 4);
     assert_eq!(cfg.agent.report_ttl, Duration::from_secs(3 * 86_400));
+    assert!(cfg.anchor.advertise);
+    assert_eq!(cfg.anchor.max_peers, 4);
     assert_eq!(cfg.ipfs.mfs_root, "/swing");
     assert_eq!(cfg.publish.keep_versions, 5);
     assert!(cfg.kubo.managed);

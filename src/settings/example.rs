@@ -200,6 +200,7 @@ mod tests {
         let defaults = crate::config::build_config_from_str("", |_| None).unwrap();
 
         assert_eq!(cfg.policy, defaults.policy);
+        assert_eq!(cfg.anchor, defaults.anchor);
         assert_eq!(cfg.kubo, defaults.kubo);
         assert_eq!(cfg.publish, defaults.publish);
         assert_eq!(cfg.gateway, defaults.gateway);

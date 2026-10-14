@@ -459,6 +459,82 @@ mod tests {
     }
 
     #[test]
+    fn every_editable_setting_round_trips_its_shown_value() {
+        let dir = tempfile::tempdir().unwrap();
+        let cfg = base_config(dir.path());
+        for setting in SETTINGS.iter().filter(|s| s.editable) {
+            let shown = raw_value(&cfg, setting.key).unwrap();
+            let input = match shown.clone() {
+                RawValue::Str(s) => InputValue::Str(s),
+                RawValue::List(l) => InputValue::List(l),
+            };
+            let items = BTreeMap::from([(setting.key.to_string(), input)]);
+            let reloaded = update(&cfg, &items)
+                .unwrap_or_else(|e| panic!("{}: {shown:?} was refused: {e}", setting.key));
+            assert_eq!(
+                reloaded.source_of(setting.key),
+                Some(config::Source::File),
+                "{} was not written to the file",
+                setting.key
+            );
+            assert_eq!(
+                serde_json::to_value(raw_value(&reloaded, setting.key).unwrap()).unwrap(),
+                serde_json::to_value(&shown).unwrap(),
+                "{} changed after a round trip",
+                setting.key
+            );
+        }
+    }
+
+    #[test]
+    fn values_of_the_wrong_shape_are_refused_without_writing() {
+        let dir = tempfile::tempdir().unwrap();
+        let cfg = base_config(dir.path());
+        let before = std::fs::read_to_string(&cfg.config_path).unwrap();
+        let cases = [
+            (
+                "nostr.relays",
+                InputValue::Str("wss://r".into()),
+                "nostr.relays expects a list",
+            ),
+            (
+                "nostr.mirror_set",
+                InputValue::List(vec!["a".into()]),
+                "nostr.mirror_set expects a single string",
+            ),
+            (
+                "policy.remove_on_unfollow",
+                InputValue::Str("maybe".into()),
+                "policy.remove_on_unfollow: invalid boolean",
+            ),
+            (
+                "policy.keep_versions",
+                InputValue::Str("five".into()),
+                "policy.keep_versions: expected an integer",
+            ),
+            (
+                "policy.min_update_interval",
+                InputValue::Str("soon".into()),
+                "policy.min_update_interval: invalid duration",
+            ),
+            (
+                "policy.nip05",
+                InputValue::Str("sometimes".into()),
+                "invalid mode: sometimes",
+            ),
+        ];
+        for (key, value, expected) in cases {
+            let items = BTreeMap::from([(key.to_string(), value)]);
+            let Err(EditError::Invalid(e)) = update(&cfg, &items) else {
+                panic!("{key}: expected an invalid-value error");
+            };
+            let shown = format!("{e:#}");
+            assert!(shown.contains(expected), "{key}: {shown}");
+        }
+        assert_eq!(std::fs::read_to_string(&cfg.config_path).unwrap(), before);
+    }
+
+    #[test]
     fn empty_relay_list_is_rejected() {
         let dir = tempfile::tempdir().unwrap();
         let cfg = base_config(dir.path());
