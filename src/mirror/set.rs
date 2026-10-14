@@ -136,25 +136,19 @@ mod tests {
     }
 
     #[test]
-    fn add_is_idempotent_and_reports_no_new_keys() {
-        let author = keys();
-        let p1 = keys().public_key();
-        let ev = follow_set(&author, "swing", None, "", &[p1], 0);
-        let mut set = MirrorSet::from_event(&ev);
-        let outcome = set.add(&[p1]);
-        assert!(outcome.added.is_empty());
-        assert_eq!(outcome.already, vec![p1]);
-        assert_eq!(outcome.total, 1);
-        assert_eq!(set.pubkeys(), vec![p1]);
-    }
-
-    #[test]
-    fn add_appends_new_keys_keeping_existing() {
+    fn add_appends_only_new_keys_and_reports_the_rest() {
         let author = keys();
         let p1 = keys().public_key();
         let p2 = keys().public_key();
         let ev = follow_set(&author, "swing", None, "", &[p1], 0);
         let mut set = MirrorSet::from_event(&ev);
+
+        let outcome = set.add(&[p1]);
+        assert!(outcome.added.is_empty());
+        assert_eq!(outcome.already, vec![p1]);
+        assert_eq!(outcome.total, 1);
+        assert_eq!(set.pubkeys(), vec![p1]);
+
         let outcome = set.add(&[p1, p2]);
         assert_eq!(outcome.added, vec![p2]);
         assert_eq!(outcome.already, vec![p1]);
@@ -176,18 +170,6 @@ mod tests {
         let removed = set.remove(&[p1, absent]);
         assert_eq!(removed, vec![p1]);
         assert_eq!(set.pubkeys(), vec![p2]);
-    }
-
-    #[test]
-    fn remove_absent_key_is_no_op() {
-        let author = keys();
-        let p1 = keys().public_key();
-        let absent = keys().public_key();
-        let ev = follow_set(&author, "swing", None, "", &[p1], 0);
-        let mut set = MirrorSet::from_event(&ev);
-        let removed = set.remove(&[absent]);
-        assert!(removed.is_empty());
-        assert_eq!(set.pubkeys(), vec![p1]);
     }
 
     #[test]

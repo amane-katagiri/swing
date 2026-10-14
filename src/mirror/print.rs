@@ -239,17 +239,17 @@ mod tests {
     }
 
     #[test]
-    fn format_size_column_prefers_measured_over_declared() {
-        assert_eq!(format_size_column(&site_row(Some(999), Some(123))), "123");
-    }
-
-    #[test]
-    fn format_size_column_parenthesizes_declared_when_not_stored() {
-        assert_eq!(format_size_column(&site_row(Some(456), None)), "(456)");
-    }
-
-    #[test]
-    fn format_size_column_is_dash_when_neither_is_known() {
-        assert_eq!(format_size_column(&site_row(None, None)), "-");
+    fn format_size_column_prefers_measured_then_declared() {
+        for (case, declared, measured, want) in [
+            ("measured wins", Some(999), Some(123), "123"),
+            ("declared only", Some(456), None, "(456)"),
+            ("neither", None, None, "-"),
+        ] {
+            assert_eq!(
+                format_size_column(&site_row(declared, measured)),
+                want,
+                "{case}"
+            );
+        }
     }
 }

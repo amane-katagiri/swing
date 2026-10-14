@@ -500,33 +500,31 @@ mod tests {
     #[test]
     fn ensure_within_follow_set_cap_allows_exactly_the_budget() {
         assert!(ensure_within_follow_set_cap(nostr::budget::MAX_FOLLOW_SET_ENTRIES).is_ok());
-    }
-
-    #[test]
-    fn ensure_within_follow_set_cap_rejects_growing_past_the_budget() {
         let err =
             ensure_within_follow_set_cap(nostr::budget::MAX_FOLLOW_SET_ENTRIES + 1).unwrap_err();
-        assert!(err.to_string().contains("over the"));
+        assert!(err.to_string().contains("over the"), "{err}");
     }
 
     #[test]
-    fn parses_hex_npub_and_nprofile() {
+    fn parse_pubkey_input_reads_hex_npub_and_nprofile() {
         let k = keys();
-        let hex = k.public_key().to_hex();
-        let npub_str = k.public_key().to_bech32().unwrap();
-        let nprofile_str = Nip19Profile::new(k.public_key(), Vec::<RelayUrl>::new())
+        let nprofile = Nip19Profile::new(k.public_key(), Vec::<RelayUrl>::new())
             .to_bech32()
             .unwrap();
-
-        assert_eq!(parse_pubkey_input(&hex).unwrap(), k.public_key());
-        assert_eq!(parse_pubkey_input(&npub_str).unwrap(), k.public_key());
-        assert_eq!(parse_pubkey_input(&nprofile_str).unwrap(), k.public_key());
-    }
-
-    #[test]
-    fn parse_pubkey_input_rejects_garbage() {
-        assert!(parse_pubkey_input("not-a-key").is_err());
-        assert!(parse_pubkey_input("").is_err());
+        for (case, input) in [
+            ("hex", k.public_key().to_hex()),
+            ("npub", k.public_key().to_bech32().unwrap()),
+            ("nprofile", nprofile),
+        ] {
+            assert_eq!(
+                parse_pubkey_input(&input).unwrap(),
+                k.public_key(),
+                "{case}"
+            );
+        }
+        for bad in ["not-a-key", ""] {
+            assert!(parse_pubkey_input(bad).is_err(), "{bad:?}");
+        }
     }
 
     #[test]
@@ -669,34 +667,11 @@ mod tests {
     }
 
     #[test]
-    fn newest_follow_set_prefers_a_newer_saved_copy() {
+    fn newest_follow_set_prefers_the_newest_plausible_copy() {
         let k = keys();
         let old = follow_set(&k, "swing", None, "", &[], 100);
         let new = follow_set(&k, "swing", None, "", &[], 200);
-
-        let (ev, note) = newest_follow_set(Some(old.clone()), Some(new.clone()), 1000);
-        assert_eq!(ev.unwrap().id, new.id);
-        assert!(note.is_some());
-
-        let (ev, note) = newest_follow_set(Some(new.clone()), Some(old.clone()), 1000);
-        assert_eq!(ev.unwrap().id, new.id);
-        assert!(note.is_none());
-
-        let (ev, note) = newest_follow_set(None, Some(old.clone()), 1000);
-        assert_eq!(ev.unwrap().id, old.id);
-        assert!(note.is_some());
-
-        let (ev, note) = newest_follow_set(Some(old.clone()), None, 1000);
-        assert_eq!(ev.unwrap().id, old.id);
-        assert!(note.is_none());
-
-        assert_eq!(newest_follow_set(None, None, 1000), (None, None));
-    }
-
-    #[test]
-    fn newest_follow_set_drops_a_poisoned_saved_copy() {
-        let k = keys();
-        let poisoned_saved = follow_set(
+        let poisoned = follow_set(
             &k,
             "swing",
             None,
@@ -704,24 +679,32 @@ mod tests {
             &[],
             1000 + nostr::MAX_FUTURE_SKEW + 1,
         );
-        let fetched = follow_set(&k, "swing", None, "", &[], 100);
-
-        let (ev, note) = newest_follow_set(Some(fetched.clone()), Some(poisoned_saved), 1000);
-        assert_eq!(ev.unwrap().id, fetched.id);
-        assert!(note.is_none());
-
-        let poisoned_saved_only = follow_set(
-            &k,
-            "swing",
-            None,
-            "",
-            &[],
-            1000 + nostr::MAX_FUTURE_SKEW + 1,
-        );
-        assert_eq!(
-            newest_follow_set(None, Some(poisoned_saved_only), 1000),
-            (None, None)
-        );
+        let cases = [
+            ("saved newer", Some(&old), Some(&new), Some(&new), true),
+            ("fetched newer", Some(&new), Some(&old), Some(&new), false),
+            ("saved only", None, Some(&old), Some(&old), true),
+            ("fetched only", Some(&old), None, Some(&old), false),
+            ("neither", None, None, None, false),
+            (
+                "saved from the future",
+                Some(&old),
+                Some(&poisoned),
+                Some(&old),
+                false,
+            ),
+            (
+                "only saved from the future",
+                None,
+                Some(&poisoned),
+                None,
+                false,
+            ),
+        ];
+        for (case, fetched, saved, want, noted) in cases {
+            let (ev, note) = newest_follow_set(fetched.cloned(), saved.cloned(), 1000);
+            assert_eq!(ev.map(|e| e.id), want.map(|e| e.id), "{case}");
+            assert_eq!(note.is_some(), noted, "{case}");
+        }
     }
 
     struct MirrorRig {

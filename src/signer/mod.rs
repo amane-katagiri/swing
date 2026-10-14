@@ -440,9 +440,10 @@ mod tests {
     }
 
     #[test]
-    fn remote_signer_file_round_trips_and_hides_the_app_key() {
+    fn remote_signer_file_round_trips_privately_and_hides_the_app_key() {
         let dir = tempfile::tempdir().unwrap();
-        assert!(RemoteSignerFile::load(dir.path()).unwrap().is_none());
+        let state_dir = dir.path().join("nested").join("state");
+        assert!(RemoteSignerFile::load(&state_dir).unwrap().is_none());
         let app = Keys::generate();
         let file = remote_signer_file(
             &app,
@@ -450,30 +451,20 @@ mod tests {
             "wss://relay.example",
             random_pubkey(),
         );
-        file.save(dir.path()).unwrap();
+        file.save(&state_dir).unwrap();
         assert_eq!(
-            RemoteSignerFile::load(dir.path()).unwrap(),
+            RemoteSignerFile::load(&state_dir).unwrap(),
             Some(file.clone())
         );
         assert!(!format!("{file:?}").contains(file.app_secret_key.as_str()));
         #[cfg(unix)]
         {
-            use std::os::unix::fs::PermissionsExt;
-            let mode = std::fs::metadata(remote_signer_path(dir.path()))
-                .unwrap()
-                .permissions()
-                .mode();
-            assert_eq!(mode & 0o777, 0o600);
+            assert_eq!(crate::test_support::mode(&state_dir), 0o700);
+            assert_eq!(
+                crate::test_support::mode(&remote_signer_path(&state_dir)),
+                0o600
+            );
         }
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn remote_signer_file_save_creates_state_dir_as_0700() {
-        let dir = tempfile::tempdir().unwrap();
-        let state_dir = dir.path().join("nested").join("state");
-        saved_file().save(&state_dir).unwrap();
-        assert_eq!(crate::test_support::mode(&state_dir), 0o700);
     }
 
     pub(super) fn config_in(dir: &Path, secret_key: Option<&str>) -> Config {
