@@ -129,25 +129,12 @@ pub fn build_anchor_ad_builder(
 mod tests {
     use super::super::MAX_FUTURE_SKEW;
     use super::*;
-    use crate::test_support::keys;
+    use crate::test_support::{PEER_A, anchor_ad_event as ad, keys, raw_event};
 
-    const PEER_A: &str = "12D3KooWQqg6fSEnehBFPAzVpSwWzFheYrfktHPXLoNDJUisx9LJ";
     const PEER_QM: &str = "QmYwAPJzv5CZsnA9LqYKXfRSZryVXxNn7ZP1FyEBgvJvHR";
 
-    fn ad(k: &Keys, peer: &str, reach: AdReachability, created_at: u64, exp: u64) -> Event {
-        build_anchor_ad_builder(peer, reach, Timestamp::from_secs(exp))
-            .custom_created_at(Timestamp::from_secs(created_at))
-            .finalize(k)
-            .unwrap()
-    }
-
     fn raw(k: &Keys, tags: &[&[&str]]) -> Event {
-        let mut b = EventBuilder::new(Kind::Custom(ANCHOR_KIND), "")
-            .custom_created_at(Timestamp::from_secs(1000));
-        for t in tags {
-            b = b.tag(Tag::parse(t.iter().copied()).unwrap());
-        }
-        b.finalize(k).unwrap()
+        raw_event(k, ANCHOR_KIND, tags, 1000)
     }
 
     #[test]

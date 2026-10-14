@@ -135,58 +135,21 @@ pub fn newest_by_address(events: impl IntoIterator<Item = Event>, now: u64) -> V
 }
 
 #[cfg(test)]
-mod fixtures {
-    use nostr_sdk::prelude::*;
-
-    use crate::test_support::{self, CID_A};
-
-    pub(super) use crate::test_support::make_site_event;
-
-    pub(super) fn follow_set(keys: &Keys, d: &str, created_at: u64, marker: &str) -> Event {
-        EventBuilder::new(Kind::Custom(super::FOLLOW_SET_KIND), marker)
-            .tag(Tag::identifier(d))
-            .custom_created_at(Timestamp::from_secs(created_at))
-            .finalize(keys)
-            .unwrap()
-    }
-
-    pub(super) fn report(
-        reporter: &Keys,
-        author: &PublicKey,
-        d: &str,
-        cids: &[&str],
-        created_at: u64,
-    ) -> Event {
-        test_support::replica_report_event(reporter, author, d, cids, created_at, created_at + 100)
-    }
-
-    pub(super) fn site_event_with(k: &Keys, d: &str, title: &str, content: &str) -> Event {
-        EventBuilder::new(Kind::Custom(35980), content)
-            .tag(Tag::identifier(d))
-            .tag(Tag::custom("cid", [CID_A.to_string()]))
-            .tag(Tag::custom("title", [title.to_string()]))
-            .finalize(k)
-            .unwrap()
-    }
-}
-
-#[cfg(test)]
 mod tests {
-    use super::fixtures::{follow_set, report};
     use super::*;
-    use crate::test_support::{CID_A, CID_B, keys};
+    use crate::test_support::{CID_A, CID_B, follow_set, keys, replica_report as report};
 
     #[test]
     fn newer_replaceable_uses_created_at_then_lowest_id() {
         let k = keys();
-        let old = follow_set(&k, "swing", 100, "a");
-        let new = follow_set(&k, "swing", 200, "b");
+        let old = follow_set(&k, "swing", None, "a", &[], 100);
+        let new = follow_set(&k, "swing", None, "b", &[], 200);
         assert!(is_newer_replaceable(&new, &old));
         assert!(!is_newer_replaceable(&old, &new));
         assert!(!is_newer_replaceable(&old, &old));
 
-        let x = follow_set(&k, "swing", 100, "x");
-        let y = follow_set(&k, "swing", 100, "y");
+        let x = follow_set(&k, "swing", None, "x", &[], 100);
+        let y = follow_set(&k, "swing", None, "y", &[], 100);
         let (low, high) = if x.id < y.id { (x, y) } else { (y, x) };
         assert!(is_newer_replaceable(&low, &high));
         assert!(!is_newer_replaceable(&high, &low));

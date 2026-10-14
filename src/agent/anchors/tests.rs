@@ -5,7 +5,7 @@ use super::*;
 use crate::anchor::{AD_REFRESH, NOT_PUBLIC_AFTER, PUBLIC_AFTER, Reason};
 use crate::ipfs::Reachability;
 use crate::nostr::{AdReachability, parse_anchor_ad};
-use crate::test_support::{CID_A, PEER_A, PEER_B, PEER_OWN, replica_report_event};
+use crate::test_support::{CID_A, PEER_A, PEER_B, PEER_OWN, anchor_ad_event, replica_report_event};
 
 fn fixture(advertise: bool, max_peers: usize) -> Fixture {
     let mut config = test_config(default_policy());
@@ -43,10 +43,8 @@ fn sent_ads(fx: &Fixture) -> Vec<nostr::AnchorAd> {
 }
 
 fn own_ad(fx: &Fixture, reach: AdReachability, created_at: u64) -> Event {
-    nostr::build_anchor_ad_builder(PEER_OWN, reach, Timestamp::from_secs(created_at + AD_TTL))
-        .custom_created_at(Timestamp::from_secs(created_at))
-        .finalize(&fx.agent.reporter.keys)
-        .unwrap()
+    let keys = &fx.agent.reporter.keys;
+    anchor_ad_event(keys, PEER_OWN, reach, created_at, created_at + AD_TTL)
 }
 
 #[tokio::test]
@@ -191,10 +189,7 @@ async fn a_failing_signer_is_retried_later_not_every_check() {
 
 fn peer_ad(keys: &Keys, peer: &str, reach: AdReachability) -> Event {
     let now = now_secs();
-    nostr::build_anchor_ad_builder(peer, reach, Timestamp::from_secs(now + AD_TTL))
-        .custom_created_at(Timestamp::from_secs(now - 10))
-        .finalize(keys)
-        .unwrap()
+    anchor_ad_event(keys, peer, reach, now - 10, now + AD_TTL)
 }
 
 #[tokio::test]

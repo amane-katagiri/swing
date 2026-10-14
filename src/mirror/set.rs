@@ -115,31 +115,20 @@ impl MirrorSet {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_support::keys;
-
-    fn make_follow_set(
-        author: &Keys,
-        d: &str,
-        title: Option<&str>,
-        content: &str,
-        p: &[PublicKey],
-    ) -> Event {
-        let mut builder =
-            EventBuilder::new(Kind::Custom(FOLLOW_SET_KIND), content).tag(Tag::identifier(d));
-        if let Some(title) = title {
-            builder = builder.tag(Tag::custom("title", [title.to_string()]));
-        }
-        for pk in p {
-            builder = builder.tag(Tag::public_key(*pk));
-        }
-        builder.finalize(author).unwrap()
-    }
+    use crate::test_support::{follow_set, keys};
 
     #[test]
     fn from_event_preserves_other_tags_and_content() {
         let author = keys();
         let p1 = keys().public_key();
-        let ev = make_follow_set(&author, "swing", Some("my list"), "encrypted-blob", &[p1]);
+        let ev = follow_set(
+            &author,
+            "swing",
+            Some("my list"),
+            "encrypted-blob",
+            &[p1],
+            0,
+        );
         let set = MirrorSet::from_event(&ev);
         assert_eq!(set.content, "encrypted-blob");
         assert_eq!(set.title(), Some("my list"));
@@ -150,7 +139,7 @@ mod tests {
     fn add_is_idempotent_and_reports_no_new_keys() {
         let author = keys();
         let p1 = keys().public_key();
-        let ev = make_follow_set(&author, "swing", None, "", &[p1]);
+        let ev = follow_set(&author, "swing", None, "", &[p1], 0);
         let mut set = MirrorSet::from_event(&ev);
         let outcome = set.add(&[p1]);
         assert!(outcome.added.is_empty());
@@ -164,7 +153,7 @@ mod tests {
         let author = keys();
         let p1 = keys().public_key();
         let p2 = keys().public_key();
-        let ev = make_follow_set(&author, "swing", None, "", &[p1]);
+        let ev = follow_set(&author, "swing", None, "", &[p1], 0);
         let mut set = MirrorSet::from_event(&ev);
         let outcome = set.add(&[p1, p2]);
         assert_eq!(outcome.added, vec![p2]);
@@ -182,7 +171,7 @@ mod tests {
         let p1 = keys().public_key();
         let p2 = keys().public_key();
         let absent = keys().public_key();
-        let ev = make_follow_set(&author, "swing", None, "", &[p1, p2]);
+        let ev = follow_set(&author, "swing", None, "", &[p1, p2], 0);
         let mut set = MirrorSet::from_event(&ev);
         let removed = set.remove(&[p1, absent]);
         assert_eq!(removed, vec![p1]);
@@ -194,7 +183,7 @@ mod tests {
         let author = keys();
         let p1 = keys().public_key();
         let absent = keys().public_key();
-        let ev = make_follow_set(&author, "swing", None, "", &[p1]);
+        let ev = follow_set(&author, "swing", None, "", &[p1], 0);
         let mut set = MirrorSet::from_event(&ev);
         let removed = set.remove(&[absent]);
         assert!(removed.is_empty());
@@ -206,7 +195,14 @@ mod tests {
         let author = keys();
         let p1 = keys().public_key();
         let p2 = keys().public_key();
-        let ev = make_follow_set(&author, "swing", Some("my list"), "private-content", &[p1]);
+        let ev = follow_set(
+            &author,
+            "swing",
+            Some("my list"),
+            "private-content",
+            &[p1],
+            0,
+        );
         let mut set = MirrorSet::from_event(&ev);
         set.add(&[p2]);
         let rebuilt = set.build_event_builder("swing").finalize(&author).unwrap();
@@ -230,7 +226,7 @@ mod tests {
     #[test]
     fn next_created_at_outdates_a_future_dated_previous_set() {
         let author = keys();
-        let mut previous = make_follow_set(&author, "swing", None, "", &[]);
+        let mut previous = follow_set(&author, "swing", None, "", &[], 0);
         assert_eq!(next_created_at(100, None), 100);
         previous.created_at = Timestamp::from_secs(50);
         assert_eq!(next_created_at(100, Some(&previous)), 100);

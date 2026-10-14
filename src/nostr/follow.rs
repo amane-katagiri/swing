@@ -84,21 +84,15 @@ pub fn follow_set_pubkeys_capped(event: &Event) -> (Vec<PublicKey>, bool) {
 #[cfg(test)]
 mod tests {
     use super::super::MAX_FUTURE_SKEW;
-    use super::super::fixtures::follow_set;
     use super::*;
-    use crate::test_support::keys;
+    use crate::test_support::{follow_set, keys};
 
     #[test]
     fn extracts_follow_set_pubkeys() {
         let author = keys();
         let target1 = keys().public_key();
         let target2 = keys().public_key();
-        let ev = EventBuilder::new(Kind::Custom(FOLLOW_SET_KIND), "")
-            .tag(Tag::identifier("site-mirror"))
-            .tag(Tag::public_key(target1))
-            .tag(Tag::public_key(target2))
-            .finalize(&author)
-            .unwrap();
+        let ev = follow_set(&author, "site-mirror", None, "", &[target1, target2], 0);
         let pubkeys = extract_follow_set_pubkeys(&ev);
         assert_eq!(pubkeys.len(), 2);
         assert!(pubkeys.contains(&target1));
@@ -109,12 +103,7 @@ mod tests {
     fn follow_set_pubkeys_capped_dedups_repeated_p_tags() {
         let author = keys();
         let target = keys().public_key();
-        let ev = EventBuilder::new(Kind::Custom(FOLLOW_SET_KIND), "")
-            .tag(Tag::identifier("site-mirror"))
-            .tag(Tag::public_key(target))
-            .tag(Tag::public_key(target))
-            .finalize(&author)
-            .unwrap();
+        let ev = follow_set(&author, "site-mirror", None, "", &[target, target], 0);
 
         let (pubkeys, truncated) = follow_set_pubkeys_capped(&ev);
 
@@ -126,16 +115,10 @@ mod tests {
     fn follow_set_pubkeys_capped_stops_at_the_budget() {
         let author = keys();
         let first = keys().public_key();
-        let mut builder = EventBuilder::new(Kind::Custom(FOLLOW_SET_KIND), "")
-            .tag(Tag::identifier("site-mirror"))
-            .tag(Tag::public_key(first));
-        let extra: Vec<PublicKey> = (0..budget::MAX_FOLLOW_SET_ENTRIES)
-            .map(|_| Keys::generate().public_key())
+        let p: Vec<PublicKey> = std::iter::once(first)
+            .chain((0..budget::MAX_FOLLOW_SET_ENTRIES).map(|_| Keys::generate().public_key()))
             .collect();
-        for pk in &extra {
-            builder = builder.tag(Tag::public_key(*pk));
-        }
-        let ev = builder.finalize(&author).unwrap();
+        let ev = follow_set(&author, "site-mirror", None, "", &p, 0);
 
         let (pubkeys, truncated) = follow_set_pubkeys_capped(&ev);
 
@@ -151,7 +134,7 @@ mod tests {
     #[test]
     fn follow_set_identity_checks_kind_author_d_and_signature() {
         let k = keys();
-        let ev = follow_set(&k, "swing", 100, "");
+        let ev = follow_set(&k, "swing", None, "", &[], 100);
         assert!(is_follow_set_of(&ev, &k.public_key(), "swing"));
         assert!(!is_follow_set_of(&ev, &k.public_key(), "other"));
         assert!(!is_follow_set_of(&ev, &keys().public_key(), "swing"));
@@ -172,8 +155,8 @@ mod tests {
     #[test]
     fn choose_follow_set_prefers_the_newest_and_repairs_relays() {
         let k = keys();
-        let old = follow_set(&k, "swing", 100, "old");
-        let new = follow_set(&k, "swing", 200, "new");
+        let old = follow_set(&k, "swing", None, "old", &[], 100);
+        let new = follow_set(&k, "swing", None, "new", &[], 200);
 
         assert_eq!(choose_follow_set(None, true, None, 1000), None);
 
@@ -199,8 +182,15 @@ mod tests {
     #[test]
     fn choose_follow_set_drops_an_implausible_future_fetch_and_keeps_stored() {
         let k = keys();
-        let stored = follow_set(&k, "swing", 100, "stored");
-        let poisoned_fetch = follow_set(&k, "swing", 1000 + MAX_FUTURE_SKEW + 1, "poisoned");
+        let stored = follow_set(&k, "swing", None, "stored", &[], 100);
+        let poisoned_fetch = follow_set(
+            &k,
+            "swing",
+            None,
+            "poisoned",
+            &[],
+            1000 + MAX_FUTURE_SKEW + 1,
+        );
 
         let c = choose_follow_set(
             Some(poisoned_fetch.clone()),
@@ -215,8 +205,15 @@ mod tests {
     #[test]
     fn choose_follow_set_drops_a_poisoned_stored_copy_and_saves_the_fetched_one() {
         let k = keys();
-        let poisoned_stored = follow_set(&k, "swing", 1000 + MAX_FUTURE_SKEW + 1, "poisoned");
-        let fetched = follow_set(&k, "swing", 100, "fetched");
+        let poisoned_stored = follow_set(
+            &k,
+            "swing",
+            None,
+            "poisoned",
+            &[],
+            1000 + MAX_FUTURE_SKEW + 1,
+        );
+        let fetched = follow_set(&k, "swing", None, "fetched", &[], 100);
 
         let c =
             choose_follow_set(Some(fetched.clone()), true, Some(poisoned_stored), 1000).unwrap();
@@ -226,7 +223,14 @@ mod tests {
     #[test]
     fn choose_follow_set_returns_none_when_only_a_poisoned_stored_copy_exists() {
         let k = keys();
-        let poisoned_stored = follow_set(&k, "swing", 1000 + MAX_FUTURE_SKEW + 1, "poisoned");
+        let poisoned_stored = follow_set(
+            &k,
+            "swing",
+            None,
+            "poisoned",
+            &[],
+            1000 + MAX_FUTURE_SKEW + 1,
+        );
 
         assert_eq!(
             choose_follow_set(None, true, Some(poisoned_stored), 1000),

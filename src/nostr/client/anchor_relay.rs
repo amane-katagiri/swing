@@ -113,25 +113,18 @@ mod tests {
     use super::*;
     use crate::nostr::{AdReachability, build_anchor_ad_builder};
     use crate::signer::Signer;
-    use crate::test_support::{PEER_A, PEER_B, PEER_OWN, keys, relay_holding};
+    use crate::test_support::{
+        PEER_A, PEER_B, PEER_OWN, anchor_ad_event, follow_set, keys, relay_holding,
+    };
 
     fn ad(k: &Keys, peer: &str, created_at: u64) -> Event {
-        build_anchor_ad_builder(
+        anchor_ad_event(
+            k,
             peer,
             AdReachability::Public,
-            Timestamp::from_secs(created_at + 10_000),
+            created_at,
+            created_at + 10_000,
         )
-        .custom_created_at(Timestamp::from_secs(created_at))
-        .finalize(k)
-        .unwrap()
-    }
-
-    fn follows(k: &Keys, who: &[PublicKey]) -> Event {
-        EventBuilder::new(Kind::Custom(FOLLOW_SET_KIND), "")
-            .tag(Tag::identifier("swing"))
-            .tags(who.iter().map(|pk| Tag::public_key(*pk)))
-            .finalize(k)
-            .unwrap()
     }
 
     #[tokio::test]
@@ -147,8 +140,8 @@ mod tests {
             ad(&stranger, PEER_B, now - 10),
             ad(&own, PEER_OWN, now - 10),
             ad(&own, PEER_A, now - 10),
-            follows(&alice, &[own.public_key()]),
-            follows(&bob, &[stranger.public_key()]),
+            follow_set(&alice, "swing", None, "", &[own.public_key()], now),
+            follow_set(&bob, "swing", None, "", &[stranger.public_key()], now),
         ])
         .await;
         let client = RelayClient::connect(Signer::Local(own.clone()), &[url])

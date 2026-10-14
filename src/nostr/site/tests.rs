@@ -1,17 +1,17 @@
 use super::super::MAX_FUTURE_SKEW;
-use super::super::fixtures::{make_site_event, site_event_with};
 use super::*;
-use crate::test_support::{CID_A, CID_B, keys, site_event_fixture as site_event};
+use crate::test_support::{
+    CID_A, CID_B, keys, make_site_event, site_event_fixture, site_event_with,
+};
 
 #[test]
 fn site_event_content_is_the_message() {
     let k = keys();
-    let cid = "bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi";
     let ev = build_site_event_builder(
         35980,
         &SiteFields {
             d: "example.com",
-            cid,
+            cid: CID_A,
             message: Some("Add posts"),
             ..Default::default()
         },
@@ -47,19 +47,10 @@ fn a_size_tag_must_be_plain_decimal_digits() {
 #[test]
 fn parses_valid_site_event() {
     let k = keys();
-    let ev = make_site_event(
-        &k,
-        35980,
-        "example.com",
-        "bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
-        1000,
-    );
+    let ev = make_site_event(&k, 35980, "example.com", CID_A, 1000);
     let parsed = parse_site_event(&ev, 35980).unwrap();
     assert_eq!(parsed.d, "example.com");
-    assert_eq!(
-        parsed.cid,
-        "bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi"
-    );
+    assert_eq!(parsed.cid, CID_A);
     assert_eq!(parsed.url.as_deref(), Some("https://example.com/"));
     assert_eq!(parsed.size, Some(1234));
     assert_eq!(parsed.created_at, 1000);
@@ -76,13 +67,7 @@ fn parses_valid_site_event() {
 #[test]
 fn accepts_cidv0_and_canonicalizes_it() {
     let k = keys();
-    let ev = make_site_event(
-        &k,
-        35980,
-        "example.com",
-        "QmYwAPJzv5CZsnA9LqYKXfRSZryVXxNn7ZP1FyEBgvJvHR",
-        1000,
-    );
+    let ev = make_site_event(&k, 35980, "example.com", CID_B, 1000);
     let parsed = parse_site_event(&ev, 35980).unwrap();
     assert_eq!(
         parsed.cid,
@@ -93,17 +78,14 @@ fn accepts_cidv0_and_canonicalizes_it() {
 #[test]
 fn canonical_cid_normalizes_every_spelling_to_cidv1_base32() {
     assert_eq!(
-        canonical_cid("QmYwAPJzv5CZsnA9LqYKXfRSZryVXxNn7ZP1FyEBgvJvHR").unwrap(),
+        canonical_cid(CID_B).unwrap(),
         "bafybeie5nqv6kd3qnfjuphmab6atx72bbz674e35siysg2di3q5jltctqq"
     );
     assert_eq!(
         canonical_cid("zdj7Wic6KcJAfWz1c9o4M6kq9Lwd5BfbxkVafnrojaaGiSFxM").unwrap(),
-        "bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi"
+        CID_A
     );
-    assert_eq!(
-        canonical_cid("bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi").unwrap(),
-        "bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi"
-    );
+    assert_eq!(canonical_cid(CID_A).unwrap(), CID_A);
     assert!(canonical_cid("not-a-cid").is_err());
 }
 
@@ -209,10 +191,7 @@ fn accepts_d_tag_at_max_length() {
     let max_d = "a".repeat(253);
     let ev = EventBuilder::new(Kind::Custom(35980), "")
         .tag(Tag::custom("d", [max_d.clone()]))
-        .tag(Tag::custom(
-            "cid",
-            ["bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi".to_string()],
-        ))
+        .tag(Tag::custom("cid", [CID_A.to_string()]))
         .finalize(&k)
         .unwrap();
     let parsed = parse_site_event(&ev, 35980).unwrap();
@@ -224,10 +203,7 @@ fn drops_invalid_url_but_keeps_event() {
     let k = keys();
     let ev = EventBuilder::new(Kind::Custom(35980), "")
         .tag(Tag::identifier("example.com"))
-        .tag(Tag::custom(
-            "cid",
-            ["bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi".to_string()],
-        ))
+        .tag(Tag::custom("cid", [CID_A.to_string()]))
         .tag(Tag::custom("url", ["not a url".to_string()]))
         .finalize(&k)
         .unwrap();
@@ -242,10 +218,7 @@ fn drops_url_with_control_characters() {
     assert!(reqwest::Url::parse(url).is_ok());
     let ev = EventBuilder::new(Kind::Custom(35980), "")
         .tag(Tag::identifier("example.com"))
-        .tag(Tag::custom(
-            "cid",
-            ["bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi".to_string()],
-        ))
+        .tag(Tag::custom("cid", [CID_A.to_string()]))
         .tag(Tag::custom("url", [url.to_string()]))
         .finalize(&k)
         .unwrap();
@@ -258,10 +231,7 @@ fn drops_non_http_scheme_url() {
     let k = keys();
     let ev = EventBuilder::new(Kind::Custom(35980), "")
         .tag(Tag::identifier("example.com"))
-        .tag(Tag::custom(
-            "cid",
-            ["bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi".to_string()],
-        ))
+        .tag(Tag::custom("cid", [CID_A.to_string()]))
         .tag(Tag::custom("url", ["ftp://example.com/".to_string()]))
         .finalize(&k)
         .unwrap();
@@ -275,10 +245,7 @@ fn drops_too_long_url() {
     let long_url = format!("https://example.com/{}", "a".repeat(2048));
     let ev = EventBuilder::new(Kind::Custom(35980), "")
         .tag(Tag::identifier("example.com"))
-        .tag(Tag::custom(
-            "cid",
-            ["bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi".to_string()],
-        ))
+        .tag(Tag::custom("cid", [CID_A.to_string()]))
         .tag(Tag::custom("url", [long_url]))
         .finalize(&k)
         .unwrap();
@@ -291,10 +258,7 @@ fn keeps_valid_https_url() {
     let k = keys();
     let ev = EventBuilder::new(Kind::Custom(35980), "")
         .tag(Tag::identifier("example.com"))
-        .tag(Tag::custom(
-            "cid",
-            ["bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi".to_string()],
-        ))
+        .tag(Tag::custom("cid", [CID_A.to_string()]))
         .tag(Tag::custom("url", ["https://example.com/".to_string()]))
         .finalize(&k)
         .unwrap();
@@ -305,12 +269,11 @@ fn keeps_valid_https_url() {
 #[test]
 fn title_round_trips() {
     let k = keys();
-    let cid = "bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi";
     let ev = build_site_event_builder(
         35980,
         &SiteFields {
             d: "example.com",
-            cid,
+            cid: CID_A,
             title: Some("あまねけ！"),
             ..Default::default()
         },
@@ -327,10 +290,7 @@ fn drops_oversized_title_but_keeps_event() {
     let long_title = "a".repeat(257);
     let ev = EventBuilder::new(Kind::Custom(35980), "")
         .tag(Tag::identifier("example.com"))
-        .tag(Tag::custom(
-            "cid",
-            ["bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi".to_string()],
-        ))
+        .tag(Tag::custom("cid", [CID_A.to_string()]))
         .tag(Tag::custom("title", [long_title]))
         .finalize(&k)
         .unwrap();
@@ -343,10 +303,7 @@ fn drops_title_with_control_characters() {
     let k = keys();
     let ev = EventBuilder::new(Kind::Custom(35980), "")
         .tag(Tag::identifier("example.com"))
-        .tag(Tag::custom(
-            "cid",
-            ["bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi".to_string()],
-        ))
+        .tag(Tag::custom("cid", [CID_A.to_string()]))
         .tag(Tag::custom("title", ["hello\nworld".to_string()]))
         .finalize(&k)
         .unwrap();
@@ -359,10 +316,7 @@ fn absent_title_is_none() {
     let k = keys();
     let ev = EventBuilder::new(Kind::Custom(35980), "")
         .tag(Tag::identifier("example.com"))
-        .tag(Tag::custom(
-            "cid",
-            ["bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi".to_string()],
-        ))
+        .tag(Tag::custom("cid", [CID_A.to_string()]))
         .finalize(&k)
         .unwrap();
     let parsed = parse_site_event(&ev, 35980).unwrap();
@@ -374,10 +328,10 @@ fn cap_sites_per_author_keeps_the_first_n_by_d() {
     let a = keys().public_key();
     let b = keys().public_key();
     let sites = vec![
-        site_event(a, "c.example", 1),
-        site_event(a, "a.example", 1),
-        site_event(a, "b.example", 1),
-        site_event(b, "only.example", 1),
+        site_event_fixture(a, "c.example", CID_A, 1),
+        site_event_fixture(a, "a.example", CID_A, 1),
+        site_event_fixture(a, "b.example", CID_A, 1),
+        site_event_fixture(b, "only.example", CID_A, 1),
     ];
 
     let capped = cap_sites_per_author(&sites, 2);
@@ -396,50 +350,10 @@ fn select_latest_keeps_max_created_at_per_pubkey_and_d() {
     let k1 = keys();
     let k2 = keys();
     let events = vec![
-        SiteEvent {
-            pubkey: k1.public_key(),
-            d: "site-a".into(),
-            cid: "bafy-old".into(),
-            url: None,
-            size: None,
-            title: None,
-            message: None,
-            created_at: 100,
-            id: nostr_sdk::prelude::EventId::from_byte_array([0; 32]),
-        },
-        SiteEvent {
-            pubkey: k1.public_key(),
-            d: "site-a".into(),
-            cid: "bafy-new".into(),
-            url: None,
-            size: None,
-            title: None,
-            message: None,
-            created_at: 200,
-            id: nostr_sdk::prelude::EventId::from_byte_array([0; 32]),
-        },
-        SiteEvent {
-            pubkey: k1.public_key(),
-            d: "site-b".into(),
-            cid: "bafy-other-site".into(),
-            url: None,
-            size: None,
-            title: None,
-            message: None,
-            created_at: 50,
-            id: nostr_sdk::prelude::EventId::from_byte_array([0; 32]),
-        },
-        SiteEvent {
-            pubkey: k2.public_key(),
-            d: "site-a".into(),
-            cid: "bafy-k2".into(),
-            url: None,
-            size: None,
-            title: None,
-            message: None,
-            created_at: 999,
-            id: nostr_sdk::prelude::EventId::from_byte_array([0; 32]),
-        },
+        site_event_fixture(k1.public_key(), "site-a", "bafy-old", 100),
+        site_event_fixture(k1.public_key(), "site-a", "bafy-new", 200),
+        site_event_fixture(k1.public_key(), "site-b", "bafy-other-site", 50),
+        site_event_fixture(k2.public_key(), "site-a", "bafy-k2", 999),
     ];
     let latest = select_latest(&events, 1000);
     assert_eq!(latest.len(), 3);
@@ -460,19 +374,7 @@ fn select_latest_keeps_max_created_at_per_pubkey_and_d() {
 #[test]
 fn select_latest_ignores_an_implausible_future_created_at() {
     let k = keys();
-    fn ev(pubkey: PublicKey, cid: &str, created_at: u64) -> SiteEvent {
-        SiteEvent {
-            pubkey,
-            d: "site-a".into(),
-            cid: cid.into(),
-            url: None,
-            size: None,
-            title: None,
-            message: None,
-            created_at,
-            id: nostr_sdk::prelude::EventId::from_byte_array([0; 32]),
-        }
-    }
+    let ev = |pubkey, cid, created_at| site_event_fixture(pubkey, "site-a", cid, created_at);
     let events = vec![
         ev(k.public_key(), "bafy-plausible", 1000 + MAX_FUTURE_SKEW),
         ev(k.public_key(), "bafy-forged", 1000 + MAX_FUTURE_SKEW + 1),

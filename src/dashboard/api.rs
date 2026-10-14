@@ -397,7 +397,7 @@ mod tests {
     use super::AppState;
     use axum::body::Body;
     use axum::http::{Request, StatusCode};
-    use nostr_sdk::prelude::{Client, EventBuilder, FinalizeEvent, Keys, Kind, Tag};
+    use nostr_sdk::prelude::{Client, Keys};
     use std::sync::Arc;
 
     use crate::shutdown::ExitRequest;
@@ -582,15 +582,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let (state, keys) = ready_state_with_relays(dir.path(), std::slice::from_ref(&url)).await;
 
-        let mut tags = vec![Tag::identifier(state.config.nostr.mirror_set.clone())];
-        tags.extend(
-            (0..crate::nostr::budget::MAX_FOLLOW_SET_ENTRIES)
-                .map(|_| Tag::public_key(Keys::generate().public_key())),
-        );
-        let full = EventBuilder::new(Kind::Custom(30000), "")
-            .tags(tags)
-            .finalize(&keys)
-            .unwrap();
+        let full = crate::test_support::full_follow_set(&keys, &state.config.nostr.mirror_set);
         let client = Client::default();
         client.add_relay(url.as_str()).await.unwrap();
         client.connect().await;

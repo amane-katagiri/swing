@@ -1,6 +1,7 @@
 use super::super::test_support::*;
 use super::*;
 use crate::state::VersionRecord;
+use crate::test_support::{CID_A, CID_B, replica_report_event};
 use std::collections::HashSet;
 use tokio::task::JoinSet;
 
@@ -152,8 +153,6 @@ async fn unfollowed_sites_are_withdrawn_once() {
     assert!(fx.take_reports().is_empty());
 }
 
-const CID_A: &str = "bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi";
-const CID_B: &str = "QmYwAPJzv5CZsnA9LqYKXfRSZryVXxNn7ZP1FyEBgvJvHR";
 const CID_MIRRORED: &str = "bafybeigzhpfl7lkz4hnmxg6c4mutrtiqnxpsueszwpz3dy2vu7x4ji27qq";
 const CID_PUBLISHED: &str = "bafybeifqjzpkean3aqgk4u7wsp3khcr6ac3c3jqdtsrer7wnlg37zbbisq";
 const CID_AB: &str = "bafybeih3ryqpylsmh4siyygdtplff46bgrzjro4xpofu2widxbifkyqgam";
@@ -164,29 +163,25 @@ async fn reports_left_on_relays_are_withdrawn_or_kept_on_startup() {
     fx.seed(D, CID_A, 1, 100).await;
     let author = fx.pubkey;
     let now = now_secs();
+    let reporter = &fx.agent.reporter.keys;
     let old = |d: &str, cids: &[&str], created_at: u64| {
-        nostr::build_replica_report_builder(
-            35981,
-            35980,
+        replica_report_event(
+            reporter,
             &author,
             d,
-            &cids.iter().map(|c| c.to_string()).collect(),
-            Timestamp::from_secs(created_at + REPORT_TTL),
+            cids,
+            created_at,
+            created_at + REPORT_TTL,
         )
-        .custom_created_at(Timestamp::from_secs(created_at))
-        .finalize(&fx.agent.reporter.keys)
-        .unwrap()
     };
-    let foreign = nostr::build_replica_report_builder(
-        35981,
-        35980,
+    let foreign = replica_report_event(
+        &Keys::generate(),
         &author,
         "foreign.example",
-        &BTreeSet::from([CID_A.to_string()]),
-        Timestamp::from_secs(now + REPORT_TTL),
-    )
-    .finalize(&Keys::generate())
-    .unwrap();
+        &[CID_A],
+        now,
+        now + REPORT_TTL,
+    );
     fx.relay().stored = vec![
         old(D, &[CID_A], now - 10),
         old("gone.example", &[CID_A], now - 20),
@@ -205,17 +200,15 @@ async fn reports_left_on_relays_are_withdrawn_or_kept_on_startup() {
 async fn stale_reports_are_withdrawn_once_the_relays_answer() {
     let fx = Fixture::new(default_policy(), FakeKubo::default());
     fx.seed(D, "bafy-a", 1, 100).await;
-    let stale = nostr::build_replica_report_builder(
-        35981,
-        35980,
+    let now = now_secs();
+    let stale = replica_report_event(
+        &fx.agent.reporter.keys,
         &fx.pubkey,
         "gone.example",
-        &BTreeSet::from([CID_B.to_string()]),
-        Timestamp::from_secs(now_secs() + REPORT_TTL),
-    )
-    .custom_created_at(Timestamp::from_secs(now_secs() - 10))
-    .finalize(&fx.agent.reporter.keys)
-    .unwrap();
+        &[CID_B],
+        now - 10,
+        now + REPORT_TTL,
+    );
     {
         let mut relay = fx.relay();
         relay.stored = vec![stale];
@@ -239,17 +232,15 @@ async fn stale_reports_are_withdrawn_once_the_relays_answer() {
 async fn own_reports_are_fetched_again_after_a_walk_cut_short() {
     let fx = Fixture::new(default_policy(), FakeKubo::default());
     fx.seed(D, "bafy-a", 1, 100).await;
-    let stale = nostr::build_replica_report_builder(
-        35981,
-        35980,
+    let now = now_secs();
+    let stale = replica_report_event(
+        &fx.agent.reporter.keys,
         &fx.pubkey,
         "gone.example",
-        &BTreeSet::from([CID_B.to_string()]),
-        Timestamp::from_secs(now_secs() + REPORT_TTL),
-    )
-    .custom_created_at(Timestamp::from_secs(now_secs() - 10))
-    .finalize(&fx.agent.reporter.keys)
-    .unwrap();
+        &[CID_B],
+        now - 10,
+        now + REPORT_TTL,
+    );
     fx.relay().partial_fetch = true;
 
     fx.agent.sync_reports().await;
@@ -404,17 +395,14 @@ fn report_about_own_cid(
     cid: &str,
     created_at: u64,
 ) -> Event {
-    nostr::build_replica_report_builder(
-        35981,
-        35980,
+    replica_report_event(
+        reporter,
         &fx.agent.own,
         d,
-        &BTreeSet::from([cid.to_string()]),
-        Timestamp::from_secs(created_at + REPORT_TTL),
+        &[cid],
+        created_at,
+        created_at + REPORT_TTL,
     )
-    .custom_created_at(Timestamp::from_secs(created_at))
-    .finalize(reporter)
-    .unwrap()
 }
 
 async fn publish_own(fx: &Fixture, ds: &[&str]) {

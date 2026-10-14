@@ -412,6 +412,7 @@ mod tests {
     use std::collections::BTreeSet;
 
     use super::*;
+    use crate::test_support::{CID_A, CID_B, raw_event, replica_report_event as report};
 
     #[test]
     fn a_failed_report_fetch_keeps_the_other_ones_results() {
@@ -446,8 +447,6 @@ mod tests {
             merge_report_fetches(Err(anyhow::anyhow!("x")), Err(anyhow::anyhow!("y"))).is_err()
         );
     }
-    use crate::test_support::{CID_A, CID_B, replica_report_event as report};
-
     #[test]
     fn collect_reports_keeps_the_newest_live_report_per_reporter() {
         let author = Keys::generate().public_key();
@@ -630,34 +629,23 @@ mod tests {
         );
     }
 
-    fn report_with_bad_expiration(
-        reporter: &Keys,
-        author: &PublicKey,
-        d: &str,
-        cid: &str,
-    ) -> Event {
-        let author_hex = author.to_hex();
-        EventBuilder::new(Kind::Custom(35981), "")
-            .tag(Tag::identifier(format!("{author_hex}:{d}")))
-            .tag(Tag::custom(
-                "a",
-                [nostr::site_coordinate(35980, author, d).to_string()],
-            ))
-            .tag(Tag::custom("cid", [cid.to_string()]))
-            .tag(Tag::custom("expiration", ["not-a-number"]))
-            .finalize(reporter)
-            .unwrap()
-    }
-
     #[test]
     fn collect_reports_drops_a_report_with_a_garbage_expiration() {
         let author = Keys::generate().public_key();
         let reporter = Keys::generate();
-        let events = vec![report_with_bad_expiration(
+        let d = format!("{}:example.com", author.to_hex());
+        let a = nostr::site_coordinate(35980, &author, "example.com").to_string();
+        let tags: &[&[&str]] = &[
+            &["d", &d],
+            &["a", &a],
+            &["cid", CID_A],
+            &["expiration", "not-a-number"],
+        ];
+        let events = vec![raw_event(
             &reporter,
-            &author,
-            "example.com",
-            CID_A,
+            35981,
+            tags,
+            Timestamp::now().as_secs(),
         )];
 
         let collected = collect_reports(events, 35981, 35980, 500, &Chosen::default());

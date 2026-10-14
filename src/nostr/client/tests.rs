@@ -1,12 +1,13 @@
 use std::collections::BTreeSet;
 use std::time::Duration;
 
-use super::super::fixtures::{follow_set, report, site_event_with};
 use super::fetch::{Measured, Streamed, event_bytes};
 use super::*;
 use crate::nostr::site_coordinate;
 use crate::test_support::{
-    CID_A, CID_B, keys, make_site_event, refusing_relay, relay_holding, serve_relay,
+    CID_A, CID_B, events_on_relay, follow_set, forging_relay, full_follow_set, keys,
+    make_site_event, refusing_relay, relay_holding, replica_report as report, serve_relay,
+    site_event_with,
 };
 
 #[tokio::test]
@@ -95,8 +96,6 @@ async fn the_relay_client_drops_events_over_the_size_or_tag_limits() {
     let local = LocalRelayBuilder::default()
         .max_event_size(1024 * 1024)
         .build();
-    local.run().await.unwrap();
-    let url = local.url().await.to_string();
     let k = keys();
     let now = Timestamp::now().as_secs();
     let small = make_site_event(&k, 35980, "small.example", CID_A, now);
@@ -112,19 +111,9 @@ async fn the_relay_client_drops_events_over_the_size_or_tag_limits() {
         .tags((0..budget::MAX_EVENT_TAGS).map(|i| Tag::custom("x", [i.to_string()])))
         .finalize(&k)
         .unwrap();
-    let seeder = Client::default();
-    seeder.add_relay(url.as_str()).await.unwrap();
-    seeder.connect().await;
-    for event in [&small, &big, &tagged] {
-        seeder.send_event(event).await.unwrap();
-    }
-    let stored = seeder
-        .fetch_events(Filter::new().kind(Kind::Custom(35980)))
-        .timeout(Duration::from_secs(10))
-        .await
-        .unwrap();
+    let (_local, url) = serve_relay(local, &[small.clone(), big.clone(), tagged.clone()]).await;
+    let stored = events_on_relay(&url, Filter::new().kind(Kind::Custom(35980))).await;
     assert_eq!(stored.len(), 3);
-    seeder.shutdown().await;
 
     let client = RelayClient::connect(Signer::Local(keys()), &[url])
         .await
@@ -263,9 +252,7 @@ async fn fetch_follow_set_from(relays: &[String]) -> Result<Option<Event>> {
 #[tokio::test]
 async fn a_fetch_fails_when_no_relay_answers_but_not_when_one_does() {
     let (_refusing, refusing) = refusing_relay(None).await;
-    let healthy = LocalRelay::new();
-    healthy.run().await.unwrap();
-    let healthy = healthy.url().await.to_string();
+    let (_healthy, healthy) = relay_holding(&[]).await;
 
     let err = fetch_follow_set_from(std::slice::from_ref(&refusing))
         .await
@@ -366,21 +353,10 @@ async fn follow_sets_get_more_room_than_site_events() {
     let local = LocalRelayBuilder::default()
         .max_event_size(1024 * 1024)
         .build();
-    local.run().await.unwrap();
-    let url = local.url().await.to_string();
     let k = keys();
-    let mut tags = vec![Tag::identifier("swing")];
-    tags.extend((0..budget::MAX_FOLLOW_SET_ENTRIES).map(|_| Tag::public_key(keys().public_key())));
-    let full = EventBuilder::new(Kind::Custom(FOLLOW_SET_KIND), "")
-        .tags(tags)
-        .finalize(&k)
-        .unwrap();
+    let full = full_follow_set(&k, "swing");
     assert!(event_bytes(&full) > budget::MAX_EVENT_BYTES as usize);
-    let seeder = Client::default();
-    seeder.add_relay(url.as_str()).await.unwrap();
-    seeder.connect().await;
-    seeder.send_event(&full).await.unwrap();
-    seeder.shutdown().await;
+    let (_local, url) = serve_relay(local, std::slice::from_ref(&full)).await;
 
     let client = RelayClient::connect(Signer::Local(keys()), &[url])
         .await
@@ -431,8 +407,8 @@ async fn fetches_never_return_events_the_relay_sends_for_unrequested_authors() {
     let stranger = keys();
     let wanted_site = make_site_event(&wanted, 35980, "wanted.example", CID_A, now);
     let stranger_site = make_site_event(&stranger, 35980, "stranger.example", CID_B, older);
-    let wanted_set = follow_set(&wanted, "swing", now, "wanted");
-    let stranger_set = follow_set(&stranger, "swing", older, "stranger");
+    let wanted_set = follow_set(&wanted, "swing", None, "wanted", &[], now);
+    let stranger_set = follow_set(&stranger, "swing", None, "stranger", &[], older);
     let wanted_report = report(
         &stranger,
         &wanted.public_key(),
@@ -586,87 +562,24 @@ async fn reports_about_an_author_come_only_from_the_given_reporters_since_the_cu
     client.shutdown().await;
 }
 
-type DbFuture<'a, T> =
-    std::pin::Pin<Box<dyn Future<Output = Result<T, nostr_database::error::Error>> + Send + 'a>>;
-
-#[derive(Debug)]
-pub(super) struct ServesForgeries(pub(super) Vec<Event>);
-
-impl NostrDatabase for ServesForgeries {
-    fn backend(&self) -> &'static str {
-        "forgeries"
-    }
-
-    fn features(&self) -> Features {
-        Features {
-            persistent: false,
-            event_expiration: false,
-            full_text_search: false,
-            request_to_vanish: false,
-        }
-    }
-
-    fn save_event<'a>(&'a self, _event: &'a Event) -> DbFuture<'a, SaveEventStatus> {
-        Box::pin(async { Ok(SaveEventStatus::Success) })
-    }
-
-    fn check_id<'a>(&'a self, _event_id: &'a EventId) -> DbFuture<'a, DatabaseEventStatus> {
-        Box::pin(async { Ok(DatabaseEventStatus::NotExistent) })
-    }
-
-    fn event_by_id<'a>(&'a self, _event_id: &'a EventId) -> DbFuture<'a, Option<Event>> {
-        Box::pin(async { Ok(None) })
-    }
-
-    fn count(&self, _filter: Filter) -> DbFuture<'_, usize> {
-        Box::pin(async { Ok(self.0.len()) })
-    }
-
-    fn query(&self, _filter: Filter) -> DbFuture<'_, BTreeSet<Event>> {
-        Box::pin(async { Ok(self.0.iter().cloned().collect()) })
-    }
-
-    fn delete(&self, _filter: Filter) -> DbFuture<'_, ()> {
-        Box::pin(async { Ok(()) })
-    }
-
-    fn wipe(&self) -> DbFuture<'_, ()> {
-        Box::pin(async { Ok(()) })
-    }
-}
-
 #[tokio::test]
 async fn a_flood_of_fresh_unrequested_events_does_not_push_out_the_real_answer() {
     let k = keys();
     let now = Timestamp::now().as_secs();
     let genuine = make_site_event(&k, 35980, "a.example", CID_A, now - 3600);
 
-    let honest = LocalRelay::new();
-    honest.run().await.unwrap();
-    let honest_url = honest.url().await;
-    let seeder = Client::default();
-    seeder.add_relay(honest_url.clone()).await.unwrap();
-    seeder.connect().await;
-    seeder.send_event(&genuine).await.unwrap();
-    seeder.shutdown().await;
+    let (_honest, honest_url) = relay_holding(std::slice::from_ref(&genuine)).await;
 
     let stranger = keys();
     let filler = "x".repeat(budget::MAX_EVENT_BYTES as usize - 1024);
     let flood: Vec<Event> = (0..FetchCap::PER_REQ.bytes / filler.len() + 100)
         .map(|i| site_event_with(&stranger, &format!("s{i}.example"), "t", &filler))
         .collect();
-    let hostile = LocalRelayBuilder::default()
-        .database(ServesForgeries(flood))
-        .build();
-    hostile.run().await.unwrap();
-    let hostile_url = hostile.url().await;
+    let (_hostile, hostile_url) = forging_relay(flood).await;
 
-    let client = RelayClient::connect(
-        Signer::Local(keys()),
-        &[honest_url.to_string(), hostile_url.to_string()],
-    )
-    .await
-    .unwrap();
+    let client = RelayClient::connect(Signer::Local(keys()), &[honest_url, hostile_url])
+        .await
+        .unwrap();
     let sites = client
         .fetch_site_events(35980, &[k.public_key()])
         .await
@@ -686,21 +599,10 @@ async fn a_forged_copy_of_a_verified_event_does_not_hide_the_real_one() {
     let mut forged = genuine.clone();
     forged.content = "forged".to_string();
 
-    let honest = LocalRelay::new();
-    honest.run().await.unwrap();
-    let honest_url = honest.url().await;
-    let seeder = Client::default();
-    seeder.add_relay(honest_url.clone()).await.unwrap();
-    seeder.connect().await;
-    seeder.send_event(&genuine).await.unwrap();
-    seeder.shutdown().await;
-    let hostile = LocalRelayBuilder::default()
-        .database(ServesForgeries(vec![forged]))
-        .build();
-    hostile.run().await.unwrap();
-    let hostile_url = hostile.url().await;
+    let (_honest, honest_url) = relay_holding(std::slice::from_ref(&genuine)).await;
+    let (_hostile, hostile_url) = forging_relay(vec![forged]).await;
 
-    let client = RelayClient::connect(Signer::Local(keys()), &[honest_url.to_string()])
+    let client = RelayClient::connect(Signer::Local(keys()), std::slice::from_ref(&honest_url))
         .await
         .unwrap();
     let first = client

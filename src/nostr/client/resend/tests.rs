@@ -1,12 +1,11 @@
 use std::collections::BTreeSet;
 
-use super::super::tests::ServesForgeries;
 use super::*;
 use crate::nostr::client::FetchCap;
 use crate::signer::Signer;
 use crate::test_support::{
-    CID_A, CID_B, deletion_event, keys, make_site_event, numbered_deletion_event, refusing_relay,
-    relay_holding,
+    CID_A, CID_B, deletion_event, forging_relay, keys, make_site_event, numbered_deletion_event,
+    refusing_relay, relay_holding,
 };
 
 #[tokio::test]
@@ -59,18 +58,11 @@ async fn a_newer_version_from_a_request_that_did_not_finish_still_supersedes_the
         })
         .collect();
     served.push(newer.clone());
-    let cut_off = LocalRelayBuilder::default()
-        .database(ServesForgeries(served))
-        .build();
-    cut_off.run().await.unwrap();
-    let cut_off_url = cut_off.url().await;
+    let (_cut_off, cut_off_url) = forging_relay(served).await;
     let (_empty, empty) = relay_holding(&[]).await;
-    let client = RelayClient::connect(
-        Signer::Local(keys()),
-        &[cut_off_url.to_string(), empty.clone()],
-    )
-    .await
-    .unwrap();
+    let client = RelayClient::connect(Signer::Local(keys()), &[cut_off_url.clone(), empty.clone()])
+        .await
+        .unwrap();
 
     let sites = vec![
         (k.public_key(), "a.example".to_string()),
@@ -79,7 +71,10 @@ async fn a_newer_version_from_a_request_that_did_not_finish_still_supersedes_the
     let answers = client.fetch_sites_per_relay(35980, &sites).await;
     client.shutdown().await;
 
-    let cut = answers.iter().find(|a| a.relay == cut_off_url).unwrap();
+    let cut = answers
+        .iter()
+        .find(|a| a.relay.to_string() == cut_off_url)
+        .unwrap();
     assert_eq!(cut.sites[0], SiteAnswer::Unfinished(newer.clone()));
     assert_eq!(
         crate::nostr::plan_site_resends(&[&held], &answers),

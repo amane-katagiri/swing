@@ -7,24 +7,15 @@ use super::super::router;
 use super::super::test_support::*;
 use super::AppState;
 use crate::mfs::MfsLayout;
-use crate::mirror::MirrorSet;
 use crate::signer::Signer;
 use crate::state::{State, VersionRecord, site_key};
 use crate::test_support::{
-    CID_A, KuboApi, make_site_event, read_only_relay, relay_holding, replica_report_event,
+    CID_A, KuboApi, follow_set, make_site_event, read_only_relay, relay_holding,
+    replica_report_event,
 };
 
 const GATEWAY: &str = "http://gw.example/";
 const OWN_CID: &str = "bafybeicwrird3ditgfyu4snq6i3x6i564gfcywffrwcgumnjhyiva3p2ra";
-
-fn follow_set(author: &Keys, members: &[PublicKey], created_at: u64) -> Event {
-    let mut set = MirrorSet::empty();
-    set.add(members);
-    set.build_event_builder("swing")
-        .custom_created_at(Timestamp::from_secs(created_at))
-        .finalize(author)
-        .unwrap()
-}
 
 struct World {
     _dir: tempfile::TempDir,
@@ -44,8 +35,8 @@ async fn world() -> World {
     let now = Timestamp::now().as_secs();
     let created_at = now - 600;
     let events = [
-        follow_set(&own, &[friend.public_key()], now - 60),
-        follow_set(&friend, &[own.public_key()], now - 60),
+        follow_set(&own, "swing", None, "", &[friend.public_key()], now - 60),
+        follow_set(&friend, "swing", None, "", &[own.public_key()], now - 60),
         make_site_event(&friend, 35980, "friend.example", CID_A, created_at),
         make_site_event(&own, 35980, "own.example", OWN_CID, now - 120),
         replica_report_event(

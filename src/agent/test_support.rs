@@ -403,11 +403,14 @@ impl Fixture {
     }
 
     pub(super) async fn choose_reporters(&self, reporters: &[PublicKey]) {
-        let event = EventBuilder::new(Kind::Custom(30000), "")
-            .tag(Tag::identifier(&self.agent.config.nostr.mirror_set))
-            .tags(reporters.iter().map(|pk| Tag::public_key(*pk)))
-            .finalize(&self.agent.reporter.keys)
-            .unwrap();
+        let event = crate::test_support::follow_set(
+            &self.agent.reporter.keys,
+            &self.agent.config.nostr.mirror_set,
+            None,
+            "",
+            reporters,
+            Timestamp::now().as_secs(),
+        );
         self.agent.state.lock().await.follow_set = Some(event);
     }
 

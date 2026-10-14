@@ -861,7 +861,7 @@ pub async fn run(config: Config, dir: &Path, request: Request) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_support::{KuboApi, site_event_fixture};
+    use crate::test_support::{CID_A, KuboApi, site_event_fixture};
 
     #[test]
     fn only_canonical_decimal_names_are_versions() {
@@ -874,7 +874,7 @@ mod tests {
     }
 
     async fn kubo_with_versions(site: &str, versions: &[u64]) -> KuboApi {
-        let kubo = KuboApi::serve(crate::test_support::CID_A).await;
+        let kubo = KuboApi::serve(CID_A).await;
         kubo.with(|s| {
             for v in versions {
                 s.mfs.insert(format!("{site}/{v}"), "bafy".to_string());
@@ -903,7 +903,12 @@ mod tests {
 
     fn relay_state(previous: Option<u64>, relay_offsets: Vec<(String, i64)>) -> RelayState {
         let previous = previous.map(|created_at| {
-            site_event_fixture(Keys::generate().public_key(), "example.com", created_at)
+            site_event_fixture(
+                Keys::generate().public_key(),
+                "example.com",
+                CID_A,
+                created_at,
+            )
         });
         RelayState {
             previous: Ok(previous),

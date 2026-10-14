@@ -197,7 +197,7 @@ mod tests {
     }
 
     fn site(pk: PublicKey, d: &str) -> SiteEvent {
-        crate::test_support::site_event_fixture(pk, d, 1)
+        crate::test_support::site_event_fixture(pk, d, crate::test_support::CID_A, 1)
     }
 
     fn site_names(

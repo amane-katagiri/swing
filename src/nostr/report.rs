@@ -110,17 +110,11 @@ pub fn build_replica_report_builder(
 #[cfg(test)]
 mod tests {
     use super::super::MAX_FUTURE_SKEW;
-    use super::super::fixtures::report;
     use super::*;
-    use crate::test_support::{CID_A, CID_B, keys};
+    use crate::test_support::{CID_A, CID_B, keys, raw_event, replica_report as report};
 
-    fn report_with_tags(reporter: &Keys, d: &str, a: &str, cid: &str) -> Event {
-        EventBuilder::new(Kind::Custom(35981), "")
-            .tag(Tag::identifier(d))
-            .tag(Tag::custom("a", [a.to_string()]))
-            .tag(Tag::custom("cid", [cid.to_string()]))
-            .finalize(reporter)
-            .unwrap()
+    fn report_with_tags(reporter: &Keys, tags: &[&[&str]]) -> Event {
+        raw_event(reporter, 35981, tags, Timestamp::now().as_secs())
     }
 
     #[test]
@@ -204,18 +198,27 @@ mod tests {
         let a = format!("35980:{hex}:example.com");
 
         assert!(
-            parse_replica_report(&report_with_tags(&reporter, &d, &a, CID_A), 35981, 35980).is_ok()
+            parse_replica_report(
+                &report_with_tags(&reporter, &[&["d", &d], &["a", &a], &["cid", CID_A]]),
+                35981,
+                35980
+            )
+            .is_ok()
         );
         assert!(
-            parse_replica_report(&report_with_tags(&reporter, &d, &a, CID_A), 35982, 35980)
-                .is_err()
+            parse_replica_report(
+                &report_with_tags(&reporter, &[&["d", &d], &["a", &a], &["cid", CID_A]]),
+                35982,
+                35980
+            )
+            .is_err()
         );
 
         let other_site = format!("35980:{hex}:other.example");
         let other_kind = format!("30023:{hex}:example.com");
         let other_author = format!("35980:{}:example.com", keys().public_key().to_hex());
         for bad_a in [other_site, other_kind, other_author] {
-            let ev = report_with_tags(&reporter, &d, &bad_a, CID_A);
+            let ev = report_with_tags(&reporter, &[&["d", &d], &["a", &bad_a], &["cid", CID_A]]);
             assert!(parse_replica_report(&ev, 35981, 35980).is_err(), "{bad_a}");
         }
 
@@ -226,21 +229,12 @@ mod tests {
             upper,
             format!("{hex}:"),
         ] {
-            let ev = report_with_tags(&reporter, &bad_d, &a, CID_A);
+            let ev = report_with_tags(&reporter, &[&["d", &bad_d], &["a", &a], &["cid", CID_A]]);
             assert!(parse_replica_report(&ev, 35981, 35980).is_err(), "{bad_d}");
         }
 
-        let ev = report_with_tags(&reporter, &d, &a, "not-a-cid");
+        let ev = report_with_tags(&reporter, &[&["d", &d], &["a", &a], &["cid", "not-a-cid"]]);
         assert!(parse_replica_report(&ev, 35981, 35980).is_err());
-    }
-
-    fn report_with_expiration(reporter: &Keys, d: &str, a: &str, expiration: &str) -> Event {
-        EventBuilder::new(Kind::Custom(35981), "")
-            .tag(Tag::identifier(d))
-            .tag(Tag::custom("a", [a.to_string()]))
-            .tag(Tag::custom("expiration", [expiration.to_string()]))
-            .finalize(reporter)
-            .unwrap()
     }
 
     #[test]
@@ -260,7 +254,7 @@ mod tests {
             " 1000",
             "１０００",
         ] {
-            let ev = report_with_expiration(&reporter, &d, &a, bad);
+            let ev = report_with_tags(&reporter, &[&["d", &d], &["a", &a], &["expiration", bad]]);
             assert!(parse_replica_report(&ev, 35981, 35980).is_err(), "{bad}");
         }
     }
@@ -273,7 +267,7 @@ mod tests {
         let d = format!("{hex}:example.com");
         let a = format!("35980:{hex}:example.com");
 
-        let ev = report_with_tags(&reporter, &d, &a, CID_A);
+        let ev = report_with_tags(&reporter, &[&["d", &d], &["a", &a], &["cid", CID_A]]);
         let parsed = parse_replica_report(&ev, 35981, 35980).unwrap();
         assert_eq!(parsed.expiration, None);
     }

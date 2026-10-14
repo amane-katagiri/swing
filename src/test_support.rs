@@ -44,11 +44,26 @@ pub(crate) fn replica_report_event(
     .unwrap()
 }
 
-pub(crate) fn site_event_fixture(pubkey: PublicKey, d: &str, created_at: u64) -> SiteEvent {
+pub(crate) fn replica_report(
+    reporter: &Keys,
+    author: &PublicKey,
+    d: &str,
+    cids: &[&str],
+    created_at: u64,
+) -> Event {
+    replica_report_event(reporter, author, d, cids, created_at, created_at + 100)
+}
+
+pub(crate) fn site_event_fixture(
+    pubkey: PublicKey,
+    d: &str,
+    cid: &str,
+    created_at: u64,
+) -> SiteEvent {
     SiteEvent {
         pubkey,
         d: d.to_string(),
-        cid: CID_A.to_string(),
+        cid: cid.to_string(),
         url: None,
         size: None,
         title: None,
@@ -78,6 +93,60 @@ pub(crate) fn make_site_event(
     .custom_created_at(Timestamp::from_secs(created_at))
     .finalize(keys)
     .unwrap()
+}
+
+pub(crate) fn site_event_with(keys: &Keys, d: &str, title: &str, content: &str) -> Event {
+    EventBuilder::new(Kind::Custom(35980), content)
+        .tag(Tag::identifier(d))
+        .tag(Tag::custom("cid", [CID_A.to_string()]))
+        .tag(Tag::custom("title", [title.to_string()]))
+        .finalize(keys)
+        .unwrap()
+}
+
+pub(crate) fn follow_set(
+    keys: &Keys,
+    d: &str,
+    title: Option<&str>,
+    content: &str,
+    p: &[PublicKey],
+    created_at: u64,
+) -> Event {
+    EventBuilder::new(Kind::Custom(crate::nostr::FOLLOW_SET_KIND), content)
+        .tag(Tag::identifier(d))
+        .tags(title.map(|t| Tag::custom("title", [t.to_string()])))
+        .tags(p.iter().map(|pk| Tag::public_key(*pk)))
+        .custom_created_at(Timestamp::from_secs(created_at))
+        .finalize(keys)
+        .unwrap()
+}
+
+pub(crate) fn full_follow_set(keys: &Keys, d: &str) -> Event {
+    let p: Vec<PublicKey> = (0..crate::nostr::budget::MAX_FOLLOW_SET_ENTRIES)
+        .map(|_| Keys::generate().public_key())
+        .collect();
+    follow_set(keys, d, None, "", &p, Timestamp::now().as_secs())
+}
+
+pub(crate) fn anchor_ad_event(
+    keys: &Keys,
+    peer: &str,
+    reach: crate::nostr::AdReachability,
+    created_at: u64,
+    expiration: u64,
+) -> Event {
+    crate::nostr::build_anchor_ad_builder(peer, reach, Timestamp::from_secs(expiration))
+        .custom_created_at(Timestamp::from_secs(created_at))
+        .finalize(keys)
+        .unwrap()
+}
+
+pub(crate) fn raw_event(keys: &Keys, kind: u16, tags: &[&[&str]], created_at: u64) -> Event {
+    EventBuilder::new(Kind::Custom(kind), "")
+        .tags(tags.iter().map(|t| Tag::parse(t.iter().copied()).unwrap()))
+        .custom_created_at(Timestamp::from_secs(created_at))
+        .finalize(keys)
+        .unwrap()
 }
 
 pub(crate) fn deletion_event(keys: &Keys, tags: &[[&str; 2]], created_at: u64) -> Event {
@@ -115,6 +184,70 @@ pub(crate) async fn serve_relay(local: LocalRelay, events: &[Event]) -> (LocalRe
 
 pub(crate) async fn relay_holding(events: &[Event]) -> (LocalRelay, String) {
     serve_relay(LocalRelay::new(), events).await
+}
+
+type DbFuture<'a, T> = std::pin::Pin<
+    Box<
+        dyn std::future::Future<Output = std::result::Result<T, nostr_database::error::Error>>
+            + Send
+            + 'a,
+    >,
+>;
+
+#[derive(Debug)]
+pub(crate) struct ServesForgeries(pub(crate) Vec<Event>);
+
+impl NostrDatabase for ServesForgeries {
+    fn backend(&self) -> &'static str {
+        "forgeries"
+    }
+
+    fn features(&self) -> Features {
+        Features {
+            persistent: false,
+            event_expiration: false,
+            full_text_search: false,
+            request_to_vanish: false,
+        }
+    }
+
+    fn save_event<'a>(&'a self, _event: &'a Event) -> DbFuture<'a, SaveEventStatus> {
+        Box::pin(async { Ok(SaveEventStatus::Success) })
+    }
+
+    fn check_id<'a>(&'a self, _event_id: &'a EventId) -> DbFuture<'a, DatabaseEventStatus> {
+        Box::pin(async { Ok(DatabaseEventStatus::NotExistent) })
+    }
+
+    fn event_by_id<'a>(&'a self, _event_id: &'a EventId) -> DbFuture<'a, Option<Event>> {
+        Box::pin(async { Ok(None) })
+    }
+
+    fn count(&self, _filter: Filter) -> DbFuture<'_, usize> {
+        Box::pin(async { Ok(self.0.len()) })
+    }
+
+    fn query(&self, _filter: Filter) -> DbFuture<'_, std::collections::BTreeSet<Event>> {
+        Box::pin(async { Ok(self.0.iter().cloned().collect()) })
+    }
+
+    fn delete(&self, _filter: Filter) -> DbFuture<'_, ()> {
+        Box::pin(async { Ok(()) })
+    }
+
+    fn wipe(&self) -> DbFuture<'_, ()> {
+        Box::pin(async { Ok(()) })
+    }
+}
+
+pub(crate) async fn forging_relay(events: Vec<Event>) -> (LocalRelay, String) {
+    serve_relay(
+        LocalRelayBuilder::default()
+            .database(ServesForgeries(events))
+            .build(),
+        &[],
+    )
+    .await
 }
 
 #[derive(Debug)]

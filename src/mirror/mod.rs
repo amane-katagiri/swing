@@ -495,7 +495,7 @@ pub async fn sites(config: &Config) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_support::keys;
+    use crate::test_support::{follow_set, keys};
 
     #[test]
     fn ensure_within_follow_set_cap_allows_exactly_the_budget() {
@@ -639,9 +639,24 @@ mod tests {
             record(crate::test_support::CID_A, 2),
         );
         let events = [
-            crate::test_support::site_event_fixture(pk, "pending.example", 3),
-            crate::test_support::site_event_fixture(pk, "stored.example", 2),
-            crate::test_support::site_event_fixture(pk, "new.example", 3),
+            crate::test_support::site_event_fixture(
+                pk,
+                "pending.example",
+                crate::test_support::CID_A,
+                3,
+            ),
+            crate::test_support::site_event_fixture(
+                pk,
+                "stored.example",
+                crate::test_support::CID_A,
+                2,
+            ),
+            crate::test_support::site_event_fixture(
+                pk,
+                "new.example",
+                crate::test_support::CID_A,
+                3,
+            ),
         ];
         let latest: Vec<&nostr::SiteEvent> = events.iter().collect();
 
@@ -668,19 +683,11 @@ mod tests {
         );
     }
 
-    fn signed_follow_set(keys: &Keys, created_at: u64) -> Event {
-        MirrorSet::empty()
-            .build_event_builder("swing")
-            .custom_created_at(Timestamp::from_secs(created_at))
-            .finalize(keys)
-            .unwrap()
-    }
-
     #[test]
     fn newest_follow_set_prefers_a_newer_saved_copy() {
         let k = keys();
-        let old = signed_follow_set(&k, 100);
-        let new = signed_follow_set(&k, 200);
+        let old = follow_set(&k, "swing", None, "", &[], 100);
+        let new = follow_set(&k, "swing", None, "", &[], 200);
 
         let (ev, note) = newest_follow_set(Some(old.clone()), Some(new.clone()), 1000);
         assert_eq!(ev.unwrap().id, new.id);
@@ -704,14 +711,28 @@ mod tests {
     #[test]
     fn newest_follow_set_drops_a_poisoned_saved_copy() {
         let k = keys();
-        let poisoned_saved = signed_follow_set(&k, 1000 + nostr::MAX_FUTURE_SKEW + 1);
-        let fetched = signed_follow_set(&k, 100);
+        let poisoned_saved = follow_set(
+            &k,
+            "swing",
+            None,
+            "",
+            &[],
+            1000 + nostr::MAX_FUTURE_SKEW + 1,
+        );
+        let fetched = follow_set(&k, "swing", None, "", &[], 100);
 
         let (ev, note) = newest_follow_set(Some(fetched.clone()), Some(poisoned_saved), 1000);
         assert_eq!(ev.unwrap().id, fetched.id);
         assert!(note.is_none());
 
-        let poisoned_saved_only = signed_follow_set(&k, 1000 + nostr::MAX_FUTURE_SKEW + 1);
+        let poisoned_saved_only = follow_set(
+            &k,
+            "swing",
+            None,
+            "",
+            &[],
+            1000 + nostr::MAX_FUTURE_SKEW + 1,
+        );
         assert_eq!(
             newest_follow_set(None, Some(poisoned_saved_only), 1000),
             (None, None)
